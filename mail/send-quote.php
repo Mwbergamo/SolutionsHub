@@ -20,6 +20,9 @@
  *   - honeypot field must be empty
  *   - "to" must look like an email address
  *   - body size is capped
+ *
+ * Mail is sent via Microsoft Graph (see graph-mailer.php) using an Entra ID
+ * app registration's app-only credentials -- no SMTP, no app password.
  */
 
 declare(strict_types=1);
@@ -99,26 +102,24 @@ if ($subject === '') {
 // Header-injection guard: subject travels into a raw header line.
 $subject = str_replace(["\r", "\n"], ' ', $subject);
 
-require __DIR__ . '/smtp.php';
+require __DIR__ . '/graph-mailer.php';
 
 try {
-    $mailer = new SimpleSmtpMailer(
-        host: (string) $config['host'],
-        port: (int) $config['port'],
-        encryption: (string) ($config['encryption'] ?? 'tls'),
-        username: (string) $config['username'],
-        password: (string) $config['password'],
+    $mailer = new GraphMailer(
+        tenantId: (string) $config['tenant_id'],
+        clientId: (string) $config['client_id'],
+        clientSecret: (string) $config['client_secret'],
+        senderUserId: (string) $config['sender'],
     );
-    $fromEmail = (string) $config['from_email'];
     $fromName = (string) ($config['from_name'] ?? 'CodeBlue Technology');
     $bcc = trim((string) ($config['bcc'] ?? ''));
 
     $footer = $companyName !== '' ? "\n\n(Sent from the SolutionsHub quoting tool for {$companyName}.)" : '';
-    $mailer->send($fromEmail, $fromName, $to, $subject, $body . $footer, $bcc !== '' ? $bcc : null);
+    $mailer->send($to, $subject, $body . $footer, $bcc !== '' ? $bcc : null, $fromName);
 
     respond(200, ['ok' => true]);
 } catch (Throwable $e) {
-    // Never leak SMTP credentials or internal exception details to the client.
+    // Never leak Graph credentials or internal exception details to the client.
     error_log('[send-quote] ' . $e->getMessage());
     respond(502, ['ok' => false, 'error' => 'Could not send the email right now. Please try again shortly.']);
 }

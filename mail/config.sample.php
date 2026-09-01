@@ -6,43 +6,45 @@
  * is listed in .gitignore) and fill in real values there. Never commit real
  * credentials to this repository.
  *
- * For Gmail / Google Workspace:
- *   - host: smtp.gmail.com, port: 587, encryption: 'tls'
- *   - username: the full mailbox address
- *   - password: a 16-character App Password (Google Account -> Security ->
- *     2-Step Verification -> App passwords). A normal account password will
- *     NOT work if 2-Step Verification is on, which it should be.
+ * Mail is sent via the Microsoft Graph API (app-only / client credentials
+ * OAuth2), not SMTP -- no app password, no legacy basic auth. This requires
+ * an Entra ID app registration with the Mail.Send *application* permission,
+ * admin-consented, and a client secret:
  *
- * For Microsoft 365 / Outlook:
- *   - host: smtp.office365.com, port: 587, encryption: 'tls'
- *   - username: the full mailbox address
- *   - password: the mailbox password, or an app password if MFA is enforced
- *     and basic auth SMTP AUTH is allowed on the tenant.
+ *   1. Entra admin center (entra.microsoft.com) -> App registrations ->
+ *      New registration.
+ *   2. API permissions -> Add a permission -> Microsoft Graph ->
+ *      Application permissions -> Mail.Send -> Add, then
+ *      "Grant admin consent".
+ *   3. Certificates & secrets -> New client secret -> copy the VALUE
+ *      immediately (shown once).
+ *   4. tenant_id / client_id below come from the app registration's
+ *      Overview page.
  */
 
 return [
-    // SMTP server hostname, e.g. 'smtp.gmail.com' or 'smtp.office365.com'
-    'host' => 'smtp.example.com',
+    // Entra ID (Azure AD) tenant ID -- a GUID, from the app registration's
+    // Overview page ("Directory (tenant) ID").
+    'tenant_id' => 'REPLACE_ME',
 
-    // Usually 587 (STARTTLS) — this sender only supports STARTTLS, not
-    // implicit TLS on 465.
-    'port' => 587,
+    // Application (client) ID of the Entra ID app registration.
+    'client_id' => 'REPLACE_ME',
 
-    // 'tls' (STARTTLS) is what Gmail/Google Workspace and M365 both expect
-    // on port 587. Leave as 'tls' unless your provider says otherwise.
-    'encryption' => 'tls',
+    // Client secret VALUE (not the secret ID) from Certificates & secrets.
+    // KEEP THIS OUT OF GIT.
+    'client_secret' => 'REPLACE_ME',
 
-    // Full mailbox address used to authenticate (SMTP AUTH LOGIN).
-    'username' => 'quotes@example.com',
+    // The mailbox this sends as (its UPN/email address). The app
+    // registration's Mail.Send permission must be admin-consented for the
+    // tenant (or scoped to just this mailbox via an application access
+    // policy, if you want to restrict which mailboxes this app can touch).
+    'sender' => 'Solutions@codebluetechnology.com',
 
-    // App password / mailbox password. KEEP THIS OUT OF GIT.
-    'password' => 'REPLACE_ME',
-
-    // What recipients see as the sender. Should normally match (or be an
-    // alias of) the authenticated mailbox above, or the message may be
-    // flagged as spam / spoofed by the receiving server.
-    'from_email' => 'quotes@example.com',
-    'from_name' => 'CodeBlue Technology',
+    // What recipients see as the sender display name. Best-effort only --
+    // Microsoft Graph may override this with the mailbox's actual
+    // configured display name instead. For a guaranteed result, set the
+    // display name on the mailbox itself in Exchange/Entra.
+    'from_name' => 'Solutions Hub',
 
     // Every outgoing quote email is BCC'd here too, so the account manager
     // has a copy even if the customer's address was mistyped. Leave as ''
