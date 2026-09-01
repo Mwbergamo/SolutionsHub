@@ -1254,14 +1254,14 @@ var PILLARS = [
             ] },
           { id: 'cam-mounting', name: 'Mounting', blurb: "Mounting hardware by camera type and surface.", solutionHeading: 'Mounting', pricingMode: 'parts',
             products: [
-              { id: 'conduit-dome', label: 'Conduit Base Mount — Dome', options: [] },
-              { id: 'conduit-turret', label: 'Conduit Base Mount — Turret', options: [] },
-              { id: 'conduit-bullet', label: 'Conduit Base Mount — Bullet', options: [] },
-              { id: 'droptile-dome', label: 'Drop Tile Ceiling Mount — Dome', options: [] },
-              { id: 'droptile-turret', label: 'Drop Tile Ceiling Mount — Turret', options: [] },
-              { id: 'droptile-bullet', label: 'Drop Tile Ceiling Mount — Bullet', options: [] },
-              { id: 'angled-dome', label: 'Angled Wall Mount — Dome', options: [] },
-              { id: 'angled-turret', label: 'Angled Wall Mount — Turret', options: [] }
+              { id: 'conduit-dome', label: 'Conduit Base Mount — Dome', image: 'assets/products/mount-conduit-dome.jpg', options: [] },
+              { id: 'conduit-turret', label: 'Conduit Base Mount — Turret', image: 'assets/products/mount-conduit-turret.jpg', options: [] },
+              { id: 'conduit-bullet', label: 'Conduit Base Mount — Bullet', image: 'assets/products/mount-conduit-bullet.jpg', options: [] },
+              { id: 'droptile-dome', label: 'Drop Tile Ceiling Mount — Dome', image: 'assets/products/mount-droptile-dome.jpg', options: [] },
+              { id: 'droptile-turret', label: 'Drop Tile Ceiling Mount — Turret', image: 'assets/products/mount-droptile-turret.png', options: [] },
+              { id: 'droptile-bullet', label: 'Drop Tile Ceiling Mount — Bullet', image: 'assets/products/mount-droptile-bullet.png', options: [] },
+              { id: 'angled-dome', label: 'Angled Wall Mount — Dome', image: 'assets/products/mount-angled-dome.jpg', options: [] },
+              { id: 'angled-turret', label: 'Angled Wall Mount — Turret', image: 'assets/products/mount-angled-turret.png', options: [] }
             ] },
           { id: 'cam-cabling-rack', name: 'Cabling & Rack Enclosure', blurb: "Low-voltage Cat-6 runs and rack enclosure for the NVR.", solutionHeading: 'Cabling & Rack Enclosure', pricingMode: 'parts',
             products: [
