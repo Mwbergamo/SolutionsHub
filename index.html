@@ -1,0 +1,1474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SolutionsHub</title>
+<meta name="description" content="CodeBlue Technology solutions-consulting quoting tool.">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app-root"></div>
+
+<!--
+  The full ported template markup lives here as inert text (type is not
+  "text/html" or empty, so the browser never parses or executes it — no
+  image fetches, no attribute-triggered event handlers). runtime.js reads
+  this element's textContent, parses it into a real (detached) DOM subtree,
+  compiles it once, and mounts a live instance into #app-root. See
+  runtime.js for how the sc-if / sc-for / {{}} syntax below is interpreted.
+-->
+<script type="text/x-template" id="app-template">
+<div class="app-shell" style="background:oklch(0.15 0.028 255);display:flex;flex-direction:column;font-family:'IBM Plex Sans',sans-serif;overflow:hidden;position:relative;height:100vh;width:100%;">
+
+  <!-- Header -->
+  <div class="app-header" style="flex:0 0 84px;display:flex;align-items:center;justify-content:space-between;padding:0 40px;background:oklch(0.12 0.026 255);border-bottom:1px solid oklch(0.24 0.03 255);">
+    <div style="display:flex;align-items:center;gap:22px;">
+      <div style="display:flex;align-items:center;gap:10px;cursor:pointer;" data-on-click="{{goOverview}}">
+        <img src="{{logoWhite}}" alt="CodeBlue Technology" style="height:34px;width:auto;object-fit:contain;" />
+      </div>
+      <sc-if value="{{showBreadcrumb}}" hint-placeholder-val="{{false}}">
+        <div style="display:flex;align-items:center;gap:8px;color:oklch(0.55 0.02 255);font-size:14px;">
+          <span>/</span>
+          <span style="color:oklch(0.8 0.01 255);">{{breadcrumb}}</span>
+        </div>
+      </sc-if>
+    </div>
+    <button data-on-click="{{openSummary}}" style="display:flex;align-items:center;gap:8px;background:oklch(0.2 0.03 255);border:1px solid oklch(0.32 0.03 255);color:white;font-size:14px;font-weight:600;padding:10px 18px;border-radius:999px;cursor:pointer;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h2l2.4 12.2a2 2 0 0 0 2 1.6h7.2a2 2 0 0 0 2-1.6L21 8H6"></path><circle cx="9.5" cy="21" r="1"></circle><circle cx="17.5" cy="21" r="1"></circle></svg>
+      Solution
+      <span style="background:{{accentColor}};color:white;font-size:12px;font-weight:700;min-width:20px;height:20px;border-radius:999px;display:flex;align-items:center;justify-content:center;padding:0 5px;">{{selectionCount}}</span>
+    </button>
+  </div>
+
+  <!-- Body (scrollable) -->
+  <div class="app-body" style="flex:1;overflow-y:auto;overflow-x:hidden;">
+
+    <!-- OVERVIEW -->
+    <sc-if value="{{isOverview}}" hint-placeholder-val="{{true}}">
+      <div class="view-pad" style="padding:44px 56px 40px;">
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:700;color:white;max-width:680px;line-height:1.15;">What can we build for you today?</div>
+        <div style="margin-top:10px;font-size:15px;color:oklch(0.6 0.02 255);max-width:620px;">Start wide, then tap into whatever's relevant to this conversation. Nothing here commits to anything — it's a starting point to think through together.</div>
+
+        <div style="margin-top:28px;max-width:640px;position:relative;">
+          <div style="display:flex;align-items:center;gap:10px;background:oklch(0.98 0.006 255);border-radius:999px;padding:6px 8px 6px 20px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.5 0.02 255)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input value="{{searchQuery}}" data-on-input="{{onSearchInput}}" data-on-keydown="{{onSearchKeyDown}}" placeholder="Search services — try “help desk” or “cameras”…" style="flex:1;border:none;outline:none;background:transparent;font-family:'IBM Plex Sans',sans-serif;font-size:14.5px;color:oklch(0.2 0.03 255);padding:12px 0;">
+            <sc-if value="{{searchHasQuery}}" hint-placeholder-val="{{false}}">
+              <button data-on-click="{{onClearSearch}}" aria-label="Clear search" style="width:28px;height:28px;flex:0 0 auto;border-radius:999px;border:none;background:oklch(0.9 0.006 255);color:oklch(0.4 0.02 255);font-size:14px;font-weight:700;cursor:pointer;line-height:1;">×</button>
+            </sc-if>
+            <sc-if value="{{voiceSupported}}" hint-placeholder-val="{{false}}">
+              <button data-on-click="{{onVoiceClick}}" aria-label="Search by voice" style="{{voiceButtonStyle}}">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+              </button>
+            </sc-if>
+          </div>
+
+          <sc-if value="{{voiceListening}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top:8px;font-size:12.5px;color:{{accentColor}};font-weight:600;">🎙️ Listening…</div>
+          </sc-if>
+
+          <sc-if value="{{searchHasQuery}}" hint-placeholder-val="{{false}}">
+            <div style="position:absolute;top:calc(100% + 8px);left:0;right:0;background:oklch(0.98 0.006 255);border-radius:16px;padding:8px;box-shadow:0 16px 40px rgba(0,0,0,0.45);max-height:320px;overflow-y:auto;z-index:20;">
+              <sc-if value="{{searchHasResults}}" hint-placeholder-val="{{false}}">
+                <sc-for list="{{searchResults}}" as="r" hint-placeholder-count="3">
+                  <div data-on-click="{{r.onClick}}" style="padding:12px 14px;border-radius:10px;cursor:pointer;">
+                    <div style="font-size:14px;font-weight:700;color:oklch(0.2 0.03 255);">{{r.label}}</div>
+                    <div style="margin-top:2px;font-size:12px;color:oklch(0.5 0.02 255);">{{r.breadcrumb}}</div>
+                  </div>
+                </sc-for>
+              </sc-if>
+              <sc-if value="{{searchNoResults}}" hint-placeholder-val="{{false}}">
+                <div style="padding:16px 14px;font-size:13.5px;color:oklch(0.5 0.02 255);">No matches — try a service name like “VoIP” or “cameras”.</div>
+              </sc-if>
+            </div>
+          </sc-if>
+        </div>
+
+        <div style="margin-top:36px;display:flex;flex-wrap:wrap;gap:24px;justify-content:flex-start;">
+
+          <div data-on-click="{{goToIT}}" style="width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+              </div>
+              <sc-if value="{{itHasSelections}}" hint-placeholder-val="{{false}}">
+                <div style="background:{{accentColor}};color:white;font-size:12px;font-weight:700;padding:4px 11px;border-radius:999px;">{{itSelectedCount}} selected</div>
+              </sc-if>
+            </div>
+            <div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">IT Services</div>
+              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:oklch(0.45 0.02 255);">Your dedicated IT department — support, protection, and strategy in one place.</div>
+            </div>
+            <div style="font-size:11.5px;color:oklch(0.55 0.02 255);font-weight:700;letter-spacing:.03em;">7 SERVICE AREAS →</div>
+          </div>
+
+          <div data-on-click="{{goToDC}}" style="width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="6.5" rx="1.4"></rect><rect x="4" y="14.5" width="16" height="6.5" rx="1.4"></rect><circle cx="8" cy="6.25" r="0.9" fill="white" stroke="none"></circle><circle cx="8" cy="17.75" r="0.9" fill="white" stroke="none"></circle></svg>
+              </div>
+              <sc-if value="{{dcHasSelections}}" hint-placeholder-val="{{false}}">
+                <div style="background:{{accentColor}};color:white;font-size:12px;font-weight:700;padding:4px 11px;border-radius:999px;">{{dcSelectedCount}} selected</div>
+              </sc-if>
+            </div>
+            <div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">Data Center Services</div>
+              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:oklch(0.45 0.02 255);">Cloud, hosting, connectivity, and recovery built for uptime.</div>
+            </div>
+            <div style="font-size:11.5px;color:oklch(0.55 0.02 255);font-weight:700;letter-spacing:.03em;">5 SERVICE AREAS →</div>
+          </div>
+
+          <div data-on-click="{{goToVoIP}}" style="width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13v-1.5a8 8 0 0 1 16 0V13"></path><rect x="2" y="13" width="4.5" height="7" rx="2"></rect><rect x="17.5" y="13" width="4.5" height="7" rx="2"></rect></svg>
+              </div>
+              <sc-if value="{{voipHasSelections}}" hint-placeholder-val="{{false}}">
+                <div style="background:{{accentColor}};color:white;font-size:12px;font-weight:700;padding:4px 11px;border-radius:999px;">{{voipSelectedCount}} selected</div>
+              </sc-if>
+            </div>
+            <div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">Voice over IP Services</div>
+              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:oklch(0.45 0.02 255);">Phone systems, call center, and conference rooms that just work.</div>
+            </div>
+            <div style="font-size:11.5px;color:oklch(0.55 0.02 255);font-weight:700;letter-spacing:.03em;">6 SERVICE AREAS →</div>
+          </div>
+
+          <div data-on-click="{{goToCabling}}" style="width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7L4 10a4 4 0 0 0 0 5.5l0.5 0.5a4 4 0 0 0 5.5 0L13 13"></path><path d="M17 17l3-3a4 4 0 0 0 0-5.5l-0.5-0.5a4 4 0 0 0-5.5 0L11 11"></path></svg>
+              </div>
+              <sc-if value="{{cablingHasSelections}}" hint-placeholder-val="{{false}}">
+                <div style="background:{{accentColor}};color:white;font-size:12px;font-weight:700;padding:4px 11px;border-radius:999px;">{{cablingSelectedCount}} selected</div>
+              </sc-if>
+            </div>
+            <div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">Data Cabling</div>
+              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:oklch(0.45 0.02 255);">Structured cabling, data closets, and documentation done right.</div>
+            </div>
+            <div style="font-size:11.5px;color:oklch(0.55 0.02 255);font-weight:700;letter-spacing:.03em;">5 SERVICE AREAS →</div>
+          </div>
+
+          <div data-on-click="{{goToSecurity}}" style="width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 5-3.5 7.5-7 9-3.5-1.5-7-4-7-9V6l7-3z"></path></svg>
+              </div>
+              <sc-if value="{{securityHasSelections}}" hint-placeholder-val="{{false}}">
+                <div style="background:{{accentColor}};color:white;font-size:12px;font-weight:700;padding:4px 11px;border-radius:999px;">{{securitySelectedCount}} selected</div>
+              </sc-if>
+            </div>
+            <div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">Premise Security</div>
+              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:oklch(0.45 0.02 255);">Cameras and access control, installed and monitored.</div>
+            </div>
+            <div style="font-size:11.5px;color:oklch(0.55 0.02 255);font-weight:700;letter-spacing:.03em;">4 SERVICE AREAS →</div>
+          </div>
+
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- PILLAR DRILL-DOWN -->
+    <sc-if value="{{isPillar}}" hint-placeholder-val="{{false}}">
+      <div class="view-pad" style="padding:36px 56px 40px;">
+        <div style="display:flex;align-items:center;gap:14px;">
+          <div data-on-click="{{backToOverview}}" style="width:36px;height:36px;border-radius:999px;background:oklch(0.22 0.03 255);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+          </div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:25px;font-weight:700;color:white;">{{currentPillar.name}}</div>
+        </div>
+        <div style="margin-top:8px;margin-left:50px;font-size:14px;color:oklch(0.62 0.02 255);max-width:680px;">{{currentPillar.tagline}}</div>
+
+        <div style="margin-top:26px;margin-left:50px;display:flex;flex-direction:column;gap:10px;max-width:820px;">
+          <sc-for list="{{currentPillar.services}}" as="svc" hint-placeholder-count="6">
+            <div data-on-click="{{svc.onClick}}" style="background:oklch(0.98 0.006 255);border-radius:14px;padding:17px 20px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;">
+              <div style="padding-right:16px;">
+                <div style="font-weight:700;font-size:15px;color:oklch(0.2 0.03 255);">{{svc.name}}</div>
+                <div style="font-size:13px;color:oklch(0.48 0.02 255);margin-top:3px;line-height:1.4;">{{svc.blurb}}</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;flex:0 0 auto;">
+                <sc-if value="{{svc.selected}}" hint-placeholder-val="{{false}}">
+                  <div style="width:24px;height:24px;border-radius:999px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;flex:0 0 auto;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 9 18 20 6"></polyline></svg>
+                  </div>
+                </sc-if>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.65 0.02 255)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"></polyline></svg>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- SERVICE DETAIL -->
+    <sc-if value="{{isService}}" hint-placeholder-val="{{false}}">
+      <div class="view-pad" style="padding:36px 56px 48px;">
+        <div style="display:flex;align-items:center;gap:14px;">
+          <div data-on-click="{{backToPillar}}" style="width:36px;height:36px;border-radius:999px;background:oklch(0.22 0.03 255);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+          </div>
+          <div style="font-size:12px;font-weight:700;letter-spacing:.08em;color:{{accentColor}};text-transform:uppercase;">{{currentService.pillarName}}</div>
+        </div>
+
+        <div style="margin-left:50px;max-width:740px;">
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:27px;font-weight:700;color:white;margin-top:6px;">{{currentService.name}}</div>
+          <div style="margin-top:10px;font-size:15px;line-height:1.55;color:oklch(0.7 0.02 255);">{{currentService.blurb}}</div>
+
+          <div style="margin-top:22px;background:oklch(0.19 0.03 255);border-radius:14px;padding:18px 22px;">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:{{accentColor}};text-transform:uppercase;margin-bottom:7px;">CodeBlue's Approach</div>
+            <div style="font-size:13.5px;line-height:1.6;color:oklch(0.82 0.01 255);">{{currentService.methodology}}</div>
+          </div>
+
+          <sc-if value="{{currentService.hasPresentation}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top:26px;">
+              <div style="font-size:11px;font-weight:700;letter-spacing:.08em;color:{{accentColor}};text-transform:uppercase;">{{currentService.presentationVM.eyebrow}}</div>
+              <div style="margin-top:6px;font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:700;color:white;">{{currentService.presentationVM.headline}}</div>
+              <div style="margin-top:4px;font-size:14px;color:oklch(0.72 0.02 255);">{{currentService.presentationVM.tagline}}</div>
+              <div style="margin-top:14px;font-size:13.5px;line-height:1.6;color:oklch(0.78 0.01 255);">{{currentService.presentationVM.intro}}</div>
+              <div style="margin-top:16px;background:oklch(0.19 0.03 255);border-left:3px solid {{accentColor}};border-radius:10px;padding:16px 20px;">
+                <div style="font-size:14.5px;font-style:italic;line-height:1.5;color:white;">“{{currentService.presentationVM.quote}}”</div>
+                <div style="margin-top:8px;font-size:12px;color:oklch(0.6 0.02 255);">— {{currentService.presentationVM.quoteAttribution}}</div>
+              </div>
+              <div style="margin-top:14px;font-size:12.5px;line-height:1.55;color:oklch(0.62 0.02 255);">{{currentService.presentationVM.historyNote}}</div>
+
+              <sc-for list="{{currentService.presentationVM.sections}}" as="sec" hint-placeholder-count="3">
+                <div style="margin-top:30px;">
+                  <div style="display:flex;align-items:baseline;gap:10px;">
+                    <div style="font-size:12px;font-weight:700;color:{{accentColor}};">{{sec.number}}</div>
+                    <div style="font-size:15px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.04em;">{{sec.title}}</div>
+                  </div>
+
+                  <sc-if value="{{sec.isCards}}" hint-placeholder-val="{{false}}">
+                    <div style="margin-top:14px;display:flex;flex-wrap:wrap;gap:12px;">
+                      <sc-for list="{{sec.cards}}" as="c" hint-placeholder-count="3">
+                        <div style="width:220px;background:oklch(0.98 0.006 255);border-radius:14px;padding:16px 18px;">
+                          <div style="font-weight:700;font-size:14px;color:oklch(0.2 0.03 255);">{{c.title}}</div>
+                          <div style="margin-top:6px;font-size:12.5px;line-height:1.5;color:oklch(0.42 0.02 255);">{{c.text}}</div>
+                          <sc-if value="{{c.hasLines}}" hint-placeholder-val="{{false}}">
+                            <div style="margin-top:8px;display:flex;flex-direction:column;gap:2px;">
+                              <sc-for list="{{c.lines}}" as="ln" hint-placeholder-count="2">
+                                <div style="font-size:12px;font-weight:600;color:{{accentColor}};">{{ln.text}}</div>
+                              </sc-for>
+                            </div>
+                          </sc-if>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{sec.isBody}}" hint-placeholder-val="{{false}}">
+                    <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;max-width:640px;">
+                      <sc-for list="{{sec.body}}" as="para" hint-placeholder-count="2">
+                        <div style="font-size:13.5px;line-height:1.6;color:oklch(0.78 0.01 255);">{{para.text}}</div>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{sec.isContact}}" hint-placeholder-val="{{false}}">
+                    <div style="margin-top:14px;display:flex;flex-wrap:wrap;gap:22px;">
+                      <sc-for list="{{sec.contact}}" as="row" hint-placeholder-count="4">
+                        <div>
+                          <div style="font-size:11px;font-weight:700;color:oklch(0.55 0.02 255);text-transform:uppercase;letter-spacing:.04em;">{{row.label}}</div>
+                          <div style="margin-top:3px;font-size:13.5px;font-weight:600;color:white;">{{row.value}}</div>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+
+                  <sc-if value="{{sec.isRates}}" hint-placeholder-val="{{false}}">
+                    <div style="margin-top:14px;display:flex;flex-wrap:wrap;gap:14px;">
+                      <sc-for list="{{sec.rates}}" as="r" hint-placeholder-count="2">
+                        <div style="width:300px;background:oklch(0.98 0.006 255);border-radius:14px;padding:16px 18px;">
+                          <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">{{r.rate}}</div>
+                          <div style="margin-top:8px;display:flex;flex-direction:column;gap:5px;">
+                            <sc-for list="{{r.terms}}" as="t" hint-placeholder-count="3">
+                              <div style="font-size:12px;line-height:1.5;color:oklch(0.42 0.02 255);">• {{t.text}}</div>
+                            </sc-for>
+                          </div>
+                        </div>
+                      </sc-for>
+                    </div>
+                    <sc-if value="{{sec.hasNote}}" hint-placeholder-val="{{false}}">
+                      <div style="margin-top:10px;font-size:12px;line-height:1.5;color:oklch(0.58 0.02 255);">{{sec.note}}</div>
+                    </sc-if>
+                  </sc-if>
+                </div>
+              </sc-for>
+
+              <sc-if value="{{currentService.presentationVM.hasTestimonials}}" hint-placeholder-val="{{false}}">
+                <div style="margin-top:26px;font-size:12.5px;color:oklch(0.6 0.02 255);">{{currentService.presentationVM.testimonialsText}}</div>
+              </sc-if>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{currentService.hasOptions}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top:30px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Options to discuss</div>
+            <div style="margin-top:14px;display:flex;gap:16px;flex-wrap:wrap;">
+              <sc-for list="{{currentService.options}}" as="opt" hint-placeholder-count="2">
+                <div data-on-click="{{opt.onClick}}" style="{{opt.cardStyle}}">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                    <div style="font-weight:700;font-size:15px;color:{{opt.titleColor}};">{{opt.label}}</div>
+                    <sc-if value="{{opt.selected}}" hint-placeholder-val="{{false}}">
+                      <div style="width:22px;height:22px;border-radius:999px;background:white;display:flex;align-items:center;justify-content:center;flex:0 0 auto;">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="{{accentColor}}" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 9 18 20 6"></polyline></svg>
+                      </div>
+                    </sc-if>
+                  </div>
+                  <div style="margin-top:9px;font-size:13px;line-height:1.55;color:{{opt.textColor}};">{{opt.detail}}</div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{currentService.noOptions}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top:30px;">
+              <div data-on-click="{{currentService.onToggleSingle}}" style="{{currentService.singleCardStyle}}">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                  <div style="font-weight:700;font-size:15px;color:{{currentService.singleTitleColor}};">{{currentService.singleButtonLabel}}</div>
+                  <sc-if value="{{currentService.singleAdded}}" hint-placeholder-val="{{false}}">
+                    <div style="width:22px;height:22px;border-radius:999px;background:white;display:flex;align-items:center;justify-content:center;flex:0 0 auto;">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="{{accentColor}}" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 9 18 20 6"></polyline></svg>
+                    </div>
+                  </sc-if>
+                </div>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{isManagedIT}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top:26px;">
+              <div style="font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">How is this sold?</div>
+              <div style="display:flex;gap:12px;">
+                <div data-on-click="{{managedItVM.setPeopleFirst}}" style="{{managedItVM.peopleFirstStyle}}">
+                  <div style="font-weight:700;font-size:15px;color:{{managedItVM.peopleFirstTitleColor}};">PeopleFirst Membership</div>
+                  <div style="margin-top:5px;font-size:12.5px;line-height:1.5;color:{{managedItVM.peopleFirstSubColor}};">All full-time staff enrolled — one price per member, per month.</div>
+                </div>
+                <div data-on-click="{{managedItVM.setAlaCarte}}" style="{{managedItVM.alaCarteStyle}}">
+                  <div style="font-weight:700;font-size:15px;color:{{managedItVM.alaCarteTitleColor}};">À La Carte</div>
+                  <div style="margin-top:5px;font-size:12.5px;line-height:1.5;color:{{managedItVM.alaCarteSubColor}};">Each device and service priced and sold individually.</div>
+                </div>
+              </div>
+
+              <sc-if value="{{managedItVM.approachIsPeopleFirst}}" hint-placeholder-val="{{true}}">
+                <div style="margin-top:28px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Size the network</div>
+                <div style="margin-top:4px;font-size:12.5px;color:oklch(0.58 0.02 255);">Forecast this together with the customer — it's easy to true up later.</div>
+                <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px;">
+                  <div style="background:oklch(0.19 0.03 255);border-radius:12px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;border:1px solid {{accentColor}};">
+                    <div style="font-size:14px;color:white;font-weight:700;">Full-Time Staff Members (coverage)</div>
+                    <div style="display:flex;align-items:center;gap:14px;">
+                      <button data-on-click="{{managedItVM.membersDec}}" style="width:30px;height:30px;border-radius:999px;background:oklch(0.26 0.03 255);border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                      <div style="min-width:26px;text-align:center;font-size:15px;font-weight:700;color:white;">{{managedItVM.members}}</div>
+                      <button data-on-click="{{managedItVM.membersInc}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
+                    </div>
+                  </div>
+                  <sc-for list="{{managedItVM.miDeviceRows}}" as="row" hint-placeholder-count="4">
+                    <div style="background:oklch(0.19 0.03 255);border-radius:12px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;">
+                      <div style="font-size:14px;color:oklch(0.85 0.01 255);font-weight:600;">{{row.label}}</div>
+                      <div style="display:flex;align-items:center;gap:14px;">
+                        <button data-on-click="{{row.onDec}}" style="width:30px;height:30px;border-radius:999px;background:oklch(0.26 0.03 255);border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                        <div style="min-width:26px;text-align:center;font-size:15px;font-weight:700;color:white;">{{row.qty}}</div>
+                        <button data-on-click="{{row.onInc}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-if>
+
+              <div style="margin-top:28px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Hardware — Provided Firewall</div>
+              <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px;">
+                <sc-for list="{{managedItVM.miFirewalls}}" as="fw" hint-placeholder-count="3">
+                  <div data-on-click="{{fw.onClick}}" style="{{fw.cardStyle}}">
+                    <div style="font-weight:700;font-size:14px;color:{{fw.titleColor}};">{{fw.label}}</div>
+                    <div style="font-size:13px;font-weight:600;color:{{fw.rateColor}};">{{fw.rate}}</div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <div style="margin-top:28px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Security Software</div>
+              <div style="margin-top:4px;font-size:12.5px;color:oklch(0.58 0.02 255);">{{managedItVM.securitySoftwareHint}}</div>
+              <sc-if value="{{managedItVM.approachIsAlaCarte}}" hint-placeholder-val="{{false}}">
+                <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px;">
+                  <sc-for list="{{managedItVM.miAlaCarteSoftwareRows}}" as="sw" hint-placeholder-count="4">
+                    <div style="background:oklch(0.19 0.03 255);border-radius:12px;padding:12px 16px;">
+                      <div style="display:flex;align-items:center;justify-content:space-between;">
+                        <div data-on-click="{{sw.onToggleInfo}}" style="cursor:pointer;">
+                          <div style="font-size:14px;color:oklch(0.85 0.01 255);font-weight:600;">{{sw.label}} <span style="color:oklch(0.5 0.02 255);font-weight:400;">ⓘ</span></div>
+                          <div style="font-size:11.5px;color:oklch(0.5 0.02 255);margin-top:2px;">{{sw.rateText}}</div>
+                          <sc-if value="{{sw.hasSuggestion}}" hint-placeholder-val="{{false}}">
+                            <div style="font-size:11.5px;color:{{accentColor}};margin-top:2px;">{{sw.suggestion}}</div>
+                          </sc-if>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:14px;">
+                          <button data-on-click="{{sw.onDec}}" style="width:30px;height:30px;border-radius:999px;background:oklch(0.26 0.03 255);border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                          <div style="min-width:26px;text-align:center;font-size:15px;font-weight:700;color:white;">{{sw.qty}}</div>
+                          <button data-on-click="{{sw.onInc}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
+                        </div>
+                      </div>
+                      <sc-if value="{{sw.isExpanded}}" hint-placeholder-val="{{false}}">
+                        <div style="margin-top:10px;padding-top:10px;border-top:1px solid oklch(0.28 0.03 255);font-size:12.5px;line-height:1.5;color:oklch(0.65 0.02 255);">{{sw.description}}</div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-if>
+              <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px;">
+                <sc-for list="{{managedItVM.miAddons}}" as="ad" hint-placeholder-count="4">
+                  <div style="background:oklch(0.19 0.03 255);border-radius:12px;padding:12px 16px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;">
+                      <div data-on-click="{{ad.onToggleInfo}}" style="cursor:pointer;">
+                        <div style="font-size:14px;color:oklch(0.85 0.01 255);font-weight:600;">{{ad.label}} <span style="color:oklch(0.5 0.02 255);font-weight:400;">ⓘ</span></div>
+                        <div style="font-size:11.5px;color:oklch(0.5 0.02 255);margin-top:2px;">{{ad.rateText}}</div>
+                        <sc-if value="{{ad.hasSuggestion}}" hint-placeholder-val="{{false}}">
+                          <div style="font-size:11.5px;color:{{accentColor}};margin-top:2px;">{{ad.suggestion}}</div>
+                        </sc-if>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:14px;">
+                        <button data-on-click="{{ad.onDec}}" style="width:30px;height:30px;border-radius:999px;background:oklch(0.26 0.03 255);border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                        <div style="min-width:26px;text-align:center;font-size:15px;font-weight:700;color:white;">{{ad.qty}}</div>
+                        <button data-on-click="{{ad.onInc}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
+                      </div>
+                    </div>
+                    <sc-if value="{{ad.isExpanded}}" hint-placeholder-val="{{false}}">
+                      <div style="margin-top:10px;padding-top:10px;border-top:1px solid oklch(0.28 0.03 255);font-size:12.5px;line-height:1.5;color:oklch(0.65 0.02 255);">{{ad.description}}</div>
+                    </sc-if>
+                  </div>
+                </sc-for>
+              </div>
+
+              <div style="margin-top:28px;background:oklch(0.19 0.03 255);border-radius:12px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;">
+                <div>
+                  <div style="font-size:14px;color:white;font-weight:700;">Support Labor Rate</div>
+                  <div style="font-size:11.5px;color:oklch(0.55 0.02 255);margin-top:2px;">CodeBlue's Hourly Rate — default $180/hr.</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:14px;">
+                  <button data-on-click="{{managedItVM.rateDec}}" style="width:30px;height:30px;border-radius:999px;background:oklch(0.26 0.03 255);border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                  <div style="min-width:60px;text-align:center;font-size:15px;font-weight:700;color:white;">${{managedItVM.hourlyRate}}/hr</div>
+                  <button data-on-click="{{managedItVM.rateInc}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
+                </div>
+              </div>
+
+              <div style="margin-top:30px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">The Numbers</div>
+              <div class="mi-devices-grid" style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div style="background:oklch(0.98 0.006 255);border-radius:14px;padding:16px 18px;">
+                  <div style="font-size:11px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.05em;">Software Cost</div>
+                  <div style="margin-top:6px;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">{{managedItVM.softwareText}}</div>
+                  <div style="margin-top:4px;font-size:11.5px;color:oklch(0.5 0.02 255);">Hard cost — licenses billed at cost.</div>
+                </div>
+                <div style="background:oklch(0.98 0.006 255);border-radius:14px;padding:16px 18px;">
+                  <div style="font-size:11px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.05em;">Hardware Cost</div>
+                  <div style="margin-top:6px;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">{{managedItVM.hardwareText}}</div>
+                  <div style="margin-top:4px;font-size:11.5px;color:oklch(0.5 0.02 255);">Provided firewall, if selected.</div>
+                </div>
+                <div style="background:{{accentColor}};border-radius:14px;padding:16px 18px;">
+                  <div style="font-size:11px;font-weight:700;color:oklch(0.95 0.01 255);text-transform:uppercase;letter-spacing:.05em;">{{managedItVM.supportLabel}}</div>
+                  <div style="margin-top:6px;font-size:19px;font-weight:700;color:white;">{{managedItVM.supportText}}</div>
+                  <div style="margin-top:4px;font-size:11.5px;color:oklch(0.92 0.01 255);">{{managedItVM.supportSub}}</div>
+                </div>
+                <div style="background:oklch(0.98 0.006 255);border-radius:14px;padding:16px 18px;">
+                  <div style="font-size:11px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.05em;">Onboarding (One-Time)</div>
+                  <div style="margin-top:6px;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">{{managedItVM.onboardingText}}</div>
+                  <sc-if value="{{managedItVM.hasOnboardingDiscount}}" hint-placeholder-val="{{false}}">
+                    <div style="margin-top:4px;font-size:11.5px;color:oklch(0.5 0.14 155);">{{managedItVM.onboardingDiscountPct}}% off {{managedItVM.onboardingBeforeDiscountText}}</div>
+                  </sc-if>
+                  <div style="margin-top:4px;font-size:11.5px;color:oklch(0.5 0.02 255);">To get it all installed and configured.</div>
+                </div>
+              </div>
+
+              <sc-if value="{{managedItVM.showOnboardingDiscount}}" hint-placeholder-val="{{true}}">
+                <div style="margin-top:30px;background:oklch(0.19 0.03 255);border-radius:12px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;">
+                  <div>
+                    <div style="font-size:14px;color:white;font-weight:700;">Existing-Customer Onboarding Discount</div>
+                    <div style="font-size:11.5px;color:oklch(0.55 0.02 255);margin-top:2px;">For companies already with CodeBlue onboarding onto PeopleFirst — up to 50% off the one-time onboarding total.</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:14px;flex:0 0 auto;">
+                    <button data-on-click="{{managedItVM.discountDec}}" style="width:30px;height:30px;border-radius:999px;background:oklch(0.26 0.03 255);border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                    <div style="min-width:40px;text-align:center;font-size:15px;font-weight:700;color:white;">{{managedItVM.onboardingDiscountPct}}%</div>
+                    <button data-on-click="{{managedItVM.discountInc}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
+                  </div>
+                </div>
+              </sc-if>
+
+              <div style="margin-top:30px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">On-Site Support Travel</div>
+              <div style="margin-top:4px;font-size:12.5px;color:oklch(0.58 0.02 255);">Many customers are far enough away that a one-way trip charge applies per visit — set this per deal. Carries through to the Check Out proposal.</div>
+              <div style="margin-top:12px;display:flex;gap:10px;">
+                <div data-on-click="{{managedItVM.setTravelIncluded}}" style="{{managedItVM.travelIncludedStyle}}">
+                  <div style="width:16px;height:16px;border-radius:999px;border:2px solid white;display:flex;align-items:center;justify-content:center;flex:0 0 auto;">
+                    <sc-if value="{{managedItVM.travelIsIncluded}}" hint-placeholder-val="{{true}}">
+                      <div style="width:8px;height:8px;border-radius:999px;background:white;"></div>
+                    </sc-if>
+                  </div>
+                  <div style="font-weight:700;font-size:13.5px;color:white;">Travel Included</div>
+                </div>
+                <div data-on-click="{{managedItVM.setTravelChargeable}}" style="{{managedItVM.travelChargeableStyle}}">
+                  <div style="width:16px;height:16px;border-radius:999px;border:2px solid white;display:flex;align-items:center;justify-content:center;flex:0 0 auto;">
+                    <sc-if value="{{managedItVM.travelIsChargeable}}" hint-placeholder-val="{{false}}">
+                      <div style="width:8px;height:8px;border-radius:999px;background:white;"></div>
+                    </sc-if>
+                  </div>
+                  <div style="font-weight:700;font-size:13.5px;color:white;">One-Way Trip Charge Applies</div>
+                </div>
+              </div>
+
+              <div style="margin-top:30px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Customer's Current Monthly IT Spend <span style="font-weight:400;text-transform:none;color:oklch(0.55 0.02 255);">(optional)</span></div>
+              <div style="margin-top:4px;font-size:12.5px;color:oklch(0.58 0.02 255);">Feeds the old-vs-new comparison on the Check Out proposal — leave blank to skip it.</div>
+              <div style="margin-top:10px;display:flex;align-items:center;gap:8px;">
+                <span style="font-size:14px;color:oklch(0.7 0.02 255);">$</span>
+                <input type="number" min="0" value="{{managedItVM.currentSpendText}}" data-on-input="{{managedItVM.onCurrentSpendInput}}" placeholder="0.00" style="width:160px;font-size:14px;padding:9px 10px;border:1px solid oklch(0.32 0.03 255);border-radius:8px;background:oklch(0.19 0.03 255);color:white;font-family:'IBM Plex Sans',sans-serif;">
+                <span style="font-size:12px;color:oklch(0.55 0.02 255);">/ month</span>
+              </div>
+
+              <div style="margin-top:14px;background:oklch(0.19 0.03 255);border:1px solid oklch(0.3 0.03 255);border-radius:12px;padding:14px 16px;">
+                <div style="font-size:12.5px;font-weight:700;color:white;">Or Upload Their Current Invoice (PDF)</div>
+                <div style="margin-top:3px;font-size:11.5px;color:oklch(0.58 0.02 255);">Claude reads it, fills in the number above, and builds a line-item breakdown for the side-by-side comparison on Check Out.</div>
+
+                <sc-if value="{{managedItVM.invoiceIsIdle}}" hint-placeholder-val="{{true}}">
+                  <div style="margin-top:10px;">
+                    <label style="display:inline-flex;align-items:center;gap:8px;background:{{accentColor}};color:white;font-size:13px;font-weight:700;padding:9px 16px;border-radius:999px;cursor:pointer;">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                      Choose PDF Invoice
+                      <input type="file" accept="application/pdf" data-on-change="{{managedItVM.onInvoiceFileChange}}" style="display:none;">
+                    </label>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{managedItVM.invoiceIsBusy}}" hint-placeholder-val="{{false}}">
+                  <div style="margin-top:10px;display:flex;align-items:center;gap:8px;font-size:13px;color:oklch(0.8 0.02 255);">
+                    <span>⏳</span><span>{{managedItVM.invoiceBusyLabel}}</span>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{managedItVM.invoiceIsError}}" hint-placeholder-val="{{false}}">
+                  <div style="margin-top:10px;">
+                    <div style="font-size:12.5px;color:oklch(0.65 0.16 40);">{{managedItVM.invoiceErrorText}}</div>
+                    <button data-on-click="{{managedItVM.onInvoiceRetry}}" style="margin-top:8px;background:oklch(0.26 0.03 255);color:white;border:none;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:999px;cursor:pointer;">Try Again</button>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{managedItVM.invoiceIsUnavailable}}" hint-placeholder-val="{{false}}">
+                  <div style="margin-top:10px;font-size:12.5px;color:oklch(0.58 0.02 255);">{{managedItVM.invoiceErrorText}}</div>
+                </sc-if>
+
+                <sc-if value="{{managedItVM.invoiceIsDone}}" hint-placeholder-val="{{false}}">
+                  <div style="margin-top:12px;background:oklch(0.15 0.028 255);border-radius:10px;padding:12px 14px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                      <div style="font-size:12.5px;font-weight:700;color:white;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{managedItVM.invoiceFileName}}</div>
+                      <button data-on-click="{{managedItVM.onInvoiceRemove}}" style="flex:0 0 auto;background:none;border:none;color:oklch(0.58 0.02 255);font-size:12px;cursor:pointer;">Remove</button>
+                    </div>
+                    <sc-if value="{{managedItVM.invoiceHasVendor}}" hint-placeholder-val="{{false}}">
+                      <div style="margin-top:4px;font-size:12px;color:oklch(0.6 0.02 255);">{{managedItVM.invoiceVendorText}}<sc-if value="{{managedItVM.invoiceHasBillingPeriod}}" hint-placeholder-val="{{false}}"> · {{managedItVM.invoiceBillingPeriodText}}</sc-if></div>
+                    </sc-if>
+                    <div style="margin-top:8px;">
+                      <sc-for list="{{managedItVM.invoiceLineItems}}" as="li" hint-placeholder-count="3">
+                        <div style="display:flex;justify-content:space-between;font-size:12.5px;color:oklch(0.8 0.02 255);padding:3px 0;">
+                          <span>{{li.labelText}}</span><span>{{li.amountText}}</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                    <div style="margin-top:8px;padding-top:8px;border-top:1px solid oklch(0.28 0.03 255);display:flex;justify-content:space-between;font-size:13px;font-weight:700;color:white;">
+                      <span>Total</span><span>{{managedItVM.invoiceMonthlyTotalText}}</span>
+                    </div>
+                    <sc-if value="{{managedItVM.invoiceHasNotes}}" hint-placeholder-val="{{false}}">
+                      <div style="margin-top:8px;font-size:11.5px;color:oklch(0.55 0.02 255);font-style:italic;">{{managedItVM.invoiceNotesText}}</div>
+                    </sc-if>
+                    <div style="margin-top:8px;">
+                      <label style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:oklch(0.6 0.02 255);cursor:pointer;text-decoration:underline;">
+                        Upload a different invoice
+                        <input type="file" accept="application/pdf" data-on-change="{{managedItVM.onInvoiceFileChange}}" style="display:none;">
+                      </label>
+                    </div>
+                  </div>
+                </sc-if>
+              </div>
+
+              <div style="margin-top:22px;">
+                <div style="font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Rep Notes <span style="font-weight:400;text-transform:none;color:oklch(0.55 0.02 255);">(optional — visible to the inside rep fulfilling this)</span></div>
+                <div style="margin-top:10px;position:relative;">
+                  <textarea value="{{managedItVM.noteText}}" data-on-input="{{managedItVM.onNoteInput}}" rows="3" placeholder="Type or dictate notes for this service — configuration details, site conditions, customer asks…" style="width:100%;box-sizing:border-box;resize:vertical;font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;line-height:1.5;color:white;background:oklch(0.19 0.03 255);border:1px solid oklch(0.32 0.03 255);border-radius:12px;padding:12px 44px 12px 14px;"></textarea>
+                  <sc-if value="{{managedItVM.noteVoiceSupported}}" hint-placeholder-val="{{false}}">
+                    <button data-on-click="{{managedItVM.onNoteVoiceClick}}" aria-label="Dictate notes" style="{{managedItVM.noteVoiceBtnStyle}}">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+                    </button>
+                  </sc-if>
+                </div>
+                <sc-if value="{{managedItVM.noteIsListening}}" hint-placeholder-val="{{false}}">
+                  <div style="margin-top:6px;font-size:12px;color:{{accentColor}};font-weight:600;">🎙️ Listening…</div>
+                </sc-if>
+              </div>
+
+              <div style="margin-top:22px;">
+                <button data-on-click="{{managedItVM.addToSolution}}" style="background:{{accentColor}};color:white;border:none;font-size:14.5px;font-weight:700;padding:13px 24px;border-radius:999px;cursor:pointer;">{{managedItVM.addButtonLabel}}</button>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{isVcio}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top:26px;">
+              <div style="font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Hours per month</div>
+              <div style="margin-top:4px;font-size:12.5px;color:oklch(0.58 0.02 255);">Sliding scale, 2–8 hours/month — set by the rep based on the customer's needs.</div>
+              <div style="margin-top:14px;background:oklch(0.19 0.03 255);border-radius:12px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;">
+                <div>
+                  <div style="font-size:14px;color:white;font-weight:700;">Fractional CIO Time</div>
+                  <div style="font-size:11.5px;color:oklch(0.55 0.02 255);margin-top:2px;">{{vcioVM.rateText}} per hour, billed monthly</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:14px;">
+                  <button data-on-click="{{vcioVM.hoursDec}}" style="width:30px;height:30px;border-radius:999px;background:oklch(0.26 0.03 255);border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                  <div style="min-width:70px;text-align:center;font-size:15px;font-weight:700;color:white;">{{vcioVM.hours}} hrs/mo</div>
+                  <button data-on-click="{{vcioVM.hoursInc}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
+                </div>
+              </div>
+
+              <div style="margin-top:20px;background:{{accentColor}};border-radius:14px;padding:16px 18px;">
+                <div style="font-size:11px;font-weight:700;color:oklch(0.95 0.01 255);text-transform:uppercase;letter-spacing:.05em;">Monthly Investment</div>
+                <div style="margin-top:6px;font-size:19px;font-weight:700;color:white;">{{vcioVM.priceText}}</div>
+              </div>
+
+              <div style="margin-top:28px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">What's included</div>
+              <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px;">
+                <sc-for list="{{vcioVM.vcioAreas}}" as="area" hint-placeholder-count="4">
+                  <div style="background:oklch(0.98 0.006 255);border-radius:14px;padding:16px 20px;">
+                    <div style="font-weight:700;font-size:14.5px;color:oklch(0.2 0.03 255);">{{area.title}}</div>
+                    <div style="margin-top:6px;font-size:13px;line-height:1.55;color:oklch(0.48 0.02 255);">{{area.text}}</div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <div style="margin-top:22px;">
+                <div style="font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Rep Notes <span style="font-weight:400;text-transform:none;color:oklch(0.55 0.02 255);">(optional — visible to the inside rep fulfilling this)</span></div>
+                <div style="margin-top:10px;position:relative;">
+                  <textarea value="{{vcioVM.noteText}}" data-on-input="{{vcioVM.onNoteInput}}" rows="3" placeholder="Type or dictate notes for this service — configuration details, site conditions, customer asks…" style="width:100%;box-sizing:border-box;resize:vertical;font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;line-height:1.5;color:white;background:oklch(0.19 0.03 255);border:1px solid oklch(0.32 0.03 255);border-radius:12px;padding:12px 44px 12px 14px;"></textarea>
+                  <sc-if value="{{vcioVM.noteVoiceSupported}}" hint-placeholder-val="{{false}}">
+                    <button data-on-click="{{vcioVM.onNoteVoiceClick}}" aria-label="Dictate notes" style="{{vcioVM.noteVoiceBtnStyle}}">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+                    </button>
+                  </sc-if>
+                </div>
+                <sc-if value="{{vcioVM.noteIsListening}}" hint-placeholder-val="{{false}}">
+                  <div style="margin-top:6px;font-size:12px;color:{{accentColor}};font-weight:600;">🎙️ Listening…</div>
+                </sc-if>
+              </div>
+
+              <div style="margin-top:22px;">
+                <button data-on-click="{{vcioVM.addToSolution}}" style="background:{{accentColor}};color:white;border:none;font-size:14.5px;font-weight:700;padding:13px 24px;border-radius:999px;cursor:pointer;">{{vcioVM.addButtonLabel}}</button>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{isCategoryService}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top:30px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Choose a category</div>
+            <div style="margin-top:4px;font-size:12.5px;color:oklch(0.58 0.02 255);">Tap into a category to see the relevant products.</div>
+            <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:14px;">
+              <sc-for list="{{categoryServiceVM.categories}}" as="cat" hint-placeholder-count="4">
+                <div data-on-click="{{cat.onClick}}" style="{{cat.cardStyle}}">
+                  <div style="display:flex;align-items:center;justify-content:space-between;">
+                    <div style="font-weight:700;font-size:16px;color:oklch(0.2 0.03 255);">{{cat.name}}</div>
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.55 0.02 255)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"></polyline></svg>
+                  </div>
+                  <div style="margin-top:8px;font-size:13px;line-height:1.5;color:oklch(0.48 0.02 255);">{{cat.blurb}}</div>
+                  <sc-if value="{{cat.isHighlighted}}" hint-placeholder-val="{{false}}">
+                    <div style="margin-top:10px;display:inline-flex;align-items:center;gap:5px;background:oklch(0.78 0.14 85);color:oklch(0.2 0.05 85);font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;">✦ Don't forget accessories</div>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+
+            <sc-if value="{{categoryServiceVM.hasFooterLinks}}" hint-placeholder-val="{{false}}">
+              <div style="margin-top:26px;padding-top:18px;border-top:1px solid oklch(0.28 0.03 255);display:flex;flex-direction:column;gap:10px;">
+                <sc-for list="{{categoryServiceVM.footerLinks}}" as="fl" hint-placeholder-count="2">
+                  <sc-if value="{{fl.isExternal}}" hint-placeholder-val="{{false}}">
+                    <a href="{{fl.url}}" target="_blank" rel="noopener" style="font-size:13px;font-weight:600;text-decoration:none;color:{{accentColor}};">{{fl.label}} ↗</a>
+                  </sc-if>
+                  <sc-if value="{{fl.isInternal}}" hint-placeholder-val="{{false}}">
+                    <div data-on-click="{{fl.onClick}}" style="font-size:13px;font-weight:600;color:{{accentColor}};cursor:pointer;">{{fl.label}} →</div>
+                  </sc-if>
+                </sc-for>
+              </div>
+            </sc-if>
+          </sc-if>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- CATEGORY DRILL-DOWN (Cyber Security sub-categories) -->
+    <sc-if value="{{isCategory}}" hint-placeholder-val="{{false}}">
+      <div class="view-pad" style="padding:36px 56px 48px;">
+        <div style="display:flex;align-items:center;gap:14px;">
+          <div data-on-click="{{currentCategory.backToService}}" style="width:36px;height:36px;border-radius:999px;background:oklch(0.22 0.03 255);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+          </div>
+          <div style="font-size:12px;font-weight:700;letter-spacing:.08em;color:{{accentColor}};text-transform:uppercase;">{{currentCategory.pillarName}} / {{currentCategory.serviceName}}</div>
+        </div>
+        <div style="margin-left:50px;max-width:740px;">
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:27px;font-weight:700;color:white;margin-top:6px;">{{currentCategory.name}}</div>
+          <div style="margin-top:10px;font-size:15px;line-height:1.55;color:oklch(0.7 0.02 255);">{{currentCategory.blurb}}</div>
+
+          <sc-if value="{{currentCategory.hasDeviceCountFeature}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top:24px;background:oklch(0.19 0.03 255);border:1px solid oklch(0.3 0.03 255);border-radius:14px;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;">
+              <div>
+                <div style="font-weight:700;font-size:14.5px;color:white;">{{currentCategory.deviceCountLabel}}</div>
+                <div style="margin-top:4px;font-size:12px;line-height:1.5;color:oklch(0.62 0.02 255);">Adjusts Remote Access Agent, Patch Management, and Guardz by the same amount — fine-tune any product below afterward as needed.</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:14px;flex:0 0 auto;">
+                <button data-on-click="{{currentCategory.onDecDeviceCount}}" style="width:32px;height:32px;border-radius:999px;background:oklch(0.28 0.03 255);border:none;color:white;font-size:18px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                <div style="min-width:32px;text-align:center;font-size:17px;font-weight:700;color:white;">{{currentCategory.deviceCountText}}</div>
+                <button data-on-click="{{currentCategory.onIncDeviceCount}}" style="width:32px;height:32px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:18px;font-weight:700;cursor:pointer;line-height:1;">+</button>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{currentCategory.noProducts}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top:30px;background:oklch(0.19 0.03 255);border-radius:14px;padding:22px;text-align:center;">
+              <div style="font-size:13.5px;color:oklch(0.6 0.02 255);">No products added to this category yet — this is next up in the walkthrough.</div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{currentCategory.hasProducts}}" hint-placeholder-val="{{false}}">
+            <sc-if value="{{currentCategory.isPriced}}" hint-placeholder-val="{{false}}">
+              <sc-for list="{{currentCategory.groups}}" as="grp" hint-placeholder-count="2">
+                <sc-if value="{{grp.hasName}}" hint-placeholder-val="{{false}}">
+                  <div style="margin-top:26px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">{{grp.name}}</div>
+                </sc-if>
+                <sc-if value="{{grp.hasToggle}}" hint-placeholder-val="{{false}}">
+                  <div style="margin-top:10px;display:inline-flex;background:oklch(0.19 0.03 255);border:1px solid oklch(0.3 0.03 255);border-radius:999px;padding:4px;gap:4px;">
+                    <button data-on-click="{{grp.onSetMonthly}}" style="{{grp.monthlyBtnStyle}}">Monthly</button>
+                    <button data-on-click="{{grp.onSetOneTime}}" style="{{grp.oneTimeBtnStyle}}">One-Time</button>
+                  </div>
+                </sc-if>
+                <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px;">
+                  <sc-for list="{{grp.products}}" as="prod" hint-placeholder-count="4">
+                    <div style="background:oklch(0.98 0.006 255);border-radius:14px;padding:16px 20px;">
+                      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;">
+                        <div style="flex:1;">
+                          <div style="font-weight:700;font-size:15px;color:oklch(0.2 0.03 255);">{{prod.label}}</div>
+                          <div style="margin-top:3px;font-size:12.5px;font-weight:600;color:oklch(0.5 0.02 255);">{{prod.rateText}}</div>
+                          <sc-if value="{{prod.hasOnboardFee}}" hint-placeholder-val="{{false}}">
+                            <div style="margin-top:2px;font-size:12px;font-weight:600;color:oklch(0.5 0.02 255);">{{prod.onboardFeeText}}</div>
+                          </sc-if>
+                          <div style="margin-top:8px;font-size:13px;line-height:1.5;color:oklch(0.4 0.02 255);">{{prod.description}}</div>
+                          <div style="margin-top:6px;font-size:12.5px;line-height:1.5;color:{{accentColor}};">{{prod.benefit}}</div>
+                          <sc-if value="{{prod.hasNote}}" hint-placeholder-val="{{false}}">
+                            <div style="margin-top:6px;font-size:12.5px;font-weight:600;line-height:1.5;color:oklch(0.62 0.14 55);">⚠ {{prod.note}}</div>
+                          </sc-if>
+                          <sc-if value="{{prod.pricingTBD}}" hint-placeholder-val="{{false}}">
+                            <div style="margin-top:6px;font-size:12.5px;font-weight:600;line-height:1.5;color:oklch(0.62 0.14 55);">⚠ Monthly rate not yet confirmed — check before quoting.</div>
+                          </sc-if>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:14px;flex:0 0 auto;">
+                          <button data-on-click="{{prod.onDec}}" style="width:30px;height:30px;border-radius:999px;background:oklch(0.9 0.006 255);border:none;color:oklch(0.2 0.03 255);font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                          <div style="min-width:32px;text-align:center;font-size:15px;font-weight:700;color:oklch(0.2 0.03 255);">{{prod.qtyText}}</div>
+                          <button data-on-click="{{prod.onInc}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
+                        </div>
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-for>
+
+              <sc-if value="{{currentCategory.hasSelections}}" hint-placeholder-val="{{false}}">
+                <div style="margin-top:20px;display:flex;gap:12px;">
+                  <div style="flex:1;background:{{accentColor}};border-radius:14px;padding:16px 18px;">
+                    <div style="font-size:11px;font-weight:700;color:oklch(0.95 0.01 255);text-transform:uppercase;letter-spacing:.05em;">Monthly Total</div>
+                    <div style="margin-top:6px;font-size:19px;font-weight:700;color:white;">{{currentCategory.totalText}}</div>
+                  </div>
+                  <sc-if value="{{currentCategory.hasOnboarding}}" hint-placeholder-val="{{false}}">
+                    <div style="flex:1;background:oklch(0.22 0.03 255);border:1px solid oklch(0.32 0.03 255);border-radius:14px;padding:16px 18px;">
+                      <div style="font-size:11px;font-weight:700;color:oklch(0.7 0.02 255);text-transform:uppercase;letter-spacing:.05em;">Onboarding Total</div>
+                      <div style="margin-top:6px;font-size:19px;font-weight:700;color:white;">{{currentCategory.onboardingTotalText}}</div>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+            </sc-if>
+
+            <sc-if value="{{currentCategory.isParts}}" hint-placeholder-val="{{false}}">
+              <sc-if value="{{currentCategory.hasBillingToggle}}" hint-placeholder-val="{{false}}">
+                <div style="margin-top:14px;display:inline-flex;background:oklch(0.19 0.03 255);border:1px solid oklch(0.3 0.03 255);border-radius:999px;padding:4px;gap:4px;">
+                  <button data-on-click="{{currentCategory.billingToggle.onSetA}}" style="{{currentCategory.billingToggle.aBtnStyle}}">{{currentCategory.billingToggle.aLabel}}</button>
+                  <button data-on-click="{{currentCategory.billingToggle.onSetB}}" style="{{currentCategory.billingToggle.bBtnStyle}}">{{currentCategory.billingToggle.bLabel}}</button>
+                </div>
+              </sc-if>
+              <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px;">
+                <sc-for list="{{currentCategory.partsProducts}}" as="prod" hint-placeholder-count="4">
+                  <sc-if value="{{prod.hasSectionBreak}}" hint-placeholder-val="{{false}}">
+                    <div style="margin-top:10px;padding-top:14px;border-top:1px solid oklch(0.9 0.006 255);font-size:12.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.05em;">{{prod.sectionBreak}}</div>
+                  </sc-if>
+                  <div style="background:oklch(0.98 0.006 255);border-radius:14px;padding:16px 20px;">
+                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;">
+                      <div style="display:flex;align-items:flex-start;gap:14px;flex:1;min-width:0;">
+                        <sc-if value="{{prod.hasImage}}" hint-placeholder-val="{{false}}">
+                          <img src="{{prod.image}}" alt="{{prod.label}}" style="width:56px;height:56px;object-fit:contain;border-radius:8px;background:white;border:1px solid oklch(0.9 0.006 255);flex:0 0 auto;" />
+                        </sc-if>
+                        <div style="flex:1;min-width:0;">
+                          <div style="font-weight:700;font-size:15px;color:oklch(0.2 0.03 255);">{{prod.label}}</div>
+                          <sc-if value="{{prod.hasSku}}" hint-placeholder-val="{{false}}">
+                            <div style="margin-top:2px;font-size:11.5px;font-weight:600;color:oklch(0.55 0.02 255);">{{prod.sku}}</div>
+                          </sc-if>
+                          <sc-if value="{{prod.hasRecommendNote}}" hint-placeholder-val="{{false}}">
+                            <div style="margin-top:6px;display:inline-block;background:{{accentColor}};color:white;font-size:10.5px;font-weight:700;padding:3px 10px;border-radius:999px;">{{prod.recommendNote}}</div>
+                          </sc-if>
+                        </div>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:14px;flex:0 0 auto;">
+                        <button data-on-click="{{prod.onDecQty}}" style="width:30px;height:30px;border-radius:999px;background:oklch(0.9 0.006 255);border:none;color:oklch(0.2 0.03 255);font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                        <div style="min-width:32px;text-align:center;font-size:15px;font-weight:700;color:oklch(0.2 0.03 255);">{{prod.qtyText}}</div>
+                        <button data-on-click="{{prod.onIncQty}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
+                      </div>
+                    </div>
+                    <sc-if value="{{prod.hasOptions}}" hint-placeholder-val="{{false}}">
+                      <div style="margin-top:12px;padding-top:12px;border-top:1px solid oklch(0.9 0.006 255);display:flex;flex-wrap:wrap;gap:18px;">
+                        <sc-for list="{{prod.options}}" as="opt" hint-placeholder-count="2">
+                          <div>
+                            <div style="font-size:11px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">{{opt.label}}</div>
+                            <sc-if value="{{opt.isChip}}" hint-placeholder-val="{{false}}">
+                              <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+                                <sc-for list="{{opt.choices}}" as="ch" hint-placeholder-count="2">
+                                  <button data-on-click="{{ch.onClick}}" style="{{ch.style}}">{{ch.label}}</button>
+                                </sc-for>
+                              </div>
+                            </sc-if>
+                            <sc-if value="{{opt.isRange}}" hint-placeholder-val="{{false}}">
+                              <div style="margin-top:6px;display:flex;align-items:center;gap:10px;">
+                                <button data-on-click="{{opt.onDec}}" style="width:26px;height:26px;border-radius:999px;background:oklch(0.9 0.006 255);border:none;color:oklch(0.2 0.03 255);font-size:15px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                                <div style="min-width:70px;text-align:center;font-size:13px;font-weight:700;color:oklch(0.2 0.03 255);">{{opt.valueText}}</div>
+                                <button data-on-click="{{opt.onInc}}" style="width:26px;height:26px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:15px;font-weight:700;cursor:pointer;line-height:1;">+</button>
+                                <div style="font-size:11px;color:oklch(0.55 0.02 255);">{{opt.rangeHint}}</div>
+                              </div>
+                              <sc-if value="{{opt.isAutoFilled}}" hint-placeholder-val="{{false}}">
+                                <div style="margin-top:4px;font-size:10.5px;font-style:italic;color:oklch(0.55 0.02 255);">Auto-filled from Sound speaker count — adjust as needed</div>
+                              </sc-if>
+                              <sc-if value="{{opt.hasWattsSuggestion}}" hint-placeholder-val="{{false}}">
+                                <div style="margin-top:4px;font-size:11px;font-weight:600;color:{{accentColor}};">{{opt.wattsSuggestionText}}</div>
+                              </sc-if>
+                            </sc-if>
+                          </div>
+                        </sc-for>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{prod.hasHints}}" hint-placeholder-val="{{false}}">
+                      <div style="margin-top:12px;padding-top:12px;border-top:1px solid oklch(0.9 0.006 255);display:flex;flex-direction:column;gap:6px;">
+                        <div style="font-size:10.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Recommended Configuration</div>
+                        <sc-for list="{{prod.hints}}" as="hint" hint-placeholder-count="2">
+                          <div style="display:flex;align-items:flex-start;gap:8px;font-size:12px;font-weight:600;color:oklch(0.3 0.02 255);background:oklch(0.95 0.02 255);border-radius:8px;padding:8px 10px;">
+                            <span style="color:{{accentColor}};flex:0 0 auto;">✓</span>
+                            <span>{{hint.text}}</span>
+                          </div>
+                        </sc-for>
+                      </div>
+                    </sc-if>
+                  </div>
+                </sc-for>
+              </div>
+
+              <sc-if value="{{currentCategory.hasPhonePicker}}" hint-placeholder-val="{{false}}">
+                <div style="margin-top:18px;background:oklch(0.98 0.006 255);border-radius:14px;padding:18px 20px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                    <div>
+                      <div style="font-weight:700;font-size:14.5px;color:oklch(0.2 0.03 255);">Choose Physical Phones</div>
+                      <div style="margin-top:2px;font-size:11.5px;font-weight:600;color:oklch(0.55 0.02 255);">{{currentCategory.phonePicker.neededCount}} users need a physical phone — pick a model for each.</div>
+                    </div>
+                    <sc-if value="{{currentCategory.phonePicker.hasMismatch}}" hint-placeholder-val="{{false}}">
+                      <div style="font-size:11.5px;font-weight:700;color:{{accentColor}};">{{currentCategory.phonePicker.mismatchText}}</div>
+                    </sc-if>
+                    <sc-if value="{{currentCategory.phonePicker.isComplete}}" hint-placeholder-val="{{false}}">
+                      <div style="font-size:11.5px;font-weight:700;color:oklch(0.55 0.14 150);">✓ All phones assigned</div>
+                    </sc-if>
+                  </div>
+                  <div style="margin-top:14px;display:grid;grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));gap:14px;">
+                    <sc-for list="{{currentCategory.phonePicker.models}}" as="ph" hint-placeholder-count="6">
+                      <div style="background:white;border:1px solid oklch(0.9 0.006 255);border-radius:12px;padding:12px;display:flex;flex-direction:column;align-items:center;text-align:center;">
+                        <img src="{{ph.image}}" alt="{{ph.label}}" style="width:88px;height:88px;object-fit:contain;border-radius:8px;" />
+                        <div data-on-click="{{ph.onToggleInfo}}" style="margin-top:8px;cursor:pointer;">
+                          <div style="font-weight:700;font-size:13px;color:oklch(0.2 0.03 255);">{{ph.label}}</div>
+                          <div style="margin-top:2px;font-size:10.5px;font-weight:600;color:oklch(0.55 0.02 255);">{{ph.tagline}}</div>
+                        </div>
+                        <sc-if value="{{ph.isExpanded}}" hint-placeholder-val="{{false}}">
+                          <div style="margin-top:6px;font-size:10.5px;color:oklch(0.5 0.02 255);line-height:1.4;">{{ph.description}}</div>
+                        </sc-if>
+                        <div style="margin-top:10px;display:flex;align-items:center;gap:10px;">
+                          <button data-on-click="{{ph.onDec}}" style="width:26px;height:26px;border-radius:999px;background:oklch(0.9 0.006 255);border:none;color:oklch(0.2 0.03 255);font-size:15px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                          <div style="min-width:20px;text-align:center;font-size:13.5px;font-weight:700;color:oklch(0.2 0.03 255);">{{ph.qtyText}}</div>
+                          <button data-on-click="{{ph.onInc}}" style="width:26px;height:26px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:15px;font-weight:700;cursor:pointer;line-height:1;">+</button>
+                        </div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-if>
+            </sc-if>
+
+            <sc-if value="{{currentCategory.hasScopeLibrary}}" hint-placeholder-val="{{false}}">
+              <div style="margin-top:22px;background:oklch(0.98 0.006 255);border-radius:14px;padding:18px 20px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                  <div>
+                    <div style="font-weight:700;font-size:14.5px;color:oklch(0.2 0.03 255);">Scope of Work (Optional)</div>
+                    <div style="margin-top:2px;font-size:11.5px;font-weight:600;color:oklch(0.55 0.02 255);">Labor for this build — billed at {{currentCategory.hourlyRateText}}. Tap a line to view the full scope text.</div>
+                  </div>
+                </div>
+                <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px;">
+                  <sc-for list="{{currentCategory.scopeItems}}" as="sc" hint-placeholder-count="3">
+                    <div style="background:white;border:1px solid oklch(0.9 0.006 255);border-radius:10px;padding:12px 14px;">
+                      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+                        <div data-on-click="{{sc.onToggleInfo}}" style="flex:1;min-width:0;cursor:pointer;">
+                          <div style="font-weight:700;font-size:13px;color:oklch(0.2 0.03 255);">{{sc.label}}</div>
+                          <div style="margin-top:2px;font-size:11px;font-weight:600;color:oklch(0.55 0.02 255);">{{sc.hoursText}}</div>
+                          <sc-if value="{{sc.hasPrice}}" hint-placeholder-val="{{false}}">
+                            <div style="margin-top:2px;font-size:12.5px;font-weight:700;color:{{accentColor}};">{{sc.priceText}}</div>
+                          </sc-if>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;flex:0 0 auto;">
+                          <button data-on-click="{{sc.onDec}}" style="width:26px;height:26px;border-radius:999px;background:oklch(0.9 0.006 255);border:none;color:oklch(0.2 0.03 255);font-size:15px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                          <div style="min-width:20px;text-align:center;font-size:13.5px;font-weight:700;color:oklch(0.2 0.03 255);">{{sc.qtyText}}</div>
+                          <button data-on-click="{{sc.onInc}}" style="width:26px;height:26px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:15px;font-weight:700;cursor:pointer;line-height:1;">+</button>
+                        </div>
+                      </div>
+                      <sc-if value="{{sc.isExpanded}}" hint-placeholder-val="{{false}}">
+                        <div style="margin-top:10px;padding-top:10px;border-top:1px solid oklch(0.9 0.006 255);">
+                          <div style="font-size:10.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Scope of Work</div>
+                          <sc-for list="{{sc.scopeText}}" as="sl" hint-placeholder-count="3">
+                            <div style="margin-top:4px;font-size:11.5px;color:oklch(0.35 0.02 255);line-height:1.5;">• {{sl.text}}</div>
+                          </sc-for>
+                          <div style="margin-top:10px;font-size:10.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Dependencies for Success</div>
+                          <sc-for list="{{sc.depsText}}" as="dl" hint-placeholder-count="3">
+                            <div style="margin-top:4px;font-size:11.5px;color:oklch(0.45 0.02 255);line-height:1.5;">• {{dl.text}}</div>
+                          </sc-for>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+                <sc-if value="{{currentCategory.hasScopeSubtotal}}" hint-placeholder-val="{{false}}">
+                  <div style="margin-top:14px;padding-top:14px;border-top:1px solid oklch(0.9 0.006 255);display:flex;align-items:center;justify-content:space-between;">
+                    <div style="font-size:11.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Scope of Work Subtotal</div>
+                    <div style="font-size:16px;font-weight:700;color:{{accentColor}};">{{currentCategory.scopeSubtotalText}}</div>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-if>
+
+            <div style="margin-top:22px;">
+              <div style="font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Rep Notes <span style="font-weight:400;text-transform:none;color:oklch(0.55 0.02 255);">(optional — visible to the inside rep fulfilling this)</span></div>
+              <div style="margin-top:10px;position:relative;">
+                <textarea value="{{currentCategory.noteText}}" data-on-input="{{currentCategory.onNoteInput}}" rows="3" placeholder="Type or dictate notes for this product or service — configuration details, site conditions, customer asks…" style="width:100%;box-sizing:border-box;resize:vertical;font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;line-height:1.5;color:white;background:oklch(0.19 0.03 255);border:1px solid oklch(0.32 0.03 255);border-radius:12px;padding:12px 44px 12px 14px;"></textarea>
+                <sc-if value="{{currentCategory.noteVoiceSupported}}" hint-placeholder-val="{{false}}">
+                  <button data-on-click="{{currentCategory.onNoteVoiceClick}}" aria-label="Dictate notes" style="{{currentCategory.noteVoiceBtnStyle}}">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+                  </button>
+                </sc-if>
+              </div>
+              <sc-if value="{{currentCategory.noteIsListening}}" hint-placeholder-val="{{false}}">
+                <div style="margin-top:6px;font-size:12px;color:{{accentColor}};font-weight:600;">🎙️ Listening…</div>
+              </sc-if>
+            </div>
+
+            <div style="margin-top:22px;">
+              <button data-on-click="{{currentCategory.addToSolution}}" style="background:{{accentColor}};color:white;border:none;font-size:14.5px;font-weight:700;padding:13px 24px;border-radius:999px;cursor:pointer;">{{currentCategory.addButtonLabel}}</button>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{currentCategory.isMirror}}" hint-placeholder-val="{{false}}">
+            <sc-if value="{{currentCategory.notConfigured}}" hint-placeholder-val="{{false}}">
+              <div style="margin-top:30px;background:oklch(0.19 0.03 255);border-radius:14px;padding:22px;text-align:center;">
+                <div style="font-size:13.5px;color:oklch(0.6 0.02 255);">The primary server hasn't been configured yet — nothing to mirror.</div>
+                <div data-on-click="{{currentCategory.goToSource}}" style="margin-top:10px;display:inline-block;font-size:13px;font-weight:700;color:{{accentColor}};cursor:pointer;">Go configure it →</div>
+              </div>
+            </sc-if>
+            <sc-if value="{{currentCategory.isConfigured}}" hint-placeholder-val="{{false}}">
+              <div style="margin-top:24px;background:oklch(0.98 0.006 255);border-radius:14px;padding:20px 22px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
+                  <div style="font-weight:700;font-size:15px;color:oklch(0.2 0.03 255);">{{currentCategory.sourceLabel}}</div>
+                  <div style="font-size:12.5px;font-weight:700;color:oklch(0.5 0.02 255);">{{currentCategory.sourceQtyText}}</div>
+                </div>
+                <div style="margin-top:4px;font-size:11.5px;font-style:italic;color:oklch(0.55 0.02 255);">Read-only 1-for-1 copy — always matches the primary server automatically.</div>
+                <sc-if value="{{currentCategory.hasMirrorDetails}}" hint-placeholder-val="{{false}}">
+                  <div style="margin-top:14px;padding-top:14px;border-top:1px solid oklch(0.9 0.006 255);display:flex;flex-wrap:wrap;gap:12px 24px;">
+                    <sc-for list="{{currentCategory.mirrorDetails}}" as="md" hint-placeholder-count="4">
+                      <div>
+                        <div style="font-size:10.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">{{md.label}}</div>
+                        <div style="margin-top:2px;font-size:13px;font-weight:600;color:oklch(0.25 0.02 255);">{{md.value}}</div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+                <div data-on-click="{{currentCategory.goToSource}}" style="margin-top:14px;font-size:12px;font-weight:700;color:{{accentColor}};cursor:pointer;">Edit the primary server →</div>
+              </div>
+              <div style="margin-top:22px;">
+                <div style="font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Rep Notes <span style="font-weight:400;text-transform:none;color:oklch(0.55 0.02 255);">(optional — visible to the inside rep fulfilling this)</span></div>
+                <div style="margin-top:10px;position:relative;">
+                  <textarea value="{{currentCategory.noteText}}" data-on-input="{{currentCategory.onNoteInput}}" rows="3" placeholder="Type or dictate notes for this product or service — configuration details, site conditions, customer asks…" style="width:100%;box-sizing:border-box;resize:vertical;font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;line-height:1.5;color:white;background:oklch(0.19 0.03 255);border:1px solid oklch(0.32 0.03 255);border-radius:12px;padding:12px 44px 12px 14px;"></textarea>
+                  <sc-if value="{{currentCategory.noteVoiceSupported}}" hint-placeholder-val="{{false}}">
+                    <button data-on-click="{{currentCategory.onNoteVoiceClick}}" aria-label="Dictate notes" style="{{currentCategory.noteVoiceBtnStyle}}">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
+                    </button>
+                  </sc-if>
+                </div>
+                <sc-if value="{{currentCategory.noteIsListening}}" hint-placeholder-val="{{false}}">
+                  <div style="margin-top:6px;font-size:12px;color:{{accentColor}};font-weight:600;">🎙️ Listening…</div>
+                </sc-if>
+              </div>
+              <div style="margin-top:22px;">
+                <button data-on-click="{{currentCategory.addToSolution}}" style="background:{{accentColor}};color:white;border:none;font-size:14.5px;font-weight:700;padding:13px 24px;border-radius:999px;cursor:pointer;">{{currentCategory.addButtonLabel}}</button>
+              </div>
+            </sc-if>
+          </sc-if>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- SUMMARY -->
+    <sc-if value="{{isSummary}}" hint-placeholder-val="{{false}}">
+      <div class="summary-print-area view-pad" style="padding:36px 56px 48px;max-width:800px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:27px;font-weight:700;color:white;">Your Solution</div>
+          <button data-on-click="{{closeSummary}}" style="background:oklch(0.22 0.03 255);border:1px solid oklch(0.32 0.03 255);color:white;font-size:13.5px;font-weight:600;padding:9px 18px;border-radius:999px;cursor:pointer;">Close</button>
+        </div>
+        <div style="margin-top:14px;background:white;border-radius:12px;padding:10px 16px;display:inline-block;">
+          <img src="{{logoColor}}" alt="CodeBlue Technology" style="height:34px;width:auto;object-fit:contain;display:block;" />
+        </div>
+
+        <sc-if value="{{hasSelections}}" hint-placeholder-val="{{false}}">
+          <div style="margin-top:26px;font-size:12px;font-weight:700;color:{{accentColor}};text-transform:uppercase;letter-spacing:.06em;">Bill of Materials</div>
+          <div style="margin-top:10px;">
+            <sc-for list="{{summaryGroups}}" as="grp" hint-placeholder-count="2">
+              <div style="margin-bottom:6px;">
+                <div style="font-size:11.5px;font-weight:700;color:oklch(0.58 0.02 255);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 7px;">{{grp.pillarName}}</div>
+                <sc-for list="{{grp.items}}" as="it" hint-placeholder-count="2">
+                  <div style="background:oklch(0.98 0.006 255);border-radius:12px;padding:13px 16px;margin-bottom:7px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                      <div>
+                        <div style="font-weight:700;font-size:14px;color:oklch(0.2 0.03 255);">{{it.serviceName}}</div>
+                        <div style="font-size:12.5px;color:oklch(0.5 0.02 255);margin-top:2px;">{{it.optionLabel}}</div>
+                      </div>
+                      <button data-on-click="{{it.onRemove}}" style="background:none;border:none;color:oklch(0.55 0.02 255);font-size:12.5px;font-weight:600;cursor:pointer;padding:6px 8px;flex:0 0 auto;">Remove</button>
+                    </div>
+                    <sc-if value="{{it.hasNote}}" hint-placeholder-val="{{false}}">
+                      <div style="margin-top:9px;padding:9px 11px;background:oklch(0.96 0.01 90);border-radius:8px;">
+                        <div style="font-size:10px;font-weight:700;color:oklch(0.5 0.05 80);text-transform:uppercase;letter-spacing:.04em;">Rep Notes</div>
+                        <div style="margin-top:3px;font-size:12px;line-height:1.5;color:oklch(0.35 0.03 80);white-space:pre-wrap;">{{it.noteText}}</div>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{it.hasScopeLines}}" hint-placeholder-val="{{false}}">
+                      <div style="margin-top:10px;padding-top:10px;border-top:1px solid oklch(0.9 0.006 255);">
+                        <div style="font-size:10px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Scope of Work</div>
+                        <sc-for list="{{it.scopeLines}}" as="sl" hint-placeholder-count="2">
+                          <div style="margin-top:5px;">
+                            <div data-on-click="{{sl.onToggleInfo}}" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                              <div style="font-size:12px;color:oklch(0.35 0.02 255);">{{sl.label}} — Qty {{sl.qtyText}} ({{sl.hoursText}})</div>
+                              <div style="font-size:12px;font-weight:700;color:{{accentColor}};flex:0 0 auto;">{{sl.priceText}}</div>
+                            </div>
+                            <div data-on-click="{{sl.onToggleInfo}}" style="cursor:pointer;margin-top:2px;font-size:10.5px;font-weight:600;color:oklch(0.55 0.02 255);">{{sl.toggleHint}}</div>
+                            <div class="scope-detail-block" style="display:{{sl.detailDisplay}};margin-top:6px;background:oklch(0.96 0.006 255);border-radius:8px;padding:10px 12px;">
+                              <div style="font-size:9.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Scope of Work</div>
+                              <sc-for list="{{sl.scopeText}}" as="st" hint-placeholder-count="3">
+                                <div style="margin-top:3px;font-size:11px;color:oklch(0.35 0.02 255);line-height:1.5;">• {{st.text}}</div>
+                              </sc-for>
+                              <div style="margin-top:8px;font-size:9.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Dependencies for Success</div>
+                              <sc-for list="{{sl.depsText}}" as="dt" hint-placeholder-count="3">
+                                <div style="margin-top:3px;font-size:11px;color:oklch(0.4 0.02 255);line-height:1.5;">• {{dt.text}}</div>
+                              </sc-for>
+                            </div>
+                          </div>
+                        </sc-for>
+                        <div style="margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                          <div style="font-size:11px;font-weight:700;color:oklch(0.45 0.02 255);">Scope of Work Subtotal</div>
+                          <div style="font-size:12.5px;font-weight:700;color:oklch(0.25 0.03 255);">{{it.scopeSubtotalText}}</div>
+                        </div>
+                      </div>
+                    </sc-if>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="margin-top:30px;font-size:12px;font-weight:700;color:{{accentColor}};text-transform:uppercase;letter-spacing:.06em;">Customer Quote</div>
+          <sc-if value="{{hasScopeGrandTotal}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;gap:14px;background:oklch(0.19 0.03 255);border:1px solid oklch(0.3 0.03 255);border-radius:14px;padding:14px 18px;flex-wrap:wrap;">
+              <div style="font-size:12.5px;font-weight:600;color:oklch(0.7 0.02 255);">CodeBlue's Hourly Rate — applies to all Scope of Work pricing</div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <button data-on-click="{{onScopeRateDec}}" style="width:28px;height:28px;border-radius:999px;background:oklch(0.3 0.03 255);border:none;color:white;font-size:15px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                <div style="min-width:60px;text-align:center;font-size:15px;font-weight:700;color:white;">{{scopeRateText}}</div>
+                <button data-on-click="{{onScopeRateInc}}" style="width:28px;height:28px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:15px;font-weight:700;cursor:pointer;line-height:1;">+</button>
+              </div>
+            </div>
+            <div style="margin-top:10px;background:{{accentColor}};border-radius:14px;padding:16px 18px;">
+              <div style="font-size:11px;font-weight:700;color:oklch(0.95 0.01 255);text-transform:uppercase;letter-spacing:.05em;">Estimated Scope of Work / Labor Total</div>
+              <div style="margin-top:6px;font-size:19px;font-weight:700;color:white;">{{scopeGrandTotalText}}</div>
+            </div>
+          </sc-if>
+          <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+            <input value="{{customerEmail}}" data-on-input="{{onCustomerEmailInput}}" placeholder="Customer email (optional)" style="flex:1;min-width:220px;font-size:13.5px;padding:10px 12px;border:1px solid oklch(0.3 0.03 255);border-radius:8px;background:oklch(0.19 0.03 255);color:white;font-family:'IBM Plex Sans',sans-serif;">
+            <button data-on-click="{{onCopyQuote}}" style="background:{{accentColor}};color:white;border:none;font-size:13.5px;font-weight:700;padding:11px 20px;border-radius:999px;cursor:pointer;">{{copyQuoteLabel}}</button>
+            <button data-on-click="{{onSendQuoteEmail}}" style="background:oklch(0.55 0.14 150);border:none;color:white;font-size:13.5px;font-weight:700;padding:11px 20px;border-radius:999px;cursor:pointer;">{{sendQuoteLabel}}</button>
+            <button data-on-click="{{onPrintQuote}}" style="background:oklch(0.22 0.03 255);border:1px solid oklch(0.32 0.03 255);color:white;font-size:13.5px;font-weight:700;padding:11px 20px;border-radius:999px;cursor:pointer;">Print Quote</button>
+          </div>
+          <sc-if value="{{sendQuoteHasError}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top:8px;font-size:12.5px;font-weight:600;color:oklch(0.7 0.18 30);">{{sendQuoteErrorText}}</div>
+          </sc-if>
+
+          <div style="margin-top:30px;font-size:12px;font-weight:700;color:{{accentColor}};text-transform:uppercase;letter-spacing:.06em;">Outcomes</div>
+          <div style="margin-top:4px;font-size:12.5px;color:oklch(0.55 0.02 255);">What this solution means for the business — not a price tag, an impact.</div>
+
+          <div style="margin-top:16px;display:flex;flex-direction:column;gap:12px;">
+            <sc-if value="{{hasRiskItems}}" hint-placeholder-val="{{false}}">
+              <div style="background:oklch(0.19 0.03 255);border-radius:14px;padding:16px 20px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="{{accentColor}}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 5-3.5 7.5-7 9-3.5-1.5-7-4-7-9V6l7-3z"></path></svg>
+                  <div style="font-weight:700;font-size:14.5px;color:white;">Risk Reduced</div>
+                </div>
+                <div style="margin-top:8px;font-size:12.5px;color:oklch(0.62 0.02 255);">Fewer blind spots, fewer surprises.</div>
+                <div style="margin-top:10px;display:flex;flex-direction:column;gap:5px;">
+                  <sc-for list="{{riskItems}}" as="line" hint-placeholder-count="2">
+                    <div style="font-size:13px;color:oklch(0.85 0.01 255);">— {{line.text}}</div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+            <sc-if value="{{hasUptimeItems}}" hint-placeholder-val="{{false}}">
+              <div style="background:oklch(0.19 0.03 255);border-radius:14px;padding:16px 20px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="{{accentColor}}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 4 14 12 14 11 22 20 10 12 10 13 2"></polyline></svg>
+                  <div style="font-weight:700;font-size:14.5px;color:white;">Uptime Gained</div>
+                </div>
+                <div style="margin-top:8px;font-size:12.5px;color:oklch(0.62 0.02 255);">Less downtime, faster recovery when something breaks.</div>
+                <div style="margin-top:10px;display:flex;flex-direction:column;gap:5px;">
+                  <sc-for list="{{uptimeItems}}" as="line" hint-placeholder-count="2">
+                    <div style="font-size:13px;color:oklch(0.85 0.01 255);">— {{line.text}}</div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+            <sc-if value="{{hasCostItems}}" hint-placeholder-val="{{false}}">
+              <div style="background:oklch(0.19 0.03 255);border-radius:14px;padding:16px 20px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="{{accentColor}}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M9 15.5s1 1.5 3 1.5 3-1 3-2-1-1.5-3-2-3-1-3-2 1-2 3-2 3 1.5 3 1.5"></path></svg>
+                  <div style="font-weight:700;font-size:14.5px;color:white;">Cost Avoided</div>
+                </div>
+                <div style="margin-top:8px;font-size:12.5px;color:oklch(0.62 0.02 255);">Spend redirected from firefighting to the business.</div>
+                <div style="margin-top:10px;display:flex;flex-direction:column;gap:5px;">
+                  <sc-for list="{{costItems}}" as="line" hint-placeholder-count="2">
+                    <div style="font-size:13px;color:oklch(0.85 0.01 255);">— {{line.text}}</div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+          </div>
+
+          <div style="margin-top:26px;display:flex;gap:12px;">
+            <sc-if value="{{showCheckoutButton}}" hint-placeholder-val="{{false}}">
+              <button data-on-click="{{openCheckout}}" style="background:{{accentColor}};color:white;border:none;font-size:13.5px;font-weight:700;padding:10px 20px;border-radius:999px;cursor:pointer;">Check Out — PeopleFirst Proposal →</button>
+            </sc-if>
+            <button data-on-click="{{resetAll}}" style="background:none;border:1px solid oklch(0.35 0.03 255);color:oklch(0.65 0.02 255);font-size:13px;font-weight:600;padding:10px 18px;border-radius:999px;cursor:pointer;">Start Over</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{noSelections}}" hint-placeholder-val="{{false}}">
+          <div style="margin-top:80px;text-align:center;color:oklch(0.5 0.02 255);font-size:14.5px;">Nothing selected yet — tap into a pillar and start building the solution together.</div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <!-- PEOPLEFIRST CHECK OUT -->
+    <sc-if value="{{isCheckout}}" hint-placeholder-val="{{false}}">
+      <div class="checkout-print-area view-pad" style="padding:36px 56px 48px;max-width:800px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:27px;font-weight:700;color:white;">PeopleFirst Check Out</div>
+          <button data-on-click="{{checkoutVM.backToSummary}}" style="background:oklch(0.22 0.03 255);border:1px solid oklch(0.32 0.03 255);color:white;font-size:13.5px;font-weight:600;padding:9px 18px;border-radius:999px;cursor:pointer;">← Back to Solution</button>
+        </div>
+        <div style="margin-top:4px;font-size:12.5px;color:oklch(0.55 0.02 255);">A printer-friendly proposal, built live from what's been added to the Solution — ready to walk through at a second meeting.</div>
+
+        <div style="margin-top:22px;background:white;border-radius:16px;padding:32px 36px;color:oklch(0.2 0.03 255);">
+
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;">
+            <div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:700;color:oklch(0.32 0.11 265);">PeopleFirst Support</div>
+              <div style="font-size:13px;color:oklch(0.45 0.02 255);margin-top:2px;">Proposal prepared {{checkoutVM.dateText}}</div>
+            </div>
+            <img src="{{logoColor}}" alt="CodeBlue Technology" style="height:48px;width:auto;object-fit:contain;" />
+          </div>
+
+          <div style="margin-top:20px;display:flex;gap:16px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:220px;">
+              <div style="font-size:10.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.05em;">Company Name</div>
+              <input value="{{checkoutVM.companyName}}" data-on-input="{{checkoutVM.onCompanyNameInput}}" placeholder="Customer company name" style="margin-top:5px;width:100%;font-size:14px;padding:8px 10px;border:1px solid oklch(0.85 0.006 255);border-radius:8px;font-family:'IBM Plex Sans',sans-serif;">
+            </div>
+            <div style="flex:1;min-width:220px;">
+              <div style="font-size:10.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.05em;">Site Address</div>
+              <input value="{{checkoutVM.siteAddress}}" data-on-input="{{checkoutVM.onSiteAddressInput}}" placeholder="Site address" style="margin-top:5px;width:100%;font-size:14px;padding:8px 10px;border:1px solid oklch(0.85 0.006 255);border-radius:8px;font-family:'IBM Plex Sans',sans-serif;">
+            </div>
+          </div>
+
+          <div style="margin-top:26px;padding-top:20px;border-top:1px solid oklch(0.9 0.006 255);">
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;">Personalized Support</div>
+            <div style="margin-top:8px;font-size:13.5px;line-height:1.6;color:oklch(0.35 0.02 255);">CodeBlue's PeopleFirst support program takes care of your team, no matter the nature of the issue — technology touches most of the workday, and this program lends support to the issues that affect production the most. The plan below includes maintenance, support, and service across every area of the business, sized to what's actually been selected for this deal.</div>
+          </div>
+
+          <div style="margin-top:26px;padding-top:20px;border-top:1px solid oklch(0.9 0.006 255);">
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;">What Each Member Receives</div>
+            <div style="margin-top:6px;font-size:13px;color:oklch(0.5 0.02 255);">Admin Staff Support — {{checkoutVM.membersText}} Users covered, full support and maintenance for every listed device.</div>
+            <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
+              <sc-for list="{{checkoutVM.memberBullets}}" as="mb" hint-placeholder-count="8">
+                <div style="font-size:13.5px;line-height:1.5;color:oklch(0.3 0.02 255);display:flex;gap:8px;">
+                  <span style="color:{{accentColor}};flex:0 0 auto;">✓</span>
+                  <span>{{mb.text}}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="margin-top:26px;padding-top:20px;border-top:1px solid oklch(0.9 0.006 255);">
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;">Coverage in Detail</div>
+            <div style="margin-top:6px;font-size:13px;color:oklch(0.5 0.02 255);">What each area of coverage above actually means, section by section.</div>
+            <sc-for list="{{checkoutVM.coverageGroups}}" as="cg" hint-placeholder-count="8">
+              <div style="margin-top:16px;font-size:13.5px;font-weight:700;color:oklch(0.2 0.03 255);">{{cg.groupName}}</div>
+              <div style="margin-top:8px;display:flex;flex-direction:column;gap:8px;">
+                <sc-for list="{{cg.bullets}}" as="b" hint-placeholder-count="3">
+                  <div style="font-size:13px;line-height:1.55;color:oklch(0.35 0.02 255);"><b>{{b.label}}</b> — {{b.text}}</div>
+                </sc-for>
+              </div>
+            </sc-for>
+          </div>
+
+          <sc-if value="{{checkoutVM.hasSelectedExtras}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top:26px;padding-top:20px;border-top:1px solid oklch(0.9 0.006 255);">
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;">Additional Protection Selected for This Deal</div>
+              <div style="margin-top:6px;font-size:13px;color:oklch(0.5 0.02 255);">Optional protections beyond the baseline plan, added specifically for this proposal.</div>
+              <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
+                <sc-for list="{{checkoutVM.selectedExtras}}" as="se" hint-placeholder-count="4">
+                  <div style="font-size:13.5px;line-height:1.5;color:oklch(0.3 0.02 255);display:flex;gap:8px;">
+                    <span style="color:{{accentColor}};flex:0 0 auto;">✓</span>
+                    <span><b>{{se.label}}</b> — {{se.text}}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+
+          <div style="margin-top:26px;padding-top:20px;border-top:1px solid oklch(0.9 0.006 255);">
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;">What's Not Included <span style="font-weight:400;font-size:12px;color:oklch(0.5 0.02 255);">(available separately, on request)</span></div>
+            <div style="margin-top:6px;font-size:13px;color:oklch(0.5 0.02 255);">So it's clear what's covered above versus what would need to be added.</div>
+            <sc-if value="{{checkoutVM.hasNotIncludedItems}}" hint-placeholder-val="{{false}}">
+              <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
+                <sc-for list="{{checkoutVM.notIncludedItems}}" as="ni" hint-placeholder-count="6">
+                  <div style="font-size:13px;line-height:1.55;color:oklch(0.4 0.02 255);"><b>{{ni.label}}</b> — {{ni.text}}</div>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{checkoutVM.noNotIncludedItems}}" hint-placeholder-val="{{false}}">
+              <div style="margin-top:12px;font-size:13px;color:oklch(0.5 0.02 255);">Every optional protection above has already been selected for this deal — there's nothing left out.</div>
+            </sc-if>
+          </div>
+
+          <sc-if value="{{checkoutVM.hasDeviceLines}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top:26px;padding-top:20px;border-top:1px solid oklch(0.9 0.006 255);">
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;">Devices Covered</div>
+              <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;">
+                <sc-for list="{{checkoutVM.deviceLines}}" as="dl" hint-placeholder-count="4">
+                  <div style="background:oklch(0.97 0.006 255);border-radius:999px;padding:7px 14px;font-size:12.5px;font-weight:600;">{{dl.label}}: {{dl.qtyText}}</div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+
+          <div style="margin-top:26px;padding-top:20px;border-top:1px solid oklch(0.9 0.006 255);">
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;">Solution Details <span style="font-weight:400;font-size:12px;color:oklch(0.5 0.02 255);">({{checkoutVM.totalItemCount}} line items across the Solution)</span></div>
+            <sc-if value="{{checkoutVM.hasSolutionItems}}" hint-placeholder-val="{{false}}">
+              <div style="margin-top:10px;">
+                <sc-for list="{{checkoutVM.solutionGroups}}" as="grp" hint-placeholder-count="2">
+                  <div style="margin-bottom:6px;">
+                    <div style="font-size:11px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 6px;">{{grp.pillarName}}</div>
+                    <sc-for list="{{grp.items}}" as="it" hint-placeholder-count="2">
+                      <div style="background:oklch(0.97 0.006 255);border-radius:10px;padding:10px 14px;margin-bottom:6px;">
+                        <div style="font-weight:700;font-size:13px;">{{it.serviceName}}</div>
+                        <div style="font-size:12px;color:oklch(0.45 0.02 255);margin-top:2px;">{{it.optionLabel}}</div>
+                        <sc-if value="{{it.hasNote}}" hint-placeholder-val="{{false}}">
+                          <div style="margin-top:7px;padding:7px 10px;background:oklch(0.96 0.01 90);border-radius:7px;">
+                            <div style="font-size:9.5px;font-weight:700;color:oklch(0.5 0.05 80);text-transform:uppercase;letter-spacing:.04em;">Rep Notes</div>
+                            <div style="margin-top:2px;font-size:11.5px;line-height:1.5;color:oklch(0.35 0.03 80);white-space:pre-wrap;">{{it.noteText}}</div>
+                          </div>
+                        </sc-if>
+                        <sc-if value="{{it.hasScopeLines}}" hint-placeholder-val="{{false}}">
+                          <div style="margin-top:8px;padding-top:8px;border-top:1px solid oklch(0.9 0.006 255);">
+                            <sc-for list="{{it.scopeLines}}" as="sl" hint-placeholder-count="2">
+                              <div style="margin-top:3px;">
+                                <div data-on-click="{{sl.onToggleInfo}}" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                                  <div style="font-size:11.5px;color:oklch(0.4 0.02 255);">{{sl.label}} — Qty {{sl.qtyText}}</div>
+                                  <div style="font-size:11.5px;font-weight:700;color:oklch(0.3 0.02 255);flex:0 0 auto;">{{sl.priceText}}</div>
+                                </div>
+                                <div data-on-click="{{sl.onToggleInfo}}" style="cursor:pointer;font-size:10px;font-weight:600;color:oklch(0.55 0.02 255);">{{sl.toggleHint}}</div>
+                                <div class="scope-detail-block" style="display:{{sl.detailDisplay}};margin-top:5px;background:oklch(0.98 0.006 255);border-radius:8px;padding:9px 11px;">
+                                  <div style="font-size:9px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Scope of Work</div>
+                                  <sc-for list="{{sl.scopeText}}" as="st" hint-placeholder-count="3">
+                                    <div style="margin-top:2px;font-size:10.5px;color:oklch(0.35 0.02 255);line-height:1.5;">• {{st.text}}</div>
+                                  </sc-for>
+                                  <div style="margin-top:6px;font-size:9px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Dependencies for Success</div>
+                                  <sc-for list="{{sl.depsText}}" as="dt" hint-placeholder-count="3">
+                                    <div style="margin-top:2px;font-size:10.5px;color:oklch(0.4 0.02 255);line-height:1.5;">• {{dt.text}}</div>
+                                  </sc-for>
+                                </div>
+                              </div>
+                            </sc-for>
+                            <div style="margin-top:4px;font-size:11px;font-weight:700;color:oklch(0.45 0.02 255);text-align:right;">Subtotal: {{it.scopeSubtotalText}}</div>
+                          </div>
+                        </sc-if>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+            <sc-if value="{{checkoutVM.noSolutionItems}}" hint-placeholder-val="{{false}}">
+              <div style="margin-top:10px;font-size:13px;color:oklch(0.5 0.02 255);">Nothing else added to the Solution yet — Managed Care is the only line so far.</div>
+            </sc-if>
+          </div>
+
+          <div style="margin-top:26px;padding-top:20px;border-top:1px solid oklch(0.9 0.006 255);">
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;">How to Engage</div>
+            <div style="margin-top:10px;font-size:13px;line-height:1.6;color:oklch(0.35 0.02 255);">Every member gets access to CodeBlue's live help desk and customer portal for tracking tickets, invoices, and agreements. <b>Phone:</b> (804) 521-7660 &nbsp;·&nbsp; <b>Email:</b> Service@codebluetechnology.com — both create a tracked case with status updates until resolution.</div>
+          </div>
+
+          <div style="margin-top:26px;padding-top:20px;border-top:1px solid oklch(0.9 0.006 255);">
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;">Investment Summary</div>
+            <div style="margin-top:6px;font-size:13px;color:oklch(0.5 0.02 255);">Everything above, priced.</div>
+            <div style="margin-top:14px;display:flex;gap:12px;flex-wrap:wrap;">
+              <div style="flex:1;min-width:150px;background:oklch(0.97 0.006 255);border-radius:12px;padding:14px 16px;">
+                <div style="font-size:10.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.05em;">PeopleFirst Membership</div>
+                <div style="margin-top:6px;font-size:16px;font-weight:700;color:oklch(0.2 0.03 255);">{{checkoutVM.perMemberPriceText}}</div>
+                <div style="margin-top:2px;font-size:11.5px;color:oklch(0.5 0.02 255);">{{checkoutVM.membersText}} members · {{checkoutVM.supportMonthlyText}} total</div>
+              </div>
+              <div style="flex:1;min-width:150px;background:oklch(0.97 0.006 255);border-radius:12px;padding:14px 16px;">
+                <div style="font-size:10.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.05em;">Required Software</div>
+                <div style="margin-top:6px;font-size:16px;font-weight:700;color:oklch(0.2 0.03 255);">{{checkoutVM.softwareMonthlyText}}</div>
+              </div>
+              <div style="flex:1;min-width:150px;background:oklch(0.97 0.006 255);border-radius:12px;padding:14px 16px;">
+                <div style="font-size:10.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.05em;">Required Hardware</div>
+                <div style="margin-top:6px;font-size:16px;font-weight:700;color:oklch(0.2 0.03 255);">{{checkoutVM.hardwareMonthlyText}}</div>
+                <sc-if value="{{checkoutVM.hasHardware}}" hint-placeholder-val="{{false}}">
+                  <div style="margin-top:2px;font-size:11.5px;color:oklch(0.5 0.02 255);">{{checkoutVM.firewallLabel}}</div>
+                </sc-if>
+              </div>
+              <div style="flex:1;min-width:150px;background:oklch(0.32 0.11 265);border-radius:12px;padding:14px 16px;">
+                <div style="font-size:10.5px;font-weight:700;color:oklch(0.75 0.06 265);text-transform:uppercase;letter-spacing:.05em;">Total Monthly Investment</div>
+                <div style="margin-top:6px;font-size:19px;font-weight:700;color:white;">{{checkoutVM.newMonthlyTotalText}}</div>
+                <div style="margin-top:2px;font-size:11.5px;color:oklch(0.8 0.04 265);">+ {{checkoutVM.onboardingTotalText}} onboarding</div>
+                <sc-if value="{{checkoutVM.hasOnboardingDiscount}}" hint-placeholder-val="{{false}}">
+                  <div style="margin-top:2px;font-size:11.5px;color:oklch(0.85 0.08 155);">{{checkoutVM.onboardingDiscountText}}</div>
+                </sc-if>
+              </div>
+              <sc-if value="{{checkoutVM.hasScopeGrandTotal}}" hint-placeholder-val="{{false}}">
+                <div style="flex:1;min-width:150px;background:oklch(0.97 0.006 255);border-radius:12px;padding:14px 16px;">
+                  <div style="font-size:10.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.05em;">Est. One-Time Scope of Work (Labor)</div>
+                  <div style="margin-top:6px;font-size:16px;font-weight:700;color:oklch(0.2 0.03 255);">{{checkoutVM.scopeGrandTotalText}}</div>
+                  <div style="margin-top:2px;font-size:11.5px;color:oklch(0.5 0.02 255);">Billed at {{checkoutVM.scopeRateText}} — see Solution Details below</div>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+
+          <sc-if value="{{checkoutVM.showOldVsNew}}" hint-placeholder-val="{{false}}">
+            <div style="margin-top:26px;padding-top:20px;border-top:1px solid oklch(0.9 0.006 255);">
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;">Old vs. New Monthly Investment</div>
+              <div style="margin-top:6px;font-size:13px;color:oklch(0.5 0.02 255);">What the customer reported spending on IT support today, compared to this proposal.</div>
+
+              <sc-if value="{{checkoutVM.hasInvoiceBreakdown}}" hint-placeholder-val="{{false}}">
+                <div style="margin-top:14px;display:flex;align-items:stretch;gap:16px;flex-wrap:wrap;">
+                  <div style="flex:1;min-width:230px;background:oklch(0.97 0.006 255);border-radius:12px;padding:16px 18px;">
+                    <div style="font-size:10.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.05em;">{{checkoutVM.invoiceVendorTitle}} — Current</div>
+                    <sc-if value="{{checkoutVM.hasInvoiceBillingPeriod}}" hint-placeholder-val="{{false}}">
+                      <div style="margin-top:2px;font-size:11px;color:oklch(0.55 0.02 255);">{{checkoutVM.invoiceBillingPeriodText}}</div>
+                    </sc-if>
+                    <div style="margin-top:10px;">
+                      <sc-for list="{{checkoutVM.invoiceLineItemsC}}" as="li" hint-placeholder-count="3">
+                        <div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px;color:oklch(0.4 0.02 255);padding:4px 0;border-bottom:1px solid oklch(0.92 0.006 255);">
+                          <span>{{li.labelText}}</span><span style="flex:0 0 auto;">{{li.amountText}}</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                    <div style="margin-top:8px;padding-top:8px;display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:oklch(0.3 0.02 255);">
+                      <span>Total</span><span>{{checkoutVM.invoiceTotalText}}</span>
+                    </div>
+                    <sc-if value="{{checkoutVM.invoiceHasNotesC}}" hint-placeholder-val="{{false}}">
+                      <div style="margin-top:8px;font-size:11px;color:oklch(0.55 0.02 255);font-style:italic;">{{checkoutVM.invoiceNotesTextC}}</div>
+                    </sc-if>
+                  </div>
+                  <div style="flex:1;min-width:230px;background:oklch(0.97 0.006 255);border-radius:12px;padding:16px 18px;">
+                    <div style="font-size:10.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.05em;">PeopleFirst Solution — New</div>
+                    <div style="margin-top:10px;">
+                      <sc-for list="{{checkoutVM.newSolutionLines}}" as="li" hint-placeholder-count="3">
+                        <div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px;color:oklch(0.4 0.02 255);padding:4px 0;border-bottom:1px solid oklch(0.92 0.006 255);">
+                          <span>{{li.labelText}}</span><span style="flex:0 0 auto;">{{li.amountText}}</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                    <div style="margin-top:8px;padding-top:8px;display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:oklch(0.2 0.03 255);">
+                      <span>Total</span><span>{{checkoutVM.newMonthlyTotalText}}</span>
+                    </div>
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{checkoutVM.noInvoiceBreakdown}}" hint-placeholder-val="{{false}}">
+                <div style="margin-top:14px;display:flex;align-items:stretch;gap:12px;flex-wrap:wrap;">
+                  <div style="flex:1;min-width:150px;background:oklch(0.97 0.006 255);border-radius:12px;padding:14px 16px;">
+                    <div style="font-size:10.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.05em;">Current Monthly Spend</div>
+                    <div style="margin-top:6px;font-size:19px;font-weight:700;color:oklch(0.4 0.02 255);">{{checkoutVM.currentSpendText}}</div>
+                  </div>
+                  <div style="flex:1;min-width:150px;background:oklch(0.97 0.006 255);border-radius:12px;padding:14px 16px;">
+                    <div style="font-size:10.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.05em;">New Monthly Investment</div>
+                    <div style="margin-top:6px;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">{{checkoutVM.newMonthlyTotalText}}</div>
+                  </div>
+                </div>
+              </sc-if>
+
+              <div style="margin-top:12px;display:flex;align-items:stretch;gap:12px;flex-wrap:wrap;">
+                <sc-if value="{{checkoutVM.isSavings}}" hint-placeholder-val="{{false}}">
+                  <div style="flex:1;min-width:150px;background:oklch(0.93 0.06 155);border-radius:12px;padding:14px 16px;">
+                    <div style="font-size:10.5px;font-weight:700;color:oklch(0.4 0.1 155);text-transform:uppercase;letter-spacing:.05em;">Monthly Savings</div>
+                    <div style="margin-top:6px;font-size:19px;font-weight:700;color:oklch(0.35 0.12 155);">{{checkoutVM.monthlyDeltaText}}</div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{checkoutVM.isIncrease}}" hint-placeholder-val="{{false}}">
+                  <div style="flex:1;min-width:150px;background:oklch(0.95 0.05 70);border-radius:12px;padding:14px 16px;">
+                    <div style="font-size:10.5px;font-weight:700;color:oklch(0.45 0.12 55);text-transform:uppercase;letter-spacing:.05em;">Monthly Increase</div>
+                    <div style="margin-top:6px;font-size:19px;font-weight:700;color:oklch(0.4 0.14 55);">{{checkoutVM.monthlyDeltaText}}</div>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+          </sc-if>
+
+          <div style="margin-top:26px;padding-top:20px;border-top:1px solid oklch(0.9 0.006 255);">
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:18px;font-weight:700;">Acceptance</div>
+            <div style="margin-top:8px;font-size:12px;line-height:1.6;color:oklch(0.45 0.02 255);">This proposal, together with CodeBlue's Master Services Agreement and applicable Service Attachments (available at codebluetechnology.com/legal), forms the full Agreement between CodeBlue Technology and the customer identified above once accepted.</div>
+            <div style="margin-top:30px;display:flex;gap:40px;">
+              <div style="flex:1;">
+                <div style="border-top:1px solid oklch(0.6 0.02 255);padding-top:6px;font-size:12px;color:oklch(0.5 0.02 255);">Authorized Contract Contact</div>
+              </div>
+              <div style="flex:1;">
+                <div style="border-top:1px solid oklch(0.6 0.02 255);padding-top:6px;font-size:12px;color:oklch(0.5 0.02 255);">Date</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </sc-if>
+
+  </div>
+</div>
+</script>
+
+<script src="app.js"></script>
+<script src="runtime.js"></script>
+<script>
+  (function () {
+    var templateHtml = document.getElementById('app-template').textContent;
+    var mountEl = document.getElementById('app-root');
+    var component = window.SolutionsHubApp.createComponent({ accentColor: '#2f8fef' });
+    SolutionsHubRuntime.mountApp(templateHtml, mountEl, component);
+  })();
+</script>
+</body>
+</html>

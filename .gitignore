@@ -1,0 +1,8 @@
+# Real SMTP credentials — never commit these. Copy mail/config.sample.php
+# to mail/config.php on the server and fill it in there.
+/mail/config.php
+
+# Common OS/editor cruft
+.DS_Store
+Thumbs.db
+*.swp

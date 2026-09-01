@@ -1,0 +1,102 @@
+/*
+ * SolutionsHub — styles.css
+ *
+ * Base rules below (through the "@media print" block) are ported verbatim
+ * from the original design-canvas artifact's <style> block. Everything
+ * after the "RESPONSIVE" divider is new: the source template was built as a
+ * single fixed 1180x820 canvas frame (a preview artboard), so the page itself
+ * had no responsive behavior at all. Almost all of its layout already uses
+ * flexbox with flex-wrap and percentage/flex-basis sizing (verified while
+ * porting the template), so it reflows reasonably well on its own — the
+ * additions here handle the few remaining fixed-canvas assumptions:
+ *   - the outer frame was a fixed 1180x820px box -> now fluid, fills the
+ *     viewport (see .app-shell in index.html)
+ *   - the six top-level view containers used a flat 56px left/right padding
+ *     that comfortably fits a desktop canvas but eats most of a 375px phone
+ *     screen -> reduced with !important overrides at narrower breakpoints
+ *     (only way to win over the ported inline styles, which is where nearly
+ *     all of this app's presentation intentionally still lives)
+ */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: oklch(0.15 0.028 255); }
+a { color: #2f8fef; }
+a:hover { color: #63aefc; }
+button { font-family: 'IBM Plex Sans', sans-serif; }
+::-webkit-scrollbar { width: 10px; }
+::-webkit-scrollbar-thumb { background: oklch(0.32 0.03 255); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes accessoryReminder {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.78 0.14 85 / 0), 0 0 0 0 oklch(0.78 0.14 85 / 0); }
+  50% { box-shadow: 0 0 0 3px oklch(0.78 0.14 85 / 0.55), 0 0 22px 4px oklch(0.78 0.14 85 / 0.35); }
+}
+
+@media print {
+  body * { visibility: hidden; }
+  .checkout-print-area, .checkout-print-area *,
+  .summary-print-area, .summary-print-area * { visibility: visible; }
+  .checkout-print-area, .summary-print-area { position: absolute; left: 0; top: 0; width: 100%; max-width: 100%; padding: 0 !important; }
+  .checkout-print-area button, .summary-print-area button { display: none; }
+  .summary-print-area { background: white !important; }
+  .summary-print-area * { color: black !important; background: transparent !important; box-shadow: none !important; }
+  .scope-detail-block { display: block !important; }
+}
+
+/* ============================= RESPONSIVE ============================= */
+
+#app-root { height: 100%; }
+
+.app-shell {
+  /* fluid replacement for the original fixed 1180x820 canvas frame */
+  max-width: 100%;
+}
+
+/* Never let the page itself scroll sideways, regardless of what a stray
+   fixed-width element inside a view does. */
+body { overflow-x: hidden; }
+
+/* Header: on very narrow phones let the logo/breadcrumb/solution-button
+   group wrap onto two lines instead of squeezing or overflowing. */
+@media (max-width: 480px) {
+  .app-header {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 64px;
+    padding: 10px 16px !important;
+    gap: 8px;
+    row-gap: 8px;
+  }
+}
+
+/* Tablet: bring the desktop 56px side padding down a bit. */
+@media (max-width: 900px) {
+  .view-pad {
+    padding-left: 32px !important;
+    padding-right: 32px !important;
+  }
+}
+
+/* Phone: bring it down further so a 322px overview card (the widest
+   fixed-width element in the app) always has room next to the padding. */
+@media (max-width: 480px) {
+  .view-pad {
+    padding-left: 18px !important;
+    padding-right: 18px !important;
+  }
+}
+
+/* The Managed IT device-count grid is a fixed 2-column grid; make it a
+   single column on phones so labels and steppers aren't cramped. */
+@media (max-width: 480px) {
+  .mi-devices-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Overview search results / dropdowns are positioned absolute at full
+   width of their (now-narrower) parent — nothing extra needed there, but
+   guard against any stray overflow while the viewport is very narrow. */
+@media (max-width: 375px) {
+  .app-shell, .app-body { overflow-x: hidden; }
+}
