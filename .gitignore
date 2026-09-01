@@ -1,6 +1,8 @@
-# Real SMTP credentials — never commit these. Copy mail/config.sample.php
-# to mail/config.php on the server and fill it in there.
-/mail/config.php
+# Real credentials — never commit these. Copy mail/mail-config.sample.php
+# to mail/mail-config.php on the server and fill it in there. (Named
+# "mail-config.php" rather than "config.php" because some hosts block/
+# reserve that filename.)
+/mail/mail-config.php
 
 # Common OS/editor cruft
 .DS_Store

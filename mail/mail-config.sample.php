@@ -1,10 +1,11 @@
 <?php
 /**
- * mail/config.sample.php
+ * mail/mail-config.sample.php
  *
- * Copy this file to mail/config.php on the SERVER (not in git — config.php
- * is listed in .gitignore) and fill in real values there. Never commit real
- * credentials to this repository.
+ * Copy this file to mail/mail-config.php on the SERVER (not in git —
+ * mail-config.php is listed in .gitignore) and fill in real values there.
+ * Never commit real credentials to this repository. (Named "mail-config.php"
+ * rather than "config.php" because some hosts block/reserve that filename.)
  *
  * Mail is sent via the Microsoft Graph API (app-only / client credentials
  * OAuth2), not SMTP -- no app password, no legacy basic auth. This requires

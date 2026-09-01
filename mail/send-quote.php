@@ -16,7 +16,7 @@
  *
  * Anti-abuse (intentionally lightweight, not bulletproof — see task notes):
  *   - only POST is accepted
- *   - Origin/Referer must match config.php's allowed_origins
+ *   - Origin/Referer must match mail-config.php's allowed_origins
  *   - honeypot field must be empty
  *   - "to" must look like an email address
  *   - body size is capped
@@ -40,12 +40,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
 }
 
-$configPath = __DIR__ . '/config.php';
+$configPath = __DIR__ . '/mail-config.php';
 if (!is_file($configPath)) {
     // Fails soft with a clear message rather than a raw PHP warning/500 —
     // this is the expected state until the site owner copies
-    // config.sample.php to config.php and fills it in.
-    respond(500, ['ok' => false, 'error' => 'Mail is not configured on this server yet (mail/config.php is missing).']);
+    // mail-config.sample.php to mail-config.php and fills it in.
+    respond(500, ['ok' => false, 'error' => 'Mail is not configured on this server yet (mail/mail-config.php is missing).']);
 }
 /** @var array $config */
 $config = require $configPath;
