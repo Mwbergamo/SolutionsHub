@@ -799,7 +799,7 @@
                     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;">
                       <div style="display:flex;align-items:flex-start;gap:14px;flex:1;min-width:0;">
                         <sc-if value="{{prod.hasImage}}" hint-placeholder-val="{{false}}">
-                          <img src="{{prod.image}}" alt="{{prod.label}}" style="width:56px;height:56px;object-fit:contain;border-radius:8px;background:white;border:1px solid oklch(0.9 0.006 255);flex:0 0 auto;" />
+                          <img data-on-click="{{prod.onImageClick}}" src="{{prod.image}}" alt="{{prod.label}}" style="width:56px;height:56px;object-fit:contain;border-radius:8px;background:white;border:1px solid oklch(0.9 0.006 255);flex:0 0 auto;cursor:pointer;" />
                         </sc-if>
                         <div style="flex:1;min-width:0;">
                           <div style="font-weight:700;font-size:15px;color:oklch(0.2 0.03 255);">{{prod.label}}</div>

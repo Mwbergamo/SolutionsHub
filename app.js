@@ -1245,12 +1245,12 @@ var PILLARS = [
             ] },
           { id: 'cam-cameras', name: 'Cameras', blurb: "Dome, turret, and bullet cameras, each in white or black.", solutionHeading: 'Cameras', pricingMode: 'parts',
             products: [
-              { id: 'dome-white', label: '8MP White Dome Camera', options: [] },
-              { id: 'dome-black', label: '8MP Black Dome Camera', options: [] },
-              { id: 'turret-white', label: '8MP White Turret Camera', options: [] },
-              { id: 'turret-black', label: '8MP Black Turret Camera', options: [] },
-              { id: 'bullet-white', label: '8MP White Bullet Camera', options: [] },
-              { id: 'bullet-black', label: '8MP Black Bullet Camera', options: [] }
+              { id: 'dome-white', label: '8MP White Dome Camera', image: 'assets/products/camera-dome-white.jpg', options: [] },
+              { id: 'dome-black', label: '8MP Black Dome Camera', image: 'assets/products/camera-dome-black.png', options: [] },
+              { id: 'turret-white', label: '8MP White Turret Camera', image: 'assets/products/camera-turret-white.jpg', options: [] },
+              { id: 'turret-black', label: '8MP Black Turret Camera', image: 'assets/products/camera-turret-black.jpg', options: [] },
+              { id: 'bullet-white', label: '8MP White Bullet Camera', image: 'assets/products/camera-bullet-white.jpg', options: [] },
+              { id: 'bullet-black', label: '8MP Black Bullet Camera', image: 'assets/products/camera-bullet-black.jpg', options: [] }
             ] },
           { id: 'cam-mounting', name: 'Mounting', blurb: "Mounting hardware by camera type and surface.", solutionHeading: 'Mounting', pricingMode: 'parts',
             products: [
@@ -2909,6 +2909,7 @@ class Component extends DCLogic {
           return {
             id: p.id, label: p.label, hasSku: !!p.sku, sku: p.sku || '',
             hasImage: !!p.image, image: p.image || '',
+            onImageClick: p.image ? function () { self.openImagePreview(p.image, p.label); } : null,
             hasRecommendNote: !!recommendNote, recommendNote: recommendNote || '',
             hasHints: hints.length > 0, hints: hints,
             hasSectionBreak: !!p.sectionBreak, sectionBreak: p.sectionBreak || '',
