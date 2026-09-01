@@ -7,7 +7,7 @@
  *
  * Expects a JSON body:
  *   { "to": "customer@example.com", "companyName": "...", "subject": "...",
- *     "body": "...", "website": "" }
+ *     "html": "...", "website": "" }
  * ("website" is a honeypot field — real browsers never fill it in because
  * app.js always sends it empty and no visible form field maps to it; a
  * populated value means a bot filled in every field it could find.)
@@ -69,7 +69,7 @@ if (!empty($allowedOrigins)) {
 }
 
 // ---- parse + validate body --------------------------------------------------
-$raw = file_get_contents('php://input', false, null, 0, 262144); // 256 KB cap
+$raw = file_get_contents('php://input', false, null, 0, 786432); // 768 KB cap (HTML body runs larger than the old plain-text one)
 $data = json_decode((string) $raw, true);
 if (!is_array($data)) {
     respond(400, ['ok' => false, 'error' => 'Invalid request body.']);
@@ -85,15 +85,15 @@ if (!empty($data['website'] ?? '')) {
 $to = trim((string) ($data['to'] ?? ''));
 $companyName = trim((string) ($data['companyName'] ?? ''));
 $subject = trim((string) ($data['subject'] ?? 'Your CodeBlue Technology Quote'));
-$body = (string) ($data['body'] ?? '');
+$html = (string) ($data['html'] ?? '');
 
 if ($to === '' || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
     respond(400, ['ok' => false, 'error' => 'A valid customer email address is required.']);
 }
-if ($body === '') {
+if ($html === '') {
     respond(400, ['ok' => false, 'error' => 'Quote body is empty.']);
 }
-if (strlen($body) > 100000) {
+if (strlen($html) > 600000) {
     respond(400, ['ok' => false, 'error' => 'Quote body is too large.']);
 }
 if ($subject === '') {
@@ -114,8 +114,7 @@ try {
     $fromName = (string) ($config['from_name'] ?? 'CodeBlue Technology');
     $bcc = trim((string) ($config['bcc'] ?? ''));
 
-    $footer = $companyName !== '' ? "\n\n(Sent from the SolutionsHub quoting tool for {$companyName}.)" : '';
-    $mailer->send($to, $subject, $body . $footer, $bcc !== '' ? $bcc : null, $fromName);
+    $mailer->send($to, $subject, $html, $bcc !== '' ? $bcc : null, $fromName, 'HTML');
 
     respond(200, ['ok' => true]);
 } catch (Throwable $e) {

@@ -40,15 +40,16 @@ class GraphMailer
      *        may override this with the mailbox's actual configured display
      *        name. For a guaranteed result, set the display name on the
      *        mailbox itself in Exchange/Entra instead.
+     * @param string $contentType 'Text' (default) or 'HTML'.
      * @throws GraphMailerException
      */
-    public function send(string $toEmail, string $subject, string $textBody, ?string $bccEmail = null, ?string $fromDisplayName = null): void
+    public function send(string $toEmail, string $subject, string $textBody, ?string $bccEmail = null, ?string $fromDisplayName = null, string $contentType = 'Text'): void
     {
         $token = $this->getAccessToken();
 
         $message = [
             'subject' => $subject,
-            'body' => ['contentType' => 'Text', 'content' => $textBody],
+            'body' => ['contentType' => $contentType, 'content' => $textBody],
             'toRecipients' => [
                 ['emailAddress' => ['address' => $toEmail]],
             ],
