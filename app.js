@@ -1629,11 +1629,16 @@ class Component extends DCLogic {
     if (!chosen.length) return;
     var monthly = 0;
     var onboarding = 0;
+    var partsLines = [];
     var parts = chosen.map(function (p) {
       var qty = byCategory[p.id] || 0;
-      monthly += qty * p.rate;
-      onboarding += qty * (p.onboardFee || 0);
-      if ((p.flatOnboardFee || 0) > 0) onboarding += p.flatOnboardFee;
+      var lineMonthly = qty * p.rate;
+      var lineOnboarding = qty * (p.onboardFee || 0) + ((p.flatOnboardFee || 0) > 0 ? p.flatOnboardFee : 0);
+      monthly += lineMonthly;
+      onboarding += lineOnboarding;
+      var priceText = '$' + lineMonthly.toFixed(2) + '/mo';
+      if (lineOnboarding > 0) priceText += ' + $' + lineOnboarding.toFixed(2) + ' onboarding';
+      partsLines.push({ label: p.label, sku: p.sku || '', qty: qty.toFixed(p.decimals || 0), brand: null, specs: [], priceText: priceText });
       return p.label + ' ×' + qty.toFixed(p.decimals || 0);
     });
     var totalsText = '$' + monthly.toFixed(2) + '/mo';
@@ -1644,7 +1649,7 @@ class Component extends DCLogic {
     sel[key] = {
       pillarId: pillarObj.id, pillarName: pillarObj.name, serviceName: cat.solutionHeading || cat.name,
       optionId: 'category', optionLabel: optionLabel, optionDetail: optionLabel,
-      outcomeTags: svc.outcome,
+      outcomeTags: svc.outcome, partsLines: partsLines,
       note: this.state.categoryNotes[key] || ''
     };
     this.setState({ selections: sel });
@@ -1778,6 +1783,7 @@ class Component extends DCLogic {
           serviceName: s.serviceName,
           optionLabel: s.optionLabel === 'Included in solution' ? '' : s.optionLabel,
           note: (s.note && s.note.trim()) ? s.note.trim() : '',
+          partsLines: s.partsLines || [],
           scopeLines: scopeComputed.lines,
           scopeSubtotal: scopeComputed.subtotal
         };
@@ -1807,9 +1813,33 @@ class Component extends DCLogic {
 
     var sectionsHtml = data.sections.map(function (sec) {
       var itemsHtml = sec.items.map(function (it) {
-        var head = '<div style="font-size:14px;font-family:Arial,Helvetica,sans-serif;color:#1B2030;font-weight:700;">' + esc(it.serviceName) +
-          (it.optionLabel ? ' <span style="font-weight:400;color:#4B5468;">— ' + esc(it.optionLabel) + '</span>' : '') + '</div>';
+        var head = '<div style="font-size:14px;font-family:Arial,Helvetica,sans-serif;color:#1B2030;font-weight:700;">' + esc(it.serviceName) + '</div>';
         var note = it.note ? '<div style="font-size:12px;font-family:Arial,Helvetica,sans-serif;color:#6B7280;font-style:italic;margin-top:2px;">Rep Notes: ' + esc(it.note) + '</div>' : '';
+
+        // Bill-of-materials list: one bullet per physical line item, Brand
+        // (when the product has one) called out first as a small badge so an
+        // inside rep can scan straight to it -- that's the whole point of
+        // this list, since hardware isn't priced yet and someone has to shop
+        // it against vendors by brand/model. Falls back to the old flattened
+        // optionLabel line for selections with no structured partsLines
+        // (pure scope-of-work picks that never went through a parts flow).
+        var bom = '';
+        if (it.partsLines && it.partsLines.length) {
+          var bomItems = it.partsLines.map(function (pl) {
+            var brandBadge = pl.brand ? ('<span style="display:inline-block;background:' + NAVY + ';color:#FFFFFF;font-size:10px;font-family:Arial,Helvetica,sans-serif;font-weight:700;letter-spacing:.03em;text-transform:uppercase;padding:2px 7px;border-radius:3px;margin-right:7px;white-space:nowrap;">' + esc(pl.brand) + '</span>') : '';
+            var skuText = pl.sku ? (' <span style="color:#8A93A3;font-size:11px;font-family:Arial,Helvetica,sans-serif;">(SKU: ' + esc(pl.sku) + ')</span>') : '';
+            var priceText = pl.priceText ? (' <span style="color:' + NAVY + ';font-weight:700;font-size:12px;font-family:Arial,Helvetica,sans-serif;">' + esc(pl.priceText) + '</span>') : '';
+            var specsLine = (pl.specs && pl.specs.length) ? ('<div style="margin-top:2px;font-size:12px;font-family:Arial,Helvetica,sans-serif;color:#6B7280;">' + pl.specs.map(esc).join(' &middot; ') + '</div>') : '';
+            return '<li style="margin-bottom:9px;">' +
+              '<div>' + brandBadge + '<strong style="font-size:13.5px;font-family:Arial,Helvetica,sans-serif;color:#1B2030;">' + esc(pl.label) + '</strong>' + skuText +
+                ' <span style="color:#33394A;font-size:12.5px;font-family:Arial,Helvetica,sans-serif;">&times;' + esc(String(pl.qty)) + '</span>' + priceText +
+              '</div>' + specsLine +
+            '</li>';
+          }).join('');
+          bom = '<ul style="margin:6px 0 0 0;padding-left:18px;">' + bomItems + '</ul>';
+        } else if (it.optionLabel) {
+          bom = '<div style="font-size:13px;font-family:Arial,Helvetica,sans-serif;color:#4B5468;margin-top:2px;">' + esc(it.optionLabel) + '</div>';
+        }
 
         // Boilerplate deps (site access, point-of-contact, "changes may affect
         // price", etc.) repeat verbatim across most scope-of-work actions. When
@@ -1853,7 +1883,7 @@ class Component extends DCLogic {
             '<tr><td colspan="4" style="padding:8px 12px;font-size:12.5px;font-family:Arial,Helvetica,sans-serif;color:#33394A;text-align:right;font-weight:600;background:' + LIGHT + ';">Scope of Work Subtotal&nbsp;&nbsp;<span style="font-size:13px;color:' + NAVY + ';font-weight:700;">$' + it.scopeSubtotal.toFixed(2) + '</span></td></tr>' +
           '</table>';
         }
-        return '<div style="padding:12px 0;border-bottom:1px solid ' + BORDER + ';">' + head + note + table + '</div>';
+        return '<div style="padding:12px 0;border-bottom:1px solid ' + BORDER + ';">' + head + bom + note + table + '</div>';
       }).join('');
       return '<tr><td style="padding:0;">' +
         '<div style="background:' + NAVY + ';padding:8px 16px;">' +
@@ -2427,11 +2457,19 @@ class Component extends DCLogic {
     var allParts = this.state.partsSelections;
     var byCategory = allParts[categoryId] || {};
     var lines = [];
+    // Structured twin of `lines` above (same products, same order) -- kept
+    // alongside the flattened text so the emailed quote can render a real
+    // bill-of-materials list with Brand called out first, instead of having
+    // to regex the joined string back apart. `lines`/optionLabel stay
+    // exactly as before for the rest of the app (Solution Summary, etc.).
+    var partsLines = [];
     cat.products.forEach(function (p) {
       var entry = byCategory[p.id];
       var qty = entry ? (entry.qty || 0) : 0;
       if (qty <= 0) return;
       var detailParts = [];
+      var brand = null;
+      var specs = [];
       (p.options || []).forEach(function (opt) {
         if (opt.type === 'range') {
           var storedRangeVal = (entry.ranges || {})[opt.id] || 0;
@@ -2441,13 +2479,25 @@ class Component extends DCLogic {
             var srcEntry2 = srcCatEntries2[opt.autoDefaultFrom.productId];
             val = srcEntry2 ? (srcEntry2.qty || 0) : 0;
           }
-          if (val > 0) detailParts.push(opt.label + ': ' + val + (opt.unit ? (' ' + opt.unit) : ''));
-          if (val > 0 && opt.wattsPerUnit) detailParts.push('Suggested amplifier output: ' + (val * opt.wattsPerUnit) + 'W');
+          if (val > 0) {
+            var rangeText = opt.label + ': ' + val + (opt.unit ? (' ' + opt.unit) : '');
+            detailParts.push(rangeText);
+            specs.push(rangeText);
+          }
+          if (val > 0 && opt.wattsPerUnit) {
+            var wattsText = 'Suggested amplifier output: ' + (val * opt.wattsPerUnit) + 'W';
+            detailParts.push(wattsText);
+            specs.push(wattsText);
+          }
         } else {
           var chosenId = (entry.chips || {})[opt.id];
           if (chosenId) {
             var matches = (opt.choices || []).filter(function (c) { return c.id === chosenId; });
-            if (matches.length) detailParts.push(matches[0].label);
+            if (matches.length) {
+              detailParts.push(matches[0].label);
+              if (opt.id === 'brand') brand = matches[0].label;
+              else specs.push(matches[0].label);
+            }
           }
         }
       });
@@ -2455,6 +2505,7 @@ class Component extends DCLogic {
       if (p.sku) line = p.sku + ' — ' + line;
       if (detailParts.length) line += ' (' + detailParts.join(', ') + ')';
       lines.push(line);
+      partsLines.push({ label: p.label, sku: p.sku || '', qty: qty, brand: brand, specs: specs });
     });
     if (cat.phonePicker) {
       var triggerEntryBOM = byCategory[cat.phonePicker.productId] || { ranges: {} };
@@ -2465,6 +2516,7 @@ class Component extends DCLogic {
           var qty = phoneByCategory[m.id] || 0;
           if (qty <= 0) return;
           lines.push(m.label + ' Physical Phone — ' + m.tagline + ' ×' + qty);
+          partsLines.push({ label: m.label + ' Physical Phone', sku: '', qty: qty, brand: null, specs: [m.tagline] });
         });
       }
     }
@@ -2484,7 +2536,7 @@ class Component extends DCLogic {
       pillarId: pillarObj.id, pillarName: pillarObj.name, serviceName: cat.solutionHeading || cat.name,
       optionId: 'category', optionLabel: optionLabel, optionDetail: optionLabel,
       outcomeTags: svc.outcome,
-      categoryId: categoryId, scopeQtyMap: scopeQtyMap,
+      categoryId: categoryId, scopeQtyMap: scopeQtyMap, partsLines: partsLines,
       note: this.state.categoryNotes[key] || ''
     };
     var patch = { selections: sel };
@@ -2532,6 +2584,8 @@ class Component extends DCLogic {
     var qty = entry ? (entry.qty || 0) : 0;
     if (qty <= 0) return;
     var detailParts = [];
+    var brand = null;
+    var specs = [];
     (srcProduct.options || []).forEach(function (opt) {
       if (opt.type === 'range') {
         var storedRangeVal = (entry.ranges || {})[opt.id] || 0;
@@ -2541,13 +2595,25 @@ class Component extends DCLogic {
           var srcEntry2 = srcCatEntries2[opt.autoDefaultFrom.productId];
           val = srcEntry2 ? (srcEntry2.qty || 0) : 0;
         }
-        if (val > 0) detailParts.push(opt.label + ': ' + val + (opt.unit ? (' ' + opt.unit) : ''));
-        if (val > 0 && opt.wattsPerUnit) detailParts.push('Suggested amplifier output: ' + (val * opt.wattsPerUnit) + 'W');
+        if (val > 0) {
+          var rangeText = opt.label + ': ' + val + (opt.unit ? (' ' + opt.unit) : '');
+          detailParts.push(rangeText);
+          specs.push(rangeText);
+        }
+        if (val > 0 && opt.wattsPerUnit) {
+          var wattsText = 'Suggested amplifier output: ' + (val * opt.wattsPerUnit) + 'W';
+          detailParts.push(wattsText);
+          specs.push(wattsText);
+        }
       } else {
         var chosenId = (entry.chips || {})[opt.id];
         if (chosenId) {
           var matches = (opt.choices || []).filter(function (c) { return c.id === chosenId; });
-          if (matches.length) detailParts.push(matches[0].label);
+          if (matches.length) {
+            detailParts.push(matches[0].label);
+            if (opt.id === 'brand') brand = matches[0].label;
+            else specs.push(matches[0].label);
+          }
         }
       }
     });
@@ -2555,12 +2621,13 @@ class Component extends DCLogic {
     if (srcProduct.sku) line = srcProduct.sku + ' — ' + line;
     if (detailParts.length) line += ' (' + detailParts.join(', ') + ')';
     var optionLabel = line;
+    var partsLines = [{ label: srcProduct.label, sku: srcProduct.sku || '', qty: qty, brand: brand, specs: specs }];
     var sel2 = Object.assign({}, this.state.selections);
     var key2 = serviceId + '::' + categoryId;
     sel2[key2] = {
       pillarId: pillarObj.id, pillarName: pillarObj.name, serviceName: cat.solutionHeading || cat.name,
       optionId: 'category', optionLabel: optionLabel, optionDetail: optionLabel,
-      outcomeTags: svc.outcome,
+      outcomeTags: svc.outcome, partsLines: partsLines,
       note: this.state.categoryNotes[key2] || ''
     };
     this.setState({ selections: sel2 });
