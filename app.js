@@ -1799,7 +1799,7 @@ class Component extends DCLogic {
     var dateText = (today.getMonth() + 1) + '/' + today.getDate() + '/' + today.getFullYear();
     var esc = escapeHtml;
     var LOGO_URL = 'https://portal.codebluetechnology.com/assets/email/codeblue-logo.png';
-    var NAVY = '#182857', LIGHT = '#F4F5F7', BORDER = '#E2E5EA', MAROON = '#8B2233';
+    var NAVY = '#182857', LIGHT = '#F4F5F7', BORDER = '#E2E5EA';
 
     var metaRows = '';
     if (co.companyName) metaRows += '<tr><td style="padding:2px 0;color:#5A6472;font-size:13px;font-family:Arial,Helvetica,sans-serif;"><strong style="color:#33394A;">Prepared for:</strong> ' + esc(co.companyName) + '</td></tr>';
@@ -1808,28 +1808,49 @@ class Component extends DCLogic {
     var sectionsHtml = data.sections.map(function (sec) {
       var itemsHtml = sec.items.map(function (it) {
         var head = '<div style="font-size:14px;font-family:Arial,Helvetica,sans-serif;color:#1B2030;font-weight:700;">' + esc(it.serviceName) +
-          (it.optionLabel ? ' <span style="font-weight:400;color:#4B5468;">\u2014 ' + esc(it.optionLabel) + '</span>' : '') + '</div>';
+          (it.optionLabel ? ' <span style="font-weight:400;color:#4B5468;">— ' + esc(it.optionLabel) + '</span>' : '') + '</div>';
         var note = it.note ? '<div style="font-size:12px;font-family:Arial,Helvetica,sans-serif;color:#6B7280;font-style:italic;margin-top:2px;">Rep Notes: ' + esc(it.note) + '</div>' : '';
+
+        // Boilerplate deps (site access, point-of-contact, "changes may affect
+        // price", etc.) repeat verbatim across most scope-of-work actions. When
+        // an item has multiple scope lines selected, only show a given
+        // requirement the first time it appears so the email stays scannable.
+        var seenDeps = {};
         var table = '';
         if (it.scopeLines.length) {
-          var rows = it.scopeLines.map(function (sl, idx) {
-            var bg = idx % 2 === 0 ? '#FFFFFF' : '#FAFBFC';
-            return '<tr style="background:' + bg + ';">' +
-              '<td style="padding:6px 10px;font-size:12.5px;font-family:Arial,Helvetica,sans-serif;color:#33394A;border-bottom:1px solid ' + BORDER + ';">' + esc(sl.label) + '</td>' +
-              '<td style="padding:6px 10px;font-size:12.5px;font-family:Arial,Helvetica,sans-serif;color:#33394A;border-bottom:1px solid ' + BORDER + ';text-align:center;">' + esc(sl.qtyText) + '</td>' +
-              '<td style="padding:6px 10px;font-size:12.5px;font-family:Arial,Helvetica,sans-serif;color:#33394A;border-bottom:1px solid ' + BORDER + ';text-align:center;">' + esc(sl.hoursText) + '</td>' +
-              '<td style="padding:6px 10px;font-size:12.5px;font-family:Arial,Helvetica,sans-serif;color:#1B2030;font-weight:600;border-bottom:1px solid ' + BORDER + ';text-align:right;">' + esc(sl.priceText) + '</td>' +
+          var rows = it.scopeLines.map(function (sl) {
+            var includesHtml = (sl.scopeText || []).map(function (t) {
+              return '<li style="margin:0 0 3px 0;">' + esc(t.text) + '</li>';
+            }).join('');
+            var newDeps = (sl.depsText || []).filter(function (t) {
+              if (seenDeps[t.text]) return false;
+              seenDeps[t.text] = true;
+              return true;
+            });
+            var requiresHtml = newDeps.map(function (t) {
+              return '<li style="margin:0 0 3px 0;">' + esc(t.text) + '</li>';
+            }).join('');
+            var requiresBlock = requiresHtml ? (
+              '<div style="margin-top:8px;font-size:10.5px;font-family:Arial,Helvetica,sans-serif;color:#6B7280;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">Requires</div>' +
+              '<ul style="margin:4px 0 0 16px;padding:0;font-size:12px;font-family:Arial,Helvetica,sans-serif;color:#6B7280;">' + requiresHtml + '</ul>'
+            ) : '';
+            return '<tr style="background:#FFFFFF;">' +
+              '<td colspan="4" style="padding:10px 12px;border-bottom:1px solid ' + BORDER + ';">' +
+                '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">' +
+                  '<tr>' +
+                    '<td style="font-size:13px;font-family:Arial,Helvetica,sans-serif;color:#1B2030;font-weight:700;">' + esc(sl.label) + '</td>' +
+                    '<td style="font-size:12px;font-family:Arial,Helvetica,sans-serif;color:#5A6472;text-align:right;white-space:nowrap;padding-left:12px;">Qty ' + esc(sl.qtyText) + ' &middot; ' + esc(sl.hoursText) + ' &middot; <strong style="color:' + NAVY + ';">' + esc(sl.priceText) + '</strong></td>' +
+                  '</tr>' +
+                '</table>' +
+                '<div style="margin-top:8px;font-size:10.5px;font-family:Arial,Helvetica,sans-serif;color:#6B7280;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">Includes</div>' +
+                '<ul style="margin:4px 0 0 16px;padding:0;font-size:12px;font-family:Arial,Helvetica,sans-serif;color:#33394A;">' + includesHtml + '</ul>' +
+                requiresBlock +
+              '</td>' +
             '</tr>';
           }).join('');
           table = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;border:1px solid ' + BORDER + ';border-radius:4px;border-collapse:collapse;">' +
-            '<tr style="background:' + LIGHT + ';">' +
-              '<td style="padding:6px 10px;font-size:11px;font-family:Arial,Helvetica,sans-serif;color:' + NAVY + ';font-weight:700;text-transform:uppercase;letter-spacing:.03em;">Scope Item</td>' +
-              '<td style="padding:6px 10px;font-size:11px;font-family:Arial,Helvetica,sans-serif;color:' + NAVY + ';font-weight:700;text-transform:uppercase;letter-spacing:.03em;text-align:center;">Qty</td>' +
-              '<td style="padding:6px 10px;font-size:11px;font-family:Arial,Helvetica,sans-serif;color:' + NAVY + ';font-weight:700;text-transform:uppercase;letter-spacing:.03em;text-align:center;">Hours</td>' +
-              '<td style="padding:6px 10px;font-size:11px;font-family:Arial,Helvetica,sans-serif;color:' + NAVY + ';font-weight:700;text-transform:uppercase;letter-spacing:.03em;text-align:right;">Price</td>' +
-            '</tr>' + rows +
-            '<tr><td colspan="3" style="padding:8px 10px;font-size:12.5px;font-family:Arial,Helvetica,sans-serif;color:#33394A;text-align:right;font-weight:600;">Scope of Work Subtotal</td>' +
-            '<td style="padding:8px 10px;font-size:13px;font-family:Arial,Helvetica,sans-serif;color:' + NAVY + ';font-weight:700;text-align:right;">$' + it.scopeSubtotal.toFixed(2) + '</td></tr>' +
+            rows +
+            '<tr><td colspan="4" style="padding:8px 12px;font-size:12.5px;font-family:Arial,Helvetica,sans-serif;color:#33394A;text-align:right;font-weight:600;background:' + LIGHT + ';">Scope of Work Subtotal&nbsp;&nbsp;<span style="font-size:13px;color:' + NAVY + ';font-weight:700;">$' + it.scopeSubtotal.toFixed(2) + '</span></td></tr>' +
           '</table>';
         }
         return '<div style="padding:12px 0;border-bottom:1px solid ' + BORDER + ';">' + head + note + table + '</div>';
@@ -1855,7 +1876,7 @@ class Component extends DCLogic {
       '</td></tr>';
     }
 
-    return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Your CodeBlue Technology Quote</title></head>' +
+    return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Solution Request — CodeBlue Technology</title></head>' +
     '<body style="margin:0;padding:0;background:' + LIGHT + ';">' +
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:' + LIGHT + ';padding:24px 0;">' +
       '<tr><td align="center">' +
@@ -1864,22 +1885,17 @@ class Component extends DCLogic {
             '<img src="' + LOGO_URL + '" width="200" alt="CodeBlue Technology" style="display:block;height:auto;width:200px;border:0;" />' +
           '</td></tr>' +
           '<tr><td style="padding:20px 24px 8px 24px;">' +
-            '<div style="font-size:20px;font-family:Arial,Helvetica,sans-serif;font-weight:800;color:' + NAVY + ';">Your CodeBlue Technology Quote</div>' +
+            '<div style="font-size:20px;font-family:Arial,Helvetica,sans-serif;font-weight:800;color:' + NAVY + ';">Solution Request</div>' +
             '<table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:8px;">' +
               '<tr><td style="padding:2px 0;color:#5A6472;font-size:13px;font-family:Arial,Helvetica,sans-serif;"><strong style="color:#33394A;">Date:</strong> ' + dateText + '</td></tr>' +
               metaRows +
             '</table>' +
+            '<div style="margin-top:12px;padding:8px 12px;background:#EEF2F7;border-left:3px solid ' + NAVY + ';border-radius:3px;">' +
+              '<span style="font-size:11.5px;font-family:Arial,Helvetica,sans-serif;color:#33394A;"><strong>For Inside Sales:</strong> pair each item and quantity below with vendor pricing &amp; availability before sending a customer-facing quote.</span>' +
+            '</div>' +
           '</td></tr>' +
           sectionsHtml +
           totalBlock +
-          '<tr><td style="padding:0 16px 20px 16px;">' +
-            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FBF2F0;border:1px solid #E9C7C4;border-radius:6px;">' +
-              '<tr><td style="padding:14px 18px;">' +
-                '<div style="color:' + MAROON + ';font-size:13px;font-family:Arial,Helvetica,sans-serif;font-weight:700;">Questions about this quote?</div>' +
-                '<div style="color:#4B5468;font-size:12.5px;font-family:Arial,Helvetica,sans-serif;margin-top:3px;">Just reply to this email, or call us at <a href="tel:+18045217660" style="color:' + MAROON + ';font-weight:600;text-decoration:none;">(804) 521-7660</a>.</div>' +
-              '</td></tr>' +
-            '</table>' +
-          '</td></tr>' +
           '<tr><td style="padding:0 24px 20px 24px;">' +
             '<div style="font-size:11px;font-family:Arial,Helvetica,sans-serif;color:#8A93A3;font-style:italic;">This is a working estimate prepared on-site and is subject to final review by CodeBlue Technology.</div>' +
           '</td></tr>' +
