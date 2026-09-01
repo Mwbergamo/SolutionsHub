@@ -405,7 +405,7 @@ var PILLARS = [
                 benefit: "Protects backups from a site-level disaster — fire, theft, or ransomware that reaches on-site storage too." }
             ]
           },
-          { id: 'servers', name: 'Servers', blurb: "Server-grade threat protection and hardening.", solutionHeading: 'Server Management',
+          { id: 'cyber-servers', name: 'Servers', blurb: "Server-grade threat protection and hardening.", solutionHeading: 'Server Management',
             products: [
               { id: 'remote-agent', label: 'Remote Access Agent', rate: 2.63, unit: 'per server',
                 description: "A lightweight agent installed on each server that lets CodeBlue's team securely connect in for remote troubleshooting and support.",
@@ -520,7 +520,7 @@ var PILLARS = [
                   { id: 'wireless', label: 'Wireless', type: 'chip', choices: [ { id: 'wireless', label: 'Wireless' } ] },
                   { id: 'security-level', label: 'Security Level', type: 'chip', choices: [ { id: 'premium', label: 'Premium Security' }, { id: 'basic', label: 'Basic Security' } ] } ] }
             ] },
-          { id: 'servers', name: 'Servers', blurb: "Rack and tower servers — configure processor, RAM, storage, and OS.", solutionHeading: 'Servers', pricingMode: 'parts',
+          { id: 'pe-servers', name: 'Servers', blurb: "Rack and tower servers — configure processor, RAM, storage, and OS.", solutionHeading: 'Servers', pricingMode: 'parts',
             products: [
               { id: 'pe-rackserver', label: 'Rack Mounted Server', sku: 'PE-RACKSERVER', options: [
                   { id: 'processor', label: 'Processor Cores', type: 'range', min: 8, max: 24, step: 2, unit: 'cores' },
