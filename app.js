@@ -1226,15 +1226,15 @@ var PILLARS = [
             products: [
               { id: 'nvr', label: 'NVR', options: [
                   { id: 'channels', label: 'NVR Channels', type: 'chip', choices: [
-                      { id: '4ch', label: '4 Channels' }, { id: '8ch', label: '8 Channels' }, { id: '16ch', label: '16 Channels' }, { id: '24ch', label: '24 Channels' }, { id: '32ch', label: '32 Channels' }, { id: '64ch', label: '64 Channels' } ] },
+                      { id: '4ch', label: '4 Channels', image: 'assets/products/nvr-4ch.png' }, { id: '8ch', label: '8 Channels', image: 'assets/products/nvr-8ch.png' }, { id: '16ch', label: '16 Channels', image: 'assets/products/nvr-16ch.png' }, { id: '24ch', label: '24 Channels', image: 'assets/products/nvr-24ch.png' }, { id: '32ch', label: '32 Channels', image: 'assets/products/nvr-32ch.png' }, { id: '64ch', label: '64 Channels', image: 'assets/products/nvr-64ch.png' } ] },
                   { id: 'storage', label: 'Storage', type: 'chip', choices: [
-                      { id: '2tb', label: '2TB' }, { id: '4tb', label: '4TB' }, { id: '8tb', label: '8TB' }, { id: '12tb', label: '12TB' } ] }
+                      { id: '2tb', label: '2TB', image: 'assets/products/hdd-2tb-wd-purple.jpg' }, { id: '4tb', label: '4TB', image: 'assets/products/hdd-4tb-wd-red-plus.jpg' }, { id: '8tb', label: '8TB', image: 'assets/products/hdd-8tb-wd-purple.jpg' }, { id: '12tb', label: '12TB', image: 'assets/products/hdd-12tb-seagate-ironwolf-pro.jpg' } ] }
                 ] },
               { id: 'cellular-service', label: 'Cellular Service', sku: 'For remote or hard-to-reach camera locations with no wired network available', options: [
                   { id: 'network', label: 'Network', type: 'chip', choices: [
                       { id: '4g', label: '4G' }, { id: '5g', label: '5G' } ] },
                   { id: 'router', label: 'Cellular Router', type: 'chip', choices: [
-                      { id: 'managed', label: 'Managed Cellular Router' }, { id: 'purchased', label: 'Purchased Cellular Router' } ] }
+                      { id: 'managed', label: 'Managed Cellular Router', image: 'assets/products/cellular-router-peplink.jpg' }, { id: 'purchased', label: 'Purchased Cellular Router', image: 'assets/products/cellular-router-peplink.jpg' } ] }
                 ] }
             ] },
           { id: 'cam-cameras', name: 'Cameras', blurb: "Dome, turret, and bullet cameras, each in white or black.", solutionHeading: 'Cameras', pricingMode: 'parts',
@@ -1397,8 +1397,52 @@ class Component extends DCLogic {
       noteVoiceListening: null,
       quoteCopied: false,
       sendQuote: { status: 'idle', error: null },
-      checkout: { companyName: '', siteAddress: '', customerEmail: '' }
+      checkout: { companyName: '', siteAddress: '', customerEmail: '' },
+      // Generic image lightbox/modal state — reusable by any future feature.
+      // Set { isOpen: true, url, caption } to open it; not scoped to any
+      // one category or product.
+      imagePreview: { isOpen: false, url: '', caption: '' }
     };
+  }
+
+  openImagePreview(url, caption) {
+    if (!url) return;
+    this.setState({ imagePreview: { isOpen: true, url: url, caption: caption || '' } });
+  }
+  closeImagePreview() {
+    this.setState({ imagePreview: { isOpen: false, url: '', caption: '' } });
+  }
+
+  // Generic helper: given a parts-mode category and its partsSelections
+  // entry map, finds the first added product (qty > 0) that has a
+  // currently-selected chip choice carrying an `image`, walking that
+  // product's options in declared order (so a more "primary" option, e.g.
+  // an NVR's channel count, wins over a secondary one like its storage,
+  // simply by being listed first in the catalog). Returns
+  // { url, caption } or null. Not specific to any one category/product —
+  // any parts-mode category whose choices gain an `image` field picks this
+  // up automatically.
+  findCategoryPreviewImage(cat, byCategory) {
+    var products = (cat && cat.products) || [];
+    for (var i = 0; i < products.length; i++) {
+      var p = products[i];
+      var entry = byCategory[p.id];
+      if (!entry || (entry.qty || 0) <= 0) continue;
+      var opts = p.options || [];
+      for (var j = 0; j < opts.length; j++) {
+        var opt = opts[j];
+        if (opt.type === 'range') continue;
+        var chosenId = (entry.chips || {})[opt.id];
+        if (!chosenId) continue;
+        var choices = opt.choices || [];
+        for (var k = 0; k < choices.length; k++) {
+          if (choices[k].id === chosenId && choices[k].image) {
+            return { url: choices[k].image, caption: choices[k].label };
+          }
+        }
+      }
+    }
+    return null;
   }
 
   findPillar(id) { for (var i = 0; i < PILLARS.length; i++) { if (PILLARS[i].id === id) return PILLARS[i]; } return null; }
@@ -2270,7 +2314,12 @@ class Component extends DCLogic {
       categoryId: categoryId, scopeQtyMap: scopeQtyMap,
       note: this.state.categoryNotes[key] || ''
     };
-    this.setState({ selections: sel });
+    var patch = { selections: sel };
+    // If anything just added in this category has a selected choice with a
+    // product photo, surface it in the shared lightbox after the add.
+    var previewImg = this.findCategoryPreviewImage(cat, byCategory);
+    if (previewImg) patch.imagePreview = { isOpen: true, url: previewImg.url, caption: previewImg.caption };
+    this.setState(patch);
   }
 
   computeScopeLinesForSelection(s, rate) {
@@ -2350,6 +2399,18 @@ class Component extends DCLogic {
     var view = this.state.view;
     var selections = this.state.selections;
     var selectionCount = Object.keys(selections).length;
+
+    // Generic image lightbox view-model — root-level, reusable by any
+    // feature that calls self.openImagePreview(url, caption).
+    var ipState = this.state.imagePreview || { isOpen: false, url: '', caption: '' };
+    var imagePreviewVM = {
+      isOpen: !!ipState.isOpen,
+      url: ipState.url || '',
+      caption: ipState.caption || '',
+      hasCaption: !!ipState.caption,
+      onClose: function () { self.closeImagePreview(); },
+      onStop: function (e) { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); }
+    };
 
     var noteVoiceSupportedGlobal = (typeof window !== 'undefined') && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
     function buildNoteVM(noteKey) {
@@ -2812,8 +2873,17 @@ class Component extends DCLogic {
               };
             }
             var chosenId = (entry.chips || {})[opt.id];
+            var chosenChoiceMatches = (opt.choices || []).filter(function (c) { return c.id === chosenId; });
+            var chosenChoice = chosenChoiceMatches.length ? chosenChoiceMatches[0] : null;
+            var headingImage = chosenChoice && chosenChoice.image ? chosenChoice.image : null;
             return {
               id: opt.id, label: opt.label, isRange: false, isChip: true,
+              // Tapping the option heading previews the currently-selected
+              // choice's photo — only wired (and only shown as tappable)
+              // when that choice actually has an `image`.
+              headingHasImage: !!headingImage,
+              headingStyle: 'font-size:11px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;display:flex;align-items:center;gap:5px;' + (headingImage ? 'cursor:pointer;' : ''),
+              onHeadingClick: headingImage ? function () { self.openImagePreview(headingImage, chosenChoice.label); } : null,
               choices: (opt.choices || []).map(function (c) {
                 var isSelected = chosenId === c.id;
                 return {
@@ -3293,6 +3363,7 @@ class Component extends DCLogic {
     }
 
     return {
+      imagePreview: imagePreviewVM,
       accentColor: accentColor,
       logoWhite: CBT_LOGO_WHITE,
       logoColor: CBT_LOGO_COLOR,

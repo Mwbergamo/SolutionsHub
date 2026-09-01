@@ -821,7 +821,12 @@
                       <div style="margin-top:12px;padding-top:12px;border-top:1px solid oklch(0.9 0.006 255);display:flex;flex-wrap:wrap;gap:18px;">
                         <sc-for list="{{prod.options}}" as="opt" hint-placeholder-count="2">
                           <div>
-                            <div style="font-size:11px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">{{opt.label}}</div>
+                            <div data-on-click="{{opt.onHeadingClick}}" style="{{opt.headingStyle}}">
+                              <span>{{opt.label}}</span>
+                              <sc-if value="{{opt.headingHasImage}}" hint-placeholder-val="{{false}}">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="{{accentColor}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="View photo"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                              </sc-if>
+                            </div>
                             <sc-if value="{{opt.isChip}}" hint-placeholder-val="{{false}}">
                               <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
                                 <sc-for list="{{opt.choices}}" as="ch" hint-placeholder-count="2">
@@ -1457,6 +1462,22 @@
     </sc-if>
 
   </div>
+
+  <!-- Generic image lightbox/modal — reusable by any feature via the
+       imagePreview root state (see Component.openImagePreview in app.js).
+       Dismiss by tapping the dim backdrop or the close button. -->
+  <sc-if value="{{imagePreview.isOpen}}" hint-placeholder-val="{{false}}">
+    <div data-on-click="{{imagePreview.onClose}}" style="position:fixed;inset:0;background:rgba(8,12,22,0.82);z-index:1000;display:flex;align-items:center;justify-content:center;padding:40px;">
+      <div data-on-click="{{imagePreview.onStop}}" style="position:relative;max-width:min(640px, 90vw);max-height:90vh;display:flex;flex-direction:column;align-items:center;">
+        <button data-on-click="{{imagePreview.onClose}}" aria-label="Close preview" style="position:absolute;top:-14px;right:-14px;width:34px;height:34px;border-radius:999px;background:white;border:none;color:oklch(0.2 0.03 255);font-size:16px;font-weight:700;cursor:pointer;line-height:1;box-shadow:0 6px 18px rgba(0,0,0,0.4);">✕</button>
+        <img src="{{imagePreview.url}}" alt="{{imagePreview.caption}}" style="display:block;max-width:100%;max-height:80vh;border-radius:14px;background:white;object-fit:contain;box-shadow:0 20px 60px rgba(0,0,0,0.5);" />
+        <sc-if value="{{imagePreview.hasCaption}}" hint-placeholder-val="{{false}}">
+          <div style="margin-top:14px;font-size:13.5px;font-weight:700;color:white;text-align:center;">{{imagePreview.caption}}</div>
+        </sc-if>
+      </div>
+    </div>
+  </sc-if>
+
 </div>
 </script>
 
