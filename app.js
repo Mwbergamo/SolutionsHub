@@ -722,6 +722,10 @@ var PILLARS = [
                       { id: 'ryzen-5', label: 'Ryzen 5' }, { id: 'intel-i5', label: 'Intel i5' }, { id: 'ryzen-7', label: 'Ryzen 7' }, { id: 'intel-i7', label: 'Intel i7' }, { id: 'ryzen-9', label: 'Ryzen 9' }, { id: 'intel-i9', label: 'Intel i9' }, { id: 'best-available', label: 'Best Available' } ] },
                   { id: 'brand', label: 'Brand Preference', type: 'chip', choices: [
                       { id: 'hp', label: 'HP' }, { id: 'dell', label: 'Dell' }, { id: 'lenovo', label: 'Lenovo' }, { id: 'best-available', label: 'Best Available' } ] },
+                  { id: 'warranty', label: 'Warranty Coverage', type: 'chip', choices: [
+                      { id: '24x7-1yr', label: '24x7 – 1 Year' }, { id: '24x7-2yr', label: '24x7 – 2 Year' }, { id: '24x7-3yr', label: '24x7 – 3 Year' },
+                      { id: '8x5-1yr', label: '8x5 – 1 Year' }, { id: '8x5-2yr', label: '8x5 – 2 Year' }, { id: '8x5-3yr', label: '8x5 – 3 Year' } ] },
+                  { id: 'addon-accidental-damage', label: 'Accidental Damage Protection', type: 'chip', choices: [ { id: 'accidental-damage', label: 'Accidental Damage Protection' } ] },
                   { id: 'addon-docking-station', label: 'Docking Station', type: 'chip', choices: [ { id: 'docking-station', label: 'Docking Station' } ] },
                   { id: 'addon-wireless-mouse', label: 'Wireless Mouse', type: 'chip', choices: [ { id: 'wireless-mouse', label: 'Wireless Mouse' } ] },
                   { id: 'addon-wireless-keyboard', label: 'Wireless Keyboard', type: 'chip', choices: [ { id: 'wireless-keyboard', label: 'Wireless Keyboard' } ] },
@@ -748,6 +752,8 @@ var PILLARS = [
                   { id: 'storage', label: 'Server Storage', type: 'range', min: 120, max: 10024, step: 500, unit: 'GB' },
                   { id: 'brand', label: 'Brand Preference', type: 'chip', choices: [
                       { id: 'hp', label: 'HP' }, { id: 'dell', label: 'Dell' }, { id: 'lenovo', label: 'Lenovo' }, { id: 'best-available', label: 'Best Available' } ] },
+                  { id: 'warranty', label: 'Warranty Coverage', type: 'chip', choices: [
+                      { id: '24x7-1yr', label: '24x7 – 1 Year' }, { id: '24x7-2yr', label: '24x7 – 2 Year' }, { id: '24x7-3yr', label: '24x7 – 3 Year' }, { id: '24x7-5yr', label: '24x7 – 5 Year' } ] },
                   { id: 'addon-rack-rails', label: 'Rack Rails', type: 'chip', choices: [ { id: 'rack-rails', label: 'Rack Rails' } ] },
                   { id: 'addon-mouse-keyboard', label: 'Mouse/Keyboard', type: 'chip', choices: [ { id: 'mouse-keyboard', label: 'Mouse/Keyboard' } ] },
                   { id: 'addon-monitor', label: 'Monitor', type: 'chip', choices: [ { id: 'monitor', label: 'Monitor' } ] },
@@ -769,9 +775,9 @@ var PILLARS = [
                   { id: 'core-licenses', label: 'Number of Server Core Licenses', type: 'range', min: 0, max: 99, step: 1, unit: '' }
                 ] }
             ] },
-          { id: 'es-accessories', name: 'Accessories', blurb: "Monitors, mounts, UPS battery backup, wireless peripherals, spare power, and warranty extensions.", solutionHeading: 'Accessories', pricingMode: 'parts', highlightWhenSelected: 'es-computers',
+          { id: 'es-accessories', name: 'Accessories', blurb: "Monitors, mounts, UPS battery backup, and wireless/secondary peripherals. Warranty and Accidental Damage Protection are now configured with the Computer/Server itself.", solutionHeading: 'Accessories', pricingMode: 'parts', highlightWhenSelected: 'es-computers',
             products: [
-              { id: 'monitor-22', label: '22" Monitor', options: [
+              { id: 'monitor-22', label: '22" Monitor', sectionBreak: 'Monitors & Mounts', options: [
                   { id: 'input', label: 'Input', type: 'chip', choices: [ { id: 'hdmi', label: 'HDMI' }, { id: 'displayport', label: 'DisplayPort' } ] }
                 ] },
               { id: 'monitor-24', label: '24" Monitor', options: [
@@ -789,22 +795,12 @@ var PILLARS = [
               { id: 'mount-dual', label: 'Dual Monitor Mount', options: [] },
               { id: 'mount-triple', label: 'Triple Monitor Mount', options: [] },
               { id: 'mount-custom', label: 'Custom Monitor Mount', options: [] },
-              { id: 'ups-small', label: 'Small UPS (Battery Backup)', sku: 'Networking equipment', options: [] },
+              { id: 'ups-small', label: 'Small UPS (Battery Backup)', sku: 'Networking equipment', sectionBreak: 'UPS Battery Backups', options: [] },
               { id: 'ups-medium', label: 'Medium UPS (Battery Backup)', sku: 'Desktops', options: [] },
               { id: 'ups-large', label: 'Large UPS (Battery Backup)', sku: 'Servers and storage', options: [] },
-              { id: 'wireless-mouse', label: 'Wireless Mouse', options: [] },
+              { id: 'wireless-mouse', label: 'Wireless Mouse', sectionBreak: 'All Others', options: [] },
               { id: 'wireless-keyboard', label: 'Wireless Keyboard', options: [] },
-              { id: 'spare-laptop-power', label: 'Secondary Laptop Power Supply', options: [] },
-              { id: 'warranty-servers-24x7', label: '24x7 Warranty — Servers', options: [
-                  { id: 'term', label: 'Term', type: 'chip', choices: [ { id: '1yr', label: '1 Year' }, { id: '2yr', label: '2 Year' }, { id: '3yr', label: '3 Year' }, { id: '5yr', label: '5 Year' } ] }
-                ] },
-              { id: 'warranty-computers-24x7', label: '24x7 Warranty — Computers', options: [
-                  { id: 'term', label: 'Term', type: 'chip', choices: [ { id: '1yr', label: '1 Year' }, { id: '2yr', label: '2 Year' }, { id: '3yr', label: '3 Year' } ] }
-                ] },
-              { id: 'warranty-computers-8x5', label: '8x5 Warranty — Computers', options: [
-                  { id: 'term', label: 'Term', type: 'chip', choices: [ { id: '1yr', label: '1 Year' }, { id: '2yr', label: '2 Year' }, { id: '3yr', label: '3 Year' } ] }
-                ] },
-              { id: 'warranty-adp-laptops', label: 'Accidental Damage Protection — Laptops', options: [] }
+              { id: 'spare-laptop-power', label: 'Secondary Laptop Power Supply', options: [] }
             ] },
           { id: 'es-printers', name: 'Printers', blurb: "Discovery questions on volume, output needs, functionality, and compliance, plus accessories and add-ons — everything for the printer solution in one place, configured to spec for the sales engineer to quote.", solutionHeading: 'Printer / MFP Solution', pricingMode: 'parts',
             products: [
