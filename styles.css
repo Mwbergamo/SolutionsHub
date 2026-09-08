@@ -41,6 +41,20 @@ button { font-family: 'IBM Plex Sans', sans-serif; }
   .summary-print-area { background: white !important; }
   .summary-print-area * { color: black !important; background: transparent !important; box-shadow: none !important; }
   .scope-detail-block { display: block !important; }
+
+  /* The app shell and its scroll body are fixed to 100vh with
+     overflow:hidden/auto so the on-screen app never scrolls the whole
+     page — great for the UI, but during print that same overflow:hidden
+     clips everything beyond one screen's worth of height, which is why a
+     multi-page quote only ever printed its first page. Printing needs
+     these ancestors to grow to their full content height instead of
+     clipping to the viewport, so the print-area content underneath can
+     paginate normally across as many printed pages as it needs. */
+  .app-shell, .app-body {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
 }
 
 /* ============================= RESPONSIVE ============================= */

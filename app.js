@@ -1403,7 +1403,6 @@ class Component extends DCLogic {
       scopeHourlyRate: 180,
       categoryNotes: {},
       noteVoiceListening: null,
-      quoteCopied: false,
       sendQuote: { status: 'idle', error: null },
       checkout: { companyName: '', siteAddress: '', customerEmail: '', contactName: '' },
       // "Send to Inside Sales" modal state (Solution Summary screen) — emails
@@ -1797,7 +1796,8 @@ class Component extends DCLogic {
   // Table-based layout with inline styles throughout: Outlook's desktop renderer
   // (the Word engine) ignores most modern CSS, so this deliberately avoids
   // flexbox/grid and keeps every rule inline rather than in a <style> block.
-  buildFullQuoteHtml() {
+  buildFullQuoteHtml(includeLogo) {
+    if (includeLogo === undefined) includeLogo = true;
     var co = this.state.checkout;
     var data = this.buildQuoteSectionsStructured();
     var today = new Date();
@@ -1912,7 +1912,9 @@ class Component extends DCLogic {
       '<tr><td align="center">' +
         '<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:640px;max-width:640px;background:#FFFFFF;border-radius:8px;border:1px solid ' + BORDER + ';">' +
           '<tr><td style="padding:24px 24px 20px 24px;border-bottom:3px solid ' + NAVY + ';">' +
-            '<img src="' + LOGO_URL + '" width="200" alt="CodeBlue Technology" style="display:block;height:auto;width:200px;border:0;" />' +
+            (includeLogo
+              ? '<img src="' + LOGO_URL + '" width="200" alt="CodeBlue Technology" style="display:block;height:auto;width:200px;border:0;" />'
+              : '<div style="font-size:18px;font-family:Arial,Helvetica,sans-serif;font-weight:800;color:' + NAVY + ';">CodeBlue Technology</div>') +
           '</td></tr>' +
           '<tr><td style="padding:20px 24px 8px 24px;">' +
             '<div style="font-size:20px;font-family:Arial,Helvetica,sans-serif;font-weight:800;color:' + NAVY + ';">Solution Request</div>' +
@@ -1938,21 +1940,12 @@ class Component extends DCLogic {
     '</body></html>';
   }
 
-  copyQuoteForEmail() {
-    var self = this;
-    if (!(typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText)) return;
-    var to = (this.state.checkout.customerEmail || '').trim();
-    var subject = 'Your CodeBlue Technology Quote';
-    var body = this.buildFullQuoteText();
-    var text = (to ? ('To: ' + to + '\n') : '') + 'Subject: ' + subject + '\n\n' + body;
-    navigator.clipboard.writeText(text).then(function () {
-      self.setState({ quoteCopied: true });
-      setTimeout(function () { self.setState({ quoteCopied: false }); }, 2200);
-    }).catch(function () {});
-  }
-
   // Ported note: the original design-canvas artifact had no server, so "emailing"
-  // the quote just meant copying it to the clipboard (copyQuoteForEmail above).
+  // the quote used to just mean copying it to the clipboard (a "Copy Quote for
+  // Email" button called buildFullQuoteText() below, via a since-removed
+  // copyQuoteForEmail() method). Now that Email Quote to Customer and Send to
+  // Inside Sales both send directly, that clipboard button was removed —
+  // buildFullQuoteText() is kept as-is since nothing else changed.
   // On a real deployment we have a PHP mailer (mail/send-quote.php), so this method
   // sends the quote directly. It fails soft (status: 'error') if config.php is
   // missing or the request is rejected — see mail/send-quote.php and mail/config.sample.php.
@@ -1987,7 +1980,7 @@ class Component extends DCLogic {
       self.setState({ sendQuote: { status: 'sent', error: null } });
       setTimeout(function () { self.setState({ sendQuote: { status: 'idle', error: null } }); }, 3500);
     }).catch(function (err) {
-      self.setState({ sendQuote: { status: 'error', error: (err && err.message) || 'Could not send the quote — try again, or use Copy Quote instead.' } });
+      self.setState({ sendQuote: { status: 'error', error: (err && err.message) || 'Could not send the quote — try again.' } });
     });
   }
 
@@ -2017,7 +2010,7 @@ class Component extends DCLogic {
       to: 'Quotes@codebluetechnology.com',
       companyName: companyName,
       subject: 'New Solution Request — ' + companyName + ' (Attn: ' + contactName + ')',
-      html: this.buildFullQuoteHtml(),
+      html: this.buildFullQuoteHtml(false),
       website: '' // honeypot field — must stay empty
     };
     fetch('mail/send-quote.php', {
@@ -3791,8 +3784,6 @@ class Component extends DCLogic {
       onScopeRateDec: function () { self.incScopeRate(-5); }, onScopeRateInc: function () { self.incScopeRate(5); },
       customerEmail: this.state.checkout.customerEmail || '',
       onCustomerEmailInput: function (e) { self.setCheckoutField('customerEmail', e.target.value); },
-      onCopyQuote: function () { self.copyQuoteForEmail(); },
-      copyQuoteLabel: this.state.quoteCopied ? 'Copied ✓' : 'Copy Quote for Email',
       onPrintQuote: function () { window.print(); },
       onSendQuoteEmail: function () { self.sendQuoteByEmail(); },
       sendQuoteLabel: this.state.sendQuote.status === 'sending' ? 'Sending…' : (this.state.sendQuote.status === 'sent' ? 'Sent ✓' : 'Email Quote to Customer'),
