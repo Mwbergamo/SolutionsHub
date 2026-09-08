@@ -1145,6 +1145,7 @@
             <button data-on-click="{{onCopyQuote}}" style="background:{{accentColor}};color:white;border:none;font-size:13.5px;font-weight:700;padding:11px 20px;border-radius:999px;cursor:pointer;">{{copyQuoteLabel}}</button>
             <button data-on-click="{{onSendQuoteEmail}}" style="background:oklch(0.55 0.14 150);border:none;color:white;font-size:13.5px;font-weight:700;padding:11px 20px;border-radius:999px;cursor:pointer;">{{sendQuoteLabel}}</button>
             <button data-on-click="{{onPrintQuote}}" style="background:oklch(0.22 0.03 255);border:1px solid oklch(0.32 0.03 255);color:white;font-size:13.5px;font-weight:700;padding:11px 20px;border-radius:999px;cursor:pointer;">Print Quote</button>
+            <button data-on-click="{{onOpenInsideSales}}" style="background:oklch(0.5 0.16 300);border:none;color:white;font-size:13.5px;font-weight:700;padding:11px 20px;border-radius:999px;cursor:pointer;">Send to Inside Sales</button>
           </div>
           <sc-if value="{{sendQuoteHasError}}" hint-placeholder-val="{{false}}">
             <div style="margin-top:8px;font-size:12.5px;font-weight:600;color:oklch(0.7 0.18 30);">{{sendQuoteErrorText}}</div>
@@ -1511,6 +1512,33 @@
         <sc-if value="{{imagePreview.hasCaption}}" hint-placeholder-val="{{false}}">
           <div style="margin-top:14px;font-size:13.5px;font-weight:700;color:white;text-align:center;">{{imagePreview.caption}}</div>
         </sc-if>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- "Send to Inside Sales" modal — Solution Summary screen. Emails the full
+       solution to Quotes@codebluetechnology.com (see Component.sendToInsideSales
+       in app.js). Requires company name + contact name before sending. -->
+  <sc-if value="{{insideSalesVM.isOpen}}" hint-placeholder-val="{{false}}">
+    <div data-on-click="{{insideSalesVM.onClose}}" style="position:fixed;inset:0;background:rgba(8,12,22,0.82);z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;">
+      <div data-on-click="{{insideSalesVM.onStop}}" style="background:white;border-radius:16px;padding:28px;max-width:440px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">Send to Inside Sales</div>
+        <div style="margin-top:6px;font-size:13px;color:oklch(0.5 0.02 255);line-height:1.5;">Emails this full solution to Quotes@codebluetechnology.com so an inside sales rep can see it in ConnectWise and start matching CodeBlue SKUs.</div>
+        <div style="margin-top:18px;">
+          <label style="font-size:11.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Company Name</label>
+          <input value="{{insideSalesVM.companyName}}" data-on-input="{{insideSalesVM.onCompanyNameInput}}" placeholder="e.g. Acme Corporation" style="margin-top:5px;width:100%;box-sizing:border-box;font-size:14px;padding:10px 12px;border:1px solid oklch(0.85 0.006 255);border-radius:8px;font-family:'IBM Plex Sans',sans-serif;">
+        </div>
+        <div style="margin-top:14px;">
+          <label style="font-size:11.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Contact Name (who to address the quote to)</label>
+          <input value="{{insideSalesVM.contactName}}" data-on-input="{{insideSalesVM.onContactNameInput}}" placeholder="e.g. Jane Smith" style="margin-top:5px;width:100%;box-sizing:border-box;font-size:14px;padding:10px 12px;border:1px solid oklch(0.85 0.006 255);border-radius:8px;font-family:'IBM Plex Sans',sans-serif;">
+        </div>
+        <sc-if value="{{insideSalesVM.hasError}}" hint-placeholder-val="{{false}}">
+          <div style="margin-top:10px;font-size:12.5px;font-weight:600;color:oklch(0.55 0.18 30);">{{insideSalesVM.errorText}}</div>
+        </sc-if>
+        <div style="margin-top:20px;display:flex;gap:10px;justify-content:flex-end;">
+          <button data-on-click="{{insideSalesVM.onClose}}" style="background:oklch(0.94 0.006 255);border:none;color:oklch(0.3 0.02 255);font-size:13.5px;font-weight:700;padding:10px 18px;border-radius:999px;cursor:pointer;">Cancel</button>
+          <button data-on-click="{{insideSalesVM.onSend}}" style="background:oklch(0.5 0.16 300);border:none;color:white;font-size:13.5px;font-weight:700;padding:10px 20px;border-radius:999px;cursor:pointer;">{{insideSalesVM.sendLabel}}</button>
+        </div>
       </div>
     </div>
   </sc-if>

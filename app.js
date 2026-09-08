@@ -1405,7 +1405,12 @@ class Component extends DCLogic {
       noteVoiceListening: null,
       quoteCopied: false,
       sendQuote: { status: 'idle', error: null },
-      checkout: { companyName: '', siteAddress: '', customerEmail: '' },
+      checkout: { companyName: '', siteAddress: '', customerEmail: '', contactName: '' },
+      // "Send to Inside Sales" modal state (Solution Summary screen) — emails
+      // the full solution to Quotes@codebluetechnology.com so inside sales can
+      // match SKUs in ConnectWise. Reuses checkout.companyName/contactName so
+      // those fields stay consistent with the customer-facing quote email.
+      insideSales: { isOpen: false, status: 'idle', error: null },
       // Generic image lightbox/modal state — reusable by any future feature.
       // Set { isOpen: true, url, caption } to open it; not scoped to any
       // one category or product.
@@ -1730,6 +1735,7 @@ class Component extends DCLogic {
     out.push('CODEBLUE TECHNOLOGY — SOLUTION QUOTE');
     out.push('Date: ' + dateText);
     if (co.companyName) out.push('Prepared for: ' + co.companyName);
+    if (co.contactName) out.push('Attn: ' + co.contactName);
     if (co.siteAddress) out.push('Site: ' + co.siteAddress);
     out.push('');
     data.sections.forEach(function (sec) {
@@ -1802,6 +1808,7 @@ class Component extends DCLogic {
 
     var metaRows = '';
     if (co.companyName) metaRows += '<tr><td style="padding:2px 0;color:#5A6472;font-size:13px;font-family:Arial,Helvetica,sans-serif;"><strong style="color:#33394A;">Prepared for:</strong> ' + esc(co.companyName) + '</td></tr>';
+    if (co.contactName) metaRows += '<tr><td style="padding:2px 0;color:#5A6472;font-size:13px;font-family:Arial,Helvetica,sans-serif;"><strong style="color:#33394A;">Attn:</strong> ' + esc(co.contactName) + '</td></tr>';
     if (co.siteAddress) metaRows += '<tr><td style="padding:2px 0;color:#5A6472;font-size:13px;font-family:Arial,Helvetica,sans-serif;"><strong style="color:#33394A;">Site:</strong> ' + esc(co.siteAddress) + '</td></tr>';
 
     var sectionsHtml = data.sections.map(function (sec) {
@@ -1981,6 +1988,54 @@ class Component extends DCLogic {
       setTimeout(function () { self.setState({ sendQuote: { status: 'idle', error: null } }); }, 3500);
     }).catch(function (err) {
       self.setState({ sendQuote: { status: 'error', error: (err && err.message) || 'Could not send the quote — try again, or use Copy Quote instead.' } });
+    });
+  }
+
+  // "Send to Inside Sales" — Solution Summary screen. Requires a company
+  // name and the customer contact's name (so inside sales knows who to
+  // address the quote to), then emails the full solution to CodeBlue's
+  // internal Quotes inbox via the same mail/send-quote.php endpoint used
+  // for the customer-facing quote email — inside sales picks it up in
+  // ConnectWise (email-to-ticket) and matches CodeBlue SKUs from there.
+  openInsideSalesModal() {
+    this.setState({ insideSales: { isOpen: true, status: 'idle', error: null } });
+  }
+  closeInsideSalesModal() {
+    if (this.state.insideSales.status === 'sending') return;
+    this.setState({ insideSales: { isOpen: false, status: 'idle', error: null } });
+  }
+  sendToInsideSales() {
+    var self = this;
+    var companyName = (this.state.checkout.companyName || '').trim();
+    var contactName = (this.state.checkout.contactName || '').trim();
+    if (!companyName || !contactName) {
+      this.setState({ insideSales: { isOpen: true, status: 'error', error: 'Company name and contact name are both required.' } });
+      return;
+    }
+    this.setState({ insideSales: { isOpen: true, status: 'sending', error: null } });
+    var payload = {
+      to: 'Quotes@codebluetechnology.com',
+      companyName: companyName,
+      subject: 'New Solution Request — ' + companyName + ' (Attn: ' + contactName + ')',
+      html: this.buildFullQuoteHtml(),
+      website: '' // honeypot field — must stay empty
+    };
+    fetch('mail/send-quote.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok || !data || data.ok !== true) {
+          throw new Error((data && data.error) || ('Request failed (' + res.status + ')'));
+        }
+        return data;
+      });
+    }).then(function () {
+      self.setState({ insideSales: { isOpen: true, status: 'sent', error: null } });
+      setTimeout(function () { self.setState({ insideSales: { isOpen: false, status: 'idle', error: null } }); }, 2500);
+    }).catch(function (err) {
+      self.setState({ insideSales: { isOpen: true, status: 'error', error: (err && err.message) || 'Could not send the request — try again.' } });
     });
   }
 
@@ -2675,6 +2730,24 @@ class Component extends DCLogic {
       caption: ipState.caption || '',
       hasCaption: !!ipState.caption,
       onClose: function () { self.closeImagePreview(); },
+      onStop: function (e) { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); }
+    };
+
+    // "Send to Inside Sales" modal — Solution Summary screen. See
+    // openInsideSalesModal()/sendToInsideSales() above.
+    var isState = this.state.insideSales || { isOpen: false, status: 'idle', error: null };
+    var insideSalesVM = {
+      isOpen: !!isState.isOpen,
+      companyName: this.state.checkout.companyName || '',
+      contactName: this.state.checkout.contactName || '',
+      onCompanyNameInput: function (e) { self.setCheckoutField('companyName', e.target.value); },
+      onContactNameInput: function (e) { self.setCheckoutField('contactName', e.target.value); },
+      hasError: isState.status === 'error',
+      errorText: isState.error || '',
+      isSending: isState.status === 'sending',
+      sendLabel: isState.status === 'sending' ? 'Sending…' : (isState.status === 'sent' ? 'Sent ✓' : 'Send Request'),
+      onSend: function () { self.sendToInsideSales(); },
+      onClose: function () { self.closeInsideSalesModal(); },
       onStop: function (e) { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); }
     };
 
@@ -3659,6 +3732,8 @@ class Component extends DCLogic {
 
     return {
       imagePreview: imagePreviewVM,
+      insideSalesVM: insideSalesVM,
+      onOpenInsideSales: function () { self.openInsideSalesModal(); },
       accentColor: accentColor,
       logoWhite: CBT_LOGO_WHITE,
       logoColor: CBT_LOGO_COLOR,
