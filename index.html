@@ -1070,6 +1070,20 @@
           <img src="{{logoColor}}" alt="CodeBlue Technology" style="height:34px;width:auto;object-fit:contain;display:block;" />
         </div>
 
+        <sc-if value="{{hasSummaryReminders}}" hint-placeholder-val="{{false}}">
+          <div style="margin-top:22px;display:flex;flex-direction:column;gap:10px;">
+            <sc-for list="{{summaryReminders}}" as="rem" hint-placeholder-count="1">
+              <div style="background:oklch(0.78 0.14 85);border-radius:12px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
+                <div style="display:flex;align-items:center;gap:9px;flex:1;min-width:220px;">
+                  <span style="font-size:15px;line-height:1;color:oklch(0.2 0.05 85);">✦</span>
+                  <div style="font-size:13px;font-weight:600;color:oklch(0.2 0.05 85);line-height:1.4;">{{rem.text}}</div>
+                </div>
+                <button data-on-click="{{rem.onGo}}" style="background:oklch(0.2 0.05 85);border:none;color:oklch(0.94 0.05 85);font-size:12.5px;font-weight:700;padding:9px 16px;border-radius:999px;cursor:pointer;white-space:nowrap;">{{rem.goLabel}} →</button>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
         <sc-if value="{{hasSelections}}" hint-placeholder-val="{{false}}">
           <div style="margin-top:26px;font-size:12px;font-weight:700;color:{{accentColor}};text-transform:uppercase;letter-spacing:.06em;">Bill of Materials</div>
           <div style="margin-top:10px;">

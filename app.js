@@ -3530,6 +3530,63 @@ class Component extends DCLogic {
         }
       });
     }
+
+    // Solution Summary gold reminders -- the same cross-sell nudges that
+    // glow gold out on Equipment Sales (EDR / Patch Mgmt add-on chips) and
+    // Cyber Security (Guardz -> SentinelOne) also need to follow the rep to
+    // the Summary screen, since that's the last stop before the quote goes
+    // out. A reminder only shows here when (a) the product that triggered
+    // it is actually IN the Solution already -- not just a live pick out
+    // on the config screen that was never added -- and (b) the recommended
+    // item hasn't been added to that category yet. Multiple triggers that
+    // point at the same missing product (e.g. both an EDR chip pick and a
+    // Guardz sale each asking for SentinelOne in Computers) collapse into
+    // one banner instead of stacking duplicates.
+    var summaryReminders = [];
+    if (view === 'summary' || view === 'checkout') {
+      function summaryReminderCatQty(categoryId, productId) {
+        return ((catProductsForCrossSell[categoryId] || {})[productId]) || 0;
+      }
+      var summaryReminderRules = [
+        { trigger: computerEdrFlag && !!selections['equipment-sales::es-computers'],
+          targetCategoryId: 'computers', targetProductId: 'sentinelone-standalone',
+          reason: 'SentinelOne was selected as an EDR add-on when a computer was configured in Equipment Sales.' },
+        { trigger: computerPatchFlag && !!selections['equipment-sales::es-computers'],
+          targetCategoryId: 'computers', targetProductId: 'patch-mgmt',
+          reason: 'Patch Management was selected as an add-on when a computer was configured in Equipment Sales.' },
+        { trigger: serverEdrFlag && !!selections['equipment-sales::es-servers'],
+          targetCategoryId: 'cyber-servers', targetProductId: 'sentinelone-standalone',
+          reason: 'SentinelOne was selected as an EDR add-on when a server was configured in Equipment Sales.' },
+        { trigger: serverPatchFlag && !!selections['equipment-sales::es-servers'],
+          targetCategoryId: 'cyber-servers', targetProductId: 'patch-mgmt',
+          reason: 'Patch Management was selected as an add-on when a server was configured in Equipment Sales.' },
+        { trigger: computerGuardzFlag && !!selections['cyber-security::computers'],
+          targetCategoryId: 'computers', targetProductId: 'sentinelone-standalone',
+          reason: 'Guardz is in this solution -- 1 SentinelOne license is required alongside it.' },
+        { trigger: serverGuardzFlag && !!selections['cyber-security::cyber-servers'],
+          targetCategoryId: 'cyber-servers', targetProductId: 'sentinelone-standalone',
+          reason: 'Guardz is in this solution -- 1 SentinelOne license is required alongside it.' }
+      ];
+      var seenReminderTargets = {};
+      summaryReminderRules.forEach(function (rule) {
+        if (!rule.trigger) return;
+        if (summaryReminderCatQty(rule.targetCategoryId, rule.targetProductId) > 0) return; // already added
+        var targetKey = rule.targetCategoryId + '::' + rule.targetProductId;
+        if (seenReminderTargets[targetKey]) return;
+        seenReminderTargets[targetKey] = true;
+        var targetCat = self.findCategory('it', 'cyber-security', rule.targetCategoryId);
+        var targetCategoryId = rule.targetCategoryId;
+        summaryReminders.push({
+          id: targetKey,
+          text: rule.reason,
+          categoryName: targetCat ? targetCat.name : rule.targetCategoryId,
+          goLabel: 'Go to ' + (targetCat ? targetCat.name : rule.targetCategoryId),
+          onGo: function () { self.openCategory('it', 'cyber-security', targetCategoryId); }
+        });
+      });
+    }
+    var hasSummaryReminders = summaryReminders.length > 0;
+
     var hasScopeGrandTotal = scopeGrandTotal > 0;
     var scopeGrandTotalText = '$' + scopeGrandTotal.toFixed(2);
     var scopeRateText = '$' + scopeRateForTotal + '/hr';
@@ -3780,6 +3837,7 @@ class Component extends DCLogic {
       hasSelections: selectionCount > 0,
       noSelections: selectionCount === 0,
       summaryGroups: summaryGroups,
+      hasSummaryReminders: hasSummaryReminders, summaryReminders: summaryReminders,
       hasScopeGrandTotal: hasScopeGrandTotal, scopeGrandTotalText: scopeGrandTotalText, scopeRateText: scopeRateText,
       onScopeRateDec: function () { self.incScopeRate(-5); }, onScopeRateInc: function () { self.incScopeRate(5); },
       customerEmail: this.state.checkout.customerEmail || '',
