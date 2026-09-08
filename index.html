@@ -395,7 +395,12 @@
               <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px;">
                 <sc-for list="{{managedItVM.miFirewalls}}" as="fw" hint-placeholder-count="3">
                   <div data-on-click="{{fw.onClick}}" style="{{fw.cardStyle}}">
-                    <div style="font-weight:700;font-size:14px;color:{{fw.titleColor}};">{{fw.label}}</div>
+                    <div style="display:flex;align-items:center;gap:12px;min-width:0;">
+                      <sc-if value="{{fw.hasImage}}" hint-placeholder-val="{{false}}">
+                        <img data-on-click="{{fw.onImageClick}}" src="{{fw.image}}" alt="{{fw.label}}" style="width:36px;height:36px;object-fit:contain;border-radius:6px;background:white;flex:0 0 auto;cursor:pointer;" />
+                      </sc-if>
+                      <div style="font-weight:700;font-size:14px;color:{{fw.titleColor}};">{{fw.label}}</div>
+                    </div>
                     <div style="font-size:13px;font-weight:600;color:{{fw.rateColor}};">{{fw.rate}}</div>
                   </div>
                 </sc-for>

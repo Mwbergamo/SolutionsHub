@@ -513,25 +513,25 @@ var PILLARS = [
         categories: [
           { id: 'firewalls', name: 'Firewalls', blurb: "Provided firewall appliances — select model, wireless, and security tier.", solutionHeading: 'Firewalls', pricingMode: 'parts',
             products: [
-              { id: 'pe-t125', label: 'CBT125', sku: 'PE-T125', options: [
+              { id: 'pe-t125', label: 'CBT125', sku: 'PE-T125', image: 'assets/products/firewall-small.png', options: [
                   { id: 'wireless', label: 'Wireless', type: 'chip', choices: [ { id: 'wireless', label: 'Wireless' } ] },
                   { id: 'security-level', label: 'Security Level', type: 'chip', choices: [ { id: 'premium', label: 'Premium Security' }, { id: 'basic', label: 'Basic Security' } ] } ] },
-              { id: 'pe-t145', label: 'CBT145', sku: 'PE-T145', options: [
+              { id: 'pe-t145', label: 'CBT145', sku: 'PE-T145', image: 'assets/products/firewall-small.png', options: [
                   { id: 'wireless', label: 'Wireless', type: 'chip', choices: [ { id: 'wireless', label: 'Wireless' } ] },
                   { id: 'security-level', label: 'Security Level', type: 'chip', choices: [ { id: 'premium', label: 'Premium Security' }, { id: 'basic', label: 'Basic Security' } ] } ] },
-              { id: 'pe-m290', label: 'CBM290', sku: 'PE-M290', options: [
+              { id: 'pe-m290', label: 'CBM290', sku: 'PE-M290', image: 'assets/products/firewall-large.png', options: [
                   { id: 'wireless', label: 'Wireless', type: 'chip', choices: [ { id: 'wireless', label: 'Wireless' } ] },
                   { id: 'security-level', label: 'Security Level', type: 'chip', choices: [ { id: 'premium', label: 'Premium Security' }, { id: 'basic', label: 'Basic Security' } ] } ] },
-              { id: 'pe-t185', label: 'CBT185', sku: 'PE-T185', options: [
+              { id: 'pe-t185', label: 'CBT185', sku: 'PE-T185', image: 'assets/products/firewall-large.png', options: [
                   { id: 'wireless', label: 'Wireless', type: 'chip', choices: [ { id: 'wireless', label: 'Wireless' } ] },
                   { id: 'security-level', label: 'Security Level', type: 'chip', choices: [ { id: 'premium', label: 'Premium Security' }, { id: 'basic', label: 'Basic Security' } ] } ] },
-              { id: 'pe-m295', label: 'CBM295', sku: 'PE-M295', options: [
+              { id: 'pe-m295', label: 'CBM295', sku: 'PE-M295', image: 'assets/products/firewall-large.png', options: [
                   { id: 'wireless', label: 'Wireless', type: 'chip', choices: [ { id: 'wireless', label: 'Wireless' } ] },
                   { id: 'security-level', label: 'Security Level', type: 'chip', choices: [ { id: 'premium', label: 'Premium Security' }, { id: 'basic', label: 'Basic Security' } ] } ] },
-              { id: 'pe-m390', label: 'CBM390', sku: 'PE-M390', options: [
+              { id: 'pe-m390', label: 'CBM390', sku: 'PE-M390', image: 'assets/products/firewall-large.png', options: [
                   { id: 'wireless', label: 'Wireless', type: 'chip', choices: [ { id: 'wireless', label: 'Wireless' } ] },
                   { id: 'security-level', label: 'Security Level', type: 'chip', choices: [ { id: 'premium', label: 'Premium Security' }, { id: 'basic', label: 'Basic Security' } ] } ] },
-              { id: 'pe-m590', label: 'CBM590 (Advanced Security)', sku: 'PE-M590', options: [
+              { id: 'pe-m590', label: 'CBM590 (Advanced Security)', sku: 'PE-M590', image: 'assets/products/firewall-large.png', options: [
                   { id: 'wireless', label: 'Wireless', type: 'chip', choices: [ { id: 'wireless', label: 'Wireless' } ] },
                   { id: 'security-level', label: 'Security Level', type: 'chip', choices: [ { id: 'premium', label: 'Premium Security' }, { id: 'basic', label: 'Basic Security' } ] } ] }
             ] },
@@ -1354,13 +1354,13 @@ var OPTIONAL_ADDONS = [
 ];
 
 var FIREWALL_MODELS = [
-  { sku: 'PE-T125', label: 'CBT125', rate: 99 },
-  { sku: 'PE-T145', label: 'CBT145', rate: 130 },
-  { sku: 'PE-M290', label: 'CBM290', rate: 220 },
-  { sku: 'PE-T185', label: 'CBT185', rate: 262 },
-  { sku: 'PE-M295', label: 'CBM295', rate: 342 },
-  { sku: 'PE-M390', label: 'CBM390', rate: 346 },
-  { sku: 'PE-M590', label: 'CBM590 (Advanced Security)', rate: 1104 }
+  { sku: 'PE-T125', label: 'CBT125', rate: 99, image: 'assets/products/firewall-small.png' },
+  { sku: 'PE-T145', label: 'CBT145', rate: 130, image: 'assets/products/firewall-small.png' },
+  { sku: 'PE-M290', label: 'CBM290', rate: 220, image: 'assets/products/firewall-large.png' },
+  { sku: 'PE-T185', label: 'CBT185', rate: 262, image: 'assets/products/firewall-large.png' },
+  { sku: 'PE-M295', label: 'CBM295', rate: 342, image: 'assets/products/firewall-large.png' },
+  { sku: 'PE-M390', label: 'CBM390', rate: 346, image: 'assets/products/firewall-large.png' },
+  { sku: 'PE-M590', label: 'CBM590 (Advanced Security)', rate: 1104, image: 'assets/products/firewall-large.png' }
 ];
 
 class Component extends DCLogic {
@@ -2834,6 +2834,8 @@ class Component extends DCLogic {
           cardStyle: 'border-radius:12px;padding:14px 16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;' + (selected ? ('background:' + accentColor + ';') : 'background:oklch(0.98 0.006 255);'),
           titleColor: selected ? '#ffffff' : 'oklch(0.2 0.03 255)',
           rateColor: selected ? 'oklch(0.95 0.01 255)' : 'oklch(0.5 0.02 255)',
+          hasImage: !!fw.image, image: fw.image || '',
+          onImageClick: fw.image ? function (e) { if (e && e.stopPropagation) e.stopPropagation(); self.openImagePreview(fw.image, fw.label); } : null,
           onClick: function () { self.miSelectFirewall(fw.sku); }
         };
       });
