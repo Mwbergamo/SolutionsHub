@@ -781,8 +781,8 @@ var PILLARS = [
                   { id: 'size', label: 'Size', type: 'chip', choices: [ { id: '22in', label: '22"' }, { id: '24in', label: '24"' }, { id: '27in', label: '27"' }, { id: '31in', label: '31"' }, { id: '41in', label: '41"' } ] },
                   { id: 'input', label: 'Input', type: 'chip', choices: [ { id: 'hdmi', label: 'HDMI' }, { id: 'displayport', label: 'DisplayPort' } ] }
                 ] },
-              { id: 'mount-dual', label: 'Dual Monitor Mount', options: [] },
-              { id: 'mount-triple', label: 'Triple Monitor Mount', options: [] },
+              { id: 'mount-dual', label: 'Dual Monitor Mount', image: 'assets/products/mount-dual.png', options: [] },
+              { id: 'mount-triple', label: 'Triple Monitor Mount', image: 'assets/products/mount-triple.png', options: [] },
               { id: 'mount-custom', label: 'Custom Monitor Mount', options: [] },
               { id: 'ups-small', label: 'Small UPS (Battery Backup)', sku: 'Networking equipment', image: 'assets/products/ups-small.png', sectionBreak: 'UPS Battery Backups', options: [
                   { id: 'power-rating', label: 'Power Rating', type: 'range', min: 150, max: 350, step: 50, unit: 'VA' }
@@ -793,9 +793,9 @@ var PILLARS = [
               { id: 'ups-large', label: 'Large UPS (Battery Backup)', sku: 'Servers and storage', image: 'assets/products/ups-large.png', options: [
                   { id: 'power-rating', label: 'Power Rating', type: 'range', min: 1000, max: 2000, step: 50, unit: 'VA' }
                 ] },
-              { id: 'wireless-mouse', label: 'Wireless Mouse', sectionBreak: 'All Others', options: [] },
-              { id: 'wireless-keyboard', label: 'Wireless Keyboard', options: [] },
-              { id: 'spare-laptop-power', label: 'Secondary Laptop Power Supply', options: [] }
+              { id: 'wireless-mouse', label: 'Wireless Mouse', image: 'assets/products/wireless-mouse.png', sectionBreak: 'All Others', options: [] },
+              { id: 'wireless-keyboard', label: 'Wireless Keyboard', image: 'assets/products/wireless-keyboard.png', options: [] },
+              { id: 'spare-laptop-power', label: 'Secondary Laptop Power Supply', image: 'assets/products/laptop-power-adapter.png', options: [] }
             ] },
           { id: 'es-printers', name: 'Printers', blurb: "Discovery questions on volume, output needs, functionality, and compliance, plus accessories and add-ons — everything for the printer solution in one place, configured to spec for the sales engineer to quote.", solutionHeading: 'Printer / MFP Solution', pricingMode: 'parts',
             products: [
