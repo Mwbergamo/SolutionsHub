@@ -784,9 +784,15 @@ var PILLARS = [
               { id: 'mount-dual', label: 'Dual Monitor Mount', options: [] },
               { id: 'mount-triple', label: 'Triple Monitor Mount', options: [] },
               { id: 'mount-custom', label: 'Custom Monitor Mount', options: [] },
-              { id: 'ups-small', label: 'Small UPS (Battery Backup)', sku: 'Networking equipment', sectionBreak: 'UPS Battery Backups', options: [] },
-              { id: 'ups-medium', label: 'Medium UPS (Battery Backup)', sku: 'Desktops', options: [] },
-              { id: 'ups-large', label: 'Large UPS (Battery Backup)', sku: 'Servers and storage', options: [] },
+              { id: 'ups-small', label: 'Small UPS (Battery Backup)', sku: 'Networking equipment', image: 'assets/products/ups-small.png', sectionBreak: 'UPS Battery Backups', options: [
+                  { id: 'power-rating', label: 'Power Rating', type: 'range', min: 150, max: 350, step: 50, unit: 'VA' }
+                ] },
+              { id: 'ups-medium', label: 'Medium UPS (Battery Backup)', sku: 'Desktops', image: 'assets/products/ups-medium.png', options: [
+                  { id: 'power-rating', label: 'Power Rating', type: 'range', min: 450, max: 950, step: 50, unit: 'VA' }
+                ] },
+              { id: 'ups-large', label: 'Large UPS (Battery Backup)', sku: 'Servers and storage', image: 'assets/products/ups-large.png', options: [
+                  { id: 'power-rating', label: 'Power Rating', type: 'range', min: 1000, max: 2000, step: 50, unit: 'VA' }
+                ] },
               { id: 'wireless-mouse', label: 'Wireless Mouse', sectionBreak: 'All Others', options: [] },
               { id: 'wireless-keyboard', label: 'Wireless Keyboard', options: [] },
               { id: 'spare-laptop-power', label: 'Secondary Laptop Power Supply', options: [] }
