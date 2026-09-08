@@ -2650,6 +2650,15 @@ class Component extends DCLogic {
     var cyberSecFlag = computerCyberFlag || serverCyberFlag;
     var CROSS_SELL_GLOW = 'border:2px solid oklch(0.78 0.14 85);box-shadow:0 0 0 3px oklch(0.78 0.14 85 / 0.35),0 0 24px 4px oklch(0.78 0.14 85 / 0.3);animation:accessoryReminder 2.2s ease-in-out infinite;';
 
+    // Policy: selling Guardz requires 1 SentinelOne license alongside it —
+    // Guardz does not include endpoint protection. When a rep has any
+    // qty of Guardz in Computers or Servers, light up the SentinelOne row
+    // in that same category as a reminder (still billed normally — this
+    // is an enforcement nudge, not a free/bundled license).
+    var catProductsForCrossSell = this.state.categoryProducts || {};
+    var computerGuardzFlag = (((catProductsForCrossSell['computers'] || {}).guardz) || 0) > 0;
+    var serverGuardzFlag = (((catProductsForCrossSell['cyber-servers'] || {}).guardz) || 0) > 0;
+
     // Generic image lightbox view-model — root-level, reusable by any
     // feature that calls self.openImagePreview(url, caption).
     var ipState = this.state.imagePreview || { isOpen: false, url: '', caption: '' };
@@ -3271,6 +3280,7 @@ class Component extends DCLogic {
         var catOnboardingTotal = 0;
         var catEdrFlag = (catCategoryId === 'computers') ? computerEdrFlag : (catCategoryId === 'cyber-servers') ? serverEdrFlag : false;
         var catPatchFlag = (catCategoryId === 'computers') ? computerPatchFlag : (catCategoryId === 'cyber-servers') ? serverPatchFlag : false;
+        var catGuardzFlag = (catCategoryId === 'computers') ? computerGuardzFlag : (catCategoryId === 'cyber-servers') ? serverGuardzFlag : false;
         var catProducts = cat2.products.map(function (p) {
           var qty = catQtyMap[p.id] || 0;
           catMonthly += qty * p.rate;
@@ -3298,7 +3308,12 @@ class Component extends DCLogic {
           } else {
             rateText = '$' + p.rate.toFixed(2) + '/mo ' + p.unit;
           }
-          var isCrossSellItem = (catPatchFlag && p.id === 'patch-mgmt') || (catEdrFlag && p.id === 'sentinelone-standalone');
+          var crossSellReasons = [];
+          if (catPatchFlag && p.id === 'patch-mgmt') crossSellReasons.push('✦ Selected as an add-on in Equipment Sales — add here too');
+          if (catEdrFlag && p.id === 'sentinelone-standalone') crossSellReasons.push('✦ Selected as an add-on in Equipment Sales — add here too');
+          if (catGuardzFlag && p.id === 'sentinelone-standalone') crossSellReasons.push('✦ Guardz sold — 1 SentinelOne license required, add here');
+          var isCrossSellItem = crossSellReasons.length > 0;
+          var crossSellBadgeText = crossSellReasons[0] || '';
           var prodCardStyle = 'background:oklch(0.98 0.006 255);border-radius:14px;padding:16px 20px;' +
             (isCrossSellItem ? CROSS_SELL_GLOW : 'border:2px solid transparent;');
           return {
@@ -3312,7 +3327,7 @@ class Component extends DCLogic {
             onboardFeeText: onboardFeeText,
             hasImage: !!p.image, image: p.image || '',
             onImageClick: p.image ? function () { self.openImagePreview(p.image, p.label); } : null,
-            isCrossSellHighlighted: isCrossSellItem, cardStyle: prodCardStyle,
+            isCrossSellHighlighted: isCrossSellItem, crossSellBadgeText: crossSellBadgeText, cardStyle: prodCardStyle,
             onInc: function () { self.incCategoryProduct(catCategoryId, p.id, step); },
             onDec: function () { self.incCategoryProduct(catCategoryId, p.id, -step); }
           };
