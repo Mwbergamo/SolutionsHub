@@ -398,7 +398,7 @@ var PILLARS = [
         methodology: "A three-phase framework: Discovery (network-wide exposure baseline) → Planning (a Written Information Security Plan, reviewed quarterly) → Remediation (risk evaluation from the network through the Dark Web).",
         outcome: ['risk'],
         categories: [
-          { id: 'computers', name: 'Computers', blurb: "Endpoint protection for every workstation and laptop.", solutionHeading: 'Computer Management',
+          { id: 'computers', name: 'Computers', blurb: "Endpoint protection for every workstation and laptop.", solutionHeading: 'Computer Management', crossSellFlag: 'computer',
             products: [
               { id: 'remote-agent', label: 'Remote Access Agent', rate: 2.63, unit: 'per workstation',
                 description: "A lightweight agent installed on each workstation that lets CodeBlue's team securely connect in for remote troubleshooting and support.",
@@ -420,7 +420,7 @@ var PILLARS = [
                 benefit: "Protects backups from a site-level disaster — fire, theft, or ransomware that reaches on-site storage too." }
             ]
           },
-          { id: 'cyber-servers', name: 'Servers', blurb: "Server-grade threat protection and hardening.", solutionHeading: 'Server Management',
+          { id: 'cyber-servers', name: 'Servers', blurb: "Server-grade threat protection and hardening.", solutionHeading: 'Server Management', crossSellFlag: 'server',
             products: [
               { id: 'remote-agent', label: 'Remote Access Agent', rate: 2.63, unit: 'per server',
                 description: "A lightweight agent installed on each server that lets CodeBlue's team securely connect in for remote troubleshooting and support.",
@@ -752,8 +752,6 @@ var PILLARS = [
                   { id: 'storage', label: 'Server Storage', type: 'range', min: 120, max: 10024, step: 500, unit: 'GB' },
                   { id: 'brand', label: 'Brand Preference', type: 'chip', choices: [
                       { id: 'hp', label: 'HP' }, { id: 'dell', label: 'Dell' }, { id: 'lenovo', label: 'Lenovo' }, { id: 'best-available', label: 'Best Available' } ] },
-                  { id: 'warranty', label: 'Warranty Coverage', type: 'chip', choices: [
-                      { id: '24x7-1yr', label: '24x7 – 1 Year' }, { id: '24x7-2yr', label: '24x7 – 2 Year' }, { id: '24x7-3yr', label: '24x7 – 3 Year' }, { id: '24x7-5yr', label: '24x7 – 5 Year' } ] },
                   { id: 'addon-rack-rails', label: 'Rack Rails', type: 'chip', choices: [ { id: 'rack-rails', label: 'Rack Rails' } ] },
                   { id: 'addon-mouse-keyboard', label: 'Mouse/Keyboard', type: 'chip', choices: [ { id: 'mouse-keyboard', label: 'Mouse/Keyboard' } ] },
                   { id: 'addon-monitor', label: 'Monitor', type: 'chip', choices: [ { id: 'monitor', label: 'Monitor' } ] },
@@ -763,9 +761,6 @@ var PILLARS = [
                   { id: 'addon-veeam-backup', label: 'Veeam Image Backup', type: 'chip', choices: [ { id: 'veeam-backup', label: 'Veeam Image Backup' } ] },
                   { id: 'addon-replication-space', label: 'Replication Backup Space', type: 'chip', choices: [ { id: 'replication-space', label: 'Replication Backup Space' } ] },
                   { id: 'labor-server-prep', label: 'Server System Prep', type: 'chip', choices: [ { id: 'server-prep', label: 'Server System Prep' } ] },
-                  { id: 'labor-server-replacement', label: 'Server Replacement Labor', type: 'chip', choices: [ { id: 'server-replacement', label: 'Server Replacement Labor' } ] },
-                  { id: 'labor-new-server-install', label: 'New Server Installation Labor', type: 'chip', choices: [ { id: 'new-server-install', label: 'New Server Installation Labor' } ] },
-                  { id: 'labor-recycling', label: 'Recycling of Old Server', type: 'chip', choices: [ { id: 'recycling', label: 'Recycling of Old Server' } ] },
                   { id: 'software-standard', label: 'Windows Server Standard', type: 'chip', choices: [ { id: 'standard', label: 'Windows Server Standard' } ] },
                   { id: 'software-datacenter', label: 'Windows Server Data Center', type: 'chip', choices: [ { id: 'datacenter', label: 'Windows Server Data Center' } ] },
                   { id: 'software-rds', label: 'Windows Remote Desktop Services', type: 'chip', choices: [ { id: 'rds', label: 'Windows Remote Desktop Services' } ] },
@@ -2631,6 +2626,30 @@ class Component extends DCLogic {
     var selections = this.state.selections;
     var selectionCount = Object.keys(selections).length;
 
+    // Cross-sell reminder: EDR Anti-Virus / Patch Management are sold as
+    // one-time hardware add-ons on the Computer/Server config screen, but
+    // they're really recurring Cyber Security line items. When a rep picks
+    // either add-on chip while configuring a Computer or Server, we light
+    // up a trail (Pillar tile -> Cyber Security service tile -> the
+    // matching Computers/Servers category tile -> the matching product row)
+    // so the recurring line doesn't get forgotten. Driven by the live
+    // (possibly not-yet-added-to-Solution) chip picks in partsSelections,
+    // so it reacts the moment the rep taps the chip, not just after they
+    // hit "Add to Solution".
+    var partsSelForCrossSell = this.state.partsSelections || {};
+    function hasCyberAddonChip(categoryId, productId, chipId) {
+      var entry = (partsSelForCrossSell[categoryId] || {})[productId];
+      return !!(entry && entry.chips && entry.chips[chipId]);
+    }
+    var computerEdrFlag = hasCyberAddonChip('es-computers', 'computer', 'addon-edr');
+    var computerPatchFlag = hasCyberAddonChip('es-computers', 'computer', 'addon-patch-mgmt');
+    var serverEdrFlag = hasCyberAddonChip('es-servers', 'server', 'addon-edr');
+    var serverPatchFlag = hasCyberAddonChip('es-servers', 'server', 'addon-patch-mgmt');
+    var computerCyberFlag = computerEdrFlag || computerPatchFlag;
+    var serverCyberFlag = serverEdrFlag || serverPatchFlag;
+    var cyberSecFlag = computerCyberFlag || serverCyberFlag;
+    var CROSS_SELL_GLOW = 'border:2px solid oklch(0.78 0.14 85);box-shadow:0 0 0 3px oklch(0.78 0.14 85 / 0.35),0 0 24px 4px oklch(0.78 0.14 85 / 0.3);animation:accessoryReminder 2.2s ease-in-out infinite;';
+
     // Generic image lightbox view-model — root-level, reusable by any
     // feature that calls self.openImagePreview(url, caption).
     var ipState = this.state.imagePreview || { isOpen: false, url: '', caption: '' };
@@ -2697,9 +2716,14 @@ class Component extends DCLogic {
           name: p.name,
           tagline: p.tagline,
           services: p.services.map(function (s) {
+            var svcCyberHighlighted = (s.id === 'cyber-security') && cyberSecFlag;
+            var svcCardStyle = 'background:oklch(0.98 0.006 255);border-radius:14px;padding:17px 20px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;' +
+              (svcCyberHighlighted ? CROSS_SELL_GLOW : 'border:2px solid transparent;');
             return {
               id: s.id, name: s.name, blurb: s.blurb,
               selected: !!selections[s.id],
+              isCyberHighlighted: svcCyberHighlighted,
+              cardStyle: svcCardStyle,
               onClick: function () { self.openService(p.id, s.id); }
             };
           })
@@ -2978,18 +3002,21 @@ class Component extends DCLogic {
         footerLinks: footerLinksVM,
         categories: catSvcForTiles.categories.map(function (cat) {
           var isHighlighted = false;
+          var highlightBadgeText = '';
           if (cat.highlightWhenSelected) {
             isHighlighted = !!selections[catSvcForTiles.id + '::' + cat.highlightWhenSelected];
+            highlightBadgeText = "✦ Don't forget accessories";
+          } else if (cat.crossSellFlag) {
+            isHighlighted = cat.crossSellFlag === 'computer' ? computerCyberFlag : serverCyberFlag;
+            highlightBadgeText = '✦ EDR / Patch Mgmt selected — add here';
           }
           var cardStyle = 'width:340px;background:oklch(0.98 0.006 255);border-radius:16px;padding:20px 22px;cursor:pointer;' +
-            (isHighlighted
-              ? 'border:2px solid oklch(0.78 0.14 85);box-shadow:0 0 0 3px oklch(0.78 0.14 85 / 0.35),0 0 24px 4px oklch(0.78 0.14 85 / 0.3);animation:accessoryReminder 2.2s ease-in-out infinite;'
-              : 'border:2px solid transparent;');
+            (isHighlighted ? CROSS_SELL_GLOW : 'border:2px solid transparent;');
           return {
             id: cat.id, name: cat.name, blurb: cat.blurb,
             productCount: cat.products ? cat.products.length : 0,
             hasProducts: !!(cat.products && cat.products.length > 0),
-            isHighlighted: isHighlighted, cardStyle: cardStyle,
+            isHighlighted: isHighlighted, highlightBadgeText: highlightBadgeText, cardStyle: cardStyle,
             onClick: function () { self.openCategory(catSvcPillar.id, catSvcForTiles.id, cat.id); }
           };
         })
@@ -3240,6 +3267,8 @@ class Component extends DCLogic {
         var catQtyMap = this.state.categoryProducts[catCategoryId] || {};
         var catMonthly = 0;
         var catOnboardingTotal = 0;
+        var catEdrFlag = (catCategoryId === 'computers') ? computerEdrFlag : (catCategoryId === 'cyber-servers') ? serverEdrFlag : false;
+        var catPatchFlag = (catCategoryId === 'computers') ? computerPatchFlag : (catCategoryId === 'cyber-servers') ? serverPatchFlag : false;
         var catProducts = cat2.products.map(function (p) {
           var qty = catQtyMap[p.id] || 0;
           catMonthly += qty * p.rate;
@@ -3267,6 +3296,9 @@ class Component extends DCLogic {
           } else {
             rateText = '$' + p.rate.toFixed(2) + '/mo ' + p.unit;
           }
+          var isCrossSellItem = (catPatchFlag && p.id === 'patch-mgmt') || (catEdrFlag && p.id === 'sentinelone-standalone');
+          var prodCardStyle = 'background:oklch(0.98 0.006 255);border-radius:14px;padding:16px 20px;' +
+            (isCrossSellItem ? CROSS_SELL_GLOW : 'border:2px solid transparent;');
           return {
             id: p.id, label: p.label, description: p.description, benefit: p.benefit,
             group: p.group || '',
@@ -3276,6 +3308,7 @@ class Component extends DCLogic {
             hasNote: !!note, note: note,
             hasOnboardFee: hasOnboardFee,
             onboardFeeText: onboardFeeText,
+            isCrossSellHighlighted: isCrossSellItem, cardStyle: prodCardStyle,
             onInc: function () { self.incCategoryProduct(catCategoryId, p.id, step); },
             onDec: function () { self.incCategoryProduct(catCategoryId, p.id, -step); }
           };
@@ -3607,6 +3640,9 @@ class Component extends DCLogic {
       breadcrumb: breadcrumb,
       selectionCount: selectionCount,
       goOverview: function () { self.goOverview(); },
+      itCyberSellFlag: cyberSecFlag,
+      itCardStyle: 'width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
+        (cyberSecFlag ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
       goToIT: function () { self.openPillar('it'); },
       goToDC: function () { self.openPillar('dc'); },
       goToVoIP: function () { self.openPillar('voip'); },
