@@ -550,10 +550,10 @@ var PILLARS = [
             ] },
           { id: 'switches', name: 'Network Switches', blurb: "Managed network switches — select PoE configuration.", solutionHeading: 'Network Switches', pricingMode: 'parts',
             products: [
-              { id: 'pe-24port', label: '24 Port Gigabit Network Switch', sku: 'PE-24PORT', options: [
+              { id: 'pe-24port', label: '24 Port Gigabit Network Switch', sku: 'PE-24PORT', image: 'assets/products/switch-24port.png', options: [
                   { id: 'poe', label: 'PoE', type: 'chip', choices: [ { id: 'poe', label: 'PoE' }, { id: 'non-poe', label: 'Non-PoE' } ] },
                   { id: 'poe-level', label: 'PoE Level', type: 'chip', choices: [ { id: 'half', label: 'Half PoE' }, { id: 'full', label: 'Full PoE' } ] } ] },
-              { id: 'pe-48port', label: '48 Port Gigabit Network Switch', sku: 'PE-48PORT', options: [
+              { id: 'pe-48port', label: '48 Port Gigabit Network Switch', sku: 'PE-48PORT', image: 'assets/products/switch-48port.png', options: [
                   { id: 'poe', label: 'PoE', type: 'chip', choices: [ { id: 'poe', label: 'PoE' }, { id: 'non-poe', label: 'Non-PoE' } ] },
                   { id: 'poe-level', label: 'PoE Level', type: 'chip', choices: [ { id: 'half', label: 'Half PoE' }, { id: 'full', label: 'Full PoE' } ] } ] }
             ] },
