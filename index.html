@@ -754,7 +754,11 @@
                   <sc-for list="{{grp.products}}" as="prod" hint-placeholder-count="4">
                     <div style="{{prod.cardStyle}}">
                       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;">
-                        <div style="flex:1;">
+                        <div style="display:flex;align-items:flex-start;gap:14px;flex:1;min-width:0;">
+                          <sc-if value="{{prod.hasImage}}" hint-placeholder-val="{{false}}">
+                            <img data-on-click="{{prod.onImageClick}}" src="{{prod.image}}" alt="{{prod.label}}" style="width:56px;height:56px;object-fit:contain;border-radius:8px;background:white;border:1px solid oklch(0.9 0.006 255);flex:0 0 auto;cursor:pointer;" />
+                          </sc-if>
+                          <div style="flex:1;min-width:0;">
                           <div style="font-weight:700;font-size:15px;color:oklch(0.2 0.03 255);">{{prod.label}}</div>
                           <div style="margin-top:3px;font-size:12.5px;font-weight:600;color:oklch(0.5 0.02 255);">{{prod.rateText}}</div>
                           <sc-if value="{{prod.hasOnboardFee}}" hint-placeholder-val="{{false}}">
@@ -771,6 +775,7 @@
                           <sc-if value="{{prod.isCrossSellHighlighted}}" hint-placeholder-val="{{false}}">
                             <div style="margin-top:6px;display:inline-flex;align-items:center;gap:5px;background:oklch(0.78 0.14 85);color:oklch(0.2 0.05 85);font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;">✦ Selected as an add-on in Equipment Sales — add here too</div>
                           </sc-if>
+                          </div>
                         </div>
                         <div style="display:flex;align-items:center;gap:14px;flex:0 0 auto;">
                           <button data-on-click="{{prod.onDec}}" style="width:30px;height:30px;border-radius:999px;background:oklch(0.9 0.006 255);border:none;color:oklch(0.2 0.03 255);font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
