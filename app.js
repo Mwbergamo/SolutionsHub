@@ -777,19 +777,8 @@ var PILLARS = [
             ] },
           { id: 'es-accessories', name: 'Accessories', blurb: "Monitors, mounts, UPS battery backup, and wireless/secondary peripherals. Warranty and Accidental Damage Protection are now configured with the Computer/Server itself.", solutionHeading: 'Accessories', pricingMode: 'parts', highlightWhenSelected: 'es-computers',
             products: [
-              { id: 'monitor-22', label: '22" Monitor', sectionBreak: 'Monitors & Mounts', options: [
-                  { id: 'input', label: 'Input', type: 'chip', choices: [ { id: 'hdmi', label: 'HDMI' }, { id: 'displayport', label: 'DisplayPort' } ] }
-                ] },
-              { id: 'monitor-24', label: '24" Monitor', options: [
-                  { id: 'input', label: 'Input', type: 'chip', choices: [ { id: 'hdmi', label: 'HDMI' }, { id: 'displayport', label: 'DisplayPort' } ] }
-                ] },
-              { id: 'monitor-27', label: '27" Monitor', options: [
-                  { id: 'input', label: 'Input', type: 'chip', choices: [ { id: 'hdmi', label: 'HDMI' }, { id: 'displayport', label: 'DisplayPort' } ] }
-                ] },
-              { id: 'monitor-31', label: '31" Monitor', options: [
-                  { id: 'input', label: 'Input', type: 'chip', choices: [ { id: 'hdmi', label: 'HDMI' }, { id: 'displayport', label: 'DisplayPort' } ] }
-                ] },
-              { id: 'monitor-41', label: '41" Monitor', options: [
+              { id: 'monitor', label: 'Monitor', image: 'assets/products/monitor.png', sectionBreak: 'Monitors & Mounts', options: [
+                  { id: 'size', label: 'Size', type: 'chip', choices: [ { id: '22in', label: '22"' }, { id: '24in', label: '24"' }, { id: '27in', label: '27"' }, { id: '31in', label: '31"' }, { id: '41in', label: '41"' } ] },
                   { id: 'input', label: 'Input', type: 'chip', choices: [ { id: 'hdmi', label: 'HDMI' }, { id: 'displayport', label: 'DisplayPort' } ] }
                 ] },
               { id: 'mount-dual', label: 'Dual Monitor Mount', options: [] },
