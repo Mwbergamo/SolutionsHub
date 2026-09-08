@@ -446,24 +446,31 @@ var PILLARS = [
             products: [
               { id: 'firewall-cbt125', image: 'assets/products/firewall-small.png', label: 'CBT125', rate: 99.00, unit: 'per firewall', onboardFee: 600.00, group: 'Provided Firewalls',
                 description: "Next-gen firewall hardware provided and managed by CodeBlue, with lifecycle replacement so it's never a customer-owned asset going end-of-life.",
+                specText: '3,850,000 max connections · Small offices & retail · 480 Mbps VPN throughput',
                 benefit: "Perimeter protection stays current without a capital purchase — CodeBlue owns the hardware risk." },
               { id: 'firewall-cbt145', image: 'assets/products/firewall-small.png', label: 'CBT145', rate: 130.00, unit: 'per firewall', onboardFee: 600.00, group: 'Provided Firewalls',
                 description: "Next-gen firewall hardware provided and managed by CodeBlue, with lifecycle replacement so it's never a customer-owned asset going end-of-life.",
+                specText: '3,850,000 max connections · Small-to-midsize offices · 680 Mbps VPN throughput',
                 benefit: "Perimeter protection stays current without a capital purchase — CodeBlue owns the hardware risk." },
               { id: 'firewall-cbm290', image: 'assets/products/firewall-large.png', label: 'CBM290', rate: 220.00, unit: 'per firewall', onboardFee: 600.00, group: 'Provided Firewalls',
                 description: "Next-gen firewall hardware provided and managed by CodeBlue, with lifecycle replacement so it's never a customer-owned asset going end-of-life.",
+                specText: '3,500,000 max connections · 51–100 users · 2.4 Gbps VPN throughput',
                 benefit: "Perimeter protection stays current without a capital purchase — CodeBlue owns the hardware risk." },
               { id: 'firewall-cbt185', image: 'assets/products/firewall-large.png', label: 'CBT185', rate: 262.00, unit: 'per firewall', onboardFee: 600.00, group: 'Provided Firewalls',
                 description: "Next-gen firewall hardware provided and managed by CodeBlue, with lifecycle replacement so it's never a customer-owned asset going end-of-life.",
+                specText: '3,850,000 max connections · Branch offices & large remote sites · 1.14 Gbps VPN throughput',
                 benefit: "Perimeter protection stays current without a capital purchase — CodeBlue owns the hardware risk." },
               { id: 'firewall-cbm295', image: 'assets/products/firewall-large.png', label: 'CBM295', rate: 342.00, unit: 'per firewall', onboardFee: 600.00, group: 'Provided Firewalls',
                 description: "Next-gen firewall hardware provided and managed by CodeBlue, with lifecycle replacement so it's never a customer-owned asset going end-of-life.",
+                specText: '6,000,000 max connections · 51–100 users · 5.8 Gbps VPN throughput',
                 benefit: "Perimeter protection stays current without a capital purchase — CodeBlue owns the hardware risk." },
               { id: 'firewall-cbm390', image: 'assets/products/firewall-large.png', label: 'CBM390', rate: 346.00, unit: 'per firewall', onboardFee: 600.00, group: 'Provided Firewalls',
                 description: "Next-gen firewall hardware provided and managed by CodeBlue, with lifecycle replacement so it's never a customer-owned asset going end-of-life.",
+                specText: '4,500,000 max connections · 101–200 users · 5.2 Gbps VPN throughput',
                 benefit: "Perimeter protection stays current without a capital purchase — CodeBlue owns the hardware risk." },
               { id: 'firewall-cbm590', image: 'assets/products/firewall-large.png', label: 'CBM590 (Advanced Security)', rate: 1104.00, unit: 'per firewall', onboardFee: 600.00, group: 'Provided Firewalls',
                 description: "Our top-tier next-gen firewall, adding advanced security services — deep packet inspection and intrusion prevention — on top of standard managed firewall protection.",
+                specText: '6,000,000 max connections · 301–500 users · 6.8 Gbps VPN throughput',
                 benefit: "Right-sized for higher-risk or compliance-driven environments that need more than baseline firewall protection." },
               { id: 'rapid-fire', label: 'Rapid Fire Network Threat Analysis', rate: 4.00, unit: 'per person', onboardFee: 0, flatOnboardFee: 360.00, group: 'Rapid Fire Network Threat Analysis',
                 description: "Continuous automated scanning of every network-connected device for known vulnerabilities, misconfigurations, and emerging threats.",
@@ -513,25 +520,25 @@ var PILLARS = [
         categories: [
           { id: 'firewalls', name: 'Firewalls', blurb: "Provided firewall appliances — select model, wireless, and security tier.", solutionHeading: 'Firewalls', pricingMode: 'parts',
             products: [
-              { id: 'pe-t125', label: 'CBT125', sku: 'PE-T125', image: 'assets/products/firewall-small.png', options: [
+              { id: 'pe-t125', label: 'CBT125', sku: 'PE-T125', image: 'assets/products/firewall-small.png', specText: '3,850,000 max connections · Small offices & retail · 480 Mbps VPN throughput', options: [
                   { id: 'wireless', label: 'Wireless', type: 'chip', choices: [ { id: 'wireless', label: 'Wireless' } ] },
                   { id: 'security-level', label: 'Security Level', type: 'chip', choices: [ { id: 'premium', label: 'Premium Security' }, { id: 'basic', label: 'Basic Security' } ] } ] },
-              { id: 'pe-t145', label: 'CBT145', sku: 'PE-T145', image: 'assets/products/firewall-small.png', options: [
+              { id: 'pe-t145', label: 'CBT145', sku: 'PE-T145', image: 'assets/products/firewall-small.png', specText: '3,850,000 max connections · Small-to-midsize offices · 680 Mbps VPN throughput', options: [
                   { id: 'wireless', label: 'Wireless', type: 'chip', choices: [ { id: 'wireless', label: 'Wireless' } ] },
                   { id: 'security-level', label: 'Security Level', type: 'chip', choices: [ { id: 'premium', label: 'Premium Security' }, { id: 'basic', label: 'Basic Security' } ] } ] },
-              { id: 'pe-m290', label: 'CBM290', sku: 'PE-M290', image: 'assets/products/firewall-large.png', options: [
+              { id: 'pe-m290', label: 'CBM290', sku: 'PE-M290', image: 'assets/products/firewall-large.png', specText: '3,500,000 max connections · 51–100 users · 2.4 Gbps VPN throughput', options: [
                   { id: 'wireless', label: 'Wireless', type: 'chip', choices: [ { id: 'wireless', label: 'Wireless' } ] },
                   { id: 'security-level', label: 'Security Level', type: 'chip', choices: [ { id: 'premium', label: 'Premium Security' }, { id: 'basic', label: 'Basic Security' } ] } ] },
-              { id: 'pe-t185', label: 'CBT185', sku: 'PE-T185', image: 'assets/products/firewall-large.png', options: [
+              { id: 'pe-t185', label: 'CBT185', sku: 'PE-T185', image: 'assets/products/firewall-large.png', specText: '3,850,000 max connections · Branch offices & large remote sites · 1.14 Gbps VPN throughput', options: [
                   { id: 'wireless', label: 'Wireless', type: 'chip', choices: [ { id: 'wireless', label: 'Wireless' } ] },
                   { id: 'security-level', label: 'Security Level', type: 'chip', choices: [ { id: 'premium', label: 'Premium Security' }, { id: 'basic', label: 'Basic Security' } ] } ] },
-              { id: 'pe-m295', label: 'CBM295', sku: 'PE-M295', image: 'assets/products/firewall-large.png', options: [
+              { id: 'pe-m295', label: 'CBM295', sku: 'PE-M295', image: 'assets/products/firewall-large.png', specText: '6,000,000 max connections · 51–100 users · 5.8 Gbps VPN throughput', options: [
                   { id: 'wireless', label: 'Wireless', type: 'chip', choices: [ { id: 'wireless', label: 'Wireless' } ] },
                   { id: 'security-level', label: 'Security Level', type: 'chip', choices: [ { id: 'premium', label: 'Premium Security' }, { id: 'basic', label: 'Basic Security' } ] } ] },
-              { id: 'pe-m390', label: 'CBM390', sku: 'PE-M390', image: 'assets/products/firewall-large.png', options: [
+              { id: 'pe-m390', label: 'CBM390', sku: 'PE-M390', image: 'assets/products/firewall-large.png', specText: '4,500,000 max connections · 101–200 users · 5.2 Gbps VPN throughput', options: [
                   { id: 'wireless', label: 'Wireless', type: 'chip', choices: [ { id: 'wireless', label: 'Wireless' } ] },
                   { id: 'security-level', label: 'Security Level', type: 'chip', choices: [ { id: 'premium', label: 'Premium Security' }, { id: 'basic', label: 'Basic Security' } ] } ] },
-              { id: 'pe-m590', label: 'CBM590 (Advanced Security)', sku: 'PE-M590', image: 'assets/products/firewall-large.png', options: [
+              { id: 'pe-m590', label: 'CBM590 (Advanced Security)', sku: 'PE-M590', image: 'assets/products/firewall-large.png', specText: '6,000,000 max connections · 301–500 users · 6.8 Gbps VPN throughput', options: [
                   { id: 'wireless', label: 'Wireless', type: 'chip', choices: [ { id: 'wireless', label: 'Wireless' } ] },
                   { id: 'security-level', label: 'Security Level', type: 'chip', choices: [ { id: 'premium', label: 'Premium Security' }, { id: 'basic', label: 'Basic Security' } ] } ] }
             ] },
@@ -1354,13 +1361,13 @@ var OPTIONAL_ADDONS = [
 ];
 
 var FIREWALL_MODELS = [
-  { sku: 'PE-T125', label: 'CBT125', rate: 99, image: 'assets/products/firewall-small.png' },
-  { sku: 'PE-T145', label: 'CBT145', rate: 130, image: 'assets/products/firewall-small.png' },
-  { sku: 'PE-M290', label: 'CBM290', rate: 220, image: 'assets/products/firewall-large.png' },
-  { sku: 'PE-T185', label: 'CBT185', rate: 262, image: 'assets/products/firewall-large.png' },
-  { sku: 'PE-M295', label: 'CBM295', rate: 342, image: 'assets/products/firewall-large.png' },
-  { sku: 'PE-M390', label: 'CBM390', rate: 346, image: 'assets/products/firewall-large.png' },
-  { sku: 'PE-M590', label: 'CBM590 (Advanced Security)', rate: 1104, image: 'assets/products/firewall-large.png' }
+  { sku: 'PE-T125', label: 'CBT125', rate: 99, image: 'assets/products/firewall-small.png', specText: '3,850,000 max connections · Small offices & retail · 480 Mbps VPN throughput' },
+  { sku: 'PE-T145', label: 'CBT145', rate: 130, image: 'assets/products/firewall-small.png', specText: '3,850,000 max connections · Small-to-midsize offices · 680 Mbps VPN throughput' },
+  { sku: 'PE-M290', label: 'CBM290', rate: 220, image: 'assets/products/firewall-large.png', specText: '3,500,000 max connections · 51–100 users · 2.4 Gbps VPN throughput' },
+  { sku: 'PE-T185', label: 'CBT185', rate: 262, image: 'assets/products/firewall-large.png', specText: '3,850,000 max connections · Branch offices & large remote sites · 1.14 Gbps VPN throughput' },
+  { sku: 'PE-M295', label: 'CBM295', rate: 342, image: 'assets/products/firewall-large.png', specText: '6,000,000 max connections · 51–100 users · 5.8 Gbps VPN throughput' },
+  { sku: 'PE-M390', label: 'CBM390', rate: 346, image: 'assets/products/firewall-large.png', specText: '4,500,000 max connections · 101–200 users · 5.2 Gbps VPN throughput' },
+  { sku: 'PE-M590', label: 'CBM590 (Advanced Security)', rate: 1104, image: 'assets/products/firewall-large.png', specText: '6,000,000 max connections · 301–500 users · 6.8 Gbps VPN throughput' }
 ];
 
 class Component extends DCLogic {
@@ -2843,6 +2850,8 @@ class Component extends DCLogic {
           cardStyle: 'border-radius:12px;padding:14px 16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;' + (selected ? ('background:' + accentColor + ';') : 'background:oklch(0.98 0.006 255);'),
           titleColor: selected ? '#ffffff' : 'oklch(0.2 0.03 255)',
           rateColor: selected ? 'oklch(0.95 0.01 255)' : 'oklch(0.5 0.02 255)',
+          hasSpecText: !!fw.specText, specText: fw.specText || '',
+          specColor: selected ? 'oklch(0.92 0.02 255)' : 'oklch(0.55 0.02 255)',
           hasImage: !!fw.image, image: fw.image || '',
           onImageClick: fw.image ? function (e) { if (e && e.stopPropagation) e.stopPropagation(); self.openImagePreview(fw.image, fw.label); } : null,
           onClick: function () { self.miSelectFirewall(fw.sku); }
@@ -3171,6 +3180,7 @@ class Component extends DCLogic {
           });
           return {
             id: p.id, label: p.label, hasSku: !!p.sku, sku: p.sku || '',
+            hasSpecText: !!p.specText, specText: p.specText || '',
             hasImage: !!p.image, image: p.image || '',
             onImageClick: p.image ? function () { self.openImagePreview(p.image, p.label); } : null,
             hasRecommendNote: !!recommendNote, recommendNote: recommendNote || '',
@@ -3318,6 +3328,7 @@ class Component extends DCLogic {
             (isCrossSellItem ? CROSS_SELL_GLOW : 'border:2px solid transparent;');
           return {
             id: p.id, label: p.label, description: p.description, benefit: p.benefit,
+            hasSpecText: !!p.specText, specText: p.specText || '',
             group: p.group || '',
             rateText: rateText,
             pricingTBD: pricingTBD,
