@@ -1,0 +1,16 @@
+# Block public access to .git internals — this repo's .git history is
+# otherwise fully downloadable over HTTP by anyone (a common automated
+# attack pattern: scanners regularly probe for /.git/config, /.git/HEAD,
+# etc. and can reconstruct the whole repo, including anything ever
+# committed, from a readable .git directory). Added 2026-09-09 after
+# finding scanner traffic against public_html/portal/.git in the error
+# log.
+RewriteEngine On
+RewriteRule (^|/)\.git($|/) - [F,L]
+
+# Also block the mail/ config sample and any stray backup/editor files
+# from being served directly.
+<FilesMatch "(\.bak|\.swp|~)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
