@@ -6,13 +6,19 @@
  * plain string-rendering is simpler than pulling that engine in). Talks to
  * relationships/api/auth.php and relationships/api/customers.php.
  *
- * Phase 1 scope: sign-in gate, customer search, pillar summary (bright =
- * has at least one active service in that pillar, dark = none), pillar
- * drill-down showing active products + missing services, a missing-services
- * roster, deep-links back into the main Solutions Hub for a missing
- * service, and a link out to the (placeholder, pending real per-service
- * folders) SharePoint marketing library. The 7-step cross-sell checklist
- * and the step-queue reporting view are later phases — not built yet.
+ * Phase 1: sign-in gate, customer search, pillar summary (bright = has at
+ * least one active service in that pillar, dark = none), pillar drill-down
+ * showing active products + missing services, a missing-services roster,
+ * deep-links back into the main Solutions Hub for a missing service, and a
+ * link out to the (placeholder, pending real per-service folders)
+ * SharePoint marketing library.
+ *
+ * Phase 2 (relationships/api/checklist.php): a 7-step cross-sell checklist
+ * per (customer, missing service), expandable inline under that service in
+ * the drill-down; and a step-queue reporting view (Cross-Sell Report) —
+ * per-service counts of how many customers are pending at each step,
+ * drilling into who they are and jumping straight to that customer's
+ * checklist at that step.
  */
 
 (function () {
@@ -37,7 +43,28 @@
     selectedCustomer: null, // { customer: {id,name}, pillars: [...] }
     loadingDetail: false,
     activePillarId: null,
-    error: null
+    error: null,
+
+    // 'dashboard' | 'report' | 'queue'
+    view: 'dashboard',
+
+    // Checklist data, keyed by "customerId::pillarId::serviceId". Each
+    // value is: undefined (not fetched yet), 'error', or an array of the
+    // 7 step objects from checklist.php?action=get.
+    checklists: {},
+    openChecklistKey: null,
+
+    // Set right before selectCustomer() when arriving from the queue view,
+    // so the customer's dashboard opens straight to that pillar with that
+    // service's checklist already expanded and scrolled to.
+    pendingFocus: null,
+
+    report: null, // rows from checklist.php?action=summary
+    reportLoading: false,
+
+    queue: null, // customers from checklist.php?action=queue
+    queueLoading: false,
+    queueParams: null // { pillarId, serviceId, step, pillarName, serviceName }
   };
 
   function escapeHtml(s) {
@@ -50,6 +77,17 @@
     var qty = p.qty;
     var unit = p.unit ? ' ' + escapeHtml(p.unit) : '';
     return escapeHtml(qty) + unit;
+  }
+
+  function fmtTimestamp(sqlDatetime) {
+    if (!sqlDatetime) return '';
+    // checklist.php writes datetime('now') -- SQLite gives that back as
+    // "YYYY-MM-DD HH:MM:SS" in UTC. Turn it into a real Date so it prints
+    // in whoever's looking at it local time.
+    var d = new Date(sqlDatetime.replace(' ', 'T') + 'Z');
+    if (isNaN(d.getTime())) return sqlDatetime;
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) +
+      ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   }
 
   // ---- API helpers ----------------------------------------------------
@@ -119,17 +157,111 @@
     render();
     apiGet('api/customers.php?action=detail&id=' + encodeURIComponent(id)).then(function (r) {
       state.loadingDetail = false;
+      var scrollToKey = null;
       if (r.data && r.data.ok) {
         state.selectedCustomer = r.data;
+        if (state.pendingFocus) {
+          var pf = state.pendingFocus;
+          state.pendingFocus = null;
+          state.activePillarId = pf.pillarId;
+          scrollToKey = id + '::' + pf.pillarId + '::' + pf.serviceId;
+          state.openChecklistKey = scrollToKey;
+          loadChecklist(id, pf.pillarId, pf.serviceId);
+        }
       } else {
         state.error = (r.data && r.data.error) || 'Could not load that customer.';
       }
       render();
+      if (scrollToKey) {
+        var el = document.querySelector('[data-checklist-key="' + scrollToKey + '"]');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     }).catch(function () {
       state.loadingDetail = false;
       state.error = 'Could not load that customer — check your connection and try again.';
       render();
     });
+  }
+
+  function loadChecklist(customerId, pillarId, serviceId) {
+    var key = customerId + '::' + pillarId + '::' + serviceId;
+    apiGet(
+      'api/checklist.php?action=get&customer_id=' + encodeURIComponent(customerId) +
+      '&pillar_id=' + encodeURIComponent(pillarId) + '&service_id=' + encodeURIComponent(serviceId)
+    ).then(function (r) {
+      state.checklists[key] = (r.data && r.data.ok) ? r.data.steps : 'error';
+      render();
+    }).catch(function () {
+      state.checklists[key] = 'error';
+      render();
+    });
+  }
+
+  function setChecklistStep(customerId, pillarId, serviceId, serviceName, stepNumber, completed) {
+    apiPost('api/checklist.php?action=set', {
+      customer_id: customerId, pillar_id: pillarId, service_id: serviceId,
+      service_name: serviceName, step_number: stepNumber, completed: completed
+    }).then(function (r) {
+      if (r.data && r.data.ok) {
+        loadChecklist(customerId, pillarId, serviceId);
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not save that — try again.';
+        render();
+      }
+    }).catch(function () {
+      state.error = 'Could not save that — check your connection and try again.';
+      render();
+    });
+  }
+
+  function loadReport() {
+    state.reportLoading = true;
+    state.report = null;
+    state.error = null;
+    render();
+    apiGet('api/checklist.php?action=summary').then(function (r) {
+      state.reportLoading = false;
+      if (r.data && r.data.ok) {
+        state.report = r.data.rows;
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not load the report.';
+      }
+      render();
+    }).catch(function () {
+      state.reportLoading = false;
+      state.error = 'Could not load the report — check your connection and try again.';
+      render();
+    });
+  }
+
+  function loadQueue(pillarId, serviceId, step, pillarName, serviceName) {
+    state.queueLoading = true;
+    state.queue = null;
+    state.error = null;
+    state.queueParams = { pillarId: pillarId, serviceId: serviceId, step: step, pillarName: pillarName, serviceName: serviceName };
+    render();
+    apiGet(
+      'api/checklist.php?action=queue&pillar_id=' + encodeURIComponent(pillarId) +
+      '&service_id=' + encodeURIComponent(serviceId) + '&step=' + encodeURIComponent(step)
+    ).then(function (r) {
+      state.queueLoading = false;
+      if (r.data && r.data.ok) {
+        state.queue = r.data.customers;
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not load that list.';
+      }
+      render();
+    }).catch(function () {
+      state.queueLoading = false;
+      state.error = 'Could not load that list — check your connection and try again.';
+      render();
+    });
+  }
+
+  function openCustomerAtChecklist(customerId, pillarId, serviceId, serviceName) {
+    state.view = 'dashboard';
+    state.pendingFocus = { pillarId: pillarId, serviceId: serviceId, serviceName: serviceName };
+    selectCustomer(customerId);
   }
 
   function signOut() {
@@ -168,6 +300,10 @@
             '<div class="brand">Relationships</div>' +
             '<div class="brand-sub">CodeBlue Technology — Client Relationship Dashboard</div>' +
           '</div>' +
+          '<nav class="topbar-nav">' +
+            '<button class="nav-btn ' + (state.view === 'dashboard' ? 'active' : '') + '" type="button" data-action="show-dashboard">Dashboard</button>' +
+            '<button class="nav-btn ' + (state.view !== 'dashboard' ? 'active' : '') + '" type="button" data-action="show-report">Cross-Sell Report</button>' +
+          '</nav>' +
           '<a class="back-to-hub" href="' + HUB_URL + '">← Solutions Hub</a>' +
         '</div>' +
         '<div class="topbar-right">' +
@@ -180,6 +316,13 @@
 
   function mainHtml() {
     if (!state.user) return '<div class="loading">Loading…</div>';
+
+    if (state.view === 'report') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + reportHtml();
+    }
+    if (state.view === 'queue') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + queueHtml();
+    }
 
     var html = '<div class="search-wrap">' + searchBoxHtml() + '</div>';
 
@@ -195,6 +338,76 @@
       html += '<div class="empty-state">Search for a customer above to see their active CodeBlue services and what they’re missing.</div>';
     }
 
+    return html;
+  }
+
+  function reportHtml() {
+    var html = '<div class="view-header">' +
+      '<div class="view-title">Cross-Sell Step Report</div>' +
+      '<div class="view-sub">How many customers are currently sitting at each step, per missing service. Click a number to see who.</div>' +
+    '</div>';
+
+    if (state.reportLoading || !state.report) {
+      return html + '<div class="loading">Loading report…</div>';
+    }
+    if (state.report.length === 0) {
+      return html + '<div class="empty-state">No cross-sell activity yet.</div>';
+    }
+
+    html += '<div class="report-table-wrap"><table class="report-table"><thead><tr>' +
+      '<th class="report-service-col">Pillar / Service</th>' +
+      [1, 2, 3, 4, 5, 6, 7].map(function (n) { return '<th>Step ' + n + '</th>'; }).join('') +
+      '<th>Closed</th><th>Total</th>' +
+    '</tr></thead><tbody>';
+
+    state.report.forEach(function (row) {
+      html += '<tr><td class="report-service-col">' +
+        '<div class="report-pillar-name">' + escapeHtml(row.pillar_name) + '</div>' +
+        '<div class="report-service-name">' + escapeHtml(row.service_name) + '</div>' +
+      '</td>';
+      for (var n = 1; n <= 7; n++) {
+        html += '<td>' + reportCellHtml(row, String(n), row.steps[String(n)] || 0) + '</td>';
+      }
+      html += '<td>' + reportCellHtml(row, 'closed', row.closed) + '</td>';
+      html += '<td class="report-total">' + row.total + '</td></tr>';
+    });
+
+    html += '</tbody></table></div>';
+    return html;
+  }
+
+  function reportCellHtml(row, step, count) {
+    if (!count) return '<span class="report-count zero">0</span>';
+    return '<button class="report-count" type="button" data-action="report-cell" ' +
+      'data-pillar="' + row.pillar_id + '" data-service="' + row.service_id + '" data-step="' + step + '" ' +
+      'data-pillar-name="' + escapeHtml(row.pillar_name) + '" data-service-name="' + escapeHtml(row.service_name) + '">' +
+      count + '</button>';
+  }
+
+  function queueHtml() {
+    var qp = state.queueParams || {};
+    var stepLabel = qp.step === 'closed' ? 'Closed / re-address in 180 days' : ('Step ' + qp.step);
+    var html = '<div class="view-header">' +
+      '<button class="back-link" type="button" data-action="queue-back">← Back to report</button>' +
+      '<div class="view-title">' + escapeHtml(qp.serviceName || '') + ' — ' + escapeHtml(stepLabel) + '</div>' +
+      '<div class="view-sub">' + escapeHtml(qp.pillarName || '') + '. Click a customer to open their checklist at this step.</div>' +
+    '</div>';
+
+    if (state.queueLoading || !state.queue) {
+      return html + '<div class="loading">Loading…</div>';
+    }
+    if (state.queue.length === 0) {
+      return html + '<div class="empty-state">No customers currently at this step.</div>';
+    }
+
+    html += '<div class="queue-list">';
+    state.queue.forEach(function (c) {
+      html += '<div class="queue-item" data-action="open-queue-customer" data-customer="' + c.customer_id + '">' +
+        '<div class="queue-item-name">' + escapeHtml(c.customer_name) + '</div>' +
+        '<div class="queue-item-go">Open →</div>' +
+      '</div>';
+    });
+    html += '</div>';
     return html;
   }
 
@@ -268,14 +481,14 @@
     if (state.activePillarId) {
       var pillar = detail.pillars.filter(function (p) { return p.id === state.activePillarId; })[0];
       if (pillar) {
-        html += drilldownHtml(pillar);
+        html += drilldownHtml(pillar, detail.customer.id);
       }
     }
 
     return html;
   }
 
-  function drilldownHtml(pillar) {
+  function drilldownHtml(pillar, customerId) {
     var html = '<div class="drilldown">' +
       '<div class="drilldown-header">' +
         '<button class="drilldown-back" type="button" data-action="close-drilldown" aria-label="Close">' +
@@ -308,11 +521,50 @@
             '<a class="svc-action-btn primary" href="' + hubUrl + '" target="_blank" rel="noopener">Open in Solutions Hub →</a>' +
             '<a class="svc-action-btn secondary" href="' + MARKETING_LIBRARY_URL + '" target="_blank" rel="noopener">View Marketing ↗</a>' +
           '</div>' +
+          checklistHtml(customerId, pillar, svc) +
         '</div>';
       }
     });
 
     html += '</div>';
+    return html;
+  }
+
+  function checklistHtml(customerId, pillar, svc) {
+    var key = customerId + '::' + pillar.id + '::' + svc.id;
+    var isOpen = state.openChecklistKey === key;
+
+    var html = '<div class="checklist-toggle-row">' +
+      '<button class="checklist-toggle-btn" type="button" data-action="toggle-checklist" data-pillar="' + pillar.id + '" data-service="' + svc.id + '">' +
+        (isOpen ? 'Hide Cross-Sell Checklist ▴' : 'Cross-Sell Checklist ▾') +
+      '</button>' +
+    '</div>';
+
+    if (!isOpen) return html;
+
+    html += '<div class="checklist-panel" data-checklist-key="' + key + '">';
+    var data = state.checklists[key];
+    if (data === 'error') {
+      html += '<div class="checklist-error">Could not load the checklist — try again.</div>';
+    } else if (!data) {
+      html += '<div class="checklist-loading">Loading checklist…</div>';
+    } else {
+      data.forEach(function (step) {
+        html += '<label class="checklist-step ' + (step.completed ? 'done' : '') + '">' +
+          '<input type="checkbox" ' + (step.completed ? 'checked' : '') +
+            ' data-action="toggle-step" data-customer="' + customerId + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '"' +
+            ' data-service-name="' + escapeHtml(svc.name) + '" data-step="' + step.step_number + '" data-completed="' + (step.completed ? '1' : '0') + '">' +
+          '<div class="checklist-step-text">' +
+            '<div class="checklist-step-label">' + step.step_number + '. ' + escapeHtml(step.label) + '</div>' +
+            (step.completed
+              ? '<div class="checklist-step-meta">✓ ' + escapeHtml(step.completed_by_name) + ' — ' + escapeHtml(fmtTimestamp(step.completed_at)) + '</div>'
+              : '') +
+          '</div>' +
+        '</label>';
+      });
+    }
+    html += '</div>';
+
     return html;
   }
 
@@ -369,6 +621,45 @@
     } else if (action === 'close-drilldown') {
       state.activePillarId = null;
       render();
+    } else if (action === 'show-report') {
+      state.view = 'report';
+      loadReport();
+    } else if (action === 'show-dashboard') {
+      state.view = 'dashboard';
+      state.error = null;
+      render();
+    } else if (action === 'report-cell') {
+      state.view = 'queue';
+      loadQueue(
+        el.getAttribute('data-pillar'), el.getAttribute('data-service'), el.getAttribute('data-step'),
+        el.getAttribute('data-pillar-name'), el.getAttribute('data-service-name')
+      );
+    } else if (action === 'queue-back') {
+      state.view = 'report';
+      state.error = null;
+      render();
+    } else if (action === 'open-queue-customer') {
+      var qp = state.queueParams;
+      openCustomerAtChecklist(el.getAttribute('data-customer'), qp.pillarId, qp.serviceId, qp.serviceName);
+    } else if (action === 'toggle-checklist') {
+      var custId = state.selectedCustomer.customer.id;
+      var checklistKey = custId + '::' + el.getAttribute('data-pillar') + '::' + el.getAttribute('data-service');
+      if (state.openChecklistKey === checklistKey) {
+        state.openChecklistKey = null;
+        render();
+      } else {
+        state.openChecklistKey = checklistKey;
+        render();
+        if (!state.checklists[checklistKey]) {
+          loadChecklist(custId, el.getAttribute('data-pillar'), el.getAttribute('data-service'));
+        }
+      }
+    } else if (action === 'toggle-step') {
+      var wasCompleted = el.getAttribute('data-completed') === '1';
+      setChecklistStep(
+        el.getAttribute('data-customer'), el.getAttribute('data-pillar'), el.getAttribute('data-service'),
+        el.getAttribute('data-service-name'), parseInt(el.getAttribute('data-step'), 10), !wasCompleted
+      );
     } else if (action === 'signout') {
       signOut();
     }

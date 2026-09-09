@@ -21,6 +21,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/catalog.php';
+
 function relationships_db(): PDO
 {
     static $pdo = null;
@@ -116,47 +118,7 @@ function relationships_migrate(PDO $pdo): void
 
 function relationships_seed_mock_data(PDO $pdo): void
 {
-    // Mirrors SolutionsHub's real PILLARS catalog (id/name only — see
-    // app.js PILLARS). Kept as a small hand-maintained list here rather
-    // than importing app.js, since that file is a large, tightly-coupled
-    // quoting-SPA bundle this mini-app has no reason to pull in.
-    $catalog = [
-        'it' => ['name' => 'IT Services', 'services' => [
-            'managed-it' => 'Managed IT Services',
-            'vcio' => 'vCIO',
-            'cyber-security' => 'Cyber Security',
-            'provided-equipment' => 'Provided Equipment',
-            'help-desk' => 'Help Desk Support',
-            'onsite-support' => 'On-Site Technical Support',
-            'equipment-sales' => 'Equipment Sales',
-        ]],
-        'dc' => ['name' => 'Data Center Services', 'services' => [
-            'private-cloud' => 'Private Cloud Hosting',
-            'public-cloud' => 'Public Cloud Hosting',
-            'internet-sourcing' => 'Internet Connectivity Sourcing',
-            'hardware-hosting' => 'Hardware Hosting',
-            'disaster-recovery' => 'Failover and Disaster Recovery',
-        ]],
-        'voip' => ['name' => 'Voice over IP Services', 'services' => [
-            'cloud-voice' => 'Cloud Voice System',
-            'premise-voice' => 'Premise Voice System',
-            'sip-trunking' => 'SIP Trunking',
-            'call-center' => 'Call Center',
-            'phone-hardware' => 'Phone Hardware Solutions',
-            'conference-room' => 'Conference Room Solutions',
-        ]],
-        'cabling' => ['name' => 'Data Cabling', 'services' => [
-            'cabling-business' => 'Data Cabling for Business',
-            'cabling-repair' => 'Cabling Repair',
-            'data-closet' => 'Data Closet Installation',
-            'cabling-docs' => 'Cabling Documentation',
-            'cabling-supplies' => 'Cabling Supplies',
-        ]],
-        'security' => ['name' => 'Premise Security', 'services' => [
-            'ip-cameras' => 'IP Security Camera Systems',
-            'access-control' => 'Access Control Systems',
-        ]],
-    ];
+    $catalog = relationships_catalog();
 
     $insertCustomer = $pdo->prepare('INSERT INTO customers (connectwise_id, name, is_mock) VALUES (:cw, :name, 1)');
     $insertService = $pdo->prepare(

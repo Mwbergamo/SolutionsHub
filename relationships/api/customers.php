@@ -27,48 +27,6 @@ require_once __DIR__ . '/_util.php';
 $pdo = relationships_db();
 relationships_require_login($pdo);
 
-// Mirrors the catalog in db.php's seeder — see the comment there for why
-// this isn't just imported from SolutionsHub's app.js. Kept in sync by
-// hand; a future ConnectWise sync should validate pillar_id/service_id
-// against this same list before writing customer_services rows.
-const RELATIONSHIPS_CATALOG = [
-    'it' => ['name' => 'IT Services', 'services' => [
-        'managed-it' => 'Managed IT Services',
-        'vcio' => 'vCIO',
-        'cyber-security' => 'Cyber Security',
-        'provided-equipment' => 'Provided Equipment',
-        'help-desk' => 'Help Desk Support',
-        'onsite-support' => 'On-Site Technical Support',
-        'equipment-sales' => 'Equipment Sales',
-    ]],
-    'dc' => ['name' => 'Data Center Services', 'services' => [
-        'private-cloud' => 'Private Cloud Hosting',
-        'public-cloud' => 'Public Cloud Hosting',
-        'internet-sourcing' => 'Internet Connectivity Sourcing',
-        'hardware-hosting' => 'Hardware Hosting',
-        'disaster-recovery' => 'Failover and Disaster Recovery',
-    ]],
-    'voip' => ['name' => 'Voice over IP Services', 'services' => [
-        'cloud-voice' => 'Cloud Voice System',
-        'premise-voice' => 'Premise Voice System',
-        'sip-trunking' => 'SIP Trunking',
-        'call-center' => 'Call Center',
-        'phone-hardware' => 'Phone Hardware Solutions',
-        'conference-room' => 'Conference Room Solutions',
-    ]],
-    'cabling' => ['name' => 'Data Cabling', 'services' => [
-        'cabling-business' => 'Data Cabling for Business',
-        'cabling-repair' => 'Cabling Repair',
-        'data-closet' => 'Data Closet Installation',
-        'cabling-docs' => 'Cabling Documentation',
-        'cabling-supplies' => 'Cabling Supplies',
-    ]],
-    'security' => ['name' => 'Premise Security', 'services' => [
-        'ip-cameras' => 'IP Security Camera Systems',
-        'access-control' => 'Access Control Systems',
-    ]],
-];
-
 $action = $_GET['action'] ?? '';
 
 if ($action === 'list') {
@@ -120,7 +78,7 @@ if ($action === 'detail') {
     }
 
     $pillars = [];
-    foreach (RELATIONSHIPS_CATALOG as $pillarId => $pillarDef) {
+    foreach (relationships_catalog() as $pillarId => $pillarDef) {
         $services = [];
         $pillarActive = false;
         foreach ($pillarDef['services'] as $serviceId => $serviceName) {

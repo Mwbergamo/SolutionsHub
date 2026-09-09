@@ -39,6 +39,26 @@ a { color: inherit; }
   color: oklch(0.6 0.02 255);
 }
 
+.topbar-nav {
+  display: flex;
+  gap: 4px;
+  background: oklch(0.2 0.02 255);
+  border-radius: 999px;
+  padding: 3px;
+}
+
+.nav-btn {
+  background: transparent;
+  border: none;
+  color: oklch(0.62 0.02 255);
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 7px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.nav-btn.active { background: #2f8fef; color: white; }
+
 .back-to-hub {
   font-size: 12.5px;
   font-weight: 600;
@@ -388,4 +408,145 @@ a { color: inherit; }
   font-size: 13.5px;
 }
 .loading { color: oklch(0.55 0.02 255); }
-.error-banner { color: oklch(0.62 0.16 30); }
+.error-banner {
+  color: oklch(0.62 0.16 30);
+  text-align: left;
+}
+
+/* Cross-sell checklist (inline under a missing service in the drill-down) */
+
+.checklist-toggle-row { margin-top: 12px; }
+
+.checklist-toggle-btn {
+  background: transparent;
+  border: none;
+  color: #8fc3ff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+
+.checklist-panel {
+  margin-top: 12px;
+  padding-top: 4px;
+  border-top: 1px solid oklch(0.3 0.02 255);
+}
+
+.checklist-loading, .checklist-error { font-size: 12.5px; color: oklch(0.55 0.015 255); padding: 8px 0; }
+
+.checklist-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 4px;
+  cursor: pointer;
+}
+
+.checklist-step input[type="checkbox"] {
+  margin-top: 3px;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  accent-color: #2f8fef;
+  cursor: pointer;
+}
+
+.checklist-step-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: oklch(0.78 0.006 255);
+}
+.checklist-step.done .checklist-step-label { color: oklch(0.6 0.015 255); text-decoration: line-through; }
+
+.checklist-step-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #8fc3ff;
+}
+
+/* Report / queue views */
+
+.view-header { margin-bottom: 22px; }
+
+.view-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: white;
+}
+
+.view-sub {
+  margin-top: 6px;
+  font-size: 13px;
+  color: oklch(0.58 0.015 255);
+  line-height: 1.5;
+}
+
+.back-link {
+  background: transparent;
+  border: none;
+  color: #8fc3ff;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0 0 10px;
+  display: block;
+}
+
+.report-table-wrap { overflow-x: auto; border-radius: 14px; border: 1px solid oklch(0.26 0.02 255); }
+
+.report-table { width: 100%; border-collapse: collapse; font-size: 12.5px; white-space: nowrap; }
+
+.report-table th {
+  text-align: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  color: oklch(0.55 0.015 255);
+  padding: 12px 10px;
+  background: oklch(0.19 0.014 255);
+  border-bottom: 1px solid oklch(0.28 0.02 255);
+}
+.report-table th.report-service-col { text-align: left; }
+
+.report-table td {
+  text-align: center;
+  padding: 10px;
+  border-bottom: 1px solid oklch(0.24 0.016 255);
+  color: oklch(0.75 0.01 255);
+}
+
+.report-service-col { text-align: left; }
+.report-pillar-name { font-size: 10.5px; font-weight: 700; letter-spacing: .03em; color: oklch(0.5 0.015 255); text-transform: uppercase; }
+.report-service-name { margin-top: 2px; font-size: 13px; font-weight: 600; color: oklch(0.85 0.006 255); }
+
+.report-total { font-weight: 700; color: white; }
+
+.report-count {
+  background: rgba(47,143,239,0.16);
+  border: none;
+  color: #8fc3ff;
+  font-weight: 700;
+  font-size: 12.5px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.report-count.zero { background: transparent; color: oklch(0.4 0.01 255); cursor: default; }
+
+.queue-list { display: flex; flex-direction: column; gap: 2px; }
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.queue-item-name { font-size: 14px; font-weight: 700; color: white; }
+.queue-item-go { font-size: 12px; font-weight: 700; color: #8fc3ff; }
