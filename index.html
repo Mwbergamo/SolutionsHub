@@ -185,6 +185,19 @@
             <div style="font-size:11.5px;color:oklch(0.55 0.02 255);font-weight:700;letter-spacing:.03em;">4 SERVICE AREAS →</div>
           </div>
 
+          <a href="relationships/" style="width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.4"></circle><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7"></path></svg>
+              </div>
+            </div>
+            <div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">Relationships</div>
+              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:oklch(0.45 0.02 255);">CRC dashboard — see what each customer has, and what's worth a conversation.</div>
+            </div>
+            <div style="font-size:11.5px;color:oklch(0.55 0.02 255);font-weight:700;letter-spacing:.03em;">CRC DASHBOARD →</div>
+          </a>
+
         </div>
       </div>
     </sc-if>
@@ -1574,6 +1587,21 @@
     var mountEl = document.getElementById('app-root');
     var component = window.SolutionsHubApp.createComponent({ accentColor: '#2f8fef' });
     SolutionsHubRuntime.mountApp(templateHtml, mountEl, component);
+
+    // Deep-links from the Relationships dashboard (relationships/app.js),
+    // e.g. index.html?pillar=it&service=cyber-security — jumps straight to
+    // that pillar/service/category after mount instead of the Overview.
+    var params = new URLSearchParams(window.location.search);
+    var pillarId = params.get('pillar');
+    var serviceId = params.get('service');
+    var categoryId = params.get('category');
+    if (pillarId && serviceId && categoryId) {
+      component.openCategory(pillarId, serviceId, categoryId);
+    } else if (pillarId && serviceId) {
+      component.openService(pillarId, serviceId);
+    } else if (pillarId) {
+      component.openPillar(pillarId);
+    }
   })();
 </script>
 </body>

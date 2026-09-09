@@ -1,0 +1,6 @@
+# Block all direct HTTP access to this folder — it holds the Relationships
+# dashboard's SQLite database (customer service data, CRC accounts,
+# checklist progress). Nothing here should ever be served to a browser;
+# only relationships/api/*.php reads/writes it via PDO on the server side.
+Order allow,deny
+Deny from all

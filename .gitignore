@@ -8,3 +8,11 @@
 .DS_Store
 Thumbs.db
 *.swp
+
+# Relationships dashboard's runtime SQLite database — created on first
+# request by relationships/api/db.php. Never commit it: it's live CRC
+# accounts + customer/checklist data, not source, and a `git pull` deploy
+# must never overwrite or wipe it.
+/relationships/data/*.sqlite
+/relationships/data/*.sqlite-wal
+/relationships/data/*.sqlite-shm
