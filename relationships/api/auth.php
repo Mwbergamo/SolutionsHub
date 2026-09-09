@@ -56,6 +56,12 @@ if ($action === 'register') {
     if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
         relationships_respond(400, ['ok' => false, 'error' => 'Enter a valid email address.']);
     }
+    // This dashboard holds customer service data — restrict self-service
+    // registration to CodeBlue staff rather than leaving it open to anyone
+    // who finds the login page.
+    if (!str_ends_with($email, '@codebluetechnology.com')) {
+        relationships_respond(400, ['ok' => false, 'error' => 'Registration is limited to @codebluetechnology.com email addresses.']);
+    }
     if (mb_strlen($password) < 8) {
         relationships_respond(400, ['ok' => false, 'error' => 'Password must be at least 8 characters.']);
     }
