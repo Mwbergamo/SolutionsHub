@@ -30,14 +30,29 @@ function relationships_read_json_body(int $maxBytes = 262144): array
 function relationships_start_session(): void
 {
     if (session_status() !== PHP_SESSION_ACTIVE) {
+        // Shared hosting (this app runs on Bluehost) can point PHP's
+        // default session.save_path somewhere this account isn't actually
+        // able to write to, or prunes it aggressively -- when that happens
+        // session_start() doesn't error, it just silently fails to persist
+        // anything, so login/register look like they succeed but the very
+        // next request comes back signed-out. Use our own directory, which
+        // we already know is writable (db.php creates the SQLite file next
+        // to it), instead of trusting the server default. It's covered by
+        // data/.htaccess's "Deny from all", same as the database file.
+        $sessionDir = __DIR__ . '/../data/sessions';
+        if (!is_dir($sessionDir)) {
+            mkdir($sessionDir, 0770, true);
+        }
+        session_save_path($sessionDir);
+
         session_set_cookie_params([
             'lifetime' => 0,
             'path' => '/relationships/',
             'httponly' => true,
             'samesite' => 'Lax',
-            // 'secure' is left off here so this also works during local
-            // testing over plain HTTP; the production site is HTTPS-only
-            // so the cookie still only ever travels encrypted there.
+            // True only on an actual HTTPS request, so this still works
+            // during local testing over plain HTTP.
+            'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
         ]);
         session_name('relationships_session');
         session_start();
