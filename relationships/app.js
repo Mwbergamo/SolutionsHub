@@ -748,12 +748,19 @@
     detail.pillars.forEach(function (pillar) {
       var activeCount = pillar.services.filter(function (s) { return s.active; }).length;
       var totalCount = pillar.services.length;
-      html += '<div class="pillar-tile ' + (pillar.active ? 'active' : 'inactive') + '" data-action="open-pillar" data-pillar="' + pillar.id + '">' +
+      var isHostedVoip = pillar.id === 'voip' && detail.customer.voip_hosted_elsewhere;
+      var tileClass = isHostedVoip ? 'hosted-elsewhere' : (pillar.active ? 'active' : 'inactive');
+      var statusText = isHostedVoip ? 'HOSTED PLATFORM →' : (pillar.active ? 'ACTIVE →' : 'NOT IN USE →');
+      var countText = isHostedVoip
+        ? 'Hosted by manufacturer — not marketed by CodeBlue'
+        : activeCount + ' of ' + totalCount + ' service areas in use';
+      html += '<div class="pillar-tile ' + tileClass + '" data-action="open-pillar" data-pillar="' + pillar.id + '"' +
+        (isHostedVoip ? ' title="Voice hosted directly by the manufacturer' + (detail.customer.voip_hosted_agreement_name ? ' (' + escapeHtml(detail.customer.voip_hosted_agreement_name) + ')' : '') + ' — do not market phone/VoIP services to this customer."' : '') + '>' +
         '<div>' +
           '<div class="pillar-tile-name">' + escapeHtml(pillar.name) + '</div>' +
-          '<div class="pillar-tile-count">' + activeCount + ' of ' + totalCount + ' service areas in use</div>' +
+          '<div class="pillar-tile-count">' + countText + '</div>' +
         '</div>' +
-        '<div class="pillar-tile-status">' + (pillar.active ? 'ACTIVE →' : 'NOT IN USE →') + '</div>' +
+        '<div class="pillar-tile-status">' + statusText + '</div>' +
       '</div>';
     });
     html += '</div>';
@@ -779,7 +786,7 @@
     if (state.activePillarId) {
       var pillar = detail.pillars.filter(function (p) { return p.id === state.activePillarId; })[0];
       if (pillar) {
-        html += drilldownHtml(pillar, detail.customer.id);
+        html += drilldownHtml(pillar, detail.customer);
       }
     }
 
@@ -808,7 +815,8 @@
     '</div>';
   }
 
-  function drilldownHtml(pillar, customerId) {
+  function drilldownHtml(pillar, customer) {
+    var customerId = customer.id;
     var html = '<div class="drilldown">' +
       '<div class="drilldown-header">' +
         '<button class="drilldown-back" type="button" data-action="close-drilldown" aria-label="Close">' +
@@ -816,6 +824,14 @@
         '</button>' +
         '<div class="drilldown-title">' + escapeHtml(pillar.name) + '</div>' +
       '</div>';
+
+    if (pillar.id === 'voip' && customer.voip_hosted_elsewhere) {
+      html += '<div class="hosted-elsewhere-note">' +
+        'This customer’s voice is hosted directly by the manufacturer' +
+        (customer.voip_hosted_agreement_name ? ' (per ConnectWise: “' + escapeHtml(customer.voip_hosted_agreement_name) + '”)' : '') +
+        ' — CodeBlue doesn’t sell or market phone/VoIP services here.' +
+      '</div>';
+    }
 
     pillar.services.forEach(function (svc) {
       if (svc.active) {

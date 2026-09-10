@@ -83,6 +83,15 @@ function relationships_migrate(PDO $pdo): void
     relationships_add_column_if_missing($pdo, 'customers', 'last_client_checkin_by', 'TEXT');
     relationships_add_column_if_missing($pdo, 'customers', 'last_risk_scan_at', 'TEXT');
     relationships_add_column_if_missing($pdo, 'customers', 'last_risk_scan_by', 'TEXT');
+    // Set when a customer's active Voice Agreement (ConnectWise agreement
+    // type 66) is "empty" -- zero active additions. That's how CodeBlue
+    // represents a manufacturer-hosted phone platform (e.g. Zultys Hosted)
+    // that CBT doesn't sell services against: the agreement exists so the
+    // relationship is on record, but there's nothing to sync. Used to
+    // suppress VoIP/phone cross-sell for these customers (see
+    // connectwise-sync-core.php, customers.php, checklist.php).
+    relationships_add_column_if_missing($pdo, 'customers', 'voip_hosted_elsewhere', 'INTEGER NOT NULL DEFAULT 0');
+    relationships_add_column_if_missing($pdo, 'customers', 'voip_hosted_agreement_name', 'TEXT');
 
     // One row per active ConnectWise agreement addition (mocked for now —
     // `source` distinguishes seeded sample rows from anything a future real
@@ -181,7 +190,10 @@ function relationships_seed_mock_data(PDO $pdo): void
 {
     $catalog = relationships_catalog();
 
-    $insertCustomer = $pdo->prepare('INSERT INTO customers (connectwise_id, name, is_mock, is_peoplefirst) VALUES (:cw, :name, 1, :pf)');
+    $insertCustomer = $pdo->prepare(
+        'INSERT INTO customers (connectwise_id, name, is_mock, is_peoplefirst, voip_hosted_elsewhere, voip_hosted_agreement_name)
+         VALUES (:cw, :name, 1, :pf, :hv, :hvname)'
+    );
     $insertService = $pdo->prepare(
         'INSERT INTO customer_services (customer_id, pillar_id, pillar_name, service_id, service_name, product_label, qty, unit, source)
          VALUES (:customer_id, :pillar_id, :pillar_name, :service_id, :service_name, :product_label, :qty, :unit, \'mock\')'
@@ -205,7 +217,7 @@ function relationships_seed_mock_data(PDO $pdo): void
     // pillars, drill-down quantities, an empty-roster edge case) has
     // something real to show against.
 
-    $insertCustomer->execute([':cw' => 'MOCK-1001', ':name' => 'Riverbend Family Dental', ':pf' => 1]);
+    $insertCustomer->execute([':cw' => 'MOCK-1001', ':name' => 'Riverbend Family Dental', ':pf' => 1, ':hv' => 0, ':hvname' => null]);
     $c1 = (int) $pdo->lastInsertId();
     $addService($c1, 'it', 'managed-it', 'PeopleFirst Managed IT — Per Person', 12, 'people');
     $addService($c1, 'it', 'cyber-security', 'SentinelOne EDR', 18, 'per workstation');
@@ -215,7 +227,7 @@ function relationships_seed_mock_data(PDO $pdo): void
     // example. PeopleFirst top-tier member (is_peoplefirst) — good example
     // for the gold search/header highlight even with a mostly-dark pillar grid.
 
-    $insertCustomer->execute([':cw' => 'MOCK-1002', ':name' => 'Blue Ridge Manufacturing', ':pf' => 0]);
+    $insertCustomer->execute([':cw' => 'MOCK-1002', ':name' => 'Blue Ridge Manufacturing', ':pf' => 0, ':hv' => 0, ':hvname' => null]);
     $c2 = (int) $pdo->lastInsertId();
     $addService($c2, 'it', 'managed-it', 'PeopleFirst Managed IT — Per Person', 64, 'people');
     $addService($c2, 'it', 'cyber-security', 'SentinelOne EDR', 71, 'per workstation');
@@ -227,16 +239,23 @@ function relationships_seed_mock_data(PDO $pdo): void
     $addService($c2, 'cabling', 'cabling-business', 'Data Cabling for Business', 1, 'site');
     // No Premise Security — a good single-pillar-missing example.
 
-    $insertCustomer->execute([':cw' => 'MOCK-1003', ':name' => 'Commonwealth Title & Escrow', ':pf' => 0]);
+    $insertCustomer->execute([
+        ':cw' => 'MOCK-1003', ':name' => 'Commonwealth Title & Escrow', ':pf' => 0,
+        ':hv' => 1, ':hvname' => 'Voice Agreement - Zultys Hosted',
+    ]);
     $c3 = (int) $pdo->lastInsertId();
     $addService($c3, 'it', 'help-desk', 'Help Desk Support', 22, 'people');
     $addService($c3, 'security', 'ip-cameras', 'IP Camera System — 8 cameras', 8, 'cameras');
     $addService($c3, 'security', 'access-control', 'Access Control System', 4, 'doors');
     // IT only has Help Desk (no Cyber Security, no Managed IT) — good
     // partial-pillar example (pillar shows bright, but roster inside still
-    // lists the missing IT services).
+    // lists the missing IT services). Also this build's example of a
+    // manufacturer-hosted voice platform (voip_hosted_elsewhere) — an
+    // empty ConnectWise Voice Agreement, no VoIP cross-sell should be
+    // suggested for it even though the VoIP pillar shows no active
+    // CodeBlue-sold services.
 
-    $insertCustomer->execute([':cw' => 'MOCK-1004', ':name' => 'Tidewater Logistics Group', ':pf' => 0]);
+    $insertCustomer->execute([':cw' => 'MOCK-1004', ':name' => 'Tidewater Logistics Group', ':pf' => 0, ':hv' => 0, ':hvname' => null]);
     $c4 = (int) $pdo->lastInsertId();
     $addService($c4, 'it', 'managed-it', 'PeopleFirst Managed IT — Per Person', 140, 'people');
     $addService($c4, 'it', 'cyber-security', 'SentinelOne EDR', 155, 'per workstation');
@@ -260,7 +279,7 @@ function relationships_seed_mock_data(PDO $pdo): void
     // the pillar level" example (roster inside each pillar can still show
     // a missing service or two).
 
-    $insertCustomer->execute([':cw' => 'MOCK-1005', ':name' => 'Piedmont Veterinary Partners', ':pf' => 0]);
+    $insertCustomer->execute([':cw' => 'MOCK-1005', ':name' => 'Piedmont Veterinary Partners', ':pf' => 0, ':hv' => 0, ':hvname' => null]);
     $c5 = (int) $pdo->lastInsertId();
     // Zero active services -- good empty-state example (every pillar dark).
 }

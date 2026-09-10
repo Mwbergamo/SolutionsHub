@@ -181,7 +181,7 @@ relationships_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
 function relationships_missing_services_with_progress(PDO $pdo): array
 {
     $catalog = relationships_catalog();
-    $customers = $pdo->query('SELECT id, name FROM customers ORDER BY name ASC')->fetchAll(PDO::FETCH_ASSOC);
+    $customers = $pdo->query('SELECT id, name, voip_hosted_elsewhere FROM customers ORDER BY name ASC')->fetchAll(PDO::FETCH_ASSOC);
 
     $activeSet = [];
     foreach ($pdo->query('SELECT DISTINCT customer_id, pillar_id, service_id FROM customer_services') as $r) {
@@ -199,7 +199,15 @@ function relationships_missing_services_with_progress(PDO $pdo): array
 
     $rows = [];
     foreach ($customers as $cust) {
+        // Manufacturer-hosted voice platform (Zultys Hosted, etc.) -- an
+        // empty ConnectWise Voice Agreement CBT isn't selling against, so
+        // this customer never gets a VoIP/phone cross-sell prompt. Same
+        // override as customers.php's detail action.
+        $voipHostedElsewhere = (bool) $cust['voip_hosted_elsewhere'];
         foreach ($catalog as $pillarId => $pillarDef) {
+            if ($pillarId === 'voip' && $voipHostedElsewhere) {
+                continue;
+            }
             foreach ($pillarDef['services'] as $serviceId => $serviceName) {
                 if (!relationships_is_cross_sell_eligible($pillarId, $serviceId)) {
                     continue; // not part of the blanket cross-sell push

@@ -361,6 +361,17 @@ a { color: inherit; }
 }
 .pillar-tile.inactive:hover { opacity: .85; }
 
+/* Voice hosted directly by the manufacturer (e.g. Zultys Hosted) -- an
+   informational, not-actionable state distinct from both "active" (blue)
+   and "not in use" (dim gray), so it reads at a glance as "don't market
+   phones here" rather than as a cross-sell gap. */
+.pillar-tile.hosted-elsewhere {
+  background: oklch(0.24 0.05 200);
+  border-color: oklch(0.55 0.09 200);
+  box-shadow: 0 0 0 1px rgba(45,180,180,0.2);
+}
+.pillar-tile.hosted-elsewhere:hover { transform: none; }
+
 .pillar-tile-name {
   font-family: 'Space Grotesk', sans-serif;
   font-size: 16.5px;
@@ -368,6 +379,7 @@ a { color: inherit; }
 }
 .pillar-tile.active .pillar-tile-name { color: white; }
 .pillar-tile.inactive .pillar-tile-name { color: oklch(0.62 0.015 255); }
+.pillar-tile.hosted-elsewhere .pillar-tile-name { color: white; }
 
 .pillar-tile-status {
   margin-top: 8px;
@@ -377,12 +389,25 @@ a { color: inherit; }
 }
 .pillar-tile.active .pillar-tile-status { color: #8fc3ff; }
 .pillar-tile.inactive .pillar-tile-status { color: oklch(0.5 0.015 255); }
+.pillar-tile.hosted-elsewhere .pillar-tile-status { color: oklch(0.75 0.1 200); }
 
 .pillar-tile-count {
   font-size: 12.5px;
   color: oklch(0.75 0.01 255);
 }
 .pillar-tile.inactive .pillar-tile-count { color: oklch(0.5 0.015 255); }
+.pillar-tile.hosted-elsewhere .pillar-tile-count { color: oklch(0.8 0.04 200); }
+
+.hosted-elsewhere-note {
+  margin: -4px 0 16px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: oklch(0.75 0.1 200);
+  background: oklch(0.55 0.09 200 / 0.12);
+  border: 1px solid oklch(0.55 0.09 200 / 0.35);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
 
 .roster-panel {
   background: oklch(0.19 0.014 255);

@@ -16,7 +16,8 @@
  * GET /relationships/api/customers.php?action=detail&id=123
  *   -> { ok: true, customer: { id, name, is_peoplefirst: bool,
  *                               last_client_checkin_at, last_client_checkin_by,
- *                               last_risk_scan_at, last_risk_scan_by },
+ *                               last_risk_scan_at, last_risk_scan_by,
+ *                               voip_hosted_elsewhere: bool, voip_hosted_agreement_name },
  *        pillars: [{ id, name, active: bool,
  *                     services: [{ id, name, active: bool,
  *                                  products: [{ label, qty, unit }, ...] }, ...] }, ...] }
@@ -28,6 +29,14 @@
  * relationships/api/peoplefirst.php?action=log -- see that file for the
  * "needs a checkin/scan this month/quarter" logic used by the Cross-Sell
  * Report.
+ *
+ * voip_hosted_elsewhere marks a customer whose voice is hosted directly by
+ * the manufacturer (e.g. Zultys Hosted) on an active-but-empty ConnectWise
+ * Voice Agreement -- CBT isn't selling/marketing VoIP services to them.
+ * When true, every VoIP/phone service comes back with cross_sell_eligible
+ * forced false (see the override below), regardless of the shared
+ * catalog's default -- same override applied in checklist.php's report/
+ * queue so these customers never show up needing VoIP outreach.
  */
 
 declare(strict_types=1);
@@ -63,7 +72,8 @@ if ($action === 'detail') {
     }
 
     $custStmt = $pdo->prepare(
-        'SELECT id, name, is_peoplefirst, last_client_checkin_at, last_client_checkin_by, last_risk_scan_at, last_risk_scan_by
+        'SELECT id, name, is_peoplefirst, last_client_checkin_at, last_client_checkin_by, last_risk_scan_at, last_risk_scan_by,
+                voip_hosted_elsewhere, voip_hosted_agreement_name
          FROM customers WHERE id = :id'
     );
     $custStmt->execute([':id' => $id]);
@@ -93,6 +103,8 @@ if ($action === 'detail') {
         ];
     }
 
+    $voipHostedElsewhere = (bool) $customer['voip_hosted_elsewhere'];
+
     $pillars = [];
     foreach (relationships_catalog() as $pillarId => $pillarDef) {
         $services = [];
@@ -104,12 +116,19 @@ if ($action === 'detail') {
             if ($active) {
                 $pillarActive = true;
             }
+            // A customer on a manufacturer-hosted voice platform (Zultys
+            // Hosted, etc.) never gets a VoIP/phone cross-sell prompt,
+            // even for services the catalog normally flags -- CBT isn't
+            // selling against that agreement, so there's nothing to market.
+            $crossSellEligible = ($pillarId === 'voip' && $voipHostedElsewhere)
+                ? false
+                : relationships_is_cross_sell_eligible($pillarId, $serviceId);
             $services[] = [
                 'id' => $serviceId,
                 'name' => $serviceName,
                 'active' => $active,
                 'products' => $products,
-                'cross_sell_eligible' => relationships_is_cross_sell_eligible($pillarId, $serviceId),
+                'cross_sell_eligible' => $crossSellEligible,
             ];
         }
         $pillars[] = [
@@ -130,6 +149,8 @@ if ($action === 'detail') {
             'last_client_checkin_by' => $customer['last_client_checkin_by'],
             'last_risk_scan_at' => $customer['last_risk_scan_at'],
             'last_risk_scan_by' => $customer['last_risk_scan_by'],
+            'voip_hosted_elsewhere' => $voipHostedElsewhere,
+            'voip_hosted_agreement_name' => $customer['voip_hosted_agreement_name'],
         ],
         'pillars' => $pillars,
     ]);

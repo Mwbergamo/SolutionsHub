@@ -40,12 +40,15 @@ function relationships_cw_sync_start(PDO $pdo): array
 {
     $pdo->exec('DELETE FROM cw_sync_queue');
 
-    // is_peoplefirst is an aggregate over (potentially several) of a
-    // customer's agreements -- recomputed from scratch each full sync
-    // rather than only ever set, so a customer who's no longer PeopleFirst
-    // (agreement renamed, CBT-PF-MEMBER removed) actually loses the flag
-    // instead of it sticking forever. Mock customers are untouched.
+    // is_peoplefirst and voip_hosted_elsewhere are both aggregates over
+    // (potentially several) of a customer's agreements -- recomputed from
+    // scratch each full sync rather than only ever set, so a customer who
+    // no longer qualifies (agreement renamed/removed, or a previously
+    // empty Voice Agreement now has real line items on it) actually loses
+    // the flag instead of it sticking forever. Mock customers are
+    // untouched.
     $pdo->exec('UPDATE customers SET is_peoplefirst = 0 WHERE is_mock = 0');
+    $pdo->exec("UPDATE customers SET voip_hosted_elsewhere = 0, voip_hosted_agreement_name = NULL WHERE is_mock = 0");
 
     $insert = $pdo->prepare(
         'INSERT INTO cw_sync_queue (agreement_id, agreement_type_id, agreement_name, company_cw_id, company_name, status)
@@ -219,5 +222,17 @@ function relationships_cw_sync_one_agreement(PDO $pdo, array $catalog, int $agre
         // correctly ends up false once the whole run completes.
         $pdo->prepare('UPDATE customers SET is_peoplefirst = 1 WHERE id = :id')
             ->execute([':id' => $customerId]);
+    }
+
+    // Manufacturer-hosted voice platform (e.g. Zultys Hosted): CodeBlue
+    // represents this with an active Voice Agreement that's deliberately
+    // left empty -- no additions at all, since CBT isn't selling anything
+    // against it. That's distinct from a Voice Agreement whose items just
+    // didn't classify (those still have additions, they'd just be
+    // skipped/miscategorized) -- only a truly empty agreement counts.
+    // Same reset-then-set pattern as is_peoplefirst above.
+    if ($agreementTypeId === 66 && count($additions) === 0) {
+        $pdo->prepare('UPDATE customers SET voip_hosted_elsewhere = 1, voip_hosted_agreement_name = :n WHERE id = :id')
+            ->execute([':n' => $agreementName, ':id' => $customerId]);
     }
 }
