@@ -83,7 +83,27 @@
     pfQueue: null, // customers from ?action=queue
     pfQueueLoading: false,
     pfQueueType: null, // 'checkin' | 'scan'
-    pfLogging: null // "customerId::type" currently being logged, or null
+    pfLogging: null, // "customerId::type" currently being logged, or null
+
+    // Live ConnectWise ticket/billing activity for the currently-open
+    // customer (api/activity.php) -- reset whenever a different customer
+    // is opened. { available: bool, ticket_count_ytd, billing: {series, trend} }
+    // or null while loading, or { available: false } for a mock customer /
+    // on error.
+    activitySummary: null,
+    activitySummaryLoading: false,
+
+    // Which activity drill-down (if any) is open under the activity cards:
+    // null | 'tickets' | 'invoices' | 'invoice-detail'.
+    activityView: null,
+    activityTickets: null, // array | 'error' | null (not loaded yet)
+    activityTicketsLoading: false,
+    activityInvoicesMonth: null, // { month: "YYYY-MM", label: "Aug 2026" }
+    activityInvoices: null, // array | 'error' | null
+    activityInvoicesLoading: false,
+    activityInvoiceNumber: null, // shown as the drilldown title while loading
+    activityInvoiceDetail: null, // object | 'error' | null
+    activityInvoiceDetailLoading: false
   };
 
   function escapeHtml(s) {
@@ -109,6 +129,19 @@
     if (isNaN(d.getTime())) return raw;
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) +
       ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  }
+
+  // Date-only formatting for ConnectWise ticket/invoice dates -- these come
+  // back as full ISO datetimes but only the date is meaningful here.
+  function fmtDate(raw) {
+    if (!raw) return '';
+    var d = new Date(raw);
+    if (isNaN(d.getTime())) return String(raw).slice(0, 10);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function fmtCurrency(n) {
+    return '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
   }
 
   // ---- API helpers ----------------------------------------------------
@@ -170,6 +203,111 @@
     }, 2000);
   }
 
+  function resetActivityState() {
+    state.activitySummary = null;
+    state.activitySummaryLoading = false;
+    state.activityView = null;
+    state.activityTickets = null;
+    state.activityTicketsLoading = false;
+    state.activityInvoicesMonth = null;
+    state.activityInvoices = null;
+    state.activityInvoicesLoading = false;
+    state.activityInvoiceNumber = null;
+    state.activityInvoiceDetail = null;
+    state.activityInvoiceDetailLoading = false;
+  }
+
+  // Fired once, right after a customer's dashboard loads -- non-blocking
+  // (the rest of the dashboard renders immediately; these two stat cards
+  // show their own loading state) since this means 1-2 extra live
+  // ConnectWise round-trips that shouldn't hold up anything else.
+  function loadActivitySummary(customerId) {
+    state.activitySummaryLoading = true;
+    render();
+    apiGet('api/activity.php?action=summary&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      state.activitySummaryLoading = false;
+      state.activitySummary = (r.data && r.data.ok) ? r.data : { available: false, error: (r.data && r.data.error) || 'Could not load.' };
+      render();
+    }).catch(function () {
+      state.activitySummaryLoading = false;
+      state.activitySummary = { available: false, error: 'Could not load — check your connection.' };
+      render();
+    });
+  }
+
+  function loadActivityTickets(customerId) {
+    state.activityView = 'tickets';
+    state.activityTicketsLoading = true;
+    state.activityTickets = null;
+    state.error = null;
+    render();
+    apiGet('api/activity.php?action=tickets&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      state.activityTicketsLoading = false;
+      if (r.data && r.data.ok) {
+        state.activityTickets = r.data.tickets;
+      } else {
+        state.activityTickets = 'error';
+        state.error = (r.data && r.data.error) || 'Could not load tickets from ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      state.activityTicketsLoading = false;
+      state.activityTickets = 'error';
+      state.error = 'Could not load tickets — check your connection.';
+      render();
+    });
+  }
+
+  function loadActivityInvoices(customerId, month, label) {
+    state.activityView = 'invoices';
+    state.activityInvoicesMonth = { month: month, label: label };
+    state.activityInvoicesLoading = true;
+    state.activityInvoices = null;
+    state.error = null;
+    render();
+    apiGet(
+      'api/activity.php?action=invoices&customer_id=' + encodeURIComponent(customerId) + '&month=' + encodeURIComponent(month)
+    ).then(function (r) {
+      state.activityInvoicesLoading = false;
+      if (r.data && r.data.ok) {
+        state.activityInvoices = r.data.invoices;
+      } else {
+        state.activityInvoices = 'error';
+        state.error = (r.data && r.data.error) || 'Could not load invoices from ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      state.activityInvoicesLoading = false;
+      state.activityInvoices = 'error';
+      state.error = 'Could not load invoices — check your connection.';
+      render();
+    });
+  }
+
+  function loadActivityInvoiceDetail(invoiceId, invoiceNumber) {
+    state.activityView = 'invoice-detail';
+    state.activityInvoiceNumber = invoiceNumber;
+    state.activityInvoiceDetailLoading = true;
+    state.activityInvoiceDetail = null;
+    state.error = null;
+    render();
+    apiGet('api/activity.php?action=invoice-detail&invoice_id=' + encodeURIComponent(invoiceId)).then(function (r) {
+      state.activityInvoiceDetailLoading = false;
+      if (r.data && r.data.ok) {
+        state.activityInvoiceDetail = r.data.invoice;
+      } else {
+        state.activityInvoiceDetail = 'error';
+        state.error = (r.data && r.data.error) || 'Could not load that invoice from ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      state.activityInvoiceDetailLoading = false;
+      state.activityInvoiceDetail = 'error';
+      state.error = 'Could not load that invoice — check your connection.';
+      render();
+    });
+  }
+
   function selectCustomer(id) {
     state.loadingDetail = true;
     state.resultsOpen = false;
@@ -181,6 +319,8 @@
       var scrollToKey = null;
       if (r.data && r.data.ok) {
         state.selectedCustomer = r.data;
+        resetActivityState();
+        loadActivitySummary(id);
         if (state.pendingFocus) {
           var pf = state.pendingFocus;
           state.pendingFocus = null;
@@ -726,6 +866,183 @@
     return '<span class="peoplefirst-badge" title="PeopleFirst top-tier member — due a quarterly risk assessment / client visit">★ PeopleFirst</span>';
   }
 
+  // Live ConnectWise ticket count + 6-month Agreement-invoice billing for
+  // the open customer (api/activity.php) -- a mock customer, or one whose
+  // summary hasn't loaded yet, renders nothing here rather than a
+  // permanent loading spinner or a confusing "$0" placeholder.
+  function activityPanelHtml(detail) {
+    var summary = state.activitySummary;
+    if (state.activitySummaryLoading && !summary) {
+      return '<div class="activity-panel"><div class="activity-card loading-card">Loading ticket & billing activity…</div></div>';
+    }
+    if (!summary || summary.available === false) {
+      return '';
+    }
+
+    var billing = summary.billing;
+    var maxTotal = Math.max.apply(null, billing.series.map(function (m) { return m.total; }).concat([1]));
+    var trend = billing.trend;
+    var trendIcon = trend.direction === 'up' ? '▲' : (trend.direction === 'down' ? '▼' : '—');
+    var trendPctText = trend.percent == null ? '' : (trend.percent + '%');
+    var trendSummary = trend.direction === 'flat'
+      ? 'Holding steady'
+      : ('Trending ' + trend.direction + (trendPctText ? ' ' + trendPctText : '') + ' on average');
+
+    var html = '<div class="activity-panel">';
+
+    html += '<button class="activity-card" type="button" data-action="open-tickets">' +
+      '<div class="activity-card-label">Service Tickets YTD</div>' +
+      '<div class="activity-card-value">' + summary.ticket_count_ytd + '</div>' +
+      '<div class="activity-card-sub">Professional Services board — click to view</div>' +
+    '</button>';
+
+    html += '<div class="activity-card billing-card">' +
+      '<div class="activity-card-label-row">' +
+        '<div class="activity-card-label">Monthly Billing</div>' +
+        '<div class="trend-badge ' + trend.direction + '">' + trendIcon + (trendPctText ? ' ' + trendPctText : '') + '</div>' +
+      '</div>' +
+      '<div class="billing-chart">' +
+        billing.series.map(function (m) {
+          var pct = maxTotal > 0 ? Math.max(4, Math.round((m.total / maxTotal) * 100)) : 4;
+          return '<button class="billing-bar-col" type="button" data-action="open-invoices" data-month="' + m.month + '" data-label="' + escapeHtml(m.label) + '" title="' + escapeHtml(m.label) + ': ' + fmtCurrency(m.total) + '">' +
+            '<div class="billing-bar-value">' + fmtCurrency(m.total) + '</div>' +
+            '<div class="billing-bar-track"><div class="billing-bar-fill" style="height:' + pct + '%"></div></div>' +
+            '<div class="billing-bar-label">' + escapeHtml(m.label.split(' ')[0]) + '</div>' +
+          '</button>';
+        }).join('') +
+      '</div>' +
+      '<div class="activity-card-sub">' + escapeHtml(trendSummary) + ' vs. the prior 3 months — Agreement invoices only, click a bar for detail</div>' +
+    '</div>';
+
+    html += '</div>';
+    html += activityDrilldownHtml(detail);
+    return html;
+  }
+
+  function activityDrilldownBackBtn(action, label) {
+    return '<button class="drilldown-back" type="button" data-action="' + action + '" aria-label="' + escapeHtml(label) + '">' +
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>' +
+    '</button>';
+  }
+
+  function activityDrilldownHtml(detail) {
+    if (!state.activityView) return '';
+    var html = '<div class="activity-drilldown">';
+
+    if (state.activityView === 'tickets') {
+      html += '<div class="drilldown-header">' + activityDrilldownBackBtn('activity-close', 'Close') +
+        '<div class="drilldown-title">Service Tickets YTD — ' + escapeHtml(detail.customer.name) + '</div>' +
+      '</div>';
+      if (state.activityTicketsLoading || !state.activityTickets) {
+        html += '<div class="loading">Loading tickets…</div>';
+      } else if (state.activityTickets === 'error') {
+        html += '<div class="activity-error">Could not load tickets from ConnectWise.</div>';
+      } else if (state.activityTickets.length === 0) {
+        html += '<div class="empty-state">No Professional Services tickets so far this year.</div>';
+      } else {
+        html += '<div class="activity-table-wrap"><table class="activity-table"><thead><tr>' +
+          '<th>Date</th><th>Ticket #</th><th>Summary</th><th>Engineer</th><th>Hours</th>' +
+        '</tr></thead><tbody>';
+        state.activityTickets.forEach(function (t) {
+          html += '<tr><td>' + escapeHtml(fmtDate(t.date)) + '</td><td>#' + t.ticket_number + '</td>' +
+            '<td>' + escapeHtml(t.summary) + '</td><td>' + escapeHtml(t.engineer) + '</td>' +
+            '<td>' + (t.hours || 0) + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+    } else if (state.activityView === 'invoices') {
+      var m = state.activityInvoicesMonth || {};
+      html += '<div class="drilldown-header">' + activityDrilldownBackBtn('activity-close', 'Close') +
+        '<div class="drilldown-title">Agreement Invoices — ' + escapeHtml(m.label || '') + '</div>' +
+      '</div>';
+      if (state.activityInvoicesLoading || !state.activityInvoices) {
+        html += '<div class="loading">Loading invoices…</div>';
+      } else if (state.activityInvoices === 'error') {
+        html += '<div class="activity-error">Could not load invoices from ConnectWise.</div>';
+      } else if (state.activityInvoices.length === 0) {
+        html += '<div class="empty-state">No Agreement invoices this month.</div>';
+      } else {
+        html += invoicesByAgreementTypeHtml(state.activityInvoices);
+      }
+    } else if (state.activityView === 'invoice-detail') {
+      html += '<div class="drilldown-header">' + activityDrilldownBackBtn('activity-back-to-invoices', 'Back') +
+        '<div class="drilldown-title">Invoice #' + escapeHtml(String(state.activityInvoiceNumber || '')) + '</div>' +
+      '</div>';
+      if (state.activityInvoiceDetailLoading || !state.activityInvoiceDetail) {
+        html += '<div class="loading">Loading invoice…</div>';
+      } else if (state.activityInvoiceDetail === 'error') {
+        html += '<div class="activity-error">Could not load this invoice from ConnectWise.</div>';
+      } else {
+        html += invoiceDetailHtml(state.activityInvoiceDetail);
+      }
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function invoicesByAgreementTypeHtml(invoices) {
+    var groups = {};
+    var order = [];
+    invoices.forEach(function (inv) {
+      var key = inv.agreement_type || 'Unknown';
+      if (!groups[key]) { groups[key] = []; order.push(key); }
+      groups[key].push(inv);
+    });
+
+    var html = '<div class="invoice-groups">';
+    order.forEach(function (key) {
+      var rows = groups[key];
+      var subtotal = rows.reduce(function (sum, r) { return sum + (r.total || 0); }, 0);
+      html += '<div class="invoice-group">' +
+        '<div class="invoice-group-head"><span>' + escapeHtml(key) + '</span><span>' + fmtCurrency(subtotal) + '</span></div>';
+      rows.forEach(function (inv) {
+        html += '<div class="invoice-row" data-action="open-invoice-detail" data-invoice="' + inv.id + '" data-number="' + escapeHtml(String(inv.invoice_number)) + '">' +
+          '<div class="invoice-row-main">' +
+            '<div class="invoice-row-number">#' + escapeHtml(String(inv.invoice_number)) + '</div>' +
+            '<div class="invoice-row-agreement">' + escapeHtml(inv.agreement_name || '—') + '</div>' +
+          '</div>' +
+          '<div class="invoice-row-date">' + escapeHtml(fmtDate(inv.date)) + '</div>' +
+          '<div class="invoice-row-total">' + fmtCurrency(inv.total) + '</div>' +
+        '</div>';
+      });
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function invoiceDetailHtml(inv) {
+    var html = '<div class="invoice-detail-meta">' +
+      '<div><span class="meta-label">Date</span><span>' + escapeHtml(fmtDate(inv.date)) + '</span></div>' +
+      '<div><span class="meta-label">Total</span><span>' + fmtCurrency(inv.total) + '</span></div>' +
+      '<div><span class="meta-label">Agreement</span><span>' + escapeHtml(inv.agreement_name || '—') + '</span></div>' +
+      '<div><span class="meta-label">Agreement Type</span><span>' + escapeHtml(inv.agreement_type || '—') + '</span></div>' +
+    '</div>';
+
+    var hasHours = inv.hours_remaining !== null && inv.hours_remaining !== undefined;
+    if (hasHours) {
+      html += '<div class="block-time-note">Hours Remaining (Block Time): <strong>' + escapeHtml(String(inv.hours_remaining)) + '</strong></div>';
+    }
+
+    if (inv.line_items && inv.line_items.length) {
+      html += '<div class="invoice-line-items">';
+      inv.line_items.forEach(function (li) {
+        html += '<div class="product-row"><span>' + escapeHtml(li.description) + '</span><span class="product-qty">' + (li.qty != null ? li.qty : '') + '</span></div>';
+      });
+      html += '</div>';
+    } else if (!hasHours) {
+      html += '<div class="empty-state">ConnectWise didn’t return line-item detail for this invoice.</div>';
+      if (inv.raw_hour_fields && Object.keys(inv.raw_hour_fields).length) {
+        html += '<div class="raw-fields-note">Possible hours-remaining fields found on the agreement: ' +
+          Object.keys(inv.raw_hour_fields).map(function (k) { return escapeHtml(k) + ' = ' + escapeHtml(String(inv.raw_hour_fields[k])); }).join(', ') +
+        '</div>';
+      }
+    }
+
+    return html;
+  }
+
   function customerDashboardHtml(detail) {
     var roster = missingRoster(detail);
     var html = '';
@@ -741,6 +1058,8 @@
       html += '<div class="peoplefirst-note">PeopleFirst Support Members - Quarterly Risk Scans and Monthly Client Checkin\'s are required.</div>';
       html += peopleFirstFieldsHtml(detail.customer);
     }
+
+    html += activityPanelHtml(detail);
 
     html += '<div class="dashboard-grid">';
 
@@ -936,6 +1255,7 @@
       state.query = '';
       state.results = [];
       state.resultsOpen = false;
+      resetActivityState();
       render();
     } else if (action === 'open-pillar') {
       state.activePillarId = el.getAttribute('data-pillar');
@@ -1004,6 +1324,18 @@
         el.getAttribute('data-customer'), el.getAttribute('data-pillar'), el.getAttribute('data-service'),
         el.getAttribute('data-service-name'), parseInt(el.getAttribute('data-step'), 10), !wasCompleted
       );
+    } else if (action === 'open-tickets') {
+      loadActivityTickets(state.selectedCustomer.customer.id);
+    } else if (action === 'open-invoices') {
+      loadActivityInvoices(state.selectedCustomer.customer.id, el.getAttribute('data-month'), el.getAttribute('data-label'));
+    } else if (action === 'open-invoice-detail') {
+      loadActivityInvoiceDetail(el.getAttribute('data-invoice'), el.getAttribute('data-number'));
+    } else if (action === 'activity-close') {
+      state.activityView = null;
+      render();
+    } else if (action === 'activity-back-to-invoices') {
+      state.activityView = 'invoices';
+      render();
     } else if (action === 'signout') {
       signOut();
     }

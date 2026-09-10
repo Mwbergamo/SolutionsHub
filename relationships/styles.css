@@ -409,6 +409,238 @@ a { color: inherit; }
   padding: 10px 14px;
 }
 
+/* Live ConnectWise ticket/billing activity */
+
+.activity-panel {
+  margin-top: 20px;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 700px) {
+  .activity-panel { grid-template-columns: 1fr; }
+}
+
+.activity-card {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 16px;
+  padding: 16px 18px;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.activity-card.loading-card,
+.activity-card.billing-card { cursor: default; }
+.activity-card:not(.billing-card):not(.loading-card):hover { border-color: #2f8fef; }
+
+.activity-card-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: oklch(0.55 0.015 255);
+}
+
+.activity-card-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.activity-card-value {
+  margin-top: 6px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 30px;
+  font-weight: 700;
+  color: white;
+}
+
+.activity-card-sub {
+  margin-top: 6px;
+  font-size: 11px;
+  color: oklch(0.5 0.015 255);
+  line-height: 1.5;
+}
+
+.trend-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.trend-badge.up { background: rgba(52,199,89,0.18); color: #4ade80; }
+.trend-badge.down { background: rgba(239,68,68,0.18); color: #f87171; }
+.trend-badge.flat { background: oklch(0.28 0.015 255); color: oklch(0.6 0.015 255); }
+
+.billing-chart {
+  margin-top: 12px;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  height: 96px;
+}
+
+.billing-bar-col {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+}
+
+.billing-bar-value {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: oklch(0.6 0.015 255);
+  white-space: nowrap;
+}
+
+.billing-bar-track {
+  margin-top: 3px;
+  width: 100%;
+  max-width: 34px;
+  height: 56px;
+  display: flex;
+  align-items: flex-end;
+  background: oklch(0.24 0.016 255);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.billing-bar-fill {
+  width: 100%;
+  background: linear-gradient(180deg, #2f8fef, #1f6fc0);
+  border-radius: 6px 6px 0 0;
+}
+
+.billing-bar-col:hover .billing-bar-fill { background: linear-gradient(180deg, #56a5ff, #2f8fef); }
+
+.billing-bar-label {
+  margin-top: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  color: oklch(0.55 0.015 255);
+}
+
+/* Activity drill-down (tickets / invoices / invoice detail) -- same shell
+   styling as the pillar .drilldown so it reads as part of the same UI
+   pattern. */
+
+.activity-drilldown {
+  margin-top: 20px;
+  background: oklch(0.17 0.016 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 20px;
+  padding: 22px 24px 26px;
+}
+
+.activity-error {
+  margin-top: 16px;
+  font-size: 13px;
+  color: #f87171;
+}
+
+.activity-table-wrap { margin-top: 16px; overflow-x: auto; border-radius: 14px; border: 1px solid oklch(0.26 0.02 255); }
+
+.activity-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+
+.activity-table th {
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  color: oklch(0.55 0.015 255);
+  padding: 12px 14px;
+  background: oklch(0.19 0.014 255);
+  border-bottom: 1px solid oklch(0.28 0.02 255);
+  white-space: nowrap;
+}
+
+.activity-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid oklch(0.24 0.016 255);
+  color: oklch(0.78 0.006 255);
+}
+.activity-table tr:last-child td { border-bottom: none; }
+
+.invoice-groups { margin-top: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+.invoice-group-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: oklch(0.55 0.015 255);
+  padding: 0 4px 8px;
+  border-bottom: 1px solid oklch(0.28 0.02 255);
+}
+
+.invoice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  margin-top: 6px;
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.invoice-row:hover { border-color: #2f8fef; }
+
+.invoice-row-number { font-size: 13px; font-weight: 700; color: white; }
+.invoice-row-agreement { margin-top: 2px; font-size: 11.5px; color: oklch(0.55 0.015 255); }
+.invoice-row-date { font-size: 12px; color: oklch(0.6 0.015 255); white-space: nowrap; }
+.invoice-row-total { font-size: 13.5px; font-weight: 700; color: #8fc3ff; white-space: nowrap; }
+
+.invoice-detail-meta {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 14px;
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+.invoice-detail-meta > div { display: flex; flex-direction: column; gap: 3px; }
+.invoice-detail-meta .meta-label { font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: oklch(0.5 0.015 255); }
+.invoice-detail-meta > div > span:last-child { font-size: 13.5px; font-weight: 600; color: white; }
+
+.block-time-note {
+  margin-top: 14px;
+  font-size: 13px;
+  color: oklch(0.78 0.15 85);
+  background: oklch(0.78 0.15 85 / 0.12);
+  border: 1px solid oklch(0.78 0.15 85 / 0.35);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+.invoice-line-items { margin-top: 16px; }
+
+.raw-fields-note {
+  margin-top: 12px;
+  font-size: 11px;
+  color: oklch(0.5 0.015 255);
+  line-height: 1.5;
+}
+
 .roster-panel {
   background: oklch(0.19 0.014 255);
   border: 1px solid oklch(0.26 0.02 255);
