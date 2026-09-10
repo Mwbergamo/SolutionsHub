@@ -433,8 +433,20 @@ a { color: inherit; }
   font: inherit;
 }
 .activity-card.loading-card,
-.activity-card.billing-card { cursor: default; }
-.activity-card:not(.billing-card):not(.loading-card):hover { border-color: #2f8fef; }
+.activity-card.billing-card,
+.activity-card.error-card { cursor: default; }
+.activity-card:not(.billing-card):not(.loading-card):not(.error-card):hover { border-color: #2f8fef; }
+
+.activity-card.loading-card,
+.activity-card.error-card {
+  grid-column: 1 / -1;
+  font-size: 12.5px;
+}
+.activity-card.error-card {
+  color: #f87171;
+  border-color: rgba(239,68,68,0.35);
+  background: rgba(239,68,68,0.08);
+}
 
 .activity-card-label {
   font-size: 10.5px;

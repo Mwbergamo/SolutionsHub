@@ -223,14 +223,33 @@
   // ConnectWise round-trips that shouldn't hold up anything else.
   function loadActivitySummary(customerId) {
     state.activitySummaryLoading = true;
+    // Guards against a slow response for a customer the CRC has since
+    // navigated away from landing late and showing stale/wrong data (or
+    // silently hiding the panel) for whoever's open now. customerId can
+    // arrive as a string (a data-id DOM attribute) while
+    // selectedCustomer.customer.id is always a number (from JSON) -- Number()
+    // both sides rather than risk a strict-equality type mismatch that
+    // would make every response look "stale" and never resolve.
+    var requestFor = Number(customerId);
     render();
     apiGet('api/activity.php?action=summary&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
       state.activitySummaryLoading = false;
-      state.activitySummary = (r.data && r.data.ok) ? r.data : { available: false, error: (r.data && r.data.error) || 'Could not load.' };
+      if (r.data && r.data.ok) {
+        // { available: true, ... } or { available: false } (mock customer,
+        // nothing to show, not an error) -- either way this is real data.
+        state.activitySummary = r.data;
+      } else {
+        // A real failure (ConnectWise unreachable, a field-mapping bug,
+        // etc.) -- kept distinct from "available: false" with no error so
+        // the panel can show what went wrong instead of just vanishing.
+        state.activitySummary = { available: false, error: (r.data && r.data.error) || 'Could not load ticket/billing activity from ConnectWise.' };
+      }
       render();
     }).catch(function () {
+      if (!state.selectedCustomer || state.selectedCustomer.customer.id !== requestFor) return;
       state.activitySummaryLoading = false;
-      state.activitySummary = { available: false, error: 'Could not load — check your connection.' };
+      state.activitySummary = { available: false, error: 'Could not load ticket/billing activity — check your connection.' };
       render();
     });
   }
@@ -867,16 +886,29 @@
   }
 
   // Live ConnectWise ticket count + 6-month Agreement-invoice billing for
-  // the open customer (api/activity.php) -- a mock customer, or one whose
-  // summary hasn't loaded yet, renders nothing here rather than a
-  // permanent loading spinner or a confusing "$0" placeholder.
+  // the open customer (api/activity.php). Three distinct "nothing to show
+  // yet" states, deliberately NOT collapsed into one: still loading (show
+  // a loading card), a mock customer with no ConnectWise id (nothing to
+  // show, not an error -- render nothing), and an actual ConnectWise
+  // failure (show why, rather than silently vanishing -- that silent-hide
+  // was the bug reported 2026-09-10: any real error was getting treated
+  // exactly like "mock customer, nothing to show" and the whole panel
+  // just disappeared with no explanation).
   function activityPanelHtml(detail) {
     var summary = state.activitySummary;
     if (state.activitySummaryLoading && !summary) {
       return '<div class="activity-panel"><div class="activity-card loading-card">Loading ticket & billing activity…</div></div>';
     }
-    if (!summary || summary.available === false) {
+    if (!summary) {
       return '';
+    }
+    if (summary.available === false) {
+      if (summary.error) {
+        return '<div class="activity-panel"><div class="activity-card error-card">' +
+          'Couldn’t load ticket/billing activity from ConnectWise: ' + escapeHtml(summary.error) +
+        '</div></div>';
+      }
+      return ''; // mock customer -- no ConnectWise id, nothing to show, not an error
     }
 
     var billing = summary.billing;
