@@ -548,7 +548,10 @@
         box += '<div class="search-empty">Searching…</div>';
       } else if (state.results.length) {
         state.results.forEach(function (c) {
-          box += '<div class="search-result-row" data-action="select-customer" data-id="' + c.id + '">' + escapeHtml(c.name) + '</div>';
+          box += '<div class="search-result-row' + (c.is_peoplefirst ? ' peoplefirst' : '') + '" data-action="select-customer" data-id="' + c.id + '">' +
+            '<span>' + escapeHtml(c.name) + '</span>' +
+            (c.is_peoplefirst ? peopleFirstBadgeHtml() : '') +
+          '</div>';
         });
       } else {
         box += '<div class="search-empty">No customers match “' + escapeHtml(state.query) + '”.</div>';
@@ -559,14 +562,28 @@
     return box;
   }
 
+  // PeopleFirst: CodeBlue's top-tier, most-inclusive IT Services package
+  // (see connectwise-sync-core.php). These customers get little to no
+  // cross-sell -- they already have most everything -- so the badge is a
+  // cue to schedule a quarterly risk assessment / client visit instead.
+  function peopleFirstBadgeHtml() {
+    return '<span class="peoplefirst-badge" title="PeopleFirst top-tier member — due a quarterly risk assessment / client visit">★ PeopleFirst</span>';
+  }
+
   function customerDashboardHtml(detail) {
     var roster = missingRoster(detail);
     var html = '';
 
-    html += '<div class="customer-header">' +
-      '<div class="customer-name">' + escapeHtml(detail.customer.name) + '</div>' +
+    html += '<div class="customer-header' + (detail.customer.is_peoplefirst ? ' peoplefirst' : '') + '">' +
+      '<div class="customer-header-left">' +
+        '<div class="customer-name">' + escapeHtml(detail.customer.name) + '</div>' +
+        (detail.customer.is_peoplefirst ? peopleFirstBadgeHtml() : '') +
+      '</div>' +
       '<button class="change-customer-btn" type="button" data-action="change-customer">Search a different customer</button>' +
     '</div>';
+    if (detail.customer.is_peoplefirst) {
+      html += '<div class="peoplefirst-note">Top-tier PeopleFirst member — not a cross-sell priority, but due a quarterly risk assessment and client visit.</div>';
+    }
 
     html += '<div class="dashboard-grid">';
 

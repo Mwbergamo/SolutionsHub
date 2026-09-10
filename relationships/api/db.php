@@ -69,9 +69,11 @@ function relationships_migrate(PDO $pdo): void
             connectwise_id TEXT,
             name TEXT NOT NULL,
             is_mock INTEGER NOT NULL DEFAULT 1,
+            is_peoplefirst INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
     SQL);
+    relationships_add_column_if_missing($pdo, 'customers', 'is_peoplefirst', 'INTEGER NOT NULL DEFAULT 0');
 
     // One row per active ConnectWise agreement addition (mocked for now —
     // `source` distinguishes seeded sample rows from anything a future real
@@ -106,6 +108,7 @@ function relationships_migrate(PDO $pdo): void
         CREATE TABLE IF NOT EXISTS cw_sync_queue (
             agreement_id INTEGER PRIMARY KEY,
             agreement_type_id INTEGER NOT NULL,
+            agreement_name TEXT NOT NULL DEFAULT '',
             company_cw_id TEXT NOT NULL,
             company_name TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',
@@ -115,6 +118,7 @@ function relationships_migrate(PDO $pdo): void
         )
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_cw_sync_queue_status ON cw_sync_queue(status)');
+    relationships_add_column_if_missing($pdo, 'cw_sync_queue', 'agreement_name', "TEXT NOT NULL DEFAULT ''");
 
     // Small key/value table for sync run bookkeeping (started_at of the
     // current/most recent run, etc.) -- avoids a dedicated single-row table.
@@ -168,7 +172,7 @@ function relationships_seed_mock_data(PDO $pdo): void
 {
     $catalog = relationships_catalog();
 
-    $insertCustomer = $pdo->prepare('INSERT INTO customers (connectwise_id, name, is_mock) VALUES (:cw, :name, 1)');
+    $insertCustomer = $pdo->prepare('INSERT INTO customers (connectwise_id, name, is_mock, is_peoplefirst) VALUES (:cw, :name, 1, :pf)');
     $insertService = $pdo->prepare(
         'INSERT INTO customer_services (customer_id, pillar_id, pillar_name, service_id, service_name, product_label, qty, unit, source)
          VALUES (:customer_id, :pillar_id, :pillar_name, :service_id, :service_name, :product_label, :qty, :unit, \'mock\')'
@@ -192,15 +196,17 @@ function relationships_seed_mock_data(PDO $pdo): void
     // pillars, drill-down quantities, an empty-roster edge case) has
     // something real to show against.
 
-    $insertCustomer->execute([':cw' => 'MOCK-1001', ':name' => 'Riverbend Family Dental']);
+    $insertCustomer->execute([':cw' => 'MOCK-1001', ':name' => 'Riverbend Family Dental', ':pf' => 1]);
     $c1 = (int) $pdo->lastInsertId();
     $addService($c1, 'it', 'managed-it', 'PeopleFirst Managed IT — Per Person', 12, 'people');
     $addService($c1, 'it', 'cyber-security', 'SentinelOne EDR', 18, 'per workstation');
     $addService($c1, 'it', 'cyber-security', 'Guardz', 18, 'per workstation');
     $addService($c1, 'it', 'provided-equipment', 'Provided Firewall — CBT145', 1, 'device');
-    // No Data Center, VoIP, Cabling, or Premise Security — good "mostly dark" example.
+    // No Data Center, VoIP, Cabling, or Premise Security — good "mostly dark"
+    // example. PeopleFirst top-tier member (is_peoplefirst) — good example
+    // for the gold search/header highlight even with a mostly-dark pillar grid.
 
-    $insertCustomer->execute([':cw' => 'MOCK-1002', ':name' => 'Blue Ridge Manufacturing']);
+    $insertCustomer->execute([':cw' => 'MOCK-1002', ':name' => 'Blue Ridge Manufacturing', ':pf' => 0]);
     $c2 = (int) $pdo->lastInsertId();
     $addService($c2, 'it', 'managed-it', 'PeopleFirst Managed IT — Per Person', 64, 'people');
     $addService($c2, 'it', 'cyber-security', 'SentinelOne EDR', 71, 'per workstation');
@@ -212,7 +218,7 @@ function relationships_seed_mock_data(PDO $pdo): void
     $addService($c2, 'cabling', 'cabling-business', 'Data Cabling for Business', 1, 'site');
     // No Premise Security — a good single-pillar-missing example.
 
-    $insertCustomer->execute([':cw' => 'MOCK-1003', ':name' => 'Commonwealth Title & Escrow']);
+    $insertCustomer->execute([':cw' => 'MOCK-1003', ':name' => 'Commonwealth Title & Escrow', ':pf' => 0]);
     $c3 = (int) $pdo->lastInsertId();
     $addService($c3, 'it', 'help-desk', 'Help Desk Support', 22, 'people');
     $addService($c3, 'security', 'ip-cameras', 'IP Camera System — 8 cameras', 8, 'cameras');
@@ -221,7 +227,7 @@ function relationships_seed_mock_data(PDO $pdo): void
     // partial-pillar example (pillar shows bright, but roster inside still
     // lists the missing IT services).
 
-    $insertCustomer->execute([':cw' => 'MOCK-1004', ':name' => 'Tidewater Logistics Group']);
+    $insertCustomer->execute([':cw' => 'MOCK-1004', ':name' => 'Tidewater Logistics Group', ':pf' => 0]);
     $c4 = (int) $pdo->lastInsertId();
     $addService($c4, 'it', 'managed-it', 'PeopleFirst Managed IT — Per Person', 140, 'people');
     $addService($c4, 'it', 'cyber-security', 'SentinelOne EDR', 155, 'per workstation');
@@ -245,7 +251,7 @@ function relationships_seed_mock_data(PDO $pdo): void
     // the pillar level" example (roster inside each pillar can still show
     // a missing service or two).
 
-    $insertCustomer->execute([':cw' => 'MOCK-1005', ':name' => 'Piedmont Veterinary Partners']);
+    $insertCustomer->execute([':cw' => 'MOCK-1005', ':name' => 'Piedmont Veterinary Partners', ':pf' => 0]);
     $c5 = (int) $pdo->lastInsertId();
     // Zero active services -- good empty-state example (every pillar dark).
 }

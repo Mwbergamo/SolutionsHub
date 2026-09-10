@@ -11,13 +11,17 @@
  * future sync job) — this endpoint's shape doesn't need to change.
  *
  * GET /relationships/api/customers.php?action=list&q=search+text
- *   -> { ok: true, customers: [{ id, name }, ...] }
+ *   -> { ok: true, customers: [{ id, name, is_peoplefirst: bool }, ...] }
  *
  * GET /relationships/api/customers.php?action=detail&id=123
- *   -> { ok: true, customer: { id, name },
+ *   -> { ok: true, customer: { id, name, is_peoplefirst: bool },
  *        pillars: [{ id, name, active: bool,
  *                     services: [{ id, name, active: bool,
  *                                  products: [{ label, qty, unit }, ...] }, ...] }, ...] }
+ *
+ * is_peoplefirst marks CodeBlue's top-tier IT Services customers (see
+ * connectwise-sync-core.php) -- little to no cross-sell, but due a
+ * quarterly risk assessment / client visit instead.
  */
 
 declare(strict_types=1);
@@ -32,14 +36,17 @@ $action = $_GET['action'] ?? '';
 if ($action === 'list') {
     $q = trim((string) ($_GET['q'] ?? ''));
     if ($q === '') {
-        $stmt = $pdo->query('SELECT id, name FROM customers ORDER BY name ASC LIMIT 200');
+        $stmt = $pdo->query('SELECT id, name, is_peoplefirst FROM customers ORDER BY name ASC LIMIT 200');
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } else {
-        $stmt = $pdo->prepare('SELECT id, name FROM customers WHERE name LIKE :q ORDER BY name ASC LIMIT 50');
+        $stmt = $pdo->prepare('SELECT id, name, is_peoplefirst FROM customers WHERE name LIKE :q ORDER BY name ASC LIMIT 50');
         $stmt->execute([':q' => '%' . $q . '%']);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
-    $customers = array_map(static fn (array $r): array => ['id' => (int) $r['id'], 'name' => $r['name']], $rows);
+    $customers = array_map(
+        static fn (array $r): array => ['id' => (int) $r['id'], 'name' => $r['name'], 'is_peoplefirst' => (bool) $r['is_peoplefirst']],
+        $rows
+    );
     relationships_respond(200, ['ok' => true, 'customers' => $customers]);
 }
 
@@ -49,7 +56,7 @@ if ($action === 'detail') {
         relationships_respond(400, ['ok' => false, 'error' => 'Missing customer id.']);
     }
 
-    $custStmt = $pdo->prepare('SELECT id, name FROM customers WHERE id = :id');
+    $custStmt = $pdo->prepare('SELECT id, name, is_peoplefirst FROM customers WHERE id = :id');
     $custStmt->execute([':id' => $id]);
     $customer = $custStmt->fetch(PDO::FETCH_ASSOC);
     if ($customer === false) {
@@ -106,7 +113,7 @@ if ($action === 'detail') {
 
     relationships_respond(200, [
         'ok' => true,
-        'customer' => ['id' => (int) $customer['id'], 'name' => $customer['name']],
+        'customer' => ['id' => (int) $customer['id'], 'name' => $customer['name'], 'is_peoplefirst' => (bool) $customer['is_peoplefirst']],
         'pillars' => $pillars,
     ]);
 }

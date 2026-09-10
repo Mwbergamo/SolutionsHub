@@ -40,9 +40,16 @@ function relationships_cw_sync_start(PDO $pdo): array
 {
     $pdo->exec('DELETE FROM cw_sync_queue');
 
+    // is_peoplefirst is an aggregate over (potentially several) of a
+    // customer's agreements -- recomputed from scratch each full sync
+    // rather than only ever set, so a customer who's no longer PeopleFirst
+    // (agreement renamed, CBT-PF-MEMBER removed) actually loses the flag
+    // instead of it sticking forever. Mock customers are untouched.
+    $pdo->exec('UPDATE customers SET is_peoplefirst = 0 WHERE is_mock = 0');
+
     $insert = $pdo->prepare(
-        'INSERT INTO cw_sync_queue (agreement_id, agreement_type_id, company_cw_id, company_name, status)
-         VALUES (:id, :type, :cwid, :name, \'pending\')'
+        'INSERT INTO cw_sync_queue (agreement_id, agreement_type_id, agreement_name, company_cw_id, company_name, status)
+         VALUES (:id, :type, :aname, :cwid, :name, \'pending\')'
     );
 
     $total = 0;
@@ -50,7 +57,7 @@ function relationships_cw_sync_start(PDO $pdo): array
         $agreements = relationships_cw_list(
             '/finance/agreements',
             "type/id=$typeId and agreementStatus='Active'",
-            ['id', 'company', 'type']
+            ['id', 'name', 'company', 'type']
         );
         foreach ($agreements as $a) {
             if (!isset($a['id'], $a['company']['id'], $a['company']['name'])) {
@@ -59,6 +66,7 @@ function relationships_cw_sync_start(PDO $pdo): array
             $insert->execute([
                 ':id' => $a['id'],
                 ':type' => $typeId,
+                ':aname' => (string) ($a['name'] ?? ''),
                 ':cwid' => (string) $a['company']['id'],
                 ':name' => $a['company']['name'],
             ]);
@@ -95,7 +103,7 @@ function relationships_cw_sync_step(PDO $pdo, int $batchSize = 20): array
     foreach ($rows as $row) {
         $agreementId = (int) $row['agreement_id'];
         try {
-            relationships_cw_sync_one_agreement($pdo, $catalog, $agreementId, (int) $row['agreement_type_id'], $row['company_cw_id'], $row['company_name']);
+            relationships_cw_sync_one_agreement($pdo, $catalog, $agreementId, (int) $row['agreement_type_id'], (string) $row['agreement_name'], $row['company_cw_id'], $row['company_name']);
             $pdo->prepare('UPDATE cw_sync_queue SET status = \'done\', processed_at = datetime(\'now\'), error_message = NULL WHERE agreement_id = :id')
                 ->execute([':id' => $agreementId]);
         } catch (Throwable $e) {
@@ -122,7 +130,7 @@ function relationships_cw_sync_step(PDO $pdo, int $batchSize = 20): array
     ];
 }
 
-function relationships_cw_sync_one_agreement(PDO $pdo, array $catalog, int $agreementId, int $agreementTypeId, string $companyCwId, string $companyName): void
+function relationships_cw_sync_one_agreement(PDO $pdo, array $catalog, int $agreementId, int $agreementTypeId, string $agreementName, string $companyCwId, string $companyName): void
 {
     $additions = relationships_cw_list(
         "/finance/agreements/$agreementId/additions",
@@ -158,10 +166,26 @@ function relationships_cw_sync_one_agreement(PDO $pdo, array $catalog, int $agre
          VALUES (:customer_id, :pillar_id, :pillar_name, :service_id, :service_name, :product_label, :qty, :unit, \'connectwise\', :aid)'
     );
 
+    // PeopleFirst: CodeBlue's top-tier, most-inclusive IT Services package.
+    // Two independent signals, either one is enough -- confirmed against
+    // real ConnectWise data 2026-09-10: the agreement itself is literally
+    // named "IT Services Agreement - PeopleFirst Support", and/or it
+    // carries an active CBT-PF-MEMBER addition (per-person "PeopleFirst
+    // Support Member" line item). These customers get little to no
+    // cross-sell -- they already have most everything -- but are flagged
+    // here so the dashboard can call out that they're due a quarterly risk
+    // assessment / client visit instead.
+    $isPeopleFirst = $agreementTypeId === 65 && stripos($agreementName, 'peoplefirst') !== false;
+
     foreach ($additions as $add) {
         $productId = (string) ($add['product']['identifier'] ?? '');
         $desc = (string) ($add['description'] ?? '');
         $invDesc = (string) ($add['invoiceDescription'] ?? '');
+
+        if (strcasecmp($productId, 'CBT-PF-MEMBER') === 0) {
+            $isPeopleFirst = true;
+        }
+
         $classified = relationships_cw_classify($agreementTypeId, $productId, $desc, $invDesc);
         if ($classified === null) {
             continue; // unrecognized Premise Security item -- skip rather than guess
@@ -186,5 +210,14 @@ function relationships_cw_sync_one_agreement(PDO $pdo, array $catalog, int $agre
             ':unit' => $add['uom'] ?? null,
             ':aid' => $agreementId,
         ]);
+    }
+
+    if ($isPeopleFirst) {
+        // Only ever sets it true here -- relationships_cw_sync_start()
+        // reset everyone to false at the top of this run, so a customer
+        // whose only PeopleFirst-flagged agreement no longer qualifies
+        // correctly ends up false once the whole run completes.
+        $pdo->prepare('UPDATE customers SET is_peoplefirst = 1 WHERE id = :id')
+            ->execute([':id' => $customerId]);
     }
 }
