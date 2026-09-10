@@ -66,6 +66,17 @@
  * `actualHours` on the ticket itself are still unconfirmed but haven't
  * shown a symptom (no error, and the ticket LIST -- once the board fix
  * lands -- is the next thing to actually look at for those two fields).
+ *
+ * 2026-09-10, second pass: that first board-name fix still showed a real,
+ * non-erroring 0 (confirmed by Michael on William B. Munn D.D.S. right
+ * after it shipped). It used `board/name in ("...","...")` with double
+ * quotes; every other string-equality condition in this integration that's
+ * actually proven working against real data uses single quotes on a plain
+ * `=` (connectwise-sync-core.php's `agreementStatus='Active'`), not `in`
+ * with double quotes on a related-entity field. Changed to
+ * `(board/name='...' or board/name='...')` to match that proven style.
+ * Still not directly confirmed against live data -- watch the next real
+ * customer check for whether this actually returns a nonzero count.
  */
 
 declare(strict_types=1);
@@ -84,17 +95,33 @@ require_once __DIR__ . '/connectwise.php';
 const RELATIONSHIPS_CW_PROFESSIONAL_SERVICES_BOARDS = ['Professional Services -RIC', 'Professional Services -WAR'];
 
 /**
- * `board/name in ("...", "...")` clause matching either Professional
- * Services board -- shared by the count and list queries below so the
- * board list only ever needs updating in one place.
+ * `(board/name='...' or board/name='...')` clause matching either
+ * Professional Services board -- shared by the count and list queries
+ * below so the board list only ever needs updating in one place.
+ *
+ * 2026-09-10, second pass: the first fix here used `board/name in
+ * ("...","...")` with double-quoted values, matching neither board and
+ * still coming back a real, non-erroring 0 -- confirmed by Michael on
+ * a real customer (William B. Munn D.D.S.) right after that fix shipped.
+ * Every OTHER string-equality condition already proven working in this
+ * codebase (connectwise-sync-core.php's `agreementStatus='Active'`) uses
+ * single quotes on a plain `=`, not double quotes on `in`, so this now
+ * matches that exact, already-working style instead of guessing at `in`
+ * support for a related-entity field like `board/name` -- still not
+ * confirmed against live data (connect.codebluetechnology.com wasn't
+ * reachable from the build environment), so verify against a real
+ * customer with known Professional Services tickets before trusting it.
  */
 function relationships_cw_activity_board_condition(): string
 {
-    $quoted = array_map(
-        static fn (string $name): string => '"' . str_replace('"', '\\"', $name) . '"',
+    $clauses = array_map(
+        static function (string $name): string {
+            $escaped = str_replace("'", "\\'", $name);
+            return "board/name='$escaped'";
+        },
         RELATIONSHIPS_CW_PROFESSIONAL_SERVICES_BOARDS
     );
-    return 'board/name in (' . implode(',', $quoted) . ')';
+    return '(' . implode(' or ', $clauses) . ')';
 }
 
 /**
