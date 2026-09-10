@@ -77,6 +77,22 @@
  * `(board/name='...' or board/name='...')` to match that proven style.
  * Still not directly confirmed against live data -- watch the next real
  * customer check for whether this actually returns a nonzero count.
+ *
+ * 2026-09-10, third pass: STILL a real, non-erroring 0 on the same
+ * customer, even with the proven single-quote `=` style -- because the
+ * board name itself was wrong, not the condition syntax. Michael opened
+ * one of William B. Munn D.D.S.'s actual tickets (#947385) in ConnectWise
+ * and its Board field reads "Professional Services - RIC" -- WITH spaces
+ * around the hyphen. Every prior fix used "Professional Services -RIC"
+ * (no space before the hyphen), copied verbatim from how Michael first
+ * typed the name conversationally -- an exact-match condition against a
+ * name off by exactly one character silently matches nothing, same as
+ * every other version of this bug. Fixed to the space-hyphen-space form
+ * confirmed directly from a real ticket's Board field. The "WAR" board's
+ * exact spacing was NOT independently screenshot-confirmed the same way --
+ * inferred to follow the same "Professional Services - WAR" pattern as
+ * its RIC sibling, since they're companion location boards, but that's an
+ * inference, not a confirmed value the way RIC now is.
  */
 
 declare(strict_types=1);
@@ -92,7 +108,15 @@ require_once __DIR__ . '/connectwise.php';
 // customer genuinely has no tickets" until Michael checked ConnectWise
 // directly. Both boards count as "Professional Services" for this
 // dashboard's purposes.
-const RELATIONSHIPS_CW_PROFESSIONAL_SERVICES_BOARDS = ['Professional Services -RIC', 'Professional Services -WAR'];
+//
+// Exact spelling, third pass 2026-09-10: "Professional Services - RIC" has
+// a space on BOTH sides of the hyphen -- confirmed directly off a real
+// ticket's (#947385) Board field in ConnectWise, not typed from memory.
+// "Professional Services - WAR" follows the same pattern by inference
+// (companion location board) but hasn't been screenshot-confirmed the same
+// way -- worth a quick double-check the next time a WAR-board ticket shows
+// up, the same way RIC just was.
+const RELATIONSHIPS_CW_PROFESSIONAL_SERVICES_BOARDS = ['Professional Services - RIC', 'Professional Services - WAR'];
 
 /**
  * `(board/name='...' or board/name='...')` clause matching either
