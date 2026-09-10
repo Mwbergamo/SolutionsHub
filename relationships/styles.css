@@ -157,6 +157,146 @@ a { color: inherit; }
   font-size: 14px;
 }
 
+/* Primary Relationship Dashboard front page (api/dashboard.php) -- added
+   2026-09-10. Gauges are rectangular tiles directly under the search bar
+   per Michael ("rectangular blocks under the search bar, there will be a
+   dozen gauges very soon") -- auto-fill grid so more tiles added later
+   just flow in without a layout change. */
+
+.gauges-grid {
+  margin-top: 20px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.gauge-tile {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 16px;
+  padding: 16px 18px;
+}
+
+.gauge-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: oklch(0.55 0.015 255);
+}
+
+.gauge-value {
+  margin-top: 6px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 30px;
+  font-weight: 700;
+  color: white;
+}
+
+.gauge-value-row {
+  margin-top: 10px;
+}
+
+.trend-badge-lg {
+  font-size: 15px;
+  padding: 5px 12px;
+}
+
+/* Per-customer trend list -- 6-month Agreement Billing trend, Service
+   Tickets YTD + trend, Active Contacts + trend, all from synced local
+   data. Clicking a row opens that customer's account summary (reuses
+   data-action="select-customer", same as a search result). */
+
+.overview-list-wrap {
+  margin-top: 22px;
+}
+
+.overview-list-header,
+.overview-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: center;
+}
+
+.overview-list-header {
+  padding: 0 18px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: oklch(0.5 0.015 255);
+}
+
+.overview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.overview-row {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 14px;
+  padding: 14px 18px;
+  cursor: pointer;
+}
+.overview-row:hover { border-color: #2f8fef; }
+
+.overview-col-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.overview-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: white;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.overview-col {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: oklch(0.75 0.01 255);
+}
+
+.overview-count {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  color: white;
+}
+
+.overview-dash { color: oklch(0.5 0.015 255); }
+
+@media (max-width: 700px) {
+  .overview-list-header { display: none; }
+  .overview-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
+
+/* "via <contact name>" hint on a search result matched through a synced
+   ConnectWise Contact rather than the company name itself (added
+   2026-09-10 -- see customers.php's list action). */
+
+.search-result-via {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: oklch(0.5 0.02 255);
+}
+.search-result-row.peoplefirst .search-result-via,
+.search-result-row.prospect .search-result-via { color: oklch(0.35 0.02 255); }
+
 .customer-header {
   margin-top: 8px;
   display: flex;

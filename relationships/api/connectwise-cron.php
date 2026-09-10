@@ -25,6 +25,8 @@ if (PHP_SAPI !== 'cli') {
 require_once __DIR__ . '/connectwise-sync-core.php';
 require_once __DIR__ . '/connectwise-billing-sync-core.php';
 require_once __DIR__ . '/connectwise-prospect-sync-core.php';
+require_once __DIR__ . '/connectwise-ticket-history-sync-core.php';
+require_once __DIR__ . '/connectwise-contacts-sync-core.php';
 
 set_time_limit(0);
 
@@ -127,4 +129,73 @@ if ($totalProspectErrors !== []) {
     }
 }
 
-exit(($agreementSyncErrorCount > 0 || $billingResult['totals']['error'] > 0 || $prospectResult['totals']['error'] > 0) ? 1 : 0);
+// Ticket History (customer_ticket_count_history / customers.ticket_count_ytd)
+// -- added 2026-09-10, runs after Prospects so the front-page dashboard's
+// Service Tickets YTD + trend cover every real customer this run (including
+// any the agreement sync above just created). Same independent-queue,
+// roll-into-the-final-exit-code pattern as billing/prospects.
+echo "\n[" . date('c') . "] Starting ConnectWise Ticket History sync...\n";
+
+try {
+    $ticketHistoryStart = relationships_cw_ticket_history_sync_start($pdo);
+} catch (RelationshipsConnectWiseError $e) {
+    fwrite(STDERR, "Failed to start ticket history sync: " . $e->getMessage() . "\n");
+    exit(1);
+}
+echo "Queued {$ticketHistoryStart['total']} customers.\n";
+
+$totalTicketHistoryErrors = [];
+do {
+    $ticketHistoryResult = relationships_cw_ticket_history_sync_step($pdo, 50);
+    echo "  processed {$ticketHistoryResult['processed_this_batch']} (remaining {$ticketHistoryResult['remaining']}, errors so far {$ticketHistoryResult['totals']['error']})\n";
+    foreach ($ticketHistoryResult['errors'] as $err) {
+        $totalTicketHistoryErrors[] = $err;
+    }
+} while (!$ticketHistoryResult['done']);
+
+echo "[" . date('c') . "] Done. " . $ticketHistoryResult['totals']['done'] . " customers' ticket history synced, " . $ticketHistoryResult['totals']['error'] . " failed.\n";
+
+if ($totalTicketHistoryErrors !== []) {
+    echo "Ticket history errors:\n";
+    foreach ($totalTicketHistoryErrors as $err) {
+        echo "  - customer {$err['customer_id']} ({$err['company_name']}): {$err['error']}\n";
+    }
+}
+
+// Contacts (contacts / customer_contact_count_history / customers.active_contact_count)
+// -- added 2026-09-10, runs last. Same independent-queue pattern.
+echo "\n[" . date('c') . "] Starting ConnectWise Contacts sync...\n";
+
+try {
+    $contactsStart = relationships_cw_contacts_sync_start($pdo);
+} catch (RelationshipsConnectWiseError $e) {
+    fwrite(STDERR, "Failed to start contacts sync: " . $e->getMessage() . "\n");
+    exit(1);
+}
+echo "Queued {$contactsStart['total']} customers.\n";
+
+$totalContactsErrors = [];
+do {
+    $contactsResult = relationships_cw_contacts_sync_step($pdo, 50);
+    echo "  processed {$contactsResult['processed_this_batch']} (remaining {$contactsResult['remaining']}, errors so far {$contactsResult['totals']['error']})\n";
+    foreach ($contactsResult['errors'] as $err) {
+        $totalContactsErrors[] = $err;
+    }
+} while (!$contactsResult['done']);
+
+echo "[" . date('c') . "] Done. " . $contactsResult['totals']['done'] . " customers' contacts synced, " . $contactsResult['totals']['error'] . " failed.\n";
+
+if ($totalContactsErrors !== []) {
+    echo "Contacts errors:\n";
+    foreach ($totalContactsErrors as $err) {
+        echo "  - customer {$err['customer_id']} ({$err['company_name']}): {$err['error']}\n";
+    }
+}
+
+exit((
+    $agreementSyncErrorCount > 0
+    || $billingResult['totals']['error'] > 0
+    || $prospectResult['totals']['error'] > 0
+    || $ticketHistoryResult['totals']['error'] > 0
+    || $contactsResult['totals']['error'] > 0
+) ? 1 : 0);

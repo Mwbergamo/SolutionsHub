@@ -48,6 +48,20 @@
  * the normal code path below -- the flag exists purely so the UI can badge
  * these as "zero existing relationship" rather than "missing a few
  * things" (app.js).
+ *
+ * The list action's search (added 2026-09-10, per Michael) also matches a
+ * synced ConnectWise Contact's first name, last name, or email (the
+ * `contacts` table -- see connectwise-contacts-sync-core.php) and resolves
+ * to that contact's parent company, so a CRC can find "William Munn" or
+ * "wmunn@..." even when that text never appears in the company name. This
+ * is local-data-only (per Michael's "search synced local data" choice, not
+ * a live ConnectWise lookup) -- a contact who hasn't synced yet (nightly
+ * sync hasn't run, or the sync's email-field mapping turns out to be wrong
+ * -- see that file's header) simply won't be found by name/email search
+ * until the next successful sync, though their company is still findable
+ * by company name as always. A matched-via-contact result carries
+ * matched_contact_name so the UI can show why it's in the list ("via
+ * William Munn").
  */
 
 declare(strict_types=1);
@@ -61,21 +75,60 @@ $action = $_GET['action'] ?? '';
 
 if ($action === 'list') {
     $q = trim((string) ($_GET['q'] ?? ''));
+    $matchedContact = []; // customer id => "First Last" of the contact that matched, when matched via a contact
+
     if ($q === '') {
         $stmt = $pdo->query('SELECT id, name, is_peoplefirst, is_prospect_only FROM customers ORDER BY name ASC LIMIT 200');
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } else {
-        $stmt = $pdo->prepare('SELECT id, name, is_peoplefirst, is_prospect_only FROM customers WHERE name LIKE :q ORDER BY name ASC LIMIT 50');
-        $stmt->execute([':q' => '%' . $q . '%']);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $like = '%' . $q . '%';
+
+        $nameStmt = $pdo->prepare('SELECT id, name, is_peoplefirst, is_prospect_only FROM customers WHERE name LIKE :q ORDER BY name ASC LIMIT 50');
+        $nameStmt->execute([':q' => $like]);
+        $nameRows = $nameStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Also match a synced ConnectWise Contact's first/last name or
+        // email and resolve to their parent company -- local data only,
+        // see the file header above.
+        $contactStmt = $pdo->prepare(
+            'SELECT c.id, c.name, c.is_peoplefirst, c.is_prospect_only,
+                    ct.first_name AS matched_first_name, ct.last_name AS matched_last_name
+             FROM contacts ct
+             JOIN customers c ON c.id = ct.customer_id
+             WHERE ct.first_name LIKE :q1 OR ct.last_name LIKE :q2 OR ct.email LIKE :q3
+                OR (ct.first_name || \' \' || ct.last_name) LIKE :q4
+             ORDER BY c.name ASC LIMIT 50'
+        );
+        $contactStmt->execute([':q1' => $like, ':q2' => $like, ':q3' => $like, ':q4' => $like]);
+        $contactRows = $contactStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $rows = [];
+        foreach ($nameRows as $r) {
+            $rows[(int) $r['id']] = $r;
+        }
+        foreach ($contactRows as $r) {
+            $id = (int) $r['id'];
+            if (!isset($rows[$id])) {
+                $rows[$id] = $r;
+            }
+            if (!isset($matchedContact[$id])) {
+                $matchedContact[$id] = trim($r['matched_first_name'] . ' ' . $r['matched_last_name']);
+            }
+        }
+        $rows = array_values($rows);
     }
+
     $customers = array_map(
-        static fn (array $r): array => [
-            'id' => (int) $r['id'],
-            'name' => $r['name'],
-            'is_peoplefirst' => (bool) $r['is_peoplefirst'],
-            'is_prospect_only' => (bool) $r['is_prospect_only'],
-        ],
+        static function (array $r) use ($matchedContact): array {
+            $id = (int) $r['id'];
+            return [
+                'id' => $id,
+                'name' => $r['name'],
+                'is_peoplefirst' => (bool) $r['is_peoplefirst'],
+                'is_prospect_only' => (bool) $r['is_prospect_only'],
+                'matched_contact_name' => $matchedContact[$id] ?? null,
+            ];
+        },
         $rows
     );
     relationships_respond(200, ['ok' => true, 'customers' => $customers]);

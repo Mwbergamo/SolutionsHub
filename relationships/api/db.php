@@ -214,6 +214,99 @@ function relationships_migrate(PDO $pdo): void
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_cw_prospect_sync_queue_status ON cw_prospect_sync_queue(status)');
 
+    // Front-page Primary Relationship Dashboard metrics -- added 2026-09-10
+    // per Michael. Both the Service Ticket volume and Active Contact count
+    // trends below reuse the exact "recent 3 months vs prior 3 months
+    // average" definition already proven for Monthly Billing
+    // (relationships_cw_activity_billing_series_from_totals(), reused
+    // as-is against these two new byMonth maps) -- one consistent meaning
+    // for "trend" everywhere in the app. Both are nightly-synced, not
+    // live, for the same reason Monthly Billing moved off live: the front
+    // page needs to render this for every customer at once, and a live
+    // ConnectWise round-trip per customer per page load doesn't scale.
+    relationships_add_column_if_missing($pdo, 'customers', 'ticket_count_ytd', 'INTEGER');
+    relationships_add_column_if_missing($pdo, 'customers', 'active_contact_count', 'INTEGER');
+
+    // Nightly-synced Service Ticket volume history (per-customer "YYYY-MM"
+    // => ticket count opened that month, Professional Services boards
+    // only -- same board condition as the live Service Tickets YTD query
+    // in connectwise-activity.php). See connectwise-ticket-history-sync-core.php.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS customer_ticket_count_history (
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            month TEXT NOT NULL,
+            count INTEGER NOT NULL DEFAULT 0,
+            synced_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (customer_id, month)
+        )
+    SQL);
+
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS cw_ticket_history_sync_queue (
+            customer_id INTEGER PRIMARY KEY,
+            connectwise_id TEXT NOT NULL,
+            company_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            error_message TEXT,
+            queued_at TEXT NOT NULL DEFAULT (datetime('now')),
+            processed_at TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_cw_ticket_history_sync_queue_status ON cw_ticket_history_sync_queue(status)');
+
+    // Nightly-synced Active Contact count history, same shape as ticket
+    // history above. Contact tracking starts from this build's first sync
+    // run -- there is no way to ask ConnectWise "how many active contacts
+    // did this account have 6 months ago", so (per Michael, "start
+    // tracking now") the 6-month trend simply has no real prior-period
+    // data for its first ~3-6 months. The shared trend helper already
+    // degrades gracefully for that case (percent: null, direction from
+    // whatever recent data exists) -- see connectwise-contacts-sync-core.php.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS customer_contact_count_history (
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            month TEXT NOT NULL,
+            count INTEGER NOT NULL DEFAULT 0,
+            synced_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (customer_id, month)
+        )
+    SQL);
+
+    // Locally-synced ConnectWise contact roster (active contacts only --
+    // see connectwise-contacts-sync-core.php) -- powers both the Active
+    // Contact count above and searching the main customer search box by a
+    // contact's first/last name or email (per Michael), resolving to that
+    // contact's company. Replaced wholesale per customer on each sync run,
+    // same as customer_services per agreement.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS contacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            connectwise_contact_id TEXT NOT NULL,
+            first_name TEXT NOT NULL DEFAULT '',
+            last_name TEXT NOT NULL DEFAULT '',
+            email TEXT,
+            synced_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_contacts_customer ON contacts(customer_id)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_contacts_first_name ON contacts(first_name COLLATE NOCASE)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_contacts_last_name ON contacts(last_name COLLATE NOCASE)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email COLLATE NOCASE)');
+
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS cw_contacts_sync_queue (
+            customer_id INTEGER PRIMARY KEY,
+            connectwise_id TEXT NOT NULL,
+            company_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            error_message TEXT,
+            queued_at TEXT NOT NULL DEFAULT (datetime('now')),
+            processed_at TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_cw_contacts_sync_queue_status ON cw_contacts_sync_queue(status)');
+
     // 7-step cross-sell checklist progress. One row per (customer, pillar,
     // missing service, step) — created on demand the first time a step is
     // touched, rather than pre-populated for every customer x every

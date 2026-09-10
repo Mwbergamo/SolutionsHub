@@ -85,6 +85,43 @@
     prospectSyncStartedAt: null,
     prospectSyncErrors: [],
 
+    // Ticket History sync (api/sync.php's ticket-history-* actions) --
+    // added 2026-09-10. "Run Sync Now" chains this after the prospect sync
+    // above finishes, populating the front-page Primary Relationship
+    // Dashboard's per-customer Service Tickets YTD + 6-month trend
+    // (dashboard.php reads what this writes). Independent queue, by
+    // customer, same reasoning as billing/prospect above.
+    ticketHistorySyncRunning: false,
+    ticketHistorySyncDone: false,
+    ticketHistorySyncTotal: 0,
+    ticketHistorySyncProcessed: 0,
+    ticketHistorySyncTotals: null,
+    ticketHistorySyncStartedAt: null,
+    ticketHistorySyncErrors: [],
+
+    // Contacts sync (api/sync.php's contacts-* actions) -- added
+    // 2026-09-10. Runs last as part of "Run Sync Now", populating the
+    // front page's per-customer Active Contacts count + 6-month trend, and
+    // the `contacts` table that customer search matches by name/email.
+    // Independent queue, by customer.
+    contactsSyncRunning: false,
+    contactsSyncDone: false,
+    contactsSyncTotal: 0,
+    contactsSyncProcessed: 0,
+    contactsSyncTotals: null,
+    contactsSyncStartedAt: null,
+    contactsSyncErrors: [],
+
+    // Primary Relationship Dashboard overview (api/dashboard.php) -- added
+    // 2026-09-10: the gauges + per-customer trend list shown on the front
+    // page when no customer is selected. Loaded once at boot() and re-shown
+    // (not reloaded) whenever the user backs out to the front page; a full
+    // "Run Sync Now" reloads it at the end so the numbers reflect the sync
+    // that just ran. null while never (successfully) loaded yet.
+    overview: null,
+    overviewLoading: false,
+    overviewError: null,
+
     // Checklist data, keyed by "customerId::pillarId::serviceId". Each
     // value is: undefined (not fetched yet), 'error', or an array of the
     // 7 step objects from checklist.php?action=get.
@@ -202,8 +239,34 @@
       }
       state.user = r.data.user;
       render();
+      loadOverview();
     }).catch(function () {
       window.location.href = 'login.html?next=' + encodeURIComponent('index.html');
+    });
+  }
+
+  // Front-page gauges + per-customer trend list (api/dashboard.php) --
+  // synced-data-only, so this is one cheap GET rather than a per-customer
+  // round-trip. Safe to call more than once (e.g. a defensive call from
+  // 'change-customer'/'show-dashboard' if boot()'s call hasn't resolved
+  // yet) -- overlapping calls just both resolve into the same state.
+  function loadOverview() {
+    if (state.overviewLoading) return;
+    state.overviewLoading = true;
+    state.overviewError = null;
+    render();
+    apiGet('api/dashboard.php?action=overview').then(function (r) {
+      state.overviewLoading = false;
+      if (r.data && r.data.ok) {
+        state.overview = r.data;
+      } else {
+        state.overviewError = (r.data && r.data.error) || 'Could not load the dashboard overview.';
+      }
+      render();
+    }).catch(function () {
+      state.overviewLoading = false;
+      state.overviewError = 'Could not load the dashboard overview — check your connection.';
+      render();
     });
   }
 
@@ -543,6 +606,20 @@
       }
       render();
     }).catch(function () { /* silent, same as above */ });
+    apiGet('api/sync.php?action=ticket-history-status').then(function (r) {
+      if (r.data && r.data.ok) {
+        state.ticketHistorySyncTotals = r.data.totals;
+        state.ticketHistorySyncStartedAt = r.data.started_at;
+      }
+      render();
+    }).catch(function () { /* silent, same as above */ });
+    apiGet('api/sync.php?action=contacts-status').then(function (r) {
+      if (r.data && r.data.ok) {
+        state.contactsSyncTotals = r.data.totals;
+        state.contactsSyncStartedAt = r.data.started_at;
+      }
+      render();
+    }).catch(function () { /* silent, same as above */ });
   }
 
   // Kicks off a full ConnectWise sync: api/sync.php?action=start builds the
@@ -707,6 +784,7 @@
         state.prospectSyncRunning = false;
         state.prospectSyncDone = true;
         render();
+        runTicketHistorySync();
       } else {
         render();
         prospectStepSyncLoop();
@@ -714,6 +792,117 @@
     }).catch(function () {
       state.prospectSyncRunning = false;
       state.error = 'Prospect sync failed partway through — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Same start()/step() shape as the three syncs above, run right after
+  // prospects as part of the same "Run Sync Now" click -- see
+  // api/sync.php's file header. Independent queue: a failure here doesn't
+  // retroactively un-succeed any sync that already completed.
+  function runTicketHistorySync() {
+    state.ticketHistorySyncRunning = true;
+    state.ticketHistorySyncDone = false;
+    state.ticketHistorySyncErrors = [];
+    render();
+    apiPost('api/sync.php?action=ticket-history-start', {}).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.ticketHistorySyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Agreements, billing, and prospects synced, but could not start the ticket history sync.';
+        render();
+        return;
+      }
+      state.ticketHistorySyncTotal = r.data.total;
+      state.ticketHistorySyncProcessed = 0;
+      render();
+      ticketHistoryStepSyncLoop();
+    }).catch(function () {
+      state.ticketHistorySyncRunning = false;
+      state.error = 'The ticket history sync could not start — check your connection and try again.';
+      render();
+    });
+  }
+
+  function ticketHistoryStepSyncLoop() {
+    apiPost('api/sync.php?action=ticket-history-step', { batch_size: 50 }).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.ticketHistorySyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Ticket history sync failed partway through.';
+        render();
+        return;
+      }
+      state.ticketHistorySyncTotals = r.data.totals;
+      state.ticketHistorySyncProcessed = r.data.totals.done + r.data.totals.error;
+      if (r.data.errors && r.data.errors.length) {
+        state.ticketHistorySyncErrors = state.ticketHistorySyncErrors.concat(r.data.errors);
+      }
+      if (r.data.done) {
+        state.ticketHistorySyncRunning = false;
+        state.ticketHistorySyncDone = true;
+        render();
+        runContactsSync();
+      } else {
+        render();
+        ticketHistoryStepSyncLoop();
+      }
+    }).catch(function () {
+      state.ticketHistorySyncRunning = false;
+      state.error = 'Ticket history sync failed partway through — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Same shape again, run last as part of "Run Sync Now" -- once this
+  // finishes, the front-page overview is reloaded so its gauges/list
+  // reflect the sync that just ran (see loadOverview()).
+  function runContactsSync() {
+    state.contactsSyncRunning = true;
+    state.contactsSyncDone = false;
+    state.contactsSyncErrors = [];
+    render();
+    apiPost('api/sync.php?action=contacts-start', {}).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.contactsSyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Everything else synced, but could not start the contacts sync.';
+        render();
+        return;
+      }
+      state.contactsSyncTotal = r.data.total;
+      state.contactsSyncProcessed = 0;
+      render();
+      contactsStepSyncLoop();
+    }).catch(function () {
+      state.contactsSyncRunning = false;
+      state.error = 'The contacts sync could not start — check your connection and try again.';
+      render();
+    });
+  }
+
+  function contactsStepSyncLoop() {
+    apiPost('api/sync.php?action=contacts-step', { batch_size: 50 }).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.contactsSyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Contacts sync failed partway through.';
+        render();
+        return;
+      }
+      state.contactsSyncTotals = r.data.totals;
+      state.contactsSyncProcessed = r.data.totals.done + r.data.totals.error;
+      if (r.data.errors && r.data.errors.length) {
+        state.contactsSyncErrors = state.contactsSyncErrors.concat(r.data.errors);
+      }
+      if (r.data.done) {
+        state.contactsSyncRunning = false;
+        state.contactsSyncDone = true;
+        render();
+        loadOverview();
+      } else {
+        render();
+        contactsStepSyncLoop();
+      }
+    }).catch(function () {
+      state.contactsSyncRunning = false;
+      state.error = 'Contacts sync failed partway through — check your connection and try again.';
       render();
     });
   }
@@ -833,7 +1022,7 @@
     } else if (state.selectedCustomer) {
       html += customerDashboardHtml(state.selectedCustomer);
     } else {
-      html += '<div class="empty-state">Search for a customer above to see their active CodeBlue services and what they’re missing.</div>';
+      html += overviewHtml();
     }
 
     return html;
@@ -973,12 +1162,13 @@
   function syncHtml() {
     var html = '<div class="view-header">' +
       '<div class="view-title">ConnectWise Sync</div>' +
-      '<div class="view-sub">Pulls active services from ConnectWise — IT Services, Voice, Premise Security, and Data Center agreements — into this dashboard, refreshes every customer’s Monthly Billing chart, then pulls in Active/Delinquent/Special Info companies with no agreement at all as Prospects. Checklist progress already recorded isn’t touched.</div>' +
+      '<div class="view-sub">Pulls active services from ConnectWise — IT Services, Voice, Premise Security, and Data Center agreements — into this dashboard, refreshes every customer’s Monthly Billing chart, pulls in Active/Delinquent/Special Info companies with no agreement at all as Prospects, then refreshes the front page’s Service Tickets YTD/trend and Active Contacts count/trend and search-by-contact data. Checklist progress already recorded isn’t touched.</div>' +
     '</div>';
 
     html += '<div class="sync-panel">';
 
-    var running = state.syncRunning || state.billingSyncRunning || state.prospectSyncRunning;
+    var running = state.syncRunning || state.billingSyncRunning || state.prospectSyncRunning ||
+      state.ticketHistorySyncRunning || state.contactsSyncRunning;
 
     if (state.syncRunning) {
       var pct = state.syncTotal ? Math.min(100, Math.round((state.syncProcessed / state.syncTotal) * 100)) : 0;
@@ -992,6 +1182,14 @@
       var ppct = state.prospectSyncTotal ? Math.min(100, Math.round((state.prospectSyncProcessed / state.prospectSyncTotal) * 100)) : 0;
       html += '<div class="sync-progress-label">Billing synced. Syncing Prospect Companies… ' + state.prospectSyncProcessed + ' of ' + state.prospectSyncTotal + ' companies (' + ppct + '%)</div>' +
         '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + ppct + '%"></div></div>';
+    } else if (state.ticketHistorySyncRunning) {
+      var thpct = state.ticketHistorySyncTotal ? Math.min(100, Math.round((state.ticketHistorySyncProcessed / state.ticketHistorySyncTotal) * 100)) : 0;
+      html += '<div class="sync-progress-label">Prospects synced. Syncing Ticket History… ' + state.ticketHistorySyncProcessed + ' of ' + state.ticketHistorySyncTotal + ' customers (' + thpct + '%)</div>' +
+        '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + thpct + '%"></div></div>';
+    } else if (state.contactsSyncRunning) {
+      var cpct = state.contactsSyncTotal ? Math.min(100, Math.round((state.contactsSyncProcessed / state.contactsSyncTotal) * 100)) : 0;
+      html += '<div class="sync-progress-label">Ticket history synced. Syncing Contacts… ' + state.contactsSyncProcessed + ' of ' + state.contactsSyncTotal + ' customers (' + cpct + '%)</div>' +
+        '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + cpct + '%"></div></div>';
     }
 
     html += '<button class="sync-run-btn" type="button" data-action="run-sync"' + (running ? ' disabled' : '') + '>' + (running ? 'Syncing…' : 'Run Sync Now') + '</button>';
@@ -1029,6 +1227,28 @@
       } else if (state.prospectSyncTotals) {
         html += '<div class="sync-result">Prospect Companies: no sync has been run yet.</div>';
       }
+
+      if (state.ticketHistorySyncDone) {
+        html += '<div class="sync-result">Ticket History: ' + (state.ticketHistorySyncTotals ? state.ticketHistorySyncTotals.done : 0) + ' customers synced' +
+          (state.ticketHistorySyncTotals && state.ticketHistorySyncTotals.error ? ', ' + state.ticketHistorySyncTotals.error + ' failed (see below)' : '') + '.</div>';
+      } else if (state.ticketHistorySyncTotals && (state.ticketHistorySyncTotals.done || state.ticketHistorySyncTotals.error)) {
+        html += '<div class="sync-result">Ticket History — last run: ' + state.ticketHistorySyncTotals.done + ' synced' +
+          (state.ticketHistorySyncTotals.error ? ', ' + state.ticketHistorySyncTotals.error + ' failed' : '') +
+          (state.ticketHistorySyncStartedAt ? ' — started ' + escapeHtml(fmtTimestamp(state.ticketHistorySyncStartedAt)) : '') + '.</div>';
+      } else if (state.ticketHistorySyncTotals) {
+        html += '<div class="sync-result">Ticket History: no sync has been run yet.</div>';
+      }
+
+      if (state.contactsSyncDone) {
+        html += '<div class="sync-result">Contacts: ' + (state.contactsSyncTotals ? state.contactsSyncTotals.done : 0) + ' customers synced' +
+          (state.contactsSyncTotals && state.contactsSyncTotals.error ? ', ' + state.contactsSyncTotals.error + ' failed (see below)' : '') + '.</div>';
+      } else if (state.contactsSyncTotals && (state.contactsSyncTotals.done || state.contactsSyncTotals.error)) {
+        html += '<div class="sync-result">Contacts — last run: ' + state.contactsSyncTotals.done + ' synced' +
+          (state.contactsSyncTotals.error ? ', ' + state.contactsSyncTotals.error + ' failed' : '') +
+          (state.contactsSyncStartedAt ? ' — started ' + escapeHtml(fmtTimestamp(state.contactsSyncStartedAt)) : '') + '.</div>';
+      } else if (state.contactsSyncTotals) {
+        html += '<div class="sync-result">Contacts: no sync has been run yet.</div>';
+      }
     }
 
     if (state.syncErrors.length) {
@@ -1055,7 +1275,111 @@
       html += '</div>';
     }
 
+    if (state.ticketHistorySyncErrors.length) {
+      html += '<div class="sync-errors-title">Customers whose ticket history failed to sync (' + state.ticketHistorySyncErrors.length + '):</div><div class="sync-errors-list">';
+      state.ticketHistorySyncErrors.forEach(function (err) {
+        html += '<div class="sync-error-row"><strong>' + escapeHtml(err.company_name) + '</strong>: ' + escapeHtml(err.error) + '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (state.contactsSyncErrors.length) {
+      html += '<div class="sync-errors-title">Customers whose contacts failed to sync (' + state.contactsSyncErrors.length + '):</div><div class="sync-errors-list">';
+      state.contactsSyncErrors.forEach(function (err) {
+        html += '<div class="sync-error-row"><strong>' + escapeHtml(err.company_name) + '</strong>: ' + escapeHtml(err.error) + '</div>';
+      });
+      html += '</div>';
+    }
+
     html += '</div>';
+    return html;
+  }
+
+  // Primary Relationship Dashboard front page -- added 2026-09-10, per
+  // Michael's "gauges" request. Replaces the old plain empty-state div
+  // whenever no customer is selected. Reads only state.overview
+  // (api/dashboard.php), which loadOverview() populates; this function
+  // itself never triggers a fetch, so it's safe to call from render().
+  function overviewHtml() {
+    if (state.overviewLoading && !state.overview) {
+      return '<div class="loading">Loading dashboard…</div>';
+    }
+    if (state.overview) {
+      return gaugesHtml(state.overview.gauges || []) + customerOverviewListHtml(state.overview.customers || []);
+    }
+    // Never loaded (still pending) or failed to load -- either way, fall
+    // back to the original guidance rather than showing nothing. A load
+    // failure here doesn't block searching/selecting a customer directly.
+    return (state.overviewError ? '<div class="error-banner">' + escapeHtml(state.overviewError) + '</div>' : '') +
+      '<div class="empty-state">Search for a customer above to see their active CodeBlue services and what they’re missing.</div>';
+  }
+
+  // Shared trend badge -- same "▲ 12.3%" / "▼ 8.0%" / "— " markup and
+  // .trend-badge.<direction> classes activityPanelHtml() already uses for
+  // the Monthly Billing card, so a trend means the same thing everywhere
+  // it appears. trend.percent === null (no real prior-period data yet --
+  // see relationships_cw_activity_billing_series_from_totals()) renders as
+  // a bare direction arrow with a "not enough history yet" title instead
+  // of a misleading percentage.
+  function trendBadgeHtml(trend, size) {
+    if (!trend) return '';
+    var icon = trend.direction === 'up' ? '▲' : (trend.direction === 'down' ? '▼' : '—');
+    var pctText = trend.percent == null ? '' : (trend.percent + '%');
+    var title = trend.percent == null ? ' title="Not enough synced history yet"' : '';
+    var cls = 'trend-badge ' + trend.direction + (size ? ' trend-badge-' + size : '');
+    return '<span class="' + cls + '"' + title + '>' + icon + (pctText ? ' ' + pctText : '') + '</span>';
+  }
+
+  // Rectangular KPI tiles under the search bar -- gauges is a flat ordered
+  // array from the server (see dashboard.php's header for why), so this
+  // renders whatever comes back rather than a fixed set of named fields;
+  // more gauges can be added later without an app.js change.
+  function gaugesHtml(gauges) {
+    if (!gauges.length) return '';
+    var html = '<div class="gauges-grid">';
+    gauges.forEach(function (g) {
+      if (g.format === 'trend') {
+        html += '<div class="gauge-tile">' +
+          '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
+          '<div class="gauge-value-row">' + trendBadgeHtml(g.trend, 'lg') + '</div>' +
+        '</div>';
+      } else {
+        html += '<div class="gauge-tile">' +
+          '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
+          '<div class="gauge-value">' + (g.value == null ? '—' : g.value) + '</div>' +
+        '</div>';
+      }
+    });
+    html += '</div>';
+    return html;
+  }
+
+  // Per-customer trend list: 6-month Agreement Billing trend, Service
+  // Tickets YTD + 6-month trend, and Active Contacts + 6-month trend, all
+  // from synced local data (see dashboard.php). Reuses the same
+  // data-action="select-customer" the search box already uses, so tapping
+  // a row opens that customer's account summary exactly like a search
+  // result does -- no separate click handler needed.
+  function customerOverviewListHtml(customers) {
+    if (!customers.length) return '';
+    var html = '<div class="overview-list-wrap">' +
+      '<div class="overview-list-header">' +
+        '<div class="overview-col-name">Customer</div>' +
+        '<div class="overview-col">Billing Trend (6mo)</div>' +
+        '<div class="overview-col">Tickets YTD</div>' +
+        '<div class="overview-col">Active Contacts</div>' +
+      '</div>' +
+      '<div class="overview-list">';
+    customers.forEach(function (c) {
+      var badge = c.is_peoplefirst ? peopleFirstBadgeHtml() : (c.is_prospect_only ? prospectBadgeHtml() : '');
+      html += '<div class="overview-row" data-action="select-customer" data-id="' + c.id + '">' +
+        '<div class="overview-col-name"><span class="overview-name">' + escapeHtml(c.name) + '</span>' + badge + '</div>' +
+        '<div class="overview-col">' + (trendBadgeHtml(c.billing_trend) || '<span class="overview-dash">—</span>') + '</div>' +
+        '<div class="overview-col"><span class="overview-count">' + c.ticket_count_ytd + '</span>' + trendBadgeHtml(c.ticket_trend) + '</div>' +
+        '<div class="overview-col"><span class="overview-count">' + c.contact_count + '</span>' + trendBadgeHtml(c.contact_trend) + '</div>' +
+      '</div>';
+    });
+    html += '</div></div>';
     return html;
   }
 
@@ -1063,7 +1387,7 @@
     var box =
       '<div class="search-box">' +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.5 0.02 255)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>' +
-        '<input id="customerSearchInput" type="text" value="' + escapeHtml(state.query) + '" placeholder="Search customers by name…" autocomplete="off">' +
+        '<input id="customerSearchInput" type="text" value="' + escapeHtml(state.query) + '" placeholder="Search by company, contact name, or email…" autocomplete="off">' +
       '</div>';
 
     if (state.resultsOpen && state.query.trim()) {
@@ -1073,8 +1397,13 @@
       } else if (state.results.length) {
         state.results.forEach(function (c) {
           var rowClass = c.is_peoplefirst ? ' peoplefirst' : (c.is_prospect_only ? ' prospect' : '');
+          // matched_contact_name (customers.php's list action, added
+          // 2026-09-10) is set when this result matched via a synced
+          // ConnectWise Contact's name/email rather than the company name
+          // itself -- see that file's header for the local-data-only search.
+          var viaHint = c.matched_contact_name ? '<span class="search-result-via">via ' + escapeHtml(c.matched_contact_name) + '</span>' : '';
           box += '<div class="search-result-row' + rowClass + '" data-action="select-customer" data-id="' + c.id + '">' +
-            '<span>' + escapeHtml(c.name) + '</span>' +
+            '<span>' + escapeHtml(c.name) + viaHint + '</span>' +
             (c.is_peoplefirst ? peopleFirstBadgeHtml() : (c.is_prospect_only ? prospectBadgeHtml() : '')) +
           '</div>';
         });
@@ -1532,6 +1861,7 @@
       state.resultsOpen = false;
       resetActivityState();
       render();
+      if (!state.overview) loadOverview();
     } else if (action === 'open-pillar') {
       state.activePillarId = el.getAttribute('data-pillar');
       render();
@@ -1548,6 +1878,7 @@
       state.view = 'dashboard';
       state.error = null;
       render();
+      if (!state.selectedCustomer && !state.overview) loadOverview();
     } else if (action === 'show-sync') {
       state.view = 'sync';
       state.error = null;
