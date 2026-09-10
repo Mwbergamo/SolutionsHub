@@ -271,21 +271,34 @@ function relationships_cw_activity_invoices_for_month(string $cwCompanyId, strin
  * or -- for a Block Time / prepaid-hours agreement -- the hours-remaining
  * balance instead of a line-item list.
  *
- * NOT VERIFIED against real ConnectWise data (see file header). ConnectWise
- * doesn't expose one universal, stable field for "this invoice's line
- * items" the way it does for agreements/additions, and CBT's actual
- * instance/customizations may shape this differently. Deliberately
- * defensive: pulls the full, unfiltered invoice and agreement records
- * (no `fields` restriction) and looks for the likely keys under a few
- * plausible names/shapes rather than assuming one exact schema, and
- * reports back which raw keys it found so a mismatch is diagnosable
- * instead of silently blank.
+ * 2026-09-10 (confirmed against real ConnectWise data): the invoice's own
+ * record does NOT carry a line-item array under any of the plausible keys
+ * this originally guessed (invoiceLineItems/detailItems/lineItems/details)
+ * -- ConnectWise's documented Invoice fields don't expose one at all (see
+ * this file's header for the confirmed field list). Real invoices came
+ * back with an empty line-item list every time, even for an active,
+ * normally-billing IT Services Agreement.
+ *
+ * Fixed to stop guessing at the invoice's own JSON for this and instead
+ * read the agreement's *currently synced* active additions straight out
+ * of this app's own customer_services table (cw_agreement_id -- the exact
+ * same data connectwise-sync-core.php already pulls and classifies for
+ * the dashboard's pillar/service view). This is reliable, well-formed
+ * data this app already trusts, but it IS an approximation: it's the
+ * agreement's current active additions as of the last sync, not a literal
+ * historical snapshot of exactly what that one past invoice billed -- a
+ * meaningful difference only if the agreement's additions changed since
+ * that invoice was generated. `line_items_source` in the response tells
+ * the UI which case applied (still tries the invoice's own JSON first, in
+ * case a Product/Time/Expense-generated invoice -- not just an Agreement
+ * one -- does carry real line items under one of those keys).
  */
-function relationships_cw_activity_invoice_detail(int $invoiceId): array
+function relationships_cw_activity_invoice_detail(PDO $pdo, int $invoiceId): array
 {
     $invoice = relationships_cw_request("/finance/invoices/$invoiceId");
 
     $lineItems = [];
+    $lineItemsSource = null;
     foreach (['invoiceLineItems', 'detailItems', 'lineItems', 'details'] as $key) {
         if (isset($invoice[$key]) && is_array($invoice[$key])) {
             foreach ($invoice[$key] as $item) {
@@ -299,6 +312,7 @@ function relationships_cw_activity_invoice_detail(int $invoiceId): array
                 }
             }
             if ($lineItems !== []) {
+                $lineItemsSource = 'invoice';
                 break;
             }
         }
@@ -318,17 +332,37 @@ function relationships_cw_activity_invoice_detail(int $invoiceId): array
         $agreementName = $agreement['name'] ?? null;
         $agreementType = is_array($agreement['type'] ?? null) ? ($agreement['type']['name'] ?? null) : ($agreement['type'] ?? null);
 
-        // Block Time / prepaid-hours agreements track a running hours
-        // balance somewhere on the agreement record -- the exact field
-        // name isn't confirmed, so surface every key that looks
-        // hour-related rather than guess one and risk showing nothing
-        // (or the wrong number) for a real block-time agreement.
-        foreach ($agreement as $k => $v) {
-            if (stripos((string) $k, 'hour') !== false && !is_array($v)) {
-                $rawHourFields[$k] = $v;
+        // The invoice itself had nothing -- fall back to this agreement's
+        // currently-synced active additions (see doc comment above).
+        if ($lineItems === []) {
+            $synced = $pdo->prepare(
+                'SELECT product_label, qty, unit FROM customer_services WHERE cw_agreement_id = :aid ORDER BY id'
+            );
+            $synced->execute([':aid' => $agreementId]);
+            foreach ($synced->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $lineItems[] = ['description' => (string) $row['product_label'], 'qty' => (float) $row['qty']];
+            }
+            if ($lineItems !== []) {
+                $lineItemsSource = 'agreement_additions';
             }
         }
-        $hoursRemaining = $rawHourFields['hoursRemaining'] ?? $rawHourFields['availableHours'] ?? null;
+
+        // Block Time / prepaid-hours agreements track a running hours
+        // balance somewhere on the agreement record -- the exact field
+        // name still isn't confirmed (a real invoice's agreement surfaced
+        // "compHourlyRate", a billing RATE, not a remaining-hours BALANCE
+        // -- excluded below). Only worth guessing at all for an agreement
+        // that actually looks like Block Time; showing this diagnostic for
+        // every ordinary IT Services/Voice/Security agreement was noise,
+        // not a helpful signal.
+        if (stripos((string) $agreementType, 'block') !== false) {
+            foreach ($agreement as $k => $v) {
+                if (stripos((string) $k, 'hour') !== false && stripos((string) $k, 'rate') === false && !is_array($v)) {
+                    $rawHourFields[$k] = $v;
+                }
+            }
+            $hoursRemaining = $rawHourFields['hoursRemaining'] ?? $rawHourFields['availableHours'] ?? null;
+        }
     }
 
     return [
@@ -338,7 +372,8 @@ function relationships_cw_activity_invoice_detail(int $invoiceId): array
         'agreement_name' => $agreementName,
         'agreement_type' => $agreementType,
         'line_items' => $lineItems,
+        'line_items_source' => $lineItemsSource, // 'invoice' | 'agreement_additions' | null -- see doc comment above
         'hours_remaining' => $hoursRemaining,
-        'raw_hour_fields' => $rawHourFields, // shown in the UI only when hours_remaining is null, to help diagnose the real field name
+        'raw_hour_fields' => $rawHourFields, // Block Time agreements only now -- see doc comment above
     ];
 }

@@ -1185,10 +1185,17 @@
         html += '<div class="product-row"><span>' + escapeHtml(li.description) + '</span><span class="product-qty">' + (li.qty != null ? li.qty : '') + '</span></div>';
       });
       html += '</div>';
+      // ConnectWise's invoice record never carries its own line items for a
+      // normal Agreement invoice (confirmed 2026-09-10) -- these are the
+      // agreement's current active additions instead, a close but not
+      // always exact stand-in for what that specific past invoice billed.
+      if (inv.line_items_source === 'agreement_additions') {
+        html += '<div class="activity-card-sub">Current active additions on this agreement — not a historical snapshot of this specific invoice.</div>';
+      }
     } else if (!hasHours) {
-      html += '<div class="empty-state">ConnectWise didn’t return line-item detail for this invoice.</div>';
+      html += '<div class="empty-state">No active additions found on this agreement.</div>';
       if (inv.raw_hour_fields && Object.keys(inv.raw_hour_fields).length) {
-        html += '<div class="raw-fields-note">Possible hours-remaining fields found on the agreement: ' +
+        html += '<div class="raw-fields-note">Possible hours-remaining fields found on the agreement (not yet confirmed): ' +
           Object.keys(inv.raw_hour_fields).map(function (k) { return escapeHtml(k) + ' = ' + escapeHtml(String(inv.raw_hour_fields[k])); }).join(', ') +
         '</div>';
       }

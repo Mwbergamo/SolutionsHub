@@ -35,7 +35,16 @@
  * GET /relationships/api/activity.php?action=invoice-detail&invoice_id=12345
  *   -> { ok: true, invoice: { invoice_number, date, total, agreement_name, agreement_type,
  *                               line_items: [{description, qty}, ...],
+ *                               line_items_source: 'invoice'|'agreement_additions'|null,
  *                               hours_remaining, raw_hour_fields } }
+ *
+ * line_items_source is 'agreement_additions' whenever the invoice's own
+ * ConnectWise record carried no line items (confirmed 2026-09-10: it
+ * never does, for a normal Agreement invoice) -- those cases fall back to
+ * this app's own synced customer_services for that agreement, which is
+ * the agreement's CURRENT active additions, not a per-invoice historical
+ * snapshot. See connectwise-activity.php's relationships_cw_activity_invoice_detail()
+ * doc comment.
  */
 
 declare(strict_types=1);
@@ -119,7 +128,7 @@ if ($action === 'invoice-detail') {
         relationships_respond(400, ['ok' => false, 'error' => 'Missing invoice_id.']);
     }
     try {
-        $invoice = relationships_cw_activity_invoice_detail($invoiceId);
+        $invoice = relationships_cw_activity_invoice_detail($pdo, $invoiceId);
         relationships_respond(200, ['ok' => true, 'invoice' => $invoice]);
     } catch (RelationshipsConnectWiseError $e) {
         relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
