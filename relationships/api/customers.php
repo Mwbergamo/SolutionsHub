@@ -14,14 +14,20 @@
  *   -> { ok: true, customers: [{ id, name, is_peoplefirst: bool }, ...] }
  *
  * GET /relationships/api/customers.php?action=detail&id=123
- *   -> { ok: true, customer: { id, name, is_peoplefirst: bool },
+ *   -> { ok: true, customer: { id, name, is_peoplefirst: bool,
+ *                               last_client_checkin_at, last_client_checkin_by,
+ *                               last_risk_scan_at, last_risk_scan_by },
  *        pillars: [{ id, name, active: bool,
  *                     services: [{ id, name, active: bool,
  *                                  products: [{ label, qty, unit }, ...] }, ...] }, ...] }
  *
  * is_peoplefirst marks CodeBlue's top-tier IT Services customers (see
  * connectwise-sync-core.php) -- little to no cross-sell, but due a
- * quarterly risk assessment / client visit instead.
+ * quarterly risk assessment / client visit instead. last_client_checkin_at/
+ * last_risk_scan_at (+ _by) are only ever set for PeopleFirst customers, via
+ * relationships/api/peoplefirst.php?action=log -- see that file for the
+ * "needs a checkin/scan this month/quarter" logic used by the Cross-Sell
+ * Report.
  */
 
 declare(strict_types=1);
@@ -56,7 +62,10 @@ if ($action === 'detail') {
         relationships_respond(400, ['ok' => false, 'error' => 'Missing customer id.']);
     }
 
-    $custStmt = $pdo->prepare('SELECT id, name, is_peoplefirst FROM customers WHERE id = :id');
+    $custStmt = $pdo->prepare(
+        'SELECT id, name, is_peoplefirst, last_client_checkin_at, last_client_checkin_by, last_risk_scan_at, last_risk_scan_by
+         FROM customers WHERE id = :id'
+    );
     $custStmt->execute([':id' => $id]);
     $customer = $custStmt->fetch(PDO::FETCH_ASSOC);
     if ($customer === false) {
@@ -113,7 +122,15 @@ if ($action === 'detail') {
 
     relationships_respond(200, [
         'ok' => true,
-        'customer' => ['id' => (int) $customer['id'], 'name' => $customer['name'], 'is_peoplefirst' => (bool) $customer['is_peoplefirst']],
+        'customer' => [
+            'id' => (int) $customer['id'],
+            'name' => $customer['name'],
+            'is_peoplefirst' => (bool) $customer['is_peoplefirst'],
+            'last_client_checkin_at' => $customer['last_client_checkin_at'],
+            'last_client_checkin_by' => $customer['last_client_checkin_by'],
+            'last_risk_scan_at' => $customer['last_risk_scan_at'],
+            'last_risk_scan_by' => $customer['last_risk_scan_by'],
+        ],
         'pillars' => $pillars,
     ]);
 }

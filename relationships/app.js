@@ -73,7 +73,17 @@
 
     queue: null, // customers from checklist.php?action=queue
     queueLoading: false,
-    queueParams: null // { pillarId, serviceId, step, pillarName, serviceName }
+    queueParams: null, // { pillarId, serviceId, step, pillarName, serviceName }
+
+    // PeopleFirst checkin/risk-scan tracking (api/peoplefirst.php). Shown
+    // as a summary line atop the Cross-Sell Report, drilling into a
+    // 'pf-queue' view for who currently needs a checkin or a scan.
+    pfSummary: null, // { total, needs_checkin, needs_scan } from ?action=summary
+    pfSummaryLoading: false,
+    pfQueue: null, // customers from ?action=queue
+    pfQueueLoading: false,
+    pfQueueType: null, // 'checkin' | 'scan'
+    pfLogging: null // "customerId::type" currently being logged, or null
   };
 
   function escapeHtml(s) {
@@ -157,7 +167,7 @@
         state.searching = false;
         render();
       });
-    }, 220);
+    }, 2000);
   }
 
   function selectCustomer(id) {
@@ -269,6 +279,60 @@
     });
   }
 
+  function loadPeopleFirstSummary() {
+    state.pfSummaryLoading = true;
+    apiGet('api/peoplefirst.php?action=summary').then(function (r) {
+      state.pfSummaryLoading = false;
+      if (r.data && r.data.ok) {
+        state.pfSummary = r.data;
+      }
+      render();
+    }).catch(function () {
+      state.pfSummaryLoading = false;
+      render();
+    });
+  }
+
+  function loadPeopleFirstQueue(type) {
+    state.pfQueueLoading = true;
+    state.pfQueue = null;
+    state.pfQueueType = type;
+    state.error = null;
+    render();
+    apiGet('api/peoplefirst.php?action=queue&type=' + encodeURIComponent(type)).then(function (r) {
+      state.pfQueueLoading = false;
+      if (r.data && r.data.ok) {
+        state.pfQueue = r.data.customers;
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not load that list.';
+      }
+      render();
+    }).catch(function () {
+      state.pfQueueLoading = false;
+      state.error = 'Could not load that list — check your connection and try again.';
+      render();
+    });
+  }
+
+  function logPeopleFirst(customerId, type) {
+    var key = customerId + '::' + type;
+    state.pfLogging = key;
+    render();
+    apiPost('api/peoplefirst.php?action=log', { customer_id: customerId, type: type }).then(function (r) {
+      state.pfLogging = null;
+      if (r.data && r.data.ok && state.selectedCustomer && state.selectedCustomer.customer.id === r.data.customer.id) {
+        state.selectedCustomer.customer = r.data.customer;
+      } else if (!r.data || !r.data.ok) {
+        state.error = (r.data && r.data.error) || 'Could not log that — try again.';
+      }
+      render();
+    }).catch(function () {
+      state.pfLogging = null;
+      state.error = 'Could not log that — check your connection and try again.';
+      render();
+    });
+  }
+
   function loadSyncStatus() {
     apiGet('api/sync.php?action=status').then(function (r) {
       if (r.data && r.data.ok) {
@@ -368,8 +432,36 @@
   // ---- Rendering ----------------------------------------------------
 
   function render() {
+    // Capture the search input's focus/caret state *before* touching the
+    // DOM -- replacing root.innerHTML while it's focused fires a 'blur' on
+    // the old node synchronously, so anything read after the swap is
+    // already stale. Reading document.activeElement here, before any
+    // mutation, is the only reliable way to know it was focused.
+    var searchFocus = captureSearchFocus();
     root.innerHTML = topbarHtml() + '<div class="main">' + mainHtml() + '</div>';
     bindEvents();
+    restoreSearchFocus(searchFocus);
+  }
+
+  function captureSearchFocus() {
+    var el = document.getElementById('customerSearchInput');
+    if (el && document.activeElement === el) {
+      return { start: el.selectionStart, end: el.selectionEnd };
+    }
+    return null;
+  }
+
+  function restoreSearchFocus(focusInfo) {
+    if (!focusInfo) return;
+    var el = document.getElementById('customerSearchInput');
+    if (!el) return;
+    el.focus();
+    try {
+      el.setSelectionRange(focusInfo.start, focusInfo.end);
+    } catch (e) {
+      // setSelectionRange can throw on some input types -- ignore, focus
+      // alone is the important part.
+    }
   }
 
   function topbarHtml() {
@@ -405,6 +497,9 @@
     if (state.view === 'queue') {
       return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + queueHtml();
     }
+    if (state.view === 'pf-queue') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + pfQueueHtml();
+    }
     if (state.view === 'sync') {
       return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + syncHtml();
     }
@@ -431,6 +526,8 @@
       '<div class="view-title">Cross-Sell Step Report</div>' +
       '<div class="view-sub">How many customers are currently sitting at each step, per missing service. Click a number to see who.</div>' +
     '</div>';
+
+    html += peopleFirstSummaryHtml();
 
     if (state.reportLoading || !state.report) {
       return html + '<div class="loading">Loading report…</div>';
@@ -467,6 +564,65 @@
       'data-pillar="' + row.pillar_id + '" data-service="' + row.service_id + '" data-step="' + step + '" ' +
       'data-pillar-name="' + escapeHtml(row.pillar_name) + '" data-service-name="' + escapeHtml(row.service_name) + '">' +
       count + '</button>';
+  }
+
+  // PeopleFirst summary line atop the Cross-Sell Report — separate from
+  // the step-report table above since these customers aren't cross-sell
+  // targets; the two numbers here are click-through counts of who needs a
+  // client checkin this calendar month or a risk scan this calendar
+  // quarter (see peoplefirst.php's need_checkin/need_scan for the exact
+  // rule).
+  function peopleFirstSummaryHtml() {
+    if (state.pfSummaryLoading && !state.pfSummary) {
+      return '<div class="peoplefirst-summary loading">Loading PeopleFirst status…</div>';
+    }
+    if (!state.pfSummary) return '';
+
+    var s = state.pfSummary;
+    return '<div class="peoplefirst-summary">' +
+      '<div class="peoplefirst-summary-title">★ PeopleFirst Members — ' + s.total + ' total</div>' +
+      '<div class="peoplefirst-summary-counts">' +
+        peopleFirstCountHtml(s.needs_checkin, 'need a client checkin this month', 'checkin') +
+        peopleFirstCountHtml(s.needs_scan, 'need a risk scan this quarter', 'scan') +
+      '</div>' +
+    '</div>';
+  }
+
+  function peopleFirstCountHtml(count, label, type) {
+    if (!count) {
+      return '<div class="peoplefirst-summary-count zero"><span class="peoplefirst-summary-number">0</span> ' + escapeHtml(label) + '</div>';
+    }
+    return '<button class="peoplefirst-summary-count" type="button" data-action="pf-open-queue" data-type="' + type + '">' +
+      '<span class="peoplefirst-summary-number">' + count + '</span> ' + escapeHtml(label) +
+    '</button>';
+  }
+
+  function pfQueueHtml() {
+    var type = state.pfQueueType;
+    var title = type === 'scan' ? 'Needs a Risk Scan This Quarter' : 'Needs a Client Checkin This Month';
+    var html = '<div class="view-header">' +
+      '<button class="back-link" type="button" data-action="pf-queue-back">← Back to report</button>' +
+      '<div class="view-title">' + title + '</div>' +
+      '<div class="view-sub">Click a customer to open their dashboard and log it.</div>' +
+    '</div>';
+
+    if (state.pfQueueLoading || !state.pfQueue) {
+      return html + '<div class="loading">Loading…</div>';
+    }
+    if (state.pfQueue.length === 0) {
+      return html + '<div class="empty-state">Nobody currently needs this — everyone’s up to date.</div>';
+    }
+
+    html += '<div class="queue-list">';
+    state.pfQueue.forEach(function (c) {
+      var lastLabel = c.last_at ? ('Last: ' + fmtTimestamp(c.last_at) + (c.last_by ? ' — ' + escapeHtml(c.last_by) : '')) : 'Never logged';
+      html += '<div class="queue-item" data-action="open-pf-queue-customer" data-customer="' + c.id + '">' +
+        '<div class="queue-item-name">' + escapeHtml(c.name) + '<div class="queue-item-meta">' + escapeHtml(lastLabel) + '</div></div>' +
+        '<div class="queue-item-go">Open →</div>' +
+      '</div>';
+    });
+    html += '</div>';
+    return html;
   }
 
   function queueHtml() {
@@ -582,7 +738,8 @@
       '<button class="change-customer-btn" type="button" data-action="change-customer">Search a different customer</button>' +
     '</div>';
     if (detail.customer.is_peoplefirst) {
-      html += '<div class="peoplefirst-note">Top-tier PeopleFirst member — not a cross-sell priority, but due a quarterly risk assessment and client visit.</div>';
+      html += '<div class="peoplefirst-note">PeopleFirst Support Members - Quarterly Risk Scans and Monthly Client Checkin\'s are required.</div>';
+      html += peopleFirstFieldsHtml(detail.customer);
     }
 
     html += '<div class="dashboard-grid">';
@@ -627,6 +784,28 @@
     }
 
     return html;
+  }
+
+  function peopleFirstFieldsHtml(customer) {
+    return '<div class="peoplefirst-fields">' +
+      peopleFirstFieldHtml(customer, 'checkin', 'Last Client Checkin', customer.last_client_checkin_at, customer.last_client_checkin_by) +
+      peopleFirstFieldHtml(customer, 'scan', 'Last Risk Scan', customer.last_risk_scan_at, customer.last_risk_scan_by) +
+    '</div>';
+  }
+
+  function peopleFirstFieldHtml(customer, type, label, at, by) {
+    var key = customer.id + '::' + type;
+    var isLogging = state.pfLogging === key;
+    var valueHtml = at
+      ? escapeHtml(fmtTimestamp(at)) + (by ? '<div class="peoplefirst-field-by">by ' + escapeHtml(by) + '</div>' : '')
+      : '<span class="peoplefirst-field-empty">Not recorded yet</span>';
+
+    return '<div class="peoplefirst-field">' +
+      '<div class="peoplefirst-field-label">' + escapeHtml(label) + '</div>' +
+      '<div class="peoplefirst-field-value">' + valueHtml + '</div>' +
+      '<button class="peoplefirst-log-btn" type="button" data-action="log-peoplefirst" data-customer="' + customer.id + '" data-type="' + type + '" ' +
+        (isLogging ? 'disabled' : '') + '>' + (isLogging ? 'Logging…' : 'Log Today') + '</button>' +
+    '</div>';
   }
 
   function drilldownHtml(pillar, customerId) {
@@ -717,16 +896,6 @@
 
   // ---- Event binding ----------------------------------------------------
 
-  // Tracks whether the search input was focused going into the last
-  // render(), purely so a re-render (which replaces the DOM node — the old
-  // one loses focus for free) can silently refocus the new one. Neither
-  // listener below calls render() itself: doing that from a focus handler
-  // while bindEvents() re-focuses on every render is a recursive loop
-  // (each render -> focus() -> 'focus' handler -> render() -> ...) that
-  // blows the call stack — caught in testing, kept as a comment as a
-  // trap for the next person who "simplifies" this.
-  var searchInputHadFocus = false;
-
   function bindEvents() {
     var searchInput = document.getElementById('customerSearchInput');
     if (searchInput) {
@@ -735,14 +904,6 @@
         state.resultsOpen = true;
         runSearch(state.query);
       });
-      searchInput.addEventListener('focus', function () { searchInputHadFocus = true; });
-      searchInput.addEventListener('blur', function () { searchInputHadFocus = false; });
-
-      // Preserve focus/caret across re-renders triggered while typing.
-      if (searchInputHadFocus) {
-        searchInput.focus();
-        searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
-      }
     }
   }
 
@@ -771,6 +932,7 @@
     } else if (action === 'show-report') {
       state.view = 'report';
       loadReport();
+      loadPeopleFirstSummary();
     } else if (action === 'show-dashboard') {
       state.view = 'dashboard';
       state.error = null;
@@ -795,6 +957,18 @@
     } else if (action === 'open-queue-customer') {
       var qp = state.queueParams;
       openCustomerAtChecklist(el.getAttribute('data-customer'), qp.pillarId, qp.serviceId, qp.serviceName);
+    } else if (action === 'pf-open-queue') {
+      state.view = 'pf-queue';
+      loadPeopleFirstQueue(el.getAttribute('data-type'));
+    } else if (action === 'pf-queue-back') {
+      state.view = 'report';
+      state.error = null;
+      render();
+    } else if (action === 'open-pf-queue-customer') {
+      state.view = 'dashboard';
+      selectCustomer(el.getAttribute('data-customer'));
+    } else if (action === 'log-peoplefirst') {
+      logPeopleFirst(parseInt(el.getAttribute('data-customer'), 10), el.getAttribute('data-type'));
     } else if (action === 'toggle-checklist') {
       var custId = state.selectedCustomer.customer.id;
       var checklistKey = custId + '::' + el.getAttribute('data-pillar') + '::' + el.getAttribute('data-service');

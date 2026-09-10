@@ -74,6 +74,15 @@ function relationships_migrate(PDO $pdo): void
         )
     SQL);
     relationships_add_column_if_missing($pdo, 'customers', 'is_peoplefirst', 'INTEGER NOT NULL DEFAULT 0');
+    // PeopleFirst quarterly risk-assessment / monthly client-checkin
+    // tracking -- only meaningful when is_peoplefirst = 1, but kept on the
+    // customers row itself (rather than a separate table) since each
+    // customer only ever has ONE "most recent" checkin and ONE "most
+    // recent" risk scan; history of past ones isn't tracked.
+    relationships_add_column_if_missing($pdo, 'customers', 'last_client_checkin_at', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'customers', 'last_client_checkin_by', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'customers', 'last_risk_scan_at', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'customers', 'last_risk_scan_by', 'TEXT');
 
     // One row per active ConnectWise agreement addition (mocked for now —
     // `source` distinguishes seeded sample rows from anything a future real

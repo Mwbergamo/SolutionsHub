@@ -205,6 +205,108 @@ a { color: inherit; }
   padding: 10px 14px;
 }
 
+.peoplefirst-fields {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.peoplefirst-field {
+  flex: 1 1 220px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.peoplefirst-field-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  color: oklch(0.5 0.015 255);
+  text-transform: uppercase;
+}
+
+.peoplefirst-field-value {
+  margin-top: 3px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: white;
+}
+
+.peoplefirst-field-by {
+  margin-top: 1px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: oklch(0.6 0.015 255);
+}
+
+.peoplefirst-field-empty { color: oklch(0.5 0.015 255); font-weight: 500; }
+
+.peoplefirst-log-btn {
+  flex: 0 0 auto;
+  background: oklch(0.78 0.15 85 / 0.16);
+  border: 1px solid oklch(0.78 0.15 85 / 0.4);
+  color: oklch(0.78 0.15 85);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.peoplefirst-log-btn:hover { background: oklch(0.78 0.15 85 / 0.26); }
+.peoplefirst-log-btn:disabled { opacity: .6; cursor: default; }
+
+/* PeopleFirst summary line atop the Cross-Sell Report */
+
+.peoplefirst-summary {
+  margin-bottom: 18px;
+  background: oklch(0.78 0.15 85 / 0.1);
+  border: 1px solid oklch(0.78 0.15 85 / 0.3);
+  border-radius: 14px;
+  padding: 14px 18px;
+}
+.peoplefirst-summary.loading {
+  font-size: 13px;
+  font-weight: 600;
+  color: oklch(0.6 0.015 255);
+}
+
+.peoplefirst-summary-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: oklch(0.78 0.15 85);
+  margin-bottom: 10px;
+}
+
+.peoplefirst-summary-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.peoplefirst-summary-count {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  background: rgba(47,143,239,0.16);
+  border: none;
+  color: #8fc3ff;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.peoplefirst-summary-count.zero { background: transparent; color: oklch(0.5 0.015 255); cursor: default; }
+
+.peoplefirst-summary-number { font-size: 16px; font-weight: 700; }
+
 .change-customer-btn {
   background: transparent;
   border: none;
@@ -589,6 +691,7 @@ a { color: inherit; }
 }
 
 .queue-item-name { font-size: 14px; font-weight: 700; color: white; }
+.queue-item-meta { margin-top: 3px; font-size: 11.5px; font-weight: 500; color: oklch(0.6 0.015 255); }
 .queue-item-go { font-size: 12px; font-weight: 700; color: #8fc3ff; }
 
 /* ConnectWise sync */
