@@ -74,3 +74,28 @@ function relationships_checklist_steps(): array
         7 => 'Close-Out — Re-Address in 180 Days',
     ];
 }
+
+/**
+ * Only these services get pushed through the Relationships dashboard's
+ * blanket cross-sell mechanism — the missing-services roster, the
+ * marketing link, the 7-step checklist, and the step-queue report.
+ * Per CodeBlue: everything else in the catalog is only worth cross-selling
+ * case by case, when a rep spots an actual need, not via an automatic
+ * "you're missing this" prompt. A service missing outside this list still
+ * shows in the pillar drill-down (so a CRC sees the full picture) — it
+ * just doesn't get a marketing link or a checklist.
+ */
+function relationships_cross_sell_map(): array
+{
+    return [
+        'it' => ['managed-it', 'cyber-security', 'provided-equipment'],
+        'voip' => ['cloud-voice'],
+        'security' => ['ip-cameras', 'access-control'],
+    ];
+}
+
+function relationships_is_cross_sell_eligible(string $pillarId, string $serviceId): bool
+{
+    $map = relationships_cross_sell_map();
+    return isset($map[$pillarId]) && in_array($serviceId, $map[$pillarId], true);
+}

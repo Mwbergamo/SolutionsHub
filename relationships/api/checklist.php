@@ -16,6 +16,12 @@
  * days, but nothing here auto-resets that; it's a manual re-open if/when
  * that phase gets built.
  *
+ * Only the services relationships_is_cross_sell_eligible() (catalog.php)
+ * says yes to are tracked here at all -- 'set' rejects any other service,
+ * and 'summary'/'queue' never include one. Everything else in the catalog
+ * still shows as missing in the customer detail (customers.php), it just
+ * isn't pushed through this blanket checklist/marketing mechanism.
+ *
  * GET  /relationships/api/checklist.php?action=get&customer_id=1&pillar_id=it&service_id=vcio
  *   -> { ok: true, steps: [{ step_number, label, completed, completed_at, completed_by_name }, ...] }  (7 entries)
  *
@@ -88,6 +94,9 @@ if ($action === 'set') {
     $steps = relationships_checklist_steps();
     if ($customerId <= 0 || $pillarId === '' || $serviceId === '' || !isset($steps[$stepNumber])) {
         relationships_respond(400, ['ok' => false, 'error' => 'Invalid checklist step.']);
+    }
+    if (!relationships_is_cross_sell_eligible($pillarId, $serviceId)) {
+        relationships_respond(400, ['ok' => false, 'error' => 'This service is not tracked for cross-sell.']);
     }
 
     // Delete-then-insert rather than an UPSERT: simpler, and the UNIQUE
@@ -192,6 +201,9 @@ function relationships_missing_services_with_progress(PDO $pdo): array
     foreach ($customers as $cust) {
         foreach ($catalog as $pillarId => $pillarDef) {
             foreach ($pillarDef['services'] as $serviceId => $serviceName) {
+                if (!relationships_is_cross_sell_eligible($pillarId, $serviceId)) {
+                    continue; // not part of the blanket cross-sell push
+                }
                 $key = $cust['id'] . '::' . $pillarId . '::' . $serviceId;
                 if (isset($activeSet[$key])) {
                     continue; // customer already has this service -- nothing to cross-sell

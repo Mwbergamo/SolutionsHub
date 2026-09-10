@@ -93,6 +93,7 @@ if ($action === 'detail') {
                 'name' => $serviceName,
                 'active' => $active,
                 'products' => $products,
+                'cross_sell_eligible' => relationships_is_cross_sell_eligible($pillarId, $serviceId),
             ];
         }
         $pillars[] = [

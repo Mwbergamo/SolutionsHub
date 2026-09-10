@@ -272,11 +272,14 @@
 
   // ---- Derived data -----------------------------------------------------
 
+  // Only the services flagged cross_sell_eligible by the server (see
+  // catalog.php's relationships_cross_sell_map()) show up here — the rest
+  // of the catalog is missing-but-not-marketed, per CodeBlue's process.
   function missingRoster(detail) {
     var roster = [];
     detail.pillars.forEach(function (pillar) {
       pillar.services.forEach(function (svc) {
-        if (!svc.active) {
+        if (!svc.active && svc.cross_sell_eligible) {
           roster.push({ pillarId: pillar.id, pillarName: pillar.name, serviceId: svc.id, serviceName: svc.name });
         }
       });
@@ -512,6 +515,10 @@
         '</div>';
       } else {
         var hubUrl = HUB_URL + '?pillar=' + encodeURIComponent(pillar.id) + '&service=' + encodeURIComponent(svc.id);
+        // Every missing service can still be opened in Solutions Hub (that's
+        // just navigation) — but the marketing link and checklist are only
+        // for the services CodeBlue actually cross-sells blanket-style.
+        // Everything else needs a rep to spot an actual need first.
         html += '<div class="service-block inactive">' +
           '<div class="service-block-head">' +
             '<div class="service-name">' + escapeHtml(svc.name) + '</div>' +
@@ -519,9 +526,11 @@
           '</div>' +
           '<div class="service-actions">' +
             '<a class="svc-action-btn primary" href="' + hubUrl + '" target="_blank" rel="noopener">Open in Solutions Hub →</a>' +
-            '<a class="svc-action-btn secondary" href="' + MARKETING_LIBRARY_URL + '" target="_blank" rel="noopener">View Marketing ↗</a>' +
+            (svc.cross_sell_eligible
+              ? '<a class="svc-action-btn secondary" href="' + MARKETING_LIBRARY_URL + '" target="_blank" rel="noopener">View Marketing ↗</a>'
+              : '') +
           '</div>' +
-          checklistHtml(customerId, pillar, svc) +
+          (svc.cross_sell_eligible ? checklistHtml(customerId, pillar, svc) : '') +
         '</div>';
       }
     });
