@@ -141,6 +141,8 @@ a { color: inherit; }
 .search-result-row:hover { background: oklch(0.93 0.006 255); }
 .search-result-row.peoplefirst { background: oklch(0.94 0.05 85); }
 .search-result-row.peoplefirst:hover { background: oklch(0.91 0.06 85); }
+.search-result-row.prospect { background: oklch(0.93 0.045 300); }
+.search-result-row.prospect:hover { background: oklch(0.9 0.055 300); }
 
 .search-empty {
   padding: 14px;
@@ -201,6 +203,37 @@ a { color: inherit; }
   color: oklch(0.78 0.15 85);
   background: oklch(0.78 0.15 85 / 0.12);
   border: 1px solid oklch(0.78 0.15 85 / 0.35);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+/* Prospect indicator (search results + customer header) -- a real
+   ConnectWise Company with no active agreement yet (see
+   connectwise-prospect-sync-core.php). Deliberately a different hue from
+   PeopleFirst gold and the hosted-elsewhere teal pillar tile, so all three
+   distinct customer states stay visually distinguishable at a glance. */
+
+.prospect-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: oklch(0.72 0.14 300);
+  color: oklch(0.2 0.05 300);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.prospect-note {
+  margin-top: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: oklch(0.72 0.14 300);
+  background: oklch(0.72 0.14 300 / 0.12);
+  border: 1px solid oklch(0.72 0.14 300 / 0.35);
   border-radius: 10px;
   padding: 10px 14px;
 }

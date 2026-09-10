@@ -24,6 +24,7 @@ if (PHP_SAPI !== 'cli') {
 
 require_once __DIR__ . '/connectwise-sync-core.php';
 require_once __DIR__ . '/connectwise-billing-sync-core.php';
+require_once __DIR__ . '/connectwise-prospect-sync-core.php';
 
 set_time_limit(0);
 
@@ -93,4 +94,37 @@ if ($totalBillingErrors !== []) {
     }
 }
 
-exit(($agreementSyncErrorCount > 0 || $billingResult['totals']['error'] > 0) ? 1 : 0);
+// Prospect companies (customers.is_prospect_only) -- added 2026-09-10, runs
+// last so it only sees companies the agreement sync above did NOT just
+// turn into a real customer this run. Same "one exit code for the whole
+// run" idea as billing above -- independent queue, a failure here doesn't
+// retroactively un-succeed the two syncs that already completed.
+echo "\n[" . date('c') . "] Starting ConnectWise Prospect Companies sync...\n";
+
+try {
+    $prospectStart = relationships_cw_prospect_sync_start($pdo);
+} catch (RelationshipsConnectWiseError $e) {
+    fwrite(STDERR, "Failed to start prospect sync: " . $e->getMessage() . "\n");
+    exit(1);
+}
+echo "Queued {$prospectStart['total']} companies.\n";
+
+$totalProspectErrors = [];
+do {
+    $prospectResult = relationships_cw_prospect_sync_step($pdo, 100);
+    echo "  processed {$prospectResult['processed_this_batch']} (remaining {$prospectResult['remaining']}, errors so far {$prospectResult['totals']['error']})\n";
+    foreach ($prospectResult['errors'] as $err) {
+        $totalProspectErrors[] = $err;
+    }
+} while (!$prospectResult['done']);
+
+echo "[" . date('c') . "] Done. " . $prospectResult['totals']['done'] . " companies synced, " . $prospectResult['totals']['error'] . " failed.\n";
+
+if ($totalProspectErrors !== []) {
+    echo "Prospect errors:\n";
+    foreach ($totalProspectErrors as $err) {
+        echo "  - company {$err['connectwise_id']} ({$err['company_name']}): {$err['error']}\n";
+    }
+}
+
+exit(($agreementSyncErrorCount > 0 || $billingResult['totals']['error'] > 0 || $prospectResult['totals']['error'] > 0) ? 1 : 0);

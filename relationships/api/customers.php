@@ -11,13 +11,14 @@
  * future sync job) — this endpoint's shape doesn't need to change.
  *
  * GET /relationships/api/customers.php?action=list&q=search+text
- *   -> { ok: true, customers: [{ id, name, is_peoplefirst: bool }, ...] }
+ *   -> { ok: true, customers: [{ id, name, is_peoplefirst: bool, is_prospect_only: bool }, ...] }
  *
  * GET /relationships/api/customers.php?action=detail&id=123
  *   -> { ok: true, customer: { id, name, is_peoplefirst: bool,
  *                               last_client_checkin_at, last_client_checkin_by,
  *                               last_risk_scan_at, last_risk_scan_by,
- *                               voip_hosted_elsewhere: bool, voip_hosted_agreement_name },
+ *                               voip_hosted_elsewhere: bool, voip_hosted_agreement_name,
+ *                               is_prospect_only: bool },
  *        pillars: [{ id, name, active: bool,
  *                     services: [{ id, name, active: bool,
  *                                  products: [{ label, qty, unit }, ...] }, ...] }, ...] }
@@ -37,6 +38,16 @@
  * forced false (see the override below), regardless of the shared
  * catalog's default -- same override applied in checklist.php's report/
  * queue so these customers never show up needing VoIP outreach.
+ *
+ * is_prospect_only marks a customer that came from the Prospect sync (a
+ * real ConnectWise Company, Active/Delinquent/Special Info status, no
+ * Vendor type) rather than an active agreement -- see
+ * connectwise-prospect-sync-core.php. It carries no other behavior here:
+ * a prospect customer has zero customer_services rows, so every
+ * pillar/service already comes back inactive/cross-sell-eligible through
+ * the normal code path below -- the flag exists purely so the UI can badge
+ * these as "zero existing relationship" rather than "missing a few
+ * things" (app.js).
  */
 
 declare(strict_types=1);
@@ -51,15 +62,20 @@ $action = $_GET['action'] ?? '';
 if ($action === 'list') {
     $q = trim((string) ($_GET['q'] ?? ''));
     if ($q === '') {
-        $stmt = $pdo->query('SELECT id, name, is_peoplefirst FROM customers ORDER BY name ASC LIMIT 200');
+        $stmt = $pdo->query('SELECT id, name, is_peoplefirst, is_prospect_only FROM customers ORDER BY name ASC LIMIT 200');
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } else {
-        $stmt = $pdo->prepare('SELECT id, name, is_peoplefirst FROM customers WHERE name LIKE :q ORDER BY name ASC LIMIT 50');
+        $stmt = $pdo->prepare('SELECT id, name, is_peoplefirst, is_prospect_only FROM customers WHERE name LIKE :q ORDER BY name ASC LIMIT 50');
         $stmt->execute([':q' => '%' . $q . '%']);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
     $customers = array_map(
-        static fn (array $r): array => ['id' => (int) $r['id'], 'name' => $r['name'], 'is_peoplefirst' => (bool) $r['is_peoplefirst']],
+        static fn (array $r): array => [
+            'id' => (int) $r['id'],
+            'name' => $r['name'],
+            'is_peoplefirst' => (bool) $r['is_peoplefirst'],
+            'is_prospect_only' => (bool) $r['is_prospect_only'],
+        ],
         $rows
     );
     relationships_respond(200, ['ok' => true, 'customers' => $customers]);
@@ -73,7 +89,7 @@ if ($action === 'detail') {
 
     $custStmt = $pdo->prepare(
         'SELECT id, name, is_peoplefirst, last_client_checkin_at, last_client_checkin_by, last_risk_scan_at, last_risk_scan_by,
-                voip_hosted_elsewhere, voip_hosted_agreement_name
+                voip_hosted_elsewhere, voip_hosted_agreement_name, is_prospect_only
          FROM customers WHERE id = :id'
     );
     $custStmt->execute([':id' => $id]);
@@ -151,6 +167,7 @@ if ($action === 'detail') {
             'last_risk_scan_by' => $customer['last_risk_scan_by'],
             'voip_hosted_elsewhere' => $voipHostedElsewhere,
             'voip_hosted_agreement_name' => $customer['voip_hosted_agreement_name'],
+            'is_prospect_only' => (bool) $customer['is_prospect_only'],
         ],
         'pillars' => $pillars,
     ]);

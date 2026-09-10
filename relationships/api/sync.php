@@ -37,6 +37,25 @@
  * POST /relationships/api/sync.php?action=billing-step
  *   { batch_size?: int (default 20, max 50) }
  *   -> { ok: true, processed_this_batch, remaining, done, totals, errors: [...] }
+ *
+ * The prospect-* actions below (added 2026-09-10) are the same start/step
+ * shape again, for ConnectWise Companies with no active agreement of any
+ * tracked type but a real Active/Delinquent/Special Info status and no
+ * Vendor type -- see connectwise-prospect-sync-core.php. app.js's "Run
+ * Sync Now" chains this after the billing sync above finishes, so one
+ * click still does the whole nightly-cron-equivalent sync (agreements,
+ * then billing, then prospects); connectwise-cron.php runs all three in
+ * sequence too.
+ *
+ * GET  /relationships/api/sync.php?action=prospect-status
+ *   -> { ok: true, totals: { pending, done, error }, started_at }
+ *
+ * POST /relationships/api/sync.php?action=prospect-start
+ *   -> { ok: true, total }
+ *
+ * POST /relationships/api/sync.php?action=prospect-step
+ *   { batch_size?: int (default 20, max 50) }
+ *   -> { ok: true, processed_this_batch, remaining, done, totals, errors: [...] }
  */
 
 declare(strict_types=1);
@@ -44,6 +63,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/connectwise-sync-core.php';
 require_once __DIR__ . '/connectwise-billing-sync-core.php';
+require_once __DIR__ . '/connectwise-prospect-sync-core.php';
 
 $pdo = relationships_db();
 relationships_require_login($pdo);
@@ -75,6 +95,20 @@ if ($action === 'billing-status') {
             'error' => (int) ($counts['error'] ?? 0),
         ],
         'started_at' => $meta['billing_started_at'] ?? null,
+    ]);
+}
+
+if ($action === 'prospect-status') {
+    $counts = $pdo->query('SELECT status, COUNT(*) AS n FROM cw_prospect_sync_queue GROUP BY status')->fetchAll(PDO::FETCH_KEY_PAIR);
+    $meta = $pdo->query('SELECT key, value FROM cw_sync_meta')->fetchAll(PDO::FETCH_KEY_PAIR);
+    relationships_respond(200, [
+        'ok' => true,
+        'totals' => [
+            'pending' => (int) ($counts['pending'] ?? 0),
+            'done' => (int) ($counts['done'] ?? 0),
+            'error' => (int) ($counts['error'] ?? 0),
+        ],
+        'started_at' => $meta['prospect_started_at'] ?? null,
     ]);
 }
 
@@ -118,6 +152,27 @@ if ($action === 'billing-step') {
     $batchSize = max(1, min(50, $batchSize));
     try {
         $result = relationships_cw_billing_sync_step($pdo, $batchSize);
+        relationships_respond(200, array_merge(['ok' => true], $result));
+    } catch (RelationshipsConnectWiseError $e) {
+        relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
+    }
+}
+
+if ($action === 'prospect-start') {
+    try {
+        $result = relationships_cw_prospect_sync_start($pdo);
+        relationships_respond(200, ['ok' => true, 'total' => $result['total']]);
+    } catch (RelationshipsConnectWiseError $e) {
+        relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
+    }
+}
+
+if ($action === 'prospect-step') {
+    $data = relationships_read_json_body();
+    $batchSize = (int) ($data['batch_size'] ?? 20);
+    $batchSize = max(1, min(50, $batchSize));
+    try {
+        $result = relationships_cw_prospect_sync_step($pdo, $batchSize);
         relationships_respond(200, array_merge(['ok' => true], $result));
     } catch (RelationshipsConnectWiseError $e) {
         relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);

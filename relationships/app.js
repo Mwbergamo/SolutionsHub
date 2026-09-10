@@ -71,6 +71,20 @@
     billingSyncStartedAt: null,
     billingSyncErrors: [],
 
+    // Prospect Companies sync (api/sync.php's prospect-* actions) -- added
+    // 2026-09-10. "Run Sync Now" chains this after the billing sync above
+    // finishes, same reasoning as billing chaining after agreements: one
+    // click still does the whole nightly-cron-equivalent sync, and this is
+    // a genuinely separate queue (by ConnectWise Company, not by agreement
+    // or by already-synced customer) that can succeed/fail independently.
+    prospectSyncRunning: false,
+    prospectSyncDone: false,
+    prospectSyncTotal: 0,
+    prospectSyncProcessed: 0,
+    prospectSyncTotals: null,
+    prospectSyncStartedAt: null,
+    prospectSyncErrors: [],
+
     // Checklist data, keyed by "customerId::pillarId::serviceId". Each
     // value is: undefined (not fetched yet), 'error', or an array of the
     // 7 step objects from checklist.php?action=get.
@@ -522,6 +536,13 @@
       }
       render();
     }).catch(function () { /* silent, same as above */ });
+    apiGet('api/sync.php?action=prospect-status').then(function (r) {
+      if (r.data && r.data.ok) {
+        state.prospectSyncTotals = r.data.totals;
+        state.prospectSyncStartedAt = r.data.started_at;
+      }
+      render();
+    }).catch(function () { /* silent, same as above */ });
   }
 
   // Kicks off a full ConnectWise sync: api/sync.php?action=start builds the
@@ -630,6 +651,7 @@
         state.billingSyncRunning = false;
         state.billingSyncDone = true;
         render();
+        runProspectSync();
       } else {
         render();
         billingStepSyncLoop();
@@ -637,6 +659,61 @@
     }).catch(function () {
       state.billingSyncRunning = false;
       state.error = 'Billing sync failed partway through — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Same start()/step() shape as the two syncs above, run right after
+  // billing as part of the same "Run Sync Now" click -- see api/sync.php's
+  // file header. Independent queue: a failure here doesn't retroactively
+  // un-succeed the agreement or billing sync that already completed.
+  function runProspectSync() {
+    state.prospectSyncRunning = true;
+    state.prospectSyncDone = false;
+    state.prospectSyncErrors = [];
+    render();
+    apiPost('api/sync.php?action=prospect-start', {}).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.prospectSyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Agreements and billing synced, but could not start the prospect sync.';
+        render();
+        return;
+      }
+      state.prospectSyncTotal = r.data.total;
+      state.prospectSyncProcessed = 0;
+      render();
+      prospectStepSyncLoop();
+    }).catch(function () {
+      state.prospectSyncRunning = false;
+      state.error = 'Agreements and billing synced, but the prospect sync could not start — check your connection and try again.';
+      render();
+    });
+  }
+
+  function prospectStepSyncLoop() {
+    apiPost('api/sync.php?action=prospect-step', { batch_size: 50 }).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.prospectSyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Prospect sync failed partway through.';
+        render();
+        return;
+      }
+      state.prospectSyncTotals = r.data.totals;
+      state.prospectSyncProcessed = r.data.totals.done + r.data.totals.error;
+      if (r.data.errors && r.data.errors.length) {
+        state.prospectSyncErrors = state.prospectSyncErrors.concat(r.data.errors);
+      }
+      if (r.data.done) {
+        state.prospectSyncRunning = false;
+        state.prospectSyncDone = true;
+        render();
+      } else {
+        render();
+        prospectStepSyncLoop();
+      }
+    }).catch(function () {
+      state.prospectSyncRunning = false;
+      state.error = 'Prospect sync failed partway through — check your connection and try again.';
       render();
     });
   }
@@ -896,12 +973,12 @@
   function syncHtml() {
     var html = '<div class="view-header">' +
       '<div class="view-title">ConnectWise Sync</div>' +
-      '<div class="view-sub">Pulls active services from ConnectWise — IT Services, Voice, Premise Security, and Data Center agreements — into this dashboard, then refreshes every customer’s Monthly Billing chart. Checklist progress already recorded isn’t touched.</div>' +
+      '<div class="view-sub">Pulls active services from ConnectWise — IT Services, Voice, Premise Security, and Data Center agreements — into this dashboard, refreshes every customer’s Monthly Billing chart, then pulls in Active/Delinquent/Special Info companies with no agreement at all as Prospects. Checklist progress already recorded isn’t touched.</div>' +
     '</div>';
 
     html += '<div class="sync-panel">';
 
-    var running = state.syncRunning || state.billingSyncRunning;
+    var running = state.syncRunning || state.billingSyncRunning || state.prospectSyncRunning;
 
     if (state.syncRunning) {
       var pct = state.syncTotal ? Math.min(100, Math.round((state.syncProcessed / state.syncTotal) * 100)) : 0;
@@ -911,6 +988,10 @@
       var bpct = state.billingSyncTotal ? Math.min(100, Math.round((state.billingSyncProcessed / state.billingSyncTotal) * 100)) : 0;
       html += '<div class="sync-progress-label">Services synced. Syncing Monthly Billing… ' + state.billingSyncProcessed + ' of ' + state.billingSyncTotal + ' customers (' + bpct + '%)</div>' +
         '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + bpct + '%"></div></div>';
+    } else if (state.prospectSyncRunning) {
+      var ppct = state.prospectSyncTotal ? Math.min(100, Math.round((state.prospectSyncProcessed / state.prospectSyncTotal) * 100)) : 0;
+      html += '<div class="sync-progress-label">Billing synced. Syncing Prospect Companies… ' + state.prospectSyncProcessed + ' of ' + state.prospectSyncTotal + ' companies (' + ppct + '%)</div>' +
+        '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + ppct + '%"></div></div>';
     }
 
     html += '<button class="sync-run-btn" type="button" data-action="run-sync"' + (running ? ' disabled' : '') + '>' + (running ? 'Syncing…' : 'Run Sync Now') + '</button>';
@@ -937,6 +1018,17 @@
       } else if (state.billingSyncTotals) {
         html += '<div class="sync-result">Monthly Billing: no sync has been run yet.</div>';
       }
+
+      if (state.prospectSyncDone) {
+        html += '<div class="sync-result">Prospect Companies: ' + (state.prospectSyncTotals ? state.prospectSyncTotals.done : 0) + ' companies synced' +
+          (state.prospectSyncTotals && state.prospectSyncTotals.error ? ', ' + state.prospectSyncTotals.error + ' failed (see below)' : '') + '.</div>';
+      } else if (state.prospectSyncTotals && (state.prospectSyncTotals.done || state.prospectSyncTotals.error)) {
+        html += '<div class="sync-result">Prospect Companies — last run: ' + state.prospectSyncTotals.done + ' synced' +
+          (state.prospectSyncTotals.error ? ', ' + state.prospectSyncTotals.error + ' failed' : '') +
+          (state.prospectSyncStartedAt ? ' — started ' + escapeHtml(fmtTimestamp(state.prospectSyncStartedAt)) : '') + '.</div>';
+      } else if (state.prospectSyncTotals) {
+        html += '<div class="sync-result">Prospect Companies: no sync has been run yet.</div>';
+      }
     }
 
     if (state.syncErrors.length) {
@@ -950,6 +1042,14 @@
     if (state.billingSyncErrors.length) {
       html += '<div class="sync-errors-title">Customers whose billing failed to sync (' + state.billingSyncErrors.length + '):</div><div class="sync-errors-list">';
       state.billingSyncErrors.forEach(function (err) {
+        html += '<div class="sync-error-row"><strong>' + escapeHtml(err.company_name) + '</strong>: ' + escapeHtml(err.error) + '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (state.prospectSyncErrors.length) {
+      html += '<div class="sync-errors-title">Companies that failed to sync as prospects (' + state.prospectSyncErrors.length + '):</div><div class="sync-errors-list">';
+      state.prospectSyncErrors.forEach(function (err) {
         html += '<div class="sync-error-row"><strong>' + escapeHtml(err.company_name) + '</strong>: ' + escapeHtml(err.error) + '</div>';
       });
       html += '</div>';
@@ -972,9 +1072,10 @@
         box += '<div class="search-empty">Searching…</div>';
       } else if (state.results.length) {
         state.results.forEach(function (c) {
-          box += '<div class="search-result-row' + (c.is_peoplefirst ? ' peoplefirst' : '') + '" data-action="select-customer" data-id="' + c.id + '">' +
+          var rowClass = c.is_peoplefirst ? ' peoplefirst' : (c.is_prospect_only ? ' prospect' : '');
+          box += '<div class="search-result-row' + rowClass + '" data-action="select-customer" data-id="' + c.id + '">' +
             '<span>' + escapeHtml(c.name) + '</span>' +
-            (c.is_peoplefirst ? peopleFirstBadgeHtml() : '') +
+            (c.is_peoplefirst ? peopleFirstBadgeHtml() : (c.is_prospect_only ? prospectBadgeHtml() : '')) +
           '</div>';
         });
       } else {
@@ -992,6 +1093,16 @@
   // cue to schedule a quarterly risk assessment / client visit instead.
   function peopleFirstBadgeHtml() {
     return '<span class="peoplefirst-badge" title="PeopleFirst top-tier member — due a quarterly risk assessment / client visit">★ PeopleFirst</span>';
+  }
+
+  // Prospect: a real ConnectWise Company (Active/Delinquent/Special Info
+  // status, not a Vendor) with no active agreement of any kind yet -- see
+  // connectwise-prospect-sync-core.php. Zero existing services, so every
+  // pillar is a cross-sell opportunity; the badge is the cue that this is a
+  // cold/warm lead rather than an existing customer just missing a few
+  // add-ons.
+  function prospectBadgeHtml() {
+    return '<span class="prospect-badge" title="Prospect — a ConnectWise company with no active CodeBlue services yet. Full cross-sell opportunity.">◇ Prospect</span>';
   }
 
   // Live ConnectWise ticket count + 6-month Agreement-invoice billing for
@@ -1208,16 +1319,19 @@
     var roster = missingRoster(detail);
     var html = '';
 
-    html += '<div class="customer-header' + (detail.customer.is_peoplefirst ? ' peoplefirst' : '') + '">' +
+    var headerClass = detail.customer.is_peoplefirst ? ' peoplefirst' : (detail.customer.is_prospect_only ? ' prospect' : '');
+    html += '<div class="customer-header' + headerClass + '">' +
       '<div class="customer-header-left">' +
         '<div class="customer-name">' + escapeHtml(detail.customer.name) + '</div>' +
-        (detail.customer.is_peoplefirst ? peopleFirstBadgeHtml() : '') +
+        (detail.customer.is_peoplefirst ? peopleFirstBadgeHtml() : (detail.customer.is_prospect_only ? prospectBadgeHtml() : '')) +
       '</div>' +
       '<button class="change-customer-btn" type="button" data-action="change-customer">Search a different customer</button>' +
     '</div>';
     if (detail.customer.is_peoplefirst) {
       html += '<div class="peoplefirst-note">PeopleFirst Support Members - Quarterly Risk Scans and Monthly Client Checkin\'s are required.</div>';
       html += peopleFirstFieldsHtml(detail.customer);
+    } else if (detail.customer.is_prospect_only) {
+      html += '<div class="prospect-note">Prospect — a ConnectWise company with no active CodeBlue services yet. Every pillar below is a cross-sell opportunity.</div>';
     }
 
     html += activityPanelHtml(detail);

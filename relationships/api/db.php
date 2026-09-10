@@ -92,6 +92,16 @@ function relationships_migrate(PDO $pdo): void
     // connectwise-sync-core.php, customers.php, checklist.php).
     relationships_add_column_if_missing($pdo, 'customers', 'voip_hosted_elsewhere', 'INTEGER NOT NULL DEFAULT 0');
     relationships_add_column_if_missing($pdo, 'customers', 'voip_hosted_agreement_name', 'TEXT');
+    // Set when this customer row came from the Prospect sync (a real
+    // ConnectWise Company with Active/Delinquent/Special Info status and
+    // no Vendor type) rather than from an active agreement -- i.e. it has
+    // zero recorded services and is a full cross-sell opportunity across
+    // every pillar, not just some. Added 2026-09-10 per Michael. Always 0
+    // for a customer with any real synced services -- see
+    // connectwise-sync-core.php (clears it whenever it upserts a customer
+    // from an actual agreement) and connectwise-prospect-sync-core.php
+    // (only ever sets it on a customer with zero customer_services rows).
+    relationships_add_column_if_missing($pdo, 'customers', 'is_prospect_only', 'INTEGER NOT NULL DEFAULT 0');
 
     // One row per active ConnectWise agreement addition (mocked for now —
     // `source` distinguishes seeded sample rows from anything a future real
@@ -183,6 +193,27 @@ function relationships_migrate(PDO $pdo): void
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_cw_billing_sync_queue_status ON cw_billing_sync_queue(status)');
 
+    // Queue of ConnectWise Companies to (re)sync as pure prospects -- added
+    // 2026-09-10 per Michael, so Relationship Coordinators can see (and
+    // market every service to) companies that have a real, active-ish
+    // relationship with CBT in ConnectWise but no recurring Agreement of
+    // any tracked type. Same start()/step() shape as the other two queues,
+    // but everything a step needs (id + name) is already known from the one
+    // company list call in start() -- unlike agreements/billing, no further
+    // per-item ConnectWise round-trip is needed in step(), just a DB
+    // upsert. See connectwise-prospect-sync-core.php.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS cw_prospect_sync_queue (
+            connectwise_id TEXT PRIMARY KEY,
+            company_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            error_message TEXT,
+            queued_at TEXT NOT NULL DEFAULT (datetime('now')),
+            processed_at TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_cw_prospect_sync_queue_status ON cw_prospect_sync_queue(status)');
+
     // 7-step cross-sell checklist progress. One row per (customer, pillar,
     // missing service, step) — created on demand the first time a step is
     // touched, rather than pre-populated for every customer x every
@@ -227,8 +258,8 @@ function relationships_seed_mock_data(PDO $pdo): void
     $catalog = relationships_catalog();
 
     $insertCustomer = $pdo->prepare(
-        'INSERT INTO customers (connectwise_id, name, is_mock, is_peoplefirst, voip_hosted_elsewhere, voip_hosted_agreement_name)
-         VALUES (:cw, :name, 1, :pf, :hv, :hvname)'
+        'INSERT INTO customers (connectwise_id, name, is_mock, is_peoplefirst, voip_hosted_elsewhere, voip_hosted_agreement_name, is_prospect_only)
+         VALUES (:cw, :name, 1, :pf, :hv, :hvname, :prospect)'
     );
     $insertService = $pdo->prepare(
         'INSERT INTO customer_services (customer_id, pillar_id, pillar_name, service_id, service_name, product_label, qty, unit, source)
@@ -253,7 +284,7 @@ function relationships_seed_mock_data(PDO $pdo): void
     // pillars, drill-down quantities, an empty-roster edge case) has
     // something real to show against.
 
-    $insertCustomer->execute([':cw' => 'MOCK-1001', ':name' => 'Riverbend Family Dental', ':pf' => 1, ':hv' => 0, ':hvname' => null]);
+    $insertCustomer->execute([':cw' => 'MOCK-1001', ':name' => 'Riverbend Family Dental', ':pf' => 1, ':hv' => 0, ':hvname' => null, ':prospect' => 0]);
     $c1 = (int) $pdo->lastInsertId();
     $addService($c1, 'it', 'managed-it', 'PeopleFirst Managed IT — Per Person', 12, 'people');
     $addService($c1, 'it', 'cyber-security', 'SentinelOne EDR', 18, 'per workstation');
@@ -263,7 +294,7 @@ function relationships_seed_mock_data(PDO $pdo): void
     // example. PeopleFirst top-tier member (is_peoplefirst) — good example
     // for the gold search/header highlight even with a mostly-dark pillar grid.
 
-    $insertCustomer->execute([':cw' => 'MOCK-1002', ':name' => 'Blue Ridge Manufacturing', ':pf' => 0, ':hv' => 0, ':hvname' => null]);
+    $insertCustomer->execute([':cw' => 'MOCK-1002', ':name' => 'Blue Ridge Manufacturing', ':pf' => 0, ':hv' => 0, ':hvname' => null, ':prospect' => 0]);
     $c2 = (int) $pdo->lastInsertId();
     $addService($c2, 'it', 'managed-it', 'PeopleFirst Managed IT — Per Person', 64, 'people');
     $addService($c2, 'it', 'cyber-security', 'SentinelOne EDR', 71, 'per workstation');
@@ -277,7 +308,7 @@ function relationships_seed_mock_data(PDO $pdo): void
 
     $insertCustomer->execute([
         ':cw' => 'MOCK-1003', ':name' => 'Commonwealth Title & Escrow', ':pf' => 0,
-        ':hv' => 1, ':hvname' => 'Voice Agreement - Zultys Hosted',
+        ':hv' => 1, ':hvname' => 'Voice Agreement - Zultys Hosted', ':prospect' => 0,
     ]);
     $c3 = (int) $pdo->lastInsertId();
     $addService($c3, 'it', 'help-desk', 'Help Desk Support', 22, 'people');
@@ -291,7 +322,7 @@ function relationships_seed_mock_data(PDO $pdo): void
     // suggested for it even though the VoIP pillar shows no active
     // CodeBlue-sold services.
 
-    $insertCustomer->execute([':cw' => 'MOCK-1004', ':name' => 'Tidewater Logistics Group', ':pf' => 0, ':hv' => 0, ':hvname' => null]);
+    $insertCustomer->execute([':cw' => 'MOCK-1004', ':name' => 'Tidewater Logistics Group', ':pf' => 0, ':hv' => 0, ':hvname' => null, ':prospect' => 0]);
     $c4 = (int) $pdo->lastInsertId();
     $addService($c4, 'it', 'managed-it', 'PeopleFirst Managed IT — Per Person', 140, 'people');
     $addService($c4, 'it', 'cyber-security', 'SentinelOne EDR', 155, 'per workstation');
@@ -315,7 +346,19 @@ function relationships_seed_mock_data(PDO $pdo): void
     // the pillar level" example (roster inside each pillar can still show
     // a missing service or two).
 
-    $insertCustomer->execute([':cw' => 'MOCK-1005', ':name' => 'Piedmont Veterinary Partners', ':pf' => 0, ':hv' => 0, ':hvname' => null]);
+    $insertCustomer->execute([':cw' => 'MOCK-1005', ':name' => 'Piedmont Veterinary Partners', ':pf' => 0, ':hv' => 0, ':hvname' => null, ':prospect' => 0]);
     $c5 = (int) $pdo->lastInsertId();
     // Zero active services -- good empty-state example (every pillar dark).
+    // NOT flagged is_prospect_only -- this one's just an ordinary customer
+    // who happens to have nothing synced yet, distinct from the dedicated
+    // Prospect example below.
+
+    $insertCustomer->execute([':cw' => 'MOCK-1006', ':name' => 'Harborview Consulting Group', ':pf' => 0, ':hv' => 0, ':hvname' => null, ':prospect' => 1]);
+    $c6 = (int) $pdo->lastInsertId();
+    // Zero active services AND is_prospect_only -- CodeBlue's Prospect sync
+    // example (connectwise-prospect-sync-core.php): a real ConnectWise
+    // Company with no agreement of any kind, badged distinctly from an
+    // ordinary customer with nothing synced (Piedmont above) so a CRC can
+    // tell "cold/warm lead" apart from "existing customer, just nothing
+    // recorded here yet."
 }
