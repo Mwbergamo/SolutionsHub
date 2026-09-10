@@ -57,6 +57,20 @@
     syncStartedAt: null,
     syncErrors: [],
 
+    // Monthly Billing sync (api/sync.php's billing-* actions) -- added
+    // 2026-09-10. "Run Sync Now" chains this after the agreement sync
+    // above finishes (see stepSyncLoop()), so one click still does the
+    // whole nightly-cron-equivalent sync; kept as separate state since it's
+    // a genuinely separate queue (by customer, not by agreement) that can
+    // succeed/fail independently of the agreement sync.
+    billingSyncRunning: false,
+    billingSyncDone: false,
+    billingSyncTotal: 0,
+    billingSyncProcessed: 0,
+    billingSyncTotals: null,
+    billingSyncStartedAt: null,
+    billingSyncErrors: [],
+
     // Checklist data, keyed by "customerId::pillarId::serviceId". Each
     // value is: undefined (not fetched yet), 'error', or an array of the
     // 7 step objects from checklist.php?action=get.
@@ -85,9 +99,10 @@
     pfQueueType: null, // 'checkin' | 'scan'
     pfLogging: null, // "customerId::type" currently being logged, or null
 
-    // Live ConnectWise ticket/billing activity for the currently-open
-    // customer (api/activity.php) -- reset whenever a different customer
-    // is opened. { available: bool, ticket_count_ytd, billing: {series, trend} }
+    // Ticket/billing activity for the currently-open customer
+    // (api/activity.php) -- reset whenever a different customer is opened.
+    // { available: bool, ticket_count_ytd (live), billing: {series, trend}
+    // (nightly-synced as of 2026-09-10 -- see billing_synced_at), billing_synced_at }
     // or null while loading, or { available: false } for a mock customer /
     // on error.
     activitySummary: null,
@@ -500,6 +515,13 @@
       }
       render();
     }).catch(function () { /* silent -- the view still offers "Run Sync Now" */ });
+    apiGet('api/sync.php?action=billing-status').then(function (r) {
+      if (r.data && r.data.ok) {
+        state.billingSyncTotals = r.data.totals;
+        state.billingSyncStartedAt = r.data.started_at;
+      }
+      render();
+    }).catch(function () { /* silent, same as above */ });
   }
 
   // Kicks off a full ConnectWise sync: api/sync.php?action=start builds the
@@ -507,6 +529,9 @@
   // stepSyncLoop() drains it in bounded batches, one HTTP request per
   // batch, so no single request risks Bluehost's execution-time limit even
   // though a full sync (~440 agreements) can take a few minutes overall.
+  // Once the agreement queue is fully drained, runBillingSync() below picks
+  // up automatically -- "Run Sync Now" does the same two-part sync the
+  // nightly cron does, in one click.
   function runFullSync() {
     state.syncRunning = true;
     state.syncDone = false;
@@ -548,6 +573,7 @@
         state.syncRunning = false;
         state.syncDone = true;
         render();
+        runBillingSync();
       } else {
         render();
         stepSyncLoop();
@@ -555,6 +581,62 @@
     }).catch(function () {
       state.syncRunning = false;
       state.error = 'Sync failed partway through — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Same start()/step() shape as the agreement sync above, run right after
+  // it as part of the same "Run Sync Now" click -- a failure here is shown
+  // (sync-errors-title/list, same pattern) but doesn't retroactively
+  // un-succeed the agreement sync that already completed; they're
+  // independent queues (see api/sync.php's file header).
+  function runBillingSync() {
+    state.billingSyncRunning = true;
+    state.billingSyncDone = false;
+    state.billingSyncErrors = [];
+    render();
+    apiPost('api/sync.php?action=billing-start', {}).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.billingSyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Agreements synced, but could not start the billing sync.';
+        render();
+        return;
+      }
+      state.billingSyncTotal = r.data.total;
+      state.billingSyncProcessed = 0;
+      render();
+      billingStepSyncLoop();
+    }).catch(function () {
+      state.billingSyncRunning = false;
+      state.error = 'Agreements synced, but the billing sync could not start — check your connection and try again.';
+      render();
+    });
+  }
+
+  function billingStepSyncLoop() {
+    apiPost('api/sync.php?action=billing-step', { batch_size: 20 }).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.billingSyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Billing sync failed partway through.';
+        render();
+        return;
+      }
+      state.billingSyncTotals = r.data.totals;
+      state.billingSyncProcessed = r.data.totals.done + r.data.totals.error;
+      if (r.data.errors && r.data.errors.length) {
+        state.billingSyncErrors = state.billingSyncErrors.concat(r.data.errors);
+      }
+      if (r.data.done) {
+        state.billingSyncRunning = false;
+        state.billingSyncDone = true;
+        render();
+      } else {
+        render();
+        billingStepSyncLoop();
+      }
+    }).catch(function () {
+      state.billingSyncRunning = false;
+      state.error = 'Billing sync failed partway through — check your connection and try again.';
       render();
     });
   }
@@ -814,27 +896,46 @@
   function syncHtml() {
     var html = '<div class="view-header">' +
       '<div class="view-title">ConnectWise Sync</div>' +
-      '<div class="view-sub">Pulls active services from ConnectWise — IT Services, Voice, Premise Security, and Data Center agreements — into this dashboard. Checklist progress already recorded isn’t touched.</div>' +
+      '<div class="view-sub">Pulls active services from ConnectWise — IT Services, Voice, Premise Security, and Data Center agreements — into this dashboard, then refreshes every customer’s Monthly Billing chart. Checklist progress already recorded isn’t touched.</div>' +
     '</div>';
 
     html += '<div class="sync-panel">';
 
+    var running = state.syncRunning || state.billingSyncRunning;
+
     if (state.syncRunning) {
       var pct = state.syncTotal ? Math.min(100, Math.round((state.syncProcessed / state.syncTotal) * 100)) : 0;
-      html += '<div class="sync-progress-label">Syncing… ' + state.syncProcessed + ' of ' + state.syncTotal + ' agreements (' + pct + '%)</div>' +
-        '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + pct + '%"></div></div>' +
-        '<button class="sync-run-btn" type="button" disabled>Syncing…</button>';
-    } else {
-      html += '<button class="sync-run-btn" type="button" data-action="run-sync">Run Sync Now</button>';
+      html += '<div class="sync-progress-label">Syncing services… ' + state.syncProcessed + ' of ' + state.syncTotal + ' agreements (' + pct + '%)</div>' +
+        '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + pct + '%"></div></div>';
+    } else if (state.billingSyncRunning) {
+      var bpct = state.billingSyncTotal ? Math.min(100, Math.round((state.billingSyncProcessed / state.billingSyncTotal) * 100)) : 0;
+      html += '<div class="sync-progress-label">Services synced. Syncing Monthly Billing… ' + state.billingSyncProcessed + ' of ' + state.billingSyncTotal + ' customers (' + bpct + '%)</div>' +
+        '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + bpct + '%"></div></div>';
+    }
+
+    html += '<button class="sync-run-btn" type="button" data-action="run-sync"' + (running ? ' disabled' : '') + '>' + (running ? 'Syncing…' : 'Run Sync Now') + '</button>';
+
+    if (!running) {
       if (state.syncDone) {
-        html += '<div class="sync-result">Done — ' + (state.syncTotals ? state.syncTotals.done : 0) + ' agreements synced' +
+        html += '<div class="sync-result">Services: ' + (state.syncTotals ? state.syncTotals.done : 0) + ' agreements synced' +
           (state.syncTotals && state.syncTotals.error ? ', ' + state.syncTotals.error + ' failed (see below)' : '') + '.</div>';
       } else if (state.syncTotals && (state.syncTotals.done || state.syncTotals.error)) {
-        html += '<div class="sync-result">Last run: ' + state.syncTotals.done + ' synced' +
+        html += '<div class="sync-result">Services — last run: ' + state.syncTotals.done + ' synced' +
           (state.syncTotals.error ? ', ' + state.syncTotals.error + ' failed' : '') +
           (state.syncStartedAt ? ' — started ' + escapeHtml(fmtTimestamp(state.syncStartedAt)) : '') + '.</div>';
       } else if (state.syncTotals) {
-        html += '<div class="sync-result">No sync has been run yet.</div>';
+        html += '<div class="sync-result">Services: no sync has been run yet.</div>';
+      }
+
+      if (state.billingSyncDone) {
+        html += '<div class="sync-result">Monthly Billing: ' + (state.billingSyncTotals ? state.billingSyncTotals.done : 0) + ' customers synced' +
+          (state.billingSyncTotals && state.billingSyncTotals.error ? ', ' + state.billingSyncTotals.error + ' failed (see below)' : '') + '.</div>';
+      } else if (state.billingSyncTotals && (state.billingSyncTotals.done || state.billingSyncTotals.error)) {
+        html += '<div class="sync-result">Monthly Billing — last run: ' + state.billingSyncTotals.done + ' synced' +
+          (state.billingSyncTotals.error ? ', ' + state.billingSyncTotals.error + ' failed' : '') +
+          (state.billingSyncStartedAt ? ' — started ' + escapeHtml(fmtTimestamp(state.billingSyncStartedAt)) : '') + '.</div>';
+      } else if (state.billingSyncTotals) {
+        html += '<div class="sync-result">Monthly Billing: no sync has been run yet.</div>';
       }
     }
 
@@ -842,6 +943,14 @@
       html += '<div class="sync-errors-title">Agreements that failed to sync (' + state.syncErrors.length + '):</div><div class="sync-errors-list">';
       state.syncErrors.forEach(function (err) {
         html += '<div class="sync-error-row"><strong>' + escapeHtml(err.company_name) + '</strong> — agreement #' + err.agreement_id + ': ' + escapeHtml(err.error) + '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (state.billingSyncErrors.length) {
+      html += '<div class="sync-errors-title">Customers whose billing failed to sync (' + state.billingSyncErrors.length + '):</div><div class="sync-errors-list">';
+      state.billingSyncErrors.forEach(function (err) {
+        html += '<div class="sync-error-row"><strong>' + escapeHtml(err.company_name) + '</strong>: ' + escapeHtml(err.error) + '</div>';
       });
       html += '</div>';
     }
@@ -911,15 +1020,6 @@
       return ''; // mock customer -- no ConnectWise id, nothing to show, not an error
     }
 
-    var billing = summary.billing;
-    var maxTotal = Math.max.apply(null, billing.series.map(function (m) { return m.total; }).concat([1]));
-    var trend = billing.trend;
-    var trendIcon = trend.direction === 'up' ? '▲' : (trend.direction === 'down' ? '▼' : '—');
-    var trendPctText = trend.percent == null ? '' : (trend.percent + '%');
-    var trendSummary = trend.direction === 'flat'
-      ? 'Holding steady'
-      : ('Trending ' + trend.direction + (trendPctText ? ' ' + trendPctText : '') + ' on average');
-
     var html = '<div class="activity-panel">';
 
     html += '<button class="activity-card" type="button" data-action="open-tickets">' +
@@ -928,23 +1028,45 @@
       '<div class="activity-card-sub">Professional Services board — click to view</div>' +
     '</button>';
 
-    html += '<div class="activity-card billing-card">' +
-      '<div class="activity-card-label-row">' +
+    // Monthly Billing is read from the nightly sync, not live (see
+    // activity.php) -- billing_synced_at is null when this customer hasn't
+    // been covered by a billing sync run yet, which reads as a real,
+    // confirmed $0 if shown as a normal chart. Show a plain "not yet
+    // synced" message instead, deliberately not a chart, so nobody mistakes
+    // "hasn't synced" for "no billing."
+    if (!summary.billing_synced_at) {
+      html += '<div class="activity-card billing-card">' +
         '<div class="activity-card-label">Monthly Billing</div>' +
-        '<div class="trend-badge ' + trend.direction + '">' + trendIcon + (trendPctText ? ' ' + trendPctText : '') + '</div>' +
-      '</div>' +
-      '<div class="billing-chart">' +
-        billing.series.map(function (m) {
-          var pct = maxTotal > 0 ? Math.max(4, Math.round((m.total / maxTotal) * 100)) : 4;
-          return '<button class="billing-bar-col" type="button" data-action="open-invoices" data-month="' + m.month + '" data-label="' + escapeHtml(m.label) + '" title="' + escapeHtml(m.label) + ': ' + fmtCurrency(m.total) + '">' +
-            '<div class="billing-bar-value">' + fmtCurrency(m.total) + '</div>' +
-            '<div class="billing-bar-track"><div class="billing-bar-fill" style="height:' + pct + '%"></div></div>' +
-            '<div class="billing-bar-label">' + escapeHtml(m.label.split(' ')[0]) + '</div>' +
-          '</button>';
-        }).join('') +
-      '</div>' +
-      '<div class="activity-card-sub">' + escapeHtml(trendSummary) + ' vs. the prior 3 months — Agreement invoices only, click a bar for detail</div>' +
-    '</div>';
+        '<div class="activity-card-sub">Not yet synced — run ConnectWise Sync to populate this customer’s billing history.</div>' +
+      '</div>';
+    } else {
+      var billing = summary.billing;
+      var maxTotal = Math.max.apply(null, billing.series.map(function (m) { return m.total; }).concat([1]));
+      var trend = billing.trend;
+      var trendIcon = trend.direction === 'up' ? '▲' : (trend.direction === 'down' ? '▼' : '—');
+      var trendPctText = trend.percent == null ? '' : (trend.percent + '%');
+      var trendSummary = trend.direction === 'flat'
+        ? 'Holding steady'
+        : ('Trending ' + trend.direction + (trendPctText ? ' ' + trendPctText : '') + ' on average');
+
+      html += '<div class="activity-card billing-card">' +
+        '<div class="activity-card-label-row">' +
+          '<div class="activity-card-label">Monthly Billing</div>' +
+          '<div class="trend-badge ' + trend.direction + '">' + trendIcon + (trendPctText ? ' ' + trendPctText : '') + '</div>' +
+        '</div>' +
+        '<div class="billing-chart">' +
+          billing.series.map(function (m) {
+            var pct = maxTotal > 0 ? Math.max(4, Math.round((m.total / maxTotal) * 100)) : 4;
+            return '<button class="billing-bar-col" type="button" data-action="open-invoices" data-month="' + m.month + '" data-label="' + escapeHtml(m.label) + '" title="' + escapeHtml(m.label) + ': ' + fmtCurrency(m.total) + '">' +
+              '<div class="billing-bar-value">' + fmtCurrency(m.total) + '</div>' +
+              '<div class="billing-bar-track"><div class="billing-bar-fill" style="height:' + pct + '%"></div></div>' +
+              '<div class="billing-bar-label">' + escapeHtml(m.label.split(' ')[0]) + '</div>' +
+            '</button>';
+          }).join('') +
+        '</div>' +
+        '<div class="activity-card-sub">' + escapeHtml(trendSummary) + ' vs. the prior 3 months — Agreement invoices only, click a bar for detail. Synced ' + escapeHtml(fmtTimestamp(summary.billing_synced_at)) + '.</div>' +
+      '</div>';
+    }
 
     html += '</div>';
     html += activityDrilldownHtml(detail);

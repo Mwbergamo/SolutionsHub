@@ -147,6 +147,42 @@ function relationships_migrate(PDO $pdo): void
         )
     SQL);
 
+    // Nightly-synced Monthly Billing series (per-customer "YYYY-MM" =>
+    // dollar total, from Agreement-generated invoices) -- see
+    // connectwise-billing-sync-core.php. Added 2026-09-10 per Michael: the
+    // 6-month chart moved from a live-per-dashboard-open ConnectWise query
+    // to this nightly sync (same cadence as the agreement/addition sync),
+    // while Service Tickets YTD stayed live since that's the kind of
+    // number a CRC wants as-of-right-now on a call. One row per
+    // (customer, month) -- a full sync just overwrites each month's total,
+    // it doesn't accumulate history beyond what's queried each run.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS customer_monthly_billing (
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            month TEXT NOT NULL,
+            total REAL NOT NULL DEFAULT 0,
+            synced_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (customer_id, month)
+        )
+    SQL);
+
+    // Queue of customers to (re)pull billing for -- same start()/step()
+    // shape and reasoning as cw_sync_queue, but keyed by customer (one
+    // /finance/invoices call covers a customer's whole 6-month series)
+    // rather than by agreement.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS cw_billing_sync_queue (
+            customer_id INTEGER PRIMARY KEY,
+            connectwise_id TEXT NOT NULL,
+            company_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            error_message TEXT,
+            queued_at TEXT NOT NULL DEFAULT (datetime('now')),
+            processed_at TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_cw_billing_sync_queue_status ON cw_billing_sync_queue(status)');
+
     // 7-step cross-sell checklist progress. One row per (customer, pillar,
     // missing service, step) — created on demand the first time a step is
     // touched, rather than pre-populated for every customer x every

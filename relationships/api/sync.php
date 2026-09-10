@@ -19,12 +19,31 @@
  * POST /relationships/api/sync.php?action=step
  *   { batch_size?: int (default 20, max 50) }
  *   -> { ok: true, processed_this_batch, remaining, done, totals, errors: [...] }
+ *
+ * The billing-* actions below (added 2026-09-10) are the same start/step
+ * shape, but for the Monthly Billing panel's nightly-synced 6-month series
+ * (customer_monthly_billing -- see connectwise-billing-sync-core.php) --
+ * queued by customer rather than by agreement. app.js's "Run Sync Now"
+ * chains this after the agreement sync above finishes, so one click does
+ * the same full sync the nightly cron does; connectwise-cron.php runs both
+ * in sequence too.
+ *
+ * GET  /relationships/api/sync.php?action=billing-status
+ *   -> { ok: true, totals: { pending, done, error }, started_at }
+ *
+ * POST /relationships/api/sync.php?action=billing-start
+ *   -> { ok: true, total }
+ *
+ * POST /relationships/api/sync.php?action=billing-step
+ *   { batch_size?: int (default 20, max 50) }
+ *   -> { ok: true, processed_this_batch, remaining, done, totals, errors: [...] }
  */
 
 declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/connectwise-sync-core.php';
+require_once __DIR__ . '/connectwise-billing-sync-core.php';
 
 $pdo = relationships_db();
 relationships_require_login($pdo);
@@ -42,6 +61,20 @@ if ($action === 'status') {
             'error' => (int) ($counts['error'] ?? 0),
         ],
         'started_at' => $meta['started_at'] ?? null,
+    ]);
+}
+
+if ($action === 'billing-status') {
+    $counts = $pdo->query('SELECT status, COUNT(*) AS n FROM cw_billing_sync_queue GROUP BY status')->fetchAll(PDO::FETCH_KEY_PAIR);
+    $meta = $pdo->query('SELECT key, value FROM cw_sync_meta')->fetchAll(PDO::FETCH_KEY_PAIR);
+    relationships_respond(200, [
+        'ok' => true,
+        'totals' => [
+            'pending' => (int) ($counts['pending'] ?? 0),
+            'done' => (int) ($counts['done'] ?? 0),
+            'error' => (int) ($counts['error'] ?? 0),
+        ],
+        'started_at' => $meta['billing_started_at'] ?? null,
     ]);
 }
 
@@ -64,6 +97,27 @@ if ($action === 'step') {
     $batchSize = max(1, min(50, $batchSize));
     try {
         $result = relationships_cw_sync_step($pdo, $batchSize);
+        relationships_respond(200, array_merge(['ok' => true], $result));
+    } catch (RelationshipsConnectWiseError $e) {
+        relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
+    }
+}
+
+if ($action === 'billing-start') {
+    try {
+        $result = relationships_cw_billing_sync_start($pdo);
+        relationships_respond(200, ['ok' => true, 'total' => $result['total']]);
+    } catch (RelationshipsConnectWiseError $e) {
+        relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
+    }
+}
+
+if ($action === 'billing-step') {
+    $data = relationships_read_json_body();
+    $batchSize = (int) ($data['batch_size'] ?? 20);
+    $batchSize = max(1, min(50, $batchSize));
+    try {
+        $result = relationships_cw_billing_sync_step($pdo, $batchSize);
         relationships_respond(200, array_merge(['ok' => true], $result));
     } catch (RelationshipsConnectWiseError $e) {
         relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);

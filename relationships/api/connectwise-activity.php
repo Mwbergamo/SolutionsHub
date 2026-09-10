@@ -175,6 +175,20 @@ function relationships_cw_activity_monthly_billing(string $cwCompanyId, int $mon
         $byMonth[$key] = ($byMonth[$key] ?? 0.0) + (float) ($inv['total'] ?? 0);
     }
 
+    return relationships_cw_activity_billing_series_from_totals($byMonth, $months);
+}
+
+/**
+ * Shared by the live path above and the synced path
+ * (connectwise-billing-sync-core.php's relationships_cw_billing_stored_series())
+ * so both build the { series, trend } shape identically off a plain
+ * "YYYY-MM" => dollar-total map -- one only just fetched live, the other
+ * read back out of customer_monthly_billing. Keeping this in one place
+ * means the trend definition (see comment above) only ever needs to change
+ * in one place too.
+ */
+function relationships_cw_activity_billing_series_from_totals(array $byMonth, int $months = 6): array
+{
     $series = [];
     for ($i = $months - 1; $i >= 0; $i--) {
         $d = new DateTimeImmutable("first day of -$i months");
@@ -182,7 +196,7 @@ function relationships_cw_activity_monthly_billing(string $cwCompanyId, int $mon
         $series[] = [
             'month' => $key,
             'label' => $d->format('M Y'),
-            'total' => round($byMonth[$key] ?? 0.0, 2),
+            'total' => round((float) ($byMonth[$key] ?? 0.0), 2),
         ];
     }
 
