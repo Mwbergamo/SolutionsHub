@@ -121,6 +121,13 @@
     overview: null,
     overviewLoading: false,
     overviewError: null,
+    // Current sort for the per-customer overview list -- added 2026-09-10
+    // per Michael. column is 'name' | 'billing_trend' | 'ticket_count_ytd' |
+    // 'contact_count'; direction 'asc' (alphabetical A-Z for name, low-to-
+    // high for the numeric/trend columns) or 'desc' (Z-A / high-to-low).
+    // Purely a display concern -- re-sorts state.overview.customers on
+    // every render rather than mutating the fetched data.
+    overviewSort: { column: 'name', direction: 'asc' },
 
     // Checklist data, keyed by "customerId::pillarId::serviceId". Each
     // value is: undefined (not fetched yet), 'error', or an array of the
@@ -948,6 +955,7 @@
     root.innerHTML = topbarHtml() + '<div class="main">' + mainHtml() + '</div>';
     bindEvents();
     restoreSearchFocus(searchFocus);
+    adjustOverviewListScroll();
   }
 
   function captureSearchFocus() {
@@ -1354,23 +1362,77 @@
     return html;
   }
 
+  // A trend's signed percent for sorting purposes -- trend.percent is
+  // always stored as a non-negative magnitude (see
+  // relationships_cw_activity_billing_series_from_totals() in
+  // connectwise-activity.php), with the sign carried separately in
+  // trend.direction, so "low to high" only makes sense once direction is
+  // folded back in (a 20% drop sorts below a 5% rise). No history yet
+  // (percent: null) sorts as a flat 0, same as a genuinely flat trend.
+  function overviewTrendSignedPercent(trend) {
+    if (!trend || trend.percent == null) return 0;
+    return trend.direction === 'down' ? -trend.percent : trend.percent;
+  }
+
+  function overviewSortValue(c, column) {
+    switch (column) {
+      case 'billing_trend': return overviewTrendSignedPercent(c.billing_trend);
+      case 'ticket_count_ytd': return c.ticket_count_ytd || 0;
+      case 'contact_count': return c.contact_count || 0;
+      case 'name':
+      default:
+        return (c.name || '').toLowerCase();
+    }
+  }
+
+  function sortOverviewCustomers(customers) {
+    var sort = state.overviewSort || { column: 'name', direction: 'asc' };
+    var dir = sort.direction === 'desc' ? -1 : 1;
+    return customers.slice().sort(function (a, b) {
+      var av = overviewSortValue(a, sort.column);
+      var bv = overviewSortValue(b, sort.column);
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      // Stable, readable tiebreak -- alphabetical, regardless of which
+      // column is actually being sorted.
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  // One clickable column-header label. Clicking a new column sorts it
+  // ascending (A-Z for name, low-to-high for the numeric/trend columns);
+  // clicking the already-active column flips asc/desc.
+  function overviewHeaderCellHtml(column, label) {
+    var sort = state.overviewSort || { column: 'name', direction: 'asc' };
+    var active = sort.column === column;
+    var arrow = active ? (sort.direction === 'asc' ? ' ▲' : ' ▼') : '';
+    return '<button class="overview-col-sort' + (active ? ' active' : '') + '" type="button" ' +
+      'data-action="sort-overview" data-column="' + column + '">' + escapeHtml(label) + arrow + '</button>';
+  }
+
   // Per-customer trend list: 6-month Agreement Billing trend, Service
   // Tickets YTD + 6-month trend, and Active Contacts + 6-month trend, all
   // from synced local data (see dashboard.php). Reuses the same
   // data-action="select-customer" the search box already uses, so tapping
   // a row opens that customer's account summary exactly like a search
-  // result does -- no separate click handler needed.
+  // result does -- no separate click handler needed. Sortable by any
+  // column (see overviewHeaderCellHtml()/sortOverviewCustomers()); once
+  // there are more than 25 rows, the list itself becomes a fixed-height
+  // scroll area (see adjustOverviewListScroll(), called after every
+  // render()) instead of growing the whole page -- roughly the first 25
+  // stay visible without scrolling.
   function customerOverviewListHtml(customers) {
     if (!customers.length) return '';
+    var sorted = sortOverviewCustomers(customers);
     var html = '<div class="overview-list-wrap">' +
       '<div class="overview-list-header">' +
-        '<div class="overview-col-name">Customer</div>' +
-        '<div class="overview-col">Billing Trend (6mo)</div>' +
-        '<div class="overview-col">Tickets YTD</div>' +
-        '<div class="overview-col">Active Contacts</div>' +
+        '<div class="overview-col-name">' + overviewHeaderCellHtml('name', 'Customer') + '</div>' +
+        '<div class="overview-col">' + overviewHeaderCellHtml('billing_trend', 'Billing Trend (6mo)') + '</div>' +
+        '<div class="overview-col">' + overviewHeaderCellHtml('ticket_count_ytd', 'Tickets YTD') + '</div>' +
+        '<div class="overview-col">' + overviewHeaderCellHtml('contact_count', 'Active Contacts') + '</div>' +
       '</div>' +
       '<div class="overview-list">';
-    customers.forEach(function (c) {
+    sorted.forEach(function (c) {
       var badge = c.is_peoplefirst ? peopleFirstBadgeHtml() : (c.is_prospect_only ? prospectBadgeHtml() : '');
       html += '<div class="overview-row" data-action="select-customer" data-id="' + c.id + '">' +
         '<div class="overview-col-name"><span class="overview-name">' + escapeHtml(c.name) + '</span>' + badge + '</div>' +
@@ -1381,6 +1443,28 @@
     });
     html += '</div></div>';
     return html;
+  }
+
+  // Caps the overview list's visible height to roughly 25 rows once there
+  // are more than that many, so the customer list scrolls inside its own
+  // nested box instead of stretching the whole page -- measured from the
+  // actual rendered row height (rather than a hardcoded pixel guess) so it
+  // stays correct whether rows are single-line (desktop) or stacked
+  // (narrow/mobile -- see styles.css's @media rule for .overview-row).
+  // Called after every render() that might have (re)built the list.
+  var OVERVIEW_VISIBLE_ROWS = 25;
+  function adjustOverviewListScroll() {
+    var list = document.querySelector('.overview-list');
+    if (!list) return;
+    var rows = list.children;
+    if (rows.length <= OVERVIEW_VISIBLE_ROWS) {
+      list.style.maxHeight = '';
+      return;
+    }
+    var rowRect = rows[0].getBoundingClientRect();
+    var gap = parseFloat(getComputedStyle(list).rowGap || getComputedStyle(list).gap || '0') || 0;
+    var maxHeight = (rowRect.height * OVERVIEW_VISIBLE_ROWS) + (gap * (OVERVIEW_VISIBLE_ROWS - 1));
+    list.style.maxHeight = Math.ceil(maxHeight) + 'px';
   }
 
   function searchBoxHtml() {
@@ -1941,6 +2025,14 @@
       render();
     } else if (action === 'activity-back-to-invoices') {
       state.activityView = 'invoices';
+      render();
+    } else if (action === 'sort-overview') {
+      var sortCol = el.getAttribute('data-column');
+      if (!state.overviewSort || state.overviewSort.column !== sortCol) {
+        state.overviewSort = { column: sortCol, direction: 'asc' };
+      } else {
+        state.overviewSort.direction = state.overviewSort.direction === 'asc' ? 'desc' : 'asc';
+      }
       render();
     } else if (action === 'signout') {
       signOut();
