@@ -89,10 +89,41 @@ function relationships_migrate(PDO $pdo): void
             product_label TEXT NOT NULL,
             qty REAL NOT NULL DEFAULT 1,
             unit TEXT,
-            source TEXT NOT NULL DEFAULT 'mock'
+            source TEXT NOT NULL DEFAULT 'mock',
+            cw_agreement_id INTEGER
         )
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_customer_services_customer ON customer_services(customer_id)');
+    relationships_add_column_if_missing($pdo, 'customer_services', 'cw_agreement_id', 'INTEGER');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_customer_services_cw_agreement ON customer_services(cw_agreement_id)');
+
+    // Queue of ConnectWise agreements to (re)sync -- populated wholesale by
+    // relationships_cw_sync_start(), drained in bounded batches by
+    // relationships_cw_sync_step() so a single HTTP request (Bluehost's
+    // execution-time limits) or a single cron run never has to process all
+    // ~440 agreements in one shot. See connectwise-sync-core.php.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS cw_sync_queue (
+            agreement_id INTEGER PRIMARY KEY,
+            agreement_type_id INTEGER NOT NULL,
+            company_cw_id TEXT NOT NULL,
+            company_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            error_message TEXT,
+            queued_at TEXT NOT NULL DEFAULT (datetime('now')),
+            processed_at TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_cw_sync_queue_status ON cw_sync_queue(status)');
+
+    // Small key/value table for sync run bookkeeping (started_at of the
+    // current/most recent run, etc.) -- avoids a dedicated single-row table.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS cw_sync_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    SQL);
 
     // 7-step cross-sell checklist progress. One row per (customer, pillar,
     // missing service, step) — created on demand the first time a step is
@@ -114,6 +145,23 @@ function relationships_migrate(PDO $pdo): void
         )
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_checklist_lookup ON checklist_progress(pillar_id, service_id, step_number)');
+}
+
+/**
+ * SQLite has no "ADD COLUMN IF NOT EXISTS" -- check PRAGMA table_info first
+ * so re-running migrate() on a database that already has the column (every
+ * request after the first deploy of a schema change) is a no-op instead of
+ * an error.
+ */
+function relationships_add_column_if_missing(PDO $pdo, string $table, string $column, string $type): void
+{
+    $stmt = $pdo->query('PRAGMA table_info(' . $table . ')');
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $col) {
+        if ($col['name'] === $column) {
+            return;
+        }
+    }
+    $pdo->exec("ALTER TABLE $table ADD COLUMN $column $type");
 }
 
 function relationships_seed_mock_data(PDO $pdo): void

@@ -4,6 +4,12 @@
 # reserve that filename.)
 /mail/mail-config.php
 
+# Same pattern for the ConnectWise API credentials -- copy
+# relationships/api/connectwise-config.sample.php to
+# relationships/api/connectwise-config.php on the server and fill it in
+# there.
+/relationships/api/connectwise-config.php
+
 # Common OS/editor cruft
 .DS_Store
 Thumbs.db

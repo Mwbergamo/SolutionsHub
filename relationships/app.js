@@ -45,8 +45,17 @@
     activePillarId: null,
     error: null,
 
-    // 'dashboard' | 'report' | 'queue'
+    // 'dashboard' | 'report' | 'queue' | 'sync'
     view: 'dashboard',
+
+    // ConnectWise sync (api/sync.php) -- see runFullSync()/stepSyncLoop().
+    syncRunning: false,
+    syncDone: false,
+    syncTotal: 0,
+    syncProcessed: 0,
+    syncTotals: null, // { pending, done, error } -- from the last start/step/status call
+    syncStartedAt: null,
+    syncErrors: [],
 
     // Checklist data, keyed by "customerId::pillarId::serviceId". Each
     // value is: undefined (not fetched yet), 'error', or an array of the
@@ -79,13 +88,15 @@
     return escapeHtml(qty) + unit;
   }
 
-  function fmtTimestamp(sqlDatetime) {
-    if (!sqlDatetime) return '';
+  function fmtTimestamp(raw) {
+    if (!raw) return '';
     // checklist.php writes datetime('now') -- SQLite gives that back as
-    // "YYYY-MM-DD HH:MM:SS" in UTC. Turn it into a real Date so it prints
-    // in whoever's looking at it local time.
-    var d = new Date(sqlDatetime.replace(' ', 'T') + 'Z');
-    if (isNaN(d.getTime())) return sqlDatetime;
+    // "YYYY-MM-DD HH:MM:SS" in UTC, with no "T" or offset. sync.php's
+    // started_at is a full ISO 8601 string (PHP's date('c')) and already
+    // has both -- only pad the SQLite shape.
+    var iso = raw.indexOf('T') === -1 ? raw.replace(' ', 'T') + 'Z' : raw;
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return raw;
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) +
       ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   }
@@ -258,6 +269,73 @@
     });
   }
 
+  function loadSyncStatus() {
+    apiGet('api/sync.php?action=status').then(function (r) {
+      if (r.data && r.data.ok) {
+        state.syncTotals = r.data.totals;
+        state.syncStartedAt = r.data.started_at;
+      }
+      render();
+    }).catch(function () { /* silent -- the view still offers "Run Sync Now" */ });
+  }
+
+  // Kicks off a full ConnectWise sync: api/sync.php?action=start builds the
+  // queue of agreements to pull (cheap -- a handful of list calls), then
+  // stepSyncLoop() drains it in bounded batches, one HTTP request per
+  // batch, so no single request risks Bluehost's execution-time limit even
+  // though a full sync (~440 agreements) can take a few minutes overall.
+  function runFullSync() {
+    state.syncRunning = true;
+    state.syncDone = false;
+    state.syncErrors = [];
+    state.error = null;
+    render();
+    apiPost('api/sync.php?action=start', {}).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.syncRunning = false;
+        state.error = (r.data && r.data.error) || 'Could not start the sync.';
+        render();
+        return;
+      }
+      state.syncTotal = r.data.total;
+      state.syncProcessed = 0;
+      render();
+      stepSyncLoop();
+    }).catch(function () {
+      state.syncRunning = false;
+      state.error = 'Could not start the sync — check your connection and try again.';
+      render();
+    });
+  }
+
+  function stepSyncLoop() {
+    apiPost('api/sync.php?action=step', { batch_size: 20 }).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.syncRunning = false;
+        state.error = (r.data && r.data.error) || 'Sync failed partway through.';
+        render();
+        return;
+      }
+      state.syncTotals = r.data.totals;
+      state.syncProcessed = r.data.totals.done + r.data.totals.error;
+      if (r.data.errors && r.data.errors.length) {
+        state.syncErrors = state.syncErrors.concat(r.data.errors);
+      }
+      if (r.data.done) {
+        state.syncRunning = false;
+        state.syncDone = true;
+        render();
+      } else {
+        render();
+        stepSyncLoop();
+      }
+    }).catch(function () {
+      state.syncRunning = false;
+      state.error = 'Sync failed partway through — check your connection and try again.';
+      render();
+    });
+  }
+
   function openCustomerAtChecklist(customerId, pillarId, serviceId, serviceName) {
     state.view = 'dashboard';
     state.pendingFocus = { pillarId: pillarId, serviceId: serviceId, serviceName: serviceName };
@@ -305,7 +383,8 @@
           '</div>' +
           '<nav class="topbar-nav">' +
             '<button class="nav-btn ' + (state.view === 'dashboard' ? 'active' : '') + '" type="button" data-action="show-dashboard">Dashboard</button>' +
-            '<button class="nav-btn ' + (state.view !== 'dashboard' ? 'active' : '') + '" type="button" data-action="show-report">Cross-Sell Report</button>' +
+            '<button class="nav-btn ' + (state.view === 'report' || state.view === 'queue' ? 'active' : '') + '" type="button" data-action="show-report">Cross-Sell Report</button>' +
+            '<button class="nav-btn ' + (state.view === 'sync' ? 'active' : '') + '" type="button" data-action="show-sync">ConnectWise Sync</button>' +
           '</nav>' +
           '<a class="back-to-hub" href="' + HUB_URL + '">← Solutions Hub</a>' +
         '</div>' +
@@ -325,6 +404,9 @@
     }
     if (state.view === 'queue') {
       return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + queueHtml();
+    }
+    if (state.view === 'sync') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + syncHtml();
     }
 
     var html = '<div class="search-wrap">' + searchBoxHtml() + '</div>';
@@ -410,6 +492,45 @@
         '<div class="queue-item-go">Open →</div>' +
       '</div>';
     });
+    html += '</div>';
+    return html;
+  }
+
+  function syncHtml() {
+    var html = '<div class="view-header">' +
+      '<div class="view-title">ConnectWise Sync</div>' +
+      '<div class="view-sub">Pulls active services from ConnectWise — IT Services, Voice, Premise Security, and Data Center agreements — into this dashboard. Checklist progress already recorded isn’t touched.</div>' +
+    '</div>';
+
+    html += '<div class="sync-panel">';
+
+    if (state.syncRunning) {
+      var pct = state.syncTotal ? Math.min(100, Math.round((state.syncProcessed / state.syncTotal) * 100)) : 0;
+      html += '<div class="sync-progress-label">Syncing… ' + state.syncProcessed + ' of ' + state.syncTotal + ' agreements (' + pct + '%)</div>' +
+        '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + pct + '%"></div></div>' +
+        '<button class="sync-run-btn" type="button" disabled>Syncing…</button>';
+    } else {
+      html += '<button class="sync-run-btn" type="button" data-action="run-sync">Run Sync Now</button>';
+      if (state.syncDone) {
+        html += '<div class="sync-result">Done — ' + (state.syncTotals ? state.syncTotals.done : 0) + ' agreements synced' +
+          (state.syncTotals && state.syncTotals.error ? ', ' + state.syncTotals.error + ' failed (see below)' : '') + '.</div>';
+      } else if (state.syncTotals && (state.syncTotals.done || state.syncTotals.error)) {
+        html += '<div class="sync-result">Last run: ' + state.syncTotals.done + ' synced' +
+          (state.syncTotals.error ? ', ' + state.syncTotals.error + ' failed' : '') +
+          (state.syncStartedAt ? ' — started ' + escapeHtml(fmtTimestamp(state.syncStartedAt)) : '') + '.</div>';
+      } else if (state.syncTotals) {
+        html += '<div class="sync-result">No sync has been run yet.</div>';
+      }
+    }
+
+    if (state.syncErrors.length) {
+      html += '<div class="sync-errors-title">Agreements that failed to sync (' + state.syncErrors.length + '):</div><div class="sync-errors-list">';
+      state.syncErrors.forEach(function (err) {
+        html += '<div class="sync-error-row"><strong>' + escapeHtml(err.company_name) + '</strong> — agreement #' + err.agreement_id + ': ' + escapeHtml(err.error) + '</div>';
+      });
+      html += '</div>';
+    }
+
     html += '</div>';
     return html;
   }
@@ -637,6 +758,13 @@
       state.view = 'dashboard';
       state.error = null;
       render();
+    } else if (action === 'show-sync') {
+      state.view = 'sync';
+      state.error = null;
+      render();
+      loadSyncStatus();
+    } else if (action === 'run-sync') {
+      runFullSync();
     } else if (action === 'report-cell') {
       state.view = 'queue';
       loadQueue(

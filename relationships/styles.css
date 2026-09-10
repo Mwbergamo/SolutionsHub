@@ -550,3 +550,52 @@ a { color: inherit; }
 
 .queue-item-name { font-size: 14px; font-weight: 700; color: white; }
 .queue-item-go { font-size: 12px; font-weight: 700; color: #8fc3ff; }
+
+/* ConnectWise sync */
+
+.sync-panel {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 18px;
+  padding: 24px;
+  max-width: 560px;
+}
+
+.sync-run-btn {
+  background: #2f8fef;
+  border: none;
+  color: white;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 11px 20px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.sync-run-btn:disabled { background: oklch(0.3 0.03 255); color: oklch(0.6 0.015 255); cursor: default; }
+
+.sync-progress-label { font-size: 12.5px; font-weight: 600; color: oklch(0.78 0.006 255); margin-bottom: 10px; }
+
+.sync-progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: oklch(0.26 0.02 255);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.sync-progress-fill { height: 100%; background: #2f8fef; transition: width .2s ease; }
+
+.sync-result { margin-top: 14px; font-size: 12.5px; color: oklch(0.7 0.01 255); }
+
+.sync-errors-title { margin-top: 22px; font-size: 11.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: oklch(0.62 0.16 30); }
+
+.sync-errors-list { margin-top: 10px; max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+
+.sync-error-row {
+  font-size: 12px;
+  line-height: 1.5;
+  color: oklch(0.72 0.01 255);
+  padding: 8px 10px;
+  background: oklch(0.16 0.012 255);
+  border-radius: 8px;
+  border-left: 2px solid oklch(0.55 0.18 30);
+}
