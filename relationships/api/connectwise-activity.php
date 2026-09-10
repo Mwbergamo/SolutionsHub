@@ -10,20 +10,51 @@
  * open is an acceptable trade for always-current figures, without a second
  * sync/staleness story to maintain.
  *
- * IMPORTANT / not yet live-verified: every other file in this ConnectWise
+ * IMPORTANT / not fully live-verified: every other file in this ConnectWise
  * integration (connectwise.php, connectwise-classify.php) was built by
  * inspecting real sampled data from CodeBlue's live instance before
  * writing the classification rules. This file could NOT be verified that
- * way -- the live instance (connect.codebluetechnology.com) wasn't
- * reachable from this build environment when it was written. The ticket
- * fields (board/name, owner, actualHours) and invoice fields (type,
- * agreement) below are standard ConnectWise Manage REST API v3 fields per
- * their public schema, but haven't been checked against CBT's actual data
- * the way the agreement/addition sync was. Treat the first real use of
- * each action here as its real-world test -- errors are surfaced to the
- * UI verbatim (never silently swallowed into a wrong number) specifically
- * so a field-name mismatch is obvious and fixable rather than quietly
- * showing bad figures.
+ * way when it was first written -- the live instance
+ * (connect.codebluetechnology.com) wasn't reachable from the build
+ * environment. Errors are surfaced to the UI verbatim (never silently
+ * swallowed into a wrong number) specifically so a field-name mismatch is
+ * obvious and fixable rather than quietly showing bad figures.
+ *
+ * 2026-09-10: exactly that happened. The Monthly Billing panel's first
+ * real-data use returned a real ConnectWise 400 -- {"code":"ApiFindCondition",
+ * "message":"invoiceDate is not a recognized name."} -- against
+ * /finance/invoices. Confirmed against ConnectWise's own documented Invoice
+ * field list: the invoice date field is `date`, not `invoiceDate`. Fixed
+ * throughout this file (conditions + fields + result field reads).
+ *
+ * While fixing that, a second and more serious latent problem in the same
+ * code path was caught: this file originally assumed each invoice carries
+ * a nested `agreement: {id, name}` object and used the invoice's own `type`
+ * field (its *document* type, e.g. "Standard"/"Progress"/"Down Payment") to
+ * decide whether it's an Agreement invoice. Neither matches ConnectWise's
+ * documented Invoice fields. ConnectWise instead represents "what this
+ * invoice was generated against" via `applyToType`/`applyToId` (the API
+ * field behind the "Apply To" concept in the Finance > Invoice Search UI --
+ * Agreement, Project, Sales Order, etc.). Unlike the `invoiceDate` mistake,
+ * this one would NOT have thrown an error -- an unrecognized name in the
+ * `fields` selector is silently dropped by ConnectWise rather than
+ * rejected, so `agreement` would have just come back empty and every
+ * invoice would have silently failed the "is this an Agreement invoice"
+ * filter, showing a real, error-free, but WRONG $0 for every month. Fixed
+ * to use `applyToType`/`applyToId` throughout, with the agreement's name
+ * resolved via the same batched /finance/agreements lookup already used
+ * for agreement type (that lookup already requests `name`).
+ *
+ * `applyToType`/`applyToId` is corroborated by ConnectWise's own "Apply To"
+ * field on the invoice (agreement/project/other), and by a documented
+ * third-party field enumeration of the Invoice object -- but, like the
+ * ticket fields (board/name, owner, actualHours) still used unchanged
+ * below, it has NOT been confirmed against a real invoice payload from
+ * CBT's own instance. Treat the Monthly Billing panel's next real use
+ * (after this fix deploys) as that confirmation: if agreement names/types
+ * come back sensible instead of "Unknown", applyToType/applyToId is
+ * correct; if invoice totals still look off, that's the next thing to
+ * check.
  */
 
 declare(strict_types=1);
@@ -92,26 +123,27 @@ function relationships_cw_activity_tickets_ytd(string $cwCompanyId): array
  */
 function relationships_cw_activity_agreement_invoices(string $cwCompanyId, DateTimeImmutable $start, ?DateTimeImmutable $end = null): array
 {
-    $conditions = "company/id=$cwCompanyId and invoiceDate>=[" . $start->format('Y-m-d') . "T00:00:00Z]";
+    $conditions = "company/id=$cwCompanyId and date>=[" . $start->format('Y-m-d') . "T00:00:00Z]";
     if ($end !== null) {
-        $conditions .= " and invoiceDate<[" . $end->format('Y-m-d') . "T00:00:00Z]";
+        $conditions .= " and date<[" . $end->format('Y-m-d') . "T00:00:00Z]";
     }
     $rows = relationships_cw_list(
         '/finance/invoices',
         $conditions,
-        ['id', 'invoiceNumber', 'invoiceDate', 'total', 'type', 'agreement'],
+        ['id', 'invoiceNumber', 'date', 'total', 'type', 'applyToType', 'applyToId'],
         200
     );
 
-    // Only "Agreement" invoices -- the user's own framing ("dollars billed
-    // on Agreement invoices"), excluding one-off Time/Product/Miscellaneous
-    // invoices that aren't tied to a recurring agreement. `type` can come
-    // back as a plain string or a {id, name} reference depending on the
-    // fields requested -- handle both rather than assume one shape.
+    // Only invoices generated FROM an agreement -- the user's own framing
+    // ("dollars billed on Agreement invoices"), excluding one-off Time/
+    // Product/Project/Sales-Order invoices. `applyToType` is ConnectWise's
+    // field for what the invoice was generated against (see file header --
+    // NOT the invoice's own `type`, which is its document type and
+    // unrelated to this).
     $agreementInvoices = [];
     foreach ($rows as $r) {
-        $typeName = is_array($r['type'] ?? null) ? ($r['type']['name'] ?? '') : (string) ($r['type'] ?? '');
-        if (stripos($typeName, 'agreement') === false) {
+        $applyToType = (string) ($r['applyToType'] ?? '');
+        if (stripos($applyToType, 'agreement') === false) {
             continue;
         }
         $agreementInvoices[] = $r;
@@ -135,7 +167,7 @@ function relationships_cw_activity_monthly_billing(string $cwCompanyId, int $mon
 
     $byMonth = [];
     foreach ($invoices as $inv) {
-        $date = (string) ($inv['invoiceDate'] ?? '');
+        $date = (string) ($inv['date'] ?? '');
         if ($date === '') {
             continue;
         }
@@ -186,29 +218,31 @@ function relationships_cw_activity_invoices_for_month(string $cwCompanyId, strin
     $invoices = relationships_cw_activity_agreement_invoices($cwCompanyId, $start, $end);
 
     $agreementIds = array_values(array_unique(array_filter(array_map(
-        static fn (array $inv): ?int => isset($inv['agreement']['id']) ? (int) $inv['agreement']['id'] : null,
+        static fn (array $inv): ?int => isset($inv['applyToId']) ? (int) $inv['applyToId'] : null,
         $invoices
     ))));
 
     $agreementTypes = []; // agreementId => type name
+    $agreementNames = []; // agreementId => name
     if ($agreementIds !== []) {
         $idList = implode(',', $agreementIds);
         $rows = relationships_cw_list('/finance/agreements', "id in ($idList)", ['id', 'name', 'type'], 200);
         foreach ($rows as $a) {
             $typeName = is_array($a['type'] ?? null) ? ($a['type']['name'] ?? 'Unknown') : (string) ($a['type'] ?? 'Unknown');
             $agreementTypes[(int) $a['id']] = $typeName;
+            $agreementNames[(int) $a['id']] = (string) ($a['name'] ?? '');
         }
     }
 
-    $result = array_map(static function (array $inv) use ($agreementTypes): array {
-        $agreementId = isset($inv['agreement']['id']) ? (int) $inv['agreement']['id'] : null;
+    $result = array_map(static function (array $inv) use ($agreementTypes, $agreementNames): array {
+        $agreementId = isset($inv['applyToId']) ? (int) $inv['applyToId'] : null;
         return [
             'id' => (int) ($inv['id'] ?? 0),
             'invoice_number' => $inv['invoiceNumber'] ?? (string) ($inv['id'] ?? ''),
-            'date' => $inv['invoiceDate'] ?? null,
+            'date' => $inv['date'] ?? null,
             'type' => is_array($inv['type'] ?? null) ? ($inv['type']['name'] ?? '') : (string) ($inv['type'] ?? ''),
             'agreement_id' => $agreementId,
-            'agreement_name' => $inv['agreement']['name'] ?? null,
+            'agreement_name' => $agreementId !== null ? ($agreementNames[$agreementId] ?? null) : null,
             'agreement_type' => $agreementId !== null ? ($agreementTypes[$agreementId] ?? 'Unknown') : 'Unknown',
             'total' => round((float) ($inv['total'] ?? 0), 2),
         ];
@@ -256,14 +290,18 @@ function relationships_cw_activity_invoice_detail(int $invoiceId): array
         }
     }
 
-    $agreementId = isset($invoice['agreement']['id']) ? (int) $invoice['agreement']['id'] : null;
-    $agreementName = $invoice['agreement']['name'] ?? null;
+    // See file header: invoices reference what they were generated against
+    // via applyToType/applyToId, not a nested `agreement` object.
+    $appliesToAgreement = stripos((string) ($invoice['applyToType'] ?? ''), 'agreement') !== false;
+    $agreementId = ($appliesToAgreement && isset($invoice['applyToId'])) ? (int) $invoice['applyToId'] : null;
+    $agreementName = null;
     $agreementType = null;
     $hoursRemaining = null;
     $rawHourFields = [];
 
     if ($agreementId !== null) {
         $agreement = relationships_cw_request("/finance/agreements/$agreementId");
+        $agreementName = $agreement['name'] ?? null;
         $agreementType = is_array($agreement['type'] ?? null) ? ($agreement['type']['name'] ?? null) : ($agreement['type'] ?? null);
 
         // Block Time / prepaid-hours agreements track a running hours
@@ -281,7 +319,7 @@ function relationships_cw_activity_invoice_detail(int $invoiceId): array
 
     return [
         'invoice_number' => $invoice['invoiceNumber'] ?? (string) $invoiceId,
-        'date' => $invoice['invoiceDate'] ?? null,
+        'date' => $invoice['date'] ?? null,
         'total' => round((float) ($invoice['total'] ?? 0), 2),
         'agreement_name' => $agreementName,
         'agreement_type' => $agreementType,
