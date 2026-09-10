@@ -47,19 +47,55 @@
  *
  * `applyToType`/`applyToId` is corroborated by ConnectWise's own "Apply To"
  * field on the invoice (agreement/project/other), and by a documented
- * third-party field enumeration of the Invoice object -- but, like the
- * ticket fields (board/name, owner, actualHours) still used unchanged
- * below, it has NOT been confirmed against a real invoice payload from
- * CBT's own instance. Treat the Monthly Billing panel's next real use
- * (after this fix deploys) as that confirmation: if agreement names/types
- * come back sensible instead of "Unknown", applyToType/applyToId is
- * correct; if invoice totals still look off, that's the next thing to
- * check.
+ * third-party field enumeration of the Invoice object -- CONFIRMED correct
+ * 2026-09-10 against a real customer's Monthly Billing panel (real dollar
+ * totals, and the invoice drill-down resolved a real agreement name/type
+ * instead of "Unknown").
+ *
+ * Also 2026-09-10: Service Tickets YTD was showing a real, non-erroring
+ * but WRONG 0 for that same real, actively-billing customer. Cause: CBT
+ * doesn't run one board literally named "Professional Services" -- it runs
+ * two location boards, "Professional Services -RIC" and "Professional
+ * Services -WAR" (confirmed by Michael). `board/name="Professional
+ * Services"` matched neither, and a condition that matches nothing returns
+ * an empty result rather than an error -- unlike the `invoiceDate` field
+ * mistake above, there was no error to surface, which is why this one
+ * needed Michael to check ConnectWise directly rather than being
+ * self-diagnosable from an error message. Fixed to match either board via
+ * RELATIONSHIPS_CW_PROFESSIONAL_SERVICES_BOARDS below. `owner`/
+ * `actualHours` on the ticket itself are still unconfirmed but haven't
+ * shown a symptom (no error, and the ticket LIST -- once the board fix
+ * lands -- is the next thing to actually look at for those two fields).
  */
 
 declare(strict_types=1);
 
 require_once __DIR__ . '/connectwise.php';
+
+// CBT runs two location-specific Professional Services boards, not one
+// board literally named "Professional Services" -- confirmed by Michael
+// 2026-09-10 after the ticket count query (board/name="Professional
+// Services") came back a real, non-erroring but WRONG 0 for a real,
+// actively-billing customer: a condition on a non-matching value returns
+// an empty result rather than an error, so this looked identical to "this
+// customer genuinely has no tickets" until Michael checked ConnectWise
+// directly. Both boards count as "Professional Services" for this
+// dashboard's purposes.
+const RELATIONSHIPS_CW_PROFESSIONAL_SERVICES_BOARDS = ['Professional Services -RIC', 'Professional Services -WAR'];
+
+/**
+ * `board/name in ("...", "...")` clause matching either Professional
+ * Services board -- shared by the count and list queries below so the
+ * board list only ever needs updating in one place.
+ */
+function relationships_cw_activity_board_condition(): string
+{
+    $quoted = array_map(
+        static fn (string $name): string => '"' . str_replace('"', '\\"', $name) . '"',
+        RELATIONSHIPS_CW_PROFESSIONAL_SERVICES_BOARDS
+    );
+    return 'board/name in (' . implode(',', $quoted) . ')';
+}
 
 /**
  * Count of Professional Services board tickets opened this calendar year
@@ -70,7 +106,7 @@ require_once __DIR__ . '/connectwise.php';
 function relationships_cw_activity_ticket_count_ytd(string $cwCompanyId): int
 {
     $sinceIso = date('Y') . '-01-01T00:00:00Z';
-    $conditions = "company/id=$cwCompanyId and board/name=\"Professional Services\" and dateEntered>=[$sinceIso]";
+    $conditions = "company/id=$cwCompanyId and " . relationships_cw_activity_board_condition() . " and dateEntered>=[$sinceIso]";
     $result = relationships_cw_request('/service/tickets/count', ['conditions' => $conditions]);
     return (int) ($result['count'] ?? 0);
 }
@@ -85,7 +121,7 @@ function relationships_cw_activity_ticket_count_ytd(string $cwCompanyId): int
 function relationships_cw_activity_tickets_ytd(string $cwCompanyId): array
 {
     $sinceIso = date('Y') . '-01-01T00:00:00Z';
-    $conditions = "company/id=$cwCompanyId and board/name=\"Professional Services\" and dateEntered>=[$sinceIso]";
+    $conditions = "company/id=$cwCompanyId and " . relationships_cw_activity_board_condition() . " and dateEntered>=[$sinceIso]";
     $rows = relationships_cw_list(
         '/service/tickets',
         $conditions,
