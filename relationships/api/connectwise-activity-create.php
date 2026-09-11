@@ -20,14 +20,22 @@
  * - The build environment cannot reach connect.codebluetechnology.com at
  *   all (confirmed 2026-09-11 -- even a plain read-only GET fails with
  *   "cURL error 56: CONNECT tunnel failed, response 403", an org-level
- *   network policy, not a credentials problem), so NONE of the field names
- *   or payload shape below could be verified against a real ConnectWise
- *   Activity the way e.g. the Invoice fields eventually were (see the
- *   sync doc's bug-fix history). This is built from a third-party
- *   (Zynk Workflow) field-name reference for the ConnectWise Activity
- *   object, not CodeBlue's own confirmed data -- treat every field name
- *   below as "best guess, needs a real created Activity checked against
- *   ConnectWise Manage's UI before it's trusted."
+ *   network policy, not a credentials problem), so nothing here could be
+ *   smoke-tested against a live response from this build environment.
+ *
+ * - 2026-09-11 UPDATE: the module/endpoint paths (`/sales/activities`,
+ *   `/sales/activities/statuses`, `/sales/activities/types`) and the
+ *   `assignedBy` field name are now CONFIRMED -- not guessed -- straight
+ *   from ConnectWise's own official REST API documentation (Michael
+ *   uploaded "REST Developer Network.pdf", a saved capture of the real
+ *   interactive docs page, after two wrong-guess deploys both hit real
+ *   ConnectWise 404s on `/company/...` paths). That PDF's Members section
+ *   was never expanded/printed, though, so `relationships_cw_member_id_by_email()`
+ *   below (`/system/members`, `officeEmail`) is STILL an unverified guess --
+ *   the one piece of this file that hasn't hit real ConnectWise ground
+ *   truth yet. Everything else was "best guess, needs a real created
+ *   Activity checked against ConnectWise Manage's UI before it's trusted";
+ *   as of this update, only the Member lookup still carries that caveat.
  *
  * Because of that, this deliberately does NOT follow the same "let a wrong
  * field surface as a visible, fixable error" posture connectwise-activity.php
@@ -56,19 +64,16 @@ require_once __DIR__ . '/connectwise.php';
  * the cw_sync_meta row by hand if CodeBlue ever renames or recreates this
  * ActivityType in ConnectWise.
  *
- * 2026-09-11, confirmed wrong on first real-server test (Agnihotri Cosmetic
- * Surgery): the originally-guessed flat path `/company/activityTypes`
- * returned a real ConnectWise 404 -- {"code":"ConnectWiseApi","message":
- * "The endpoint does not exist."} -- caught and logged by
- * checklist_cw_activity_log rather than silently matching nothing (this one
- * error loudly, unlike the earlier board-name saga). Fixed to
- * `/company/activities/types`, ConnectWise's actual nested-under-the-entity
- * path for this setup table (matches the pattern its other setup-table
- * lookups use, e.g. `/company/companies/statuses`) -- still NOT independently
- * confirmed against a real 200 response, since this build environment has
- * no network path to connect.codebluetechnology.com at all. Needs a second
- * real-server test to confirm this path itself returns real data rather
- * than another 404.
+ * 2026-09-11, TWO consecutive wrong guesses on real-server tests (Agnihotri
+ * Cosmetic Surgery): first the flat `/company/activityTypes`, then the
+ * nested-under-company guess `/company/activities/types` -- both returned a
+ * real ConnectWise 404 (caught and logged by checklist_cw_activity_log
+ * rather than silently matching nothing). Fixed for real this time to
+ * `/sales/activities/types` -- CONFIRMED directly from ConnectWise's own
+ * official REST API documentation (Michael's uploaded "REST Developer
+ * Network.pdf" screenshot: "GET /sales/activities/types Get List of
+ * ActivityType"). The Activities module lives under `/sales/`, not
+ * `/company/` -- that was the root mistake both prior guesses made.
  */
 function relationships_cw_activity_type_id(PDO $pdo): ?int
 {
@@ -76,7 +81,7 @@ function relationships_cw_activity_type_id(PDO $pdo): ?int
         $pdo,
         'cw_activity_type_id:NextStep Action',
         static function (): ?int {
-            $rows = relationships_cw_list('/company/activities/types', "name='NextStep Action'", ['id', 'name'], 10);
+            $rows = relationships_cw_list('/sales/activities/types', "name='NextStep Action'", ['id', 'name'], 10);
             return isset($rows[0]['id']) ? (int) $rows[0]['id'] : null;
         }
     );
@@ -84,9 +89,9 @@ function relationships_cw_activity_type_id(PDO $pdo): ?int
 
 /**
  * "Closed" ActivityStatus id -- same lookup-and-cache pattern as the
- * ActivityType above, and the same 2026-09-11 path fix (`/company/activities/statuses`,
- * not the originally-guessed flat `/company/activityStatuses`) -- see that
- * function's doc comment for the full story.
+ * ActivityType above, and the same 2026-09-11 path fix (`/sales/activities/statuses`,
+ * confirmed from the official docs PDF -- see that function's doc comment
+ * for the full story).
  */
 function relationships_cw_activity_status_id(PDO $pdo): ?int
 {
@@ -94,7 +99,7 @@ function relationships_cw_activity_status_id(PDO $pdo): ?int
         $pdo,
         'cw_activity_status_id:Closed',
         static function (): ?int {
-            $rows = relationships_cw_list('/company/activities/statuses', "name='Closed'", ['id', 'name'], 10);
+            $rows = relationships_cw_list('/sales/activities/statuses', "name='Closed'", ['id', 'name'], 10);
             return isset($rows[0]['id']) ? (int) $rows[0]['id'] : null;
         }
     );
@@ -223,7 +228,14 @@ function relationships_cw_create_checklist_activity(PDO $pdo, array $ctx): array
         // Per Michael (2026-09-11 AskUserQuestion): the completing RC is the
         // Activity's one assigned member -- no separate "Assigned By:
         // Michael" field is forced onto every activity.
-        $corePayload['assignTo'] = ['id' => $memberId];
+        //
+        // Field name CONFIRMED from the official docs PDF's own POST
+        // /sales/activities example body: the member-reference field is
+        // `assignedBy` (an {id, identifier, name, dailyCapacity, ...}
+        // object), NOT `assignTo` as originally guessed -- ConnectWise
+        // Manage's own naming, despite the field holding who the Activity
+        // is assigned TO, not who assigned it.
+        $corePayload['assignedBy'] = ['id' => $memberId];
     }
 
     $contactId = relationships_checklist_first_contact_id($pdo, (int) $ctx['customer_id']);
@@ -246,7 +258,7 @@ function relationships_cw_create_checklist_activity(PDO $pdo, array $ctx): array
     ];
 
     try {
-        $created = relationships_cw_request('/company/activities', [], 'POST', $fullPayload);
+        $created = relationships_cw_request('/sales/activities', [], 'POST', $fullPayload);
         if (isset($created['id'])) {
             return ['id' => (string) $created['id'], 'variant' => 'full'];
         }
@@ -260,7 +272,7 @@ function relationships_cw_create_checklist_activity(PDO $pdo, array $ctx): array
         // for Michael to check.
     }
 
-    $created = relationships_cw_request('/company/activities', [], 'POST', $corePayload);
+    $created = relationships_cw_request('/sales/activities', [], 'POST', $corePayload);
     if (!isset($created['id'])) {
         throw new RelationshipsConnectWiseError(
             'ConnectWise accepted the Activity create request but returned no id -- response: ' .
