@@ -162,6 +162,31 @@ if ($action === 'cw_log') {
     relationships_respond(200, ['ok' => true, 'rows' => $rows]);
 }
 
+if ($action === 'cw_date_probe') {
+    // One-off diagnostic -- added 2026-09-11 after TWO guessed date formats
+    // for the Activity create (ATOM with offset, then UTC+milliseconds+Z
+    // per the docs PDF's response example) both got rejected by a real
+    // POST /sales/activities with {"code":"UnsupportedFormat",...}. Rather
+    // than guess a third time, fetch a handful of Activities that already
+    // exist in CodeBlue's live ConnectWise and show their dateStart/dateEnd
+    // fields exactly as ConnectWise itself returns them -- real ground
+    // truth from this specific on-prem v4_6_release server, not a docs page
+    // that may describe a newer cloud API version's expected format.
+    // Read-only; same "just visit the URL, already-logged-in session covers
+    // auth" pattern as ?action=cw_log. Remove once the date format is
+    // confirmed fixed and no longer needed for debugging.
+    try {
+        $rows = relationships_cw_request('/sales/activities', [
+            'fields' => 'id,name,dateStart,dateEnd,dateEndUtc,dateClosedUtc',
+            'pageSize' => 5,
+            'orderBy' => 'id desc',
+        ]);
+        relationships_respond(200, ['ok' => true, 'rows' => $rows]);
+    } catch (Throwable $e) {
+        relationships_respond(200, ['ok' => false, 'error' => $e->getMessage()]);
+    }
+}
+
 if ($action === 'summary' || $action === 'queue') {
     $rows = relationships_missing_services_with_progress($pdo);
 
