@@ -110,7 +110,14 @@ function relationships_cw_request(string $path, array $query = [], string $metho
         throw new RelationshipsConnectWiseError("ConnectWise request failed (cURL error $errNo): $errStr — $url");
     }
     if ($status < 200 || $status >= 300) {
-        $snippet = is_string($body) ? substr($body, 0, 500) : '';
+        // Widened from 500 to 3000 chars 2026-09-11 -- a real ConnectWise
+        // 400 on POST /sales/activities came back with a multi-item
+        // "errors" array (one entry per invalid/missing field), and the old
+        // 500-char cap was cutting that array off mid-entry, hiding exactly
+        // the detail needed to diagnose the next field. 3000 chars comfortably
+        // fits ConnectWise's typical validation-error bodies while still
+        // bounding runaway/unexpected response sizes.
+        $snippet = is_string($body) ? substr($body, 0, 3000) : '';
         throw new RelationshipsConnectWiseError("ConnectWise request returned HTTP $status for $url — $snippet");
     }
 

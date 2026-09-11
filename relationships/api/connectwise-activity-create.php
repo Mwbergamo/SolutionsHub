@@ -210,8 +210,20 @@ function relationships_cw_create_checklist_activity(PDO $pdo, array $ctx): array
     }
     $notes = $ctx['step_label'] . ' - ' . $ctx['completed_by_name'] . ' - ' . $ctx['completed_at_display'];
 
+    // 2026-09-11: the ATOM format below (e.g. "2026-09-11T14:32:00-04:00")
+    // was REJECTED by a real POST /sales/activities call -- ConnectWise
+    // returned {"code":"UnsupportedFormat","message":"Unsupported format
+    // applied to dateStart", ...} for both dateStart and dateEnd. Fixed to
+    // match the exact format CONFIRMED in the docs PDF's own Activity
+    // schema example: UTC, millisecond precision, "Z" suffix --
+    // "2026-09-11T16:42:39.277Z" -- not a guess this time, a direct copy of
+    // what ConnectWise's own example shows. The underlying instant captured
+    // is still "now" in US Eastern per Michael's spec; only the serialized
+    // format changes -- captured in Eastern first (so DST is handled by PHP's
+    // tzdata rather than a hardcoded offset), then converted to UTC for the
+    // wire format ConnectWise actually accepts.
     $now = new DateTimeImmutable('now', new DateTimeZone('America/New_York'));
-    $dateIso = $now->format(DateTimeInterface::ATOM); // e.g. 2026-09-11T14:32:00-04:00 -- Eastern, DST-aware, per Michael's "US Eastern (UTC-04)"
+    $dateIso = $now->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.v\Z');
 
     $corePayload = [
         'name' => $summary,
@@ -377,7 +389,12 @@ function relationships_checklist_completion_create_cw_activity(
             $logStmt->execute([
                 ':cid' => $customerId, ':pid' => $pillarId, ':sid' => $serviceId, ':step' => $stepNumber,
                 ':status' => 'error', ':cwid' => null, ':variant' => null,
-                ':err' => substr($e->getMessage(), 0, 1000), ':uid' => $completedBy['id'],
+                // Widened from 1000 to 4000 chars 2026-09-11 -- a real
+                // ConnectWise 400 with multiple validation errors (one per
+                // invalid/missing field) was getting cut off mid-message by
+                // the old 1000-char limit, hiding exactly the detail needed
+                // to diagnose the next fix.
+                ':err' => substr($e->getMessage(), 0, 4000), ':uid' => $completedBy['id'],
             ]);
         } catch (Throwable $logError) {
             // If even the log insert fails, there's nothing left to safely
