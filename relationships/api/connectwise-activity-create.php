@@ -223,7 +223,25 @@ function relationships_cw_create_checklist_activity(PDO $pdo, array $ctx): array
         'dateEnd' => $dateIso,
     ];
 
-    $memberId = relationships_cw_member_id_by_email($ctx['completed_by_email']);
+    // 2026-09-11: on the first real-server test past the path fix above,
+    // this lookup returned a real ConnectWise HTTP 403 -- {"code":"Security",
+    // "message":"You do not have security permission to perform this
+    // action."} -- because the API key's Security Role isn't granted read
+    // access to System > Member Maintenance (a ConnectWise-side permissions
+    // config issue, NOT a wrong endpoint/field -- /system/members itself is
+    // correct). That error, left unguarded, aborted the ENTIRE Activity
+    // create -- the checklist step's completion never reached ConnectWise at
+    // all just because one optional field couldn't be looked up. Guarded the
+    // same way the $fullPayload/$corePayload split above already handles
+    // other optional-field failures: swallow it, create the Activity without
+    // an assigned member, and let Michael notice/fix the permission on his
+    // own schedule rather than losing the whole record every time someone
+    // checks a box until he does.
+    try {
+        $memberId = relationships_cw_member_id_by_email($ctx['completed_by_email']);
+    } catch (RelationshipsConnectWiseError $e) {
+        $memberId = null;
+    }
     if ($memberId !== null) {
         // Per Michael (2026-09-11 AskUserQuestion): the completing RC is the
         // Activity's one assigned member -- no separate "Assigned By:
