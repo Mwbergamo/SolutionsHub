@@ -327,6 +327,34 @@ function relationships_migrate(PDO $pdo): void
         )
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_checklist_lookup ON checklist_progress(pillar_id, service_id, step_number)');
+
+    // Audit trail for the ConnectWise Activity that checklist.php's 'set'
+    // action tries to create in the customer's real ConnectWise record every
+    // time a checklist step is newly checked off -- added 2026-09-11 per
+    // Michael (see connectwise-activity-create.php). One row per attempt
+    // (not per checklist_progress row -- unchecking then rechecking the same
+    // step is a second genuine completion event and gets a second row here,
+    // same as it gets a second real ConnectWise Activity). `status` is
+    // 'created' or 'error' -- a failure here NEVER blocks or reverts the
+    // checklist_progress save itself (Michael's explicit call), it's purely
+    // a record of what ConnectWise did or didn't get, for spot-checking and
+    // for a future "failed activities" admin view if that's ever wanted.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS checklist_cw_activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            pillar_id TEXT NOT NULL,
+            service_id TEXT NOT NULL,
+            step_number INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            cw_activity_id TEXT,
+            payload_variant TEXT,
+            error_message TEXT,
+            completed_by_user_id INTEGER REFERENCES crc_users(id),
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_checklist_cw_activity_log_customer ON checklist_cw_activity_log(customer_id)');
 }
 
 /**

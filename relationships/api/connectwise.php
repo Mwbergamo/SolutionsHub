@@ -51,10 +51,18 @@ function relationships_cw_config(): array
  * relative to the v3.0 apis root, e.g. "/finance/agreements". $query is a
  * plain key => value array (this function handles urlencoding).
  *
+ * $method/$jsonBody added 2026-09-11 for the ConnectWise Activity-creation
+ * feature (checklist.php's 'set' action, via connectwise-activity-create.php)
+ * -- every OTHER caller in this codebase before that was a GET, so both
+ * default to the old GET-only behavior and every existing call site is
+ * unaffected. Passing $jsonBody implies a POST body encoded as JSON with a
+ * Content-Type header; $method lets a caller request PATCH/PUT/DELETE too,
+ * though nothing uses those yet.
+ *
  * Returns the decoded JSON body (array). Throws RelationshipsConnectWiseError
  * on any transport failure, non-2xx response, or malformed JSON body.
  */
-function relationships_cw_request(string $path, array $query = []): array
+function relationships_cw_request(string $path, array $query = [], string $method = 'GET', ?array $jsonBody = null): array
 {
     $config = relationships_cw_config();
     $base = rtrim((string) $config['base_url'], '/') . '/v4_6_release/apis/3.0';
@@ -70,15 +78,28 @@ function relationships_cw_request(string $path, array $query = []): array
         'Accept: application/json',
     ];
 
+    $encodedBody = null;
+    if ($jsonBody !== null) {
+        $encodedBody = json_encode($jsonBody);
+        $headers[] = 'Content-Type: application/json';
+    }
+
     $ch = curl_init($url);
-    curl_setopt_array($ch, [
+    $opts = [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_HTTPHEADER => $headers,
         CURLOPT_TIMEOUT => 60,
         CURLOPT_CONNECTTIMEOUT => 15,
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
-    ]);
+    ];
+    if ($method !== 'GET') {
+        $opts[CURLOPT_CUSTOMREQUEST] = $method;
+    }
+    if ($encodedBody !== null) {
+        $opts[CURLOPT_POSTFIELDS] = $encodedBody;
+    }
+    curl_setopt_array($ch, $opts);
     $body = curl_exec($ch);
     $errNo = curl_errno($ch);
     $errStr = curl_error($ch);
@@ -93,6 +114,14 @@ function relationships_cw_request(string $path, array $query = []): array
         throw new RelationshipsConnectWiseError("ConnectWise request returned HTTP $status for $url — $snippet");
     }
 
+    // A successful write can legitimately return an empty body (204) or a
+    // JSON object (the created record) rather than the JSON *array* every
+    // list/count GET in this codebase returns -- normalize both to an array
+    // so callers don't have to special-case is_array() vs is_object()-shaped
+    // JSON themselves.
+    if ($body === '' || $body === false) {
+        return [];
+    }
     $decoded = json_decode((string) $body, true);
     if (!is_array($decoded)) {
         throw new RelationshipsConnectWiseError("ConnectWise response was not valid JSON for $url");

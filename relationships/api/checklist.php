@@ -41,6 +41,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
+require_once __DIR__ . '/connectwise-activity-create.php';
 
 $pdo = relationships_db();
 $user = relationships_require_login($pdo);
@@ -101,11 +102,16 @@ if ($action === 'set') {
 
     // Delete-then-insert rather than an UPSERT: simpler, and the UNIQUE
     // constraint on (customer_id, pillar_id, service_id, step_number)
-    // already guarantees at most one row either way.
+    // already guarantees at most one row either way. $wasCompleted (was
+    // there already a row for this step before the delete?) is what tells
+    // the ConnectWise Activity trigger below apart a genuine new completion
+    // from a redundant "set completed=true" on a step that was already
+    // done -- added 2026-09-11, see connectwise-activity-create.php.
     $del = $pdo->prepare(
         'DELETE FROM checklist_progress WHERE customer_id = :c AND pillar_id = :p AND service_id = :s AND step_number = :step'
     );
     $del->execute([':c' => $customerId, ':p' => $pillarId, ':s' => $serviceId, ':step' => $stepNumber]);
+    $wasCompleted = $del->rowCount() > 0;
 
     if ($completed) {
         $ins = $pdo->prepare(
@@ -117,6 +123,19 @@ if ($action === 'set') {
             ':c' => $customerId, ':p' => $pillarId, ':s' => $serviceId, ':sn' => $serviceName,
             ':step' => $stepNumber, ':uid' => $user['id'], ':uname' => $user['name'],
         ]);
+    }
+
+    // Fire the ConnectWise Activity create ONLY on a genuine unchecked ->
+    // checked transition, not a redundant re-save of an already-completed
+    // step -- added 2026-09-11 per Michael's cross-sell-checklist request.
+    // relationships_checklist_completion_create_cw_activity() never throws
+    // (every failure is caught and logged internally), so this can't turn
+    // a successful local checklist save into a 500 -- the response below
+    // always reflects the local save, regardless of what ConnectWise did.
+    if ($completed && !$wasCompleted) {
+        relationships_checklist_completion_create_cw_activity(
+            $pdo, $customerId, $pillarId, $serviceId, $serviceName, $stepNumber, $user
+        );
     }
 
     relationships_respond(200, ['ok' => true]);
