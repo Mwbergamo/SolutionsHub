@@ -141,6 +141,27 @@ if ($action === 'set') {
     relationships_respond(200, ['ok' => true]);
 }
 
+if ($action === 'cw_log') {
+    // Quick diagnostic view over checklist_cw_activity_log -- added
+    // 2026-09-11 right after the first real-server test of ConnectWise
+    // Activity creation (Agnihotri Cosmetic Surgery) came back with no
+    // Activity created, and no easy way to see WHY without a phpMyAdmin/
+    // SQLite-browser login. Any logged-in CRC can view it (read-only,
+    // no secrets in these rows) -- just visit this URL directly in a
+    // browser (already-signed-in session cookie covers auth); Chrome/Edge
+    // render JSON readably on their own. No dedicated UI view built for
+    // this yet -- revisit if this becomes a regular need rather than a
+    // one-off debugging aid.
+    $rows = $pdo->query(
+        'SELECT l.id, l.customer_id, c.name AS customer_name, l.pillar_id, l.service_id, l.step_number,
+                l.status, l.cw_activity_id, l.payload_variant, l.error_message, l.completed_by_user_id, l.created_at
+         FROM checklist_cw_activity_log l
+         LEFT JOIN customers c ON c.id = l.customer_id
+         ORDER BY l.id DESC LIMIT 50'
+    )->fetchAll(PDO::FETCH_ASSOC);
+    relationships_respond(200, ['ok' => true, 'rows' => $rows]);
+}
+
 if ($action === 'summary' || $action === 'queue') {
     $rows = relationships_missing_services_with_progress($pdo);
 
