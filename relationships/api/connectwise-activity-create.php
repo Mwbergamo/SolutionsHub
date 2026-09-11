@@ -259,13 +259,26 @@ function relationships_cw_create_checklist_activity(PDO $pdo, array $ctx): array
         // Activity's one assigned member -- no separate "Assigned By:
         // Michael" field is forced onto every activity.
         //
-        // Field name CONFIRMED from the official docs PDF's own POST
-        // /sales/activities example body: the member-reference field is
-        // `assignedBy` (an {id, identifier, name, dailyCapacity, ...}
-        // object), NOT `assignTo` as originally guessed -- ConnectWise
-        // Manage's own naming, despite the field holding who the Activity
-        // is assigned TO, not who assigned it.
-        $corePayload['assignedBy'] = ['id' => $memberId];
+        // Field name is `assignTo`, confirmed for real this time -- a live
+        // POST /sales/activities test came back with a real ConnectWise
+        // validation error: {"code":"MissingRequiredField","message":"The
+        // assignTo/id field is required.","field":"assignTo"}. The docs
+        // PDF's example response body showed a field called `assignedBy`
+        // (an {id, identifier, name, dailyCapacity, ...} object) in that
+        // same position, which is what led to the previous (wrong) fix --
+        // but that's apparently a different/related field ConnectWise's
+        // response includes, not the one the create request actually
+        // requires. A live 400 naming the exact required field beats a
+        // static docs screenshot; trust this one.
+        //
+        // NOTE: ConnectWise treats assignTo/id as REQUIRED, not optional --
+        // so if relationships_cw_member_id_by_email() can't resolve an id
+        // (no match, or blocked again by a ConnectWise permission), this
+        // POST will still fail server-side rather than silently creating a
+        // memberless Activity. The try/catch above only prevents a crash on
+        // the *lookup* itself; it doesn't make the field optional on
+        // ConnectWise's side.
+        $corePayload['assignTo'] = ['id' => $memberId];
     }
 
     $contactId = relationships_checklist_first_contact_id($pdo, (int) $ctx['customer_id']);
