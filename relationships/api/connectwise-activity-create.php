@@ -51,10 +51,24 @@ require_once __DIR__ . '/connectwise.php';
  * "NextStep Action" ActivityType id -- looked up by name (never hardcoded)
  * the same way this integration always resolves a ConnectWise reference id,
  * and cached in cw_sync_meta so a busy day of checklist clicks doesn't mean
- * a repeat /company/activityTypes round-trip every single time. Cache is
- * intentionally permanent (these setup-table names essentially never
- * change) -- delete the cw_sync_meta row by hand if CodeBlue ever renames
- * or recreates this ActivityType in ConnectWise.
+ * a repeat lookup round-trip every single time. Cache is intentionally
+ * permanent (these setup-table names essentially never change) -- delete
+ * the cw_sync_meta row by hand if CodeBlue ever renames or recreates this
+ * ActivityType in ConnectWise.
+ *
+ * 2026-09-11, confirmed wrong on first real-server test (Agnihotri Cosmetic
+ * Surgery): the originally-guessed flat path `/company/activityTypes`
+ * returned a real ConnectWise 404 -- {"code":"ConnectWiseApi","message":
+ * "The endpoint does not exist."} -- caught and logged by
+ * checklist_cw_activity_log rather than silently matching nothing (this one
+ * error loudly, unlike the earlier board-name saga). Fixed to
+ * `/company/activities/types`, ConnectWise's actual nested-under-the-entity
+ * path for this setup table (matches the pattern its other setup-table
+ * lookups use, e.g. `/company/companies/statuses`) -- still NOT independently
+ * confirmed against a real 200 response, since this build environment has
+ * no network path to connect.codebluetechnology.com at all. Needs a second
+ * real-server test to confirm this path itself returns real data rather
+ * than another 404.
  */
 function relationships_cw_activity_type_id(PDO $pdo): ?int
 {
@@ -62,7 +76,7 @@ function relationships_cw_activity_type_id(PDO $pdo): ?int
         $pdo,
         'cw_activity_type_id:NextStep Action',
         static function (): ?int {
-            $rows = relationships_cw_list('/company/activityTypes', "name='NextStep Action'", ['id', 'name'], 10);
+            $rows = relationships_cw_list('/company/activities/types', "name='NextStep Action'", ['id', 'name'], 10);
             return isset($rows[0]['id']) ? (int) $rows[0]['id'] : null;
         }
     );
@@ -70,7 +84,9 @@ function relationships_cw_activity_type_id(PDO $pdo): ?int
 
 /**
  * "Closed" ActivityStatus id -- same lookup-and-cache pattern as the
- * ActivityType above.
+ * ActivityType above, and the same 2026-09-11 path fix (`/company/activities/statuses`,
+ * not the originally-guessed flat `/company/activityStatuses`) -- see that
+ * function's doc comment for the full story.
  */
 function relationships_cw_activity_status_id(PDO $pdo): ?int
 {
@@ -78,7 +94,7 @@ function relationships_cw_activity_status_id(PDO $pdo): ?int
         $pdo,
         'cw_activity_status_id:Closed',
         static function (): ?int {
-            $rows = relationships_cw_list('/company/activityStatuses', "name='Closed'", ['id', 'name'], 10);
+            $rows = relationships_cw_list('/company/activities/statuses', "name='Closed'", ['id', 'name'], 10);
             return isset($rows[0]['id']) ? (int) $rows[0]['id'] : null;
         }
     );
