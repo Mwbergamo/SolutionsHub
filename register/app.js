@@ -33,6 +33,8 @@
 
     syncing: false,
     syncMessage: null,
+    syncTotal: 0,
+    syncProcessed: 0,
 
     // cart: [{ catalog_item_id, identifier, description, unit_price, quantity, on_hand }]
     cart: [],
@@ -135,24 +137,66 @@
     }, 200);
   }
 
+  // Catalog sync is a queue-based start()/step() pair (added 2026-09-12
+  // after a real "Sync failed — check your connection" error: a single
+  // synchronous request doing one ConnectWise round-trip per catalog item
+  // ran ~4 minutes before failing, almost certainly Bluehost's execution-
+  // time limit). Same start-once/step-repeatedly shape as relationships/
+  // app.js's runFullSync()/stepSyncLoop() -- each step processes a bounded
+  // batch and reports progress, so no single HTTP request risks timing out
+  // no matter how large the catalog grows.
   function runSync() {
     state.syncing = true;
-    state.syncMessage = null;
+    state.syncMessage = 'Starting sync…';
+    state.syncTotal = 0;
+    state.syncProcessed = 0;
+    state.error = null;
     render();
-    apiPost('api/catalog.php?action=sync', {}).then(function (r) {
+    apiPost('api/catalog.php?action=sync-start', {}).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.syncing = false;
+        state.syncMessage = null;
+        state.error = (r.data && r.data.error) || 'Could not start the sync.';
+        render();
+        return;
+      }
+      state.syncTotal = r.data.total;
+      state.syncMessage = 'Syncing 0 of ' + state.syncTotal + '…';
+      render();
+      syncStepLoop();
+    }).catch(function () {
       state.syncing = false;
-      if (r.data && r.data.ok) {
-        state.syncMessage = 'Synced ' + r.data.synced + ' item' + (r.data.synced === 1 ? '' : 's') +
-          (r.data.skipped ? (' (' + r.data.skipped + ' skipped)') : '') + ' from ConnectWise.';
+      state.syncMessage = null;
+      state.error = 'Could not start the sync — check your connection and try again.';
+      render();
+    });
+  }
+
+  function syncStepLoop() {
+    apiPost('api/catalog.php?action=sync-step', { batch_size: 15 }).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.syncing = false;
+        state.syncMessage = null;
+        state.error = (r.data && r.data.error) || 'Sync failed partway through.';
+        render();
+        return;
+      }
+      state.syncProcessed = r.data.totals.done + r.data.totals.error;
+      state.syncMessage = 'Syncing ' + state.syncProcessed + ' of ' + state.syncTotal + '…';
+      if (r.data.done) {
+        state.syncing = false;
+        state.syncMessage = 'Synced ' + r.data.totals.done + ' item' + (r.data.totals.done === 1 ? '' : 's') +
+          (r.data.totals.error ? (' (' + r.data.totals.error + ' failed)') : '') + ' from ConnectWise.';
         loadCatalogNow();
       } else {
-        state.syncMessage = null;
-        state.error = (r.data && r.data.error) || 'Sync failed.';
+        render();
+        syncStepLoop();
       }
       render();
     }).catch(function () {
       state.syncing = false;
-      state.error = 'Sync failed — check your connection and try again.';
+      state.syncMessage = null;
+      state.error = 'Sync failed partway through — check your connection and try again.';
       render();
     });
   }

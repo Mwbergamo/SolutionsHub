@@ -127,4 +127,35 @@ function register_migrate(PDO $pdo): void
         )
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id)');
+
+    // Queue of ConnectWise Procurement Catalog items to (re)sync -- added
+    // 2026-09-12 after a real "Sync failed — check your connection" error
+    // on a first live attempt (it ran ~4 minutes before failing): a single
+    // synchronous request doing one full-item GET + one /inventory GET per
+    // catalog item was always going to risk Bluehost's execution-time
+    // limit once there are more than a handful of Inventory items, exactly
+    // as flagged in this file's original header comment. Converted to the
+    // same start()/step()-bounded-batch queue shape relationships/api/
+    // sync.php already uses for its much larger (~440 agreement) sync --
+    // see catalog.php's action=sync-start/sync-step/sync-status.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS cw_catalog_sync_queue (
+            cw_catalog_id INTEGER PRIMARY KEY,
+            identifier TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            error_message TEXT,
+            queued_at TEXT NOT NULL DEFAULT (datetime('now')),
+            processed_at TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_cw_catalog_sync_queue_status ON cw_catalog_sync_queue(status)');
+
+    // Small key/value table for sync run bookkeeping (started_at of the
+    // current/most recent run) -- same shape as relationships' cw_sync_meta.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS register_sync_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    SQL);
 }
