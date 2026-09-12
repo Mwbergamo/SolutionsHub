@@ -1,0 +1,6 @@
+# Block all direct HTTP access to this folder — it holds the Register
+# app's SQLite database (retail staff accounts, synced catalog, sale
+# history). Nothing here should ever be served to a browser; only
+# register/api/*.php reads/writes it via PDO on the server side.
+Order allow,deny
+Deny from all

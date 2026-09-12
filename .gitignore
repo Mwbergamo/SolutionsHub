@@ -22,3 +22,18 @@ Thumbs.db
 /relationships/data/*.sqlite
 /relationships/data/*.sqlite-wal
 /relationships/data/*.sqlite-shm
+
+# Same pattern for the Register app's ConnectWise API credentials -- copy
+# register/api/connectwise-config.sample.php to
+# register/api/connectwise-config.php on the server and fill it in there.
+/register/api/connectwise-config.php
+
+# Register app's runtime SQLite database + PHP session files -- created on
+# first request by register/api/db.php / register/api/_util.php. Never
+# commit these: they're live retail-staff accounts, synced catalog, and
+# sale history, not source, and a `git pull` deploy must never overwrite or
+# wipe them.
+/register/data/*.sqlite
+/register/data/*.sqlite-wal
+/register/data/*.sqlite-shm
+/register/data/sessions/
