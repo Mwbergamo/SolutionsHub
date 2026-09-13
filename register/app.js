@@ -33,6 +33,7 @@
 
     syncing: false,
     syncMessage: null,
+    syncFilterTotal: 0,
     syncTotal: 0,
     syncProcessed: 0,
 
@@ -137,17 +138,24 @@
     }, 200);
   }
 
-  // Catalog sync is a queue-based start()/step() pair (added 2026-09-12
+  // Catalog sync is a two-phase queue-based start()/step() pair. Phase 1
+  // ("filter") added 2026-09-13: ConnectWise's own productClass field can't
+  // tell a zero-stock Inventory item from a stocked one (confirmed via live
+  // diagnostics -- ~14,600 active Inventory items match productClass alone,
+  // but only ~603 actually have on-hand stock, and there's no server-side
+  // way to filter by that), so every Inventory candidate gets one cheap
+  // /inventory-only check first. Confirmed-zero results are cached
+  // server-side, so this phase shrinks to almost nothing on later syncs.
+  // Phase 2 ("sync") is the original full-detail sync (added 2026-09-12
   // after a real "Sync failed — check your connection" error: a single
-  // synchronous request doing one ConnectWise round-trip per catalog item
-  // ran ~4 minutes before failing, almost certainly Bluehost's execution-
-  // time limit). Same start-once/step-repeatedly shape as relationships/
-  // app.js's runFullSync()/stepSyncLoop() -- each step processes a bounded
-  // batch and reports progress, so no single HTTP request risks timing out
-  // no matter how large the catalog grows.
+  // synchronous request doing one ConnectWise round-trip per item ran ~4
+  // minutes before failing, almost certainly Bluehost's execution-time
+  // limit) -- each step still processes a bounded batch, so no single HTTP
+  // request risks timing out no matter how large the catalog grows.
   function runSync() {
     state.syncing = true;
     state.syncMessage = 'Starting sync…';
+    state.syncFilterTotal = 0;
     state.syncTotal = 0;
     state.syncProcessed = 0;
     state.error = null;
@@ -160,8 +168,10 @@
         render();
         return;
       }
-      state.syncTotal = r.data.total;
-      state.syncMessage = 'Syncing 0 of ' + state.syncTotal + '…';
+      state.syncFilterTotal = r.data.total_filter_queued;
+      state.syncMessage = state.syncFilterTotal > 0
+        ? 'Checking stock: 0 of ' + state.syncFilterTotal + '…'
+        : 'Syncing 0 of ' + r.data.total_agreement + '…';
       render();
       syncStepLoop();
     }).catch(function () {
@@ -173,7 +183,7 @@
   }
 
   function syncStepLoop() {
-    apiPost('api/catalog.php?action=sync-step', { batch_size: 15 }).then(function (r) {
+    apiPost('api/catalog.php?action=sync-step', { batch_size: 20 }).then(function (r) {
       if (!r.data || !r.data.ok) {
         state.syncing = false;
         state.syncMessage = null;
@@ -181,12 +191,20 @@
         render();
         return;
       }
-      state.syncProcessed = r.data.totals.done + r.data.totals.error;
-      state.syncMessage = 'Syncing ' + state.syncProcessed + ' of ' + state.syncTotal + '…';
-      if (r.data.done) {
+      var d = r.data;
+      if (d.phase === 'filter') {
+        var checked = state.syncFilterTotal - d.filter_totals.pending;
+        state.syncMessage = 'Checking stock: ' + checked + ' of ' + state.syncFilterTotal + '…';
+      } else {
+        state.syncTotal = d.sync_totals.pending + d.sync_totals.done + d.sync_totals.error;
+        state.syncProcessed = d.sync_totals.done + d.sync_totals.error;
+        state.syncMessage = 'Syncing ' + state.syncProcessed + ' of ' + state.syncTotal + '…';
+      }
+      if (d.done) {
         state.syncing = false;
-        state.syncMessage = 'Synced ' + r.data.totals.done + ' item' + (r.data.totals.done === 1 ? '' : 's') +
-          (r.data.totals.error ? (' (' + r.data.totals.error + ' failed)') : '') + ' from ConnectWise.';
+        var totalErrors = (d.filter_totals.error || 0) + (d.sync_totals.error || 0);
+        state.syncMessage = 'Synced ' + d.sync_totals.done + ' item' + (d.sync_totals.done === 1 ? '' : 's') +
+          (totalErrors ? (' (' + totalErrors + ' failed)') : '') + ' from ConnectWise.';
         loadCatalogNow();
       } else {
         render();

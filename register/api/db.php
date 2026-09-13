@@ -151,17 +151,53 @@ function register_migrate(PDO $pdo): void
     // same start()/step()-bounded-batch queue shape relationships/api/
     // sync.php already uses for its much larger (~440 agreement) sync --
     // see catalog.php's action=sync-start/sync-step/sync-status.
+    //
+    // `phase` added 2026-09-13: confirmed via live diagnostics that
+    // productClass='Inventory' matches ~14,600 active catalog items, but
+    // only ~603 of them actually have on-hand stock right now (the rest are
+    // legacy/discontinued catalog entries) -- and ConnectWise gives no
+    // server-side way to filter the catalog list by on-hand status
+    // (productClass alone doesn't distinguish a zero-stock item from a
+    // stocked one; childconditions and every bin/warehouse inventory-list
+    // endpoint tried came back unsupported or 404). So every Inventory
+    // candidate needs its own cheap /inventory-only check first
+    // (phase='filter') before the ~603 (plus all Agreement items, which
+    // skip straight to phase='sync') get a full detail sync. `cached_on_hand`
+    // carries the summed on-hand total computed during the filter check
+    // forward into the sync phase, so it's never fetched twice for the same
+    // item.
     $pdo->exec(<<<'SQL'
         CREATE TABLE IF NOT EXISTS cw_catalog_sync_queue (
             cw_catalog_id INTEGER PRIMARY KEY,
             identifier TEXT NOT NULL DEFAULT '',
+            phase TEXT NOT NULL DEFAULT 'sync',
+            cached_on_hand REAL,
             status TEXT NOT NULL DEFAULT 'pending',
             error_message TEXT,
             queued_at TEXT NOT NULL DEFAULT (datetime('now')),
             processed_at TEXT
         )
     SQL);
-    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_cw_catalog_sync_queue_status ON cw_catalog_sync_queue(status)');
+    register_add_column_if_missing($pdo, 'cw_catalog_sync_queue', 'phase', "TEXT NOT NULL DEFAULT 'sync'");
+    register_add_column_if_missing($pdo, 'cw_catalog_sync_queue', 'cached_on_hand', 'REAL');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_cw_catalog_sync_queue_status ON cw_catalog_sync_queue(phase, status)');
+
+    // Persists which Inventory-class catalog items were last confirmed to
+    // have ZERO on-hand stock, and when -- added 2026-09-13 alongside the
+    // `phase` column above, so a full ~14,600-item /inventory scan only
+    // ever has to happen once. Every later sync skips re-checking any item
+    // still in here within the staleness window (see
+    // register_catalog_sync_start()'s $staleDays), and only re-verifies the
+    // ~603 already-known-stocked items plus whatever has aged out --
+    // instead of re-scanning the entire legacy catalog every time.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS catalog_no_stock_cache (
+            cw_catalog_id INTEGER PRIMARY KEY,
+            identifier TEXT NOT NULL DEFAULT '',
+            checked_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_catalog_no_stock_cache_checked_at ON catalog_no_stock_cache(checked_at)');
 
     // Small key/value table for sync run bookkeeping (started_at of the
     // current/most recent run) -- same shape as relationships' cw_sync_meta.
