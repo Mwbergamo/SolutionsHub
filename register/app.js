@@ -34,6 +34,7 @@
     syncing: false,
     syncMessage: null,
     syncFilterTotal: 0,
+    syncFilterTotalKnown: false,
     syncTotal: 0,
     syncProcessed: 0,
 
@@ -138,24 +139,26 @@
     }, 200);
   }
 
-  // Catalog sync is a two-phase queue-based start()/step() pair. Phase 1
-  // ("filter") added 2026-09-13: ConnectWise's own productClass field can't
-  // tell a zero-stock Inventory item from a stocked one (confirmed via live
-  // diagnostics -- ~14,600 active Inventory items match productClass alone,
-  // but only ~603 actually have on-hand stock, and there's no server-side
-  // way to filter by that), so every Inventory candidate gets one cheap
-  // /inventory-only check first. Confirmed-zero results are cached
-  // server-side, so this phase shrinks to almost nothing on later syncs.
-  // Phase 2 ("sync") is the original full-detail sync (added 2026-09-12
-  // after a real "Sync failed — check your connection" error: a single
-  // synchronous request doing one ConnectWise round-trip per item ran ~4
-  // minutes before failing, almost certainly Bluehost's execution-time
-  // limit) -- each step still processes a bounded batch, so no single HTTP
+  // Catalog sync is a four-stage queue-based start()/step() pair, revised
+  // 2026-09-13 after a two-phase version STILL failed to start ("Could not
+  // start the sync…" turned out to mean sync-start itself was timing out --
+  // even the cheap id/identifier-only catalog list calls take ~73
+  // sequential ConnectWise pages at the confirmed ~14,600-item scale, and
+  // doing that synchronously in one request hit the same execution-time
+  // limit the original 2026-09-12 fix was meant to rule out everywhere).
+  // Every stage now does at most one ConnectWise round-trip per sync-step
+  // call: 'list_agreement' and 'list_inventory' page through ConnectWise's
+  // catalog one page at a time (sync-start itself makes zero ConnectWise
+  // calls); 'filter' does one cheap /inventory-only check per Inventory
+  // candidate to find which ~603 actually have stock (confirmed-zero
+  // results are cached server-side, so this shrinks to almost nothing on
+  // later syncs); 'sync' is the original full-detail fetch. No single HTTP
   // request risks timing out no matter how large the catalog grows.
   function runSync() {
     state.syncing = true;
     state.syncMessage = 'Starting sync…';
     state.syncFilterTotal = 0;
+    state.syncFilterTotalKnown = false;
     state.syncTotal = 0;
     state.syncProcessed = 0;
     state.error = null;
@@ -168,10 +171,7 @@
         render();
         return;
       }
-      state.syncFilterTotal = r.data.total_filter_queued;
-      state.syncMessage = state.syncFilterTotal > 0
-        ? 'Checking stock: 0 of ' + state.syncFilterTotal + '…'
-        : 'Syncing 0 of ' + r.data.total_agreement + '…';
+      state.syncMessage = 'Finding recurring-protection products…';
       render();
       syncStepLoop();
     }).catch(function () {
@@ -192,7 +192,20 @@
         return;
       }
       var d = r.data;
-      if (d.phase === 'filter') {
+      if (d.phase === 'list_agreement') {
+        state.syncMessage = 'Finding recurring-protection products: ' + d.listing_totals.agreement_listed + ' found…';
+      } else if (d.phase === 'list_inventory') {
+        state.syncMessage = 'Scanning catalog: ' + d.listing_totals.inventory_listed + ' items seen, ' +
+          d.listing_totals.filter_queued + ' need a stock check…';
+      } else if (d.phase === 'filter') {
+        // The first filter-phase step we see is the moment listing just
+        // finished -- filter_totals.pending at that exact instant is the
+        // true total (nothing's been processed or errored yet), so capture
+        // it once rather than trusting a total known up front.
+        if (!state.syncFilterTotalKnown) {
+          state.syncFilterTotal = d.filter_totals.pending;
+          state.syncFilterTotalKnown = true;
+        }
         var checked = state.syncFilterTotal - d.filter_totals.pending;
         state.syncMessage = 'Checking stock: ' + checked + ' of ' + state.syncFilterTotal + '…';
       } else {

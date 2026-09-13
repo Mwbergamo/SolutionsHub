@@ -40,20 +40,39 @@
  *     catalog_items.track_inventory distinguishes the two (1 = enforce
  *     on_hand at checkout, 0 = always sellable).
  *
- * Because of that last point, the sync is a TWO-PHASE queue (added
- * 2026-09-13, replacing a single-phase version from 2026-09-12): phase
- * 'filter' does one cheap /inventory-only check per Inventory candidate to
- * find the ones with actual stock (confirmed-zero results are cached in
- * catalog_no_stock_cache so later syncs skip re-checking them -- see
- * REGISTER_NO_STOCK_RECHECK_DAYS); phase 'sync' then does one full-detail
- * fetch per Agreement item and per Inventory item the filter phase
- * promoted. Both phases are bounded-batch queues (same shape as
- * relationships/api/sync.php's much larger agreement sync) for the same
- * reason the original 2026-09-12 fix existed: doing a ConnectWise
- * round-trip per item synchronously in a single request risks Bluehost's
- * execution-time limit. app.js's "Sync from ConnectWise" calls sync-start
- * once and then sync-step repeatedly until it reports done: true, draining
- * the filter phase before the sync phase ever starts.
+ * Because of that last point, the sync is a FOUR-STAGE queue (revised
+ * 2026-09-13 after the two-phase version above STILL failed to start --
+ * "Could not start the sync — check your connection and try again" turned
+ * out to mean sync-start itself was timing out, not any per-item work: even
+ * the cheap id/identifier-only catalog list calls take ~73 sequential
+ * ConnectWise pages at the confirmed ~14,600-Inventory-candidate scale, and
+ * doing all of that synchronously inside one request hit the exact same
+ * Bluehost execution-time limit the 2026-09-12 fix was meant to rule out
+ * everywhere). Every stage below now does AT MOST ONE ConnectWise request
+ * per sync-step call, no matter how large the catalog grows:
+ *
+ *   1. 'list_agreement' -- one page (200 items) of productClass='Agreement'
+ *      per call, queued straight to phase='sync' (matches Michael's live
+ *      ConnectWise count exactly -- no stock check needed).
+ *   2. 'list_inventory' -- one page of productClass='Inventory' per call.
+ *      Each item is queued to phase='filter' UNLESS it's already in
+ *      catalog_no_stock_cache within REGISTER_NO_STOCK_RECHECK_DAYS, in
+ *      which case it's skipped entirely -- this is what keeps every sync
+ *      after the first one fast.
+ *   3. 'filter' -- one cheap /inventory-only check per Inventory candidate
+ *      from stage 2, in bounded batches. Confirmed-zero results are cached
+ *      in catalog_no_stock_cache; nonzero results are promoted to
+ *      phase='sync' with the summed total cached on the row.
+ *   4. 'sync' -- one full-detail fetch per row now in phase='sync' (all
+ *      Agreement items from stage 1, plus whatever stage 3 promoted),
+ *      upserted into catalog_items using the cached on-hand total.
+ *
+ * register_sync_meta tracks which stage/page a run is on (namespaced
+ * 'catalog_sync_*' keys) so sync-step can resume the right stage on each
+ * call. app.js's "Sync from ConnectWise" calls sync-start once (now a
+ * near-instant reset, no ConnectWise calls at all) and then sync-step
+ * repeatedly until it reports done: true, moving through the four stages
+ * in order, never interleaved.
  *
  * GET  /register/api/catalog.php?action=list[&q=search+text][&in_stock_only=1]
  *   -> { ok: true, items: [ { id, identifier, description, category_name,
@@ -61,18 +80,15 @@
  *          product_class, track_inventory, ... }, ... ] }
  *
  * GET  /register/api/catalog.php?action=sync-status
- *   -> { ok: true, filter_totals: { pending, error },
- *          sync_totals: { pending, done, error }, done, started_at }
- *
  * POST /register/api/catalog.php?action=sync-start
- *   -> { ok: true, total_agreement, total_inventory_candidates,
- *          total_filter_queued, total_skipped_cached_no_stock }
- *
  * POST /register/api/catalog.php?action=sync-step
- *   { batch_size?: int (default 20, max 50) }
- *   -> { ok: true, phase: 'filter' | 'sync', processed_this_batch,
- *          filter_totals: { pending, error },
- *          sync_totals: { pending, done, error }, done, errors: [...] }
+ *   { batch_size?: int (default 20, max 50) -- ignored during the listing
+ *     stages, which always process exactly one page per call }
+ *   -> { ok: true, phase?: 'list_agreement' | 'list_inventory' | 'filter' | 'sync',
+ *          processed_this_batch?, list_stage, listing_totals: { agreement_listed,
+ *          inventory_listed, filter_queued, skipped_cached }, filter_totals:
+ *          { pending, error }, sync_totals: { pending, done, error }, done,
+ *          errors?: [...], started_at? }
  *
  * Every action requires a signed-in retail staff account
  * (register_require_login()).
@@ -138,12 +154,8 @@ if ($action === 'sync-start') {
     if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
         register_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
     }
-    try {
-        $result = register_catalog_sync_start($pdo);
-        register_respond(200, array_merge(['ok' => true], $result));
-    } catch (RegisterConnectWiseError $e) {
-        register_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
-    }
+    $result = register_catalog_sync_start($pdo);
+    register_respond(200, array_merge(['ok' => true], $result));
 }
 
 if ($action === 'sync-step') {
@@ -168,89 +180,148 @@ register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
 const REGISTER_NO_STOCK_RECHECK_DAYS = 3;
 
 /**
- * Rebuilds the catalog sync queue for a fresh sync run. Two independent,
- * cheap id/identifier-only list calls (confirmed 2026-09-13 against real
- * ConnectWise data):
- *
- *   - productClass='Agreement' and inactiveFlag=false -- matches Michael's
- *     ConnectWise count (450) exactly. Queued straight to phase='sync' --
- *     no stock check needed, these never carry on-hand quantity.
- *   - productClass='Inventory' and inactiveFlag=false -- matches ~14,600
- *     active items, but only ~603 of those actually have on-hand stock
- *     right now (confirmed via a live diagnostic: a zero-stock item and a
- *     stocked item are both productClass='Inventory' -- there's no
- *     catalog-level field or ConnectWise list filter, including
- *     childconditions and every warehouse/bin inventory-list endpoint
- *     tried, that can tell them apart without checking each item's own
- *     /inventory sub-resource). Queued to phase='filter' UNLESS the item
- *     is already in catalog_no_stock_cache from a check within the last
- *     REGISTER_NO_STOCK_RECHECK_DAYS days, in which case it's skipped
- *     entirely -- this is what keeps every sync after the first one fast.
+ * How many items ConnectWise returns per catalog-list page during the
+ * listing stages below.
+ */
+const REGISTER_CATALOG_LIST_PAGE_SIZE = 200;
+
+/**
+ * Simple get/set helpers over register_sync_meta, namespaced under
+ * 'catalog_sync_' so sync-start can reset them all without disturbing any
+ * other key (e.g. catalog_started_at) that table might ever hold.
+ */
+function register_catalog_sync_meta_get(PDO $pdo, string $key, string $default): string
+{
+    $stmt = $pdo->prepare('SELECT value FROM register_sync_meta WHERE key = :k');
+    $stmt->execute([':k' => 'catalog_sync_' . $key]);
+    $value = $stmt->fetchColumn();
+    return $value !== false ? (string) $value : $default;
+}
+
+function register_catalog_sync_meta_set(PDO $pdo, string $key, string $value): void
+{
+    $pdo->prepare("INSERT INTO register_sync_meta (key, value) VALUES (:k, :v) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        ->execute([':k' => 'catalog_sync_' . $key, ':v' => $value]);
+}
+
+function register_catalog_sync_meta_add(PDO $pdo, string $key, int $amount): void
+{
+    $current = (int) register_catalog_sync_meta_get($pdo, $key, '0');
+    register_catalog_sync_meta_set($pdo, $key, (string) ($current + $amount));
+}
+
+/**
+ * Resets a fresh sync run. Deliberately does NOT talk to ConnectWise at
+ * all -- confirmed 2026-09-13 that even the cheap id/identifier-only
+ * catalog list calls this sync depends on require dozens of paginated
+ * ConnectWise round-trips once you account for the ~14,600 active
+ * Inventory-class candidates (pageSize 200 -> ~73 pages), and doing all of
+ * that synchronously inside one request risked exactly the kind of
+ * execution-time-limit failure ("Could not start the sync — check your
+ * connection and try again", a non-JSON timeout response, not a graceful
+ * error) that this whole queue/step architecture exists to avoid. So
+ * listing ConnectWise's catalog is now its OWN bounded, page-at-a-time
+ * stage handled by sync-step (see register_catalog_sync_list_step()) --
+ * sync-start just clears state and points the queue at page 1.
  */
 function register_catalog_sync_start(PDO $pdo): array
 {
     $pdo->exec('DELETE FROM cw_catalog_sync_queue');
+    foreach (['list_stage', 'agreement_page', 'inventory_page', 'total_agreement_listed', 'total_inventory_listed', 'total_filter_queued', 'total_skipped_cached'] as $key) {
+        $pdo->prepare('DELETE FROM register_sync_meta WHERE key = :k')->execute([':k' => 'catalog_sync_' . $key]);
+    }
+    register_catalog_sync_meta_set($pdo, 'list_stage', 'agreement');
+    register_catalog_sync_meta_set($pdo, 'agreement_page', '1');
 
-    $agreementItems = register_cw_list(
-        '/procurement/catalog',
-        "productClass='Agreement' and inactiveFlag=false",
-        ['id', 'identifier']
-    );
-    $insertSync = $pdo->prepare(
-        "INSERT INTO cw_catalog_sync_queue (cw_catalog_id, identifier, phase, status) VALUES (:id, :identifier, 'sync', 'pending')"
-    );
-    foreach ($agreementItems as $item) {
-        $cwId = (int) ($item['id'] ?? 0);
-        if ($cwId === 0) {
-            continue;
+    $pdo->prepare("INSERT INTO register_sync_meta (key, value) VALUES ('catalog_started_at', :v) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        ->execute([':v' => date('c')]);
+
+    return ['ok' => true];
+}
+
+/**
+ * One page of ConnectWise's Procurement Catalog list, for whichever
+ * listing stage is still in progress -- 'agreement' first (a handful of
+ * pages), then 'inventory' (~73 pages at the confirmed ~14,600-item scale).
+ * Each call to this function does exactly ONE ConnectWise request, so no
+ * matter how large the catalog grows, a single sync-step call can never
+ * make more than one round-trip during a listing stage.
+ *
+ * Agreement items are queued straight to phase='sync' (matches Michael's
+ * live ConnectWise count exactly -- no stock check needed, see catalog.php's
+ * header docblock). Inventory candidates are queued to phase='filter'
+ * UNLESS already in catalog_no_stock_cache within REGISTER_NO_STOCK_RECHECK_DAYS,
+ * in which case they're skipped entirely -- this is what keeps every sync
+ * after the first one fast.
+ */
+function register_catalog_sync_list_step(PDO $pdo, string $stage): array
+{
+    if ($stage === 'agreement') {
+        $page = (int) register_catalog_sync_meta_get($pdo, 'agreement_page', '1');
+        $rows = register_cw_list_page('/procurement/catalog', "productClass='Agreement' and inactiveFlag=false", ['id', 'identifier'], $page, REGISTER_CATALOG_LIST_PAGE_SIZE);
+
+        $insert = $pdo->prepare("INSERT INTO cw_catalog_sync_queue (cw_catalog_id, identifier, phase, status) VALUES (:id, :identifier, 'sync', 'pending')");
+        foreach ($rows as $item) {
+            $cwId = (int) ($item['id'] ?? 0);
+            if ($cwId === 0) {
+                continue;
+            }
+            $insert->execute([':id' => $cwId, ':identifier' => (string) ($item['identifier'] ?? '')]);
         }
-        $insertSync->execute([':id' => $cwId, ':identifier' => (string) ($item['identifier'] ?? '')]);
+        register_catalog_sync_meta_add($pdo, 'total_agreement_listed', count($rows));
+
+        if (count($rows) < REGISTER_CATALOG_LIST_PAGE_SIZE) {
+            register_catalog_sync_meta_set($pdo, 'list_stage', 'inventory');
+            register_catalog_sync_meta_set($pdo, 'inventory_page', '1');
+        } else {
+            register_catalog_sync_meta_set($pdo, 'agreement_page', (string) ($page + 1));
+        }
+
+        return array_merge(['phase' => 'list_agreement', 'processed_this_batch' => count($rows)], register_catalog_sync_totals($pdo));
     }
 
-    $inventoryItems = register_cw_list(
-        '/procurement/catalog',
-        "productClass='Inventory' and inactiveFlag=false",
-        ['id', 'identifier']
-    );
-    $noStockCache = $pdo->query('SELECT cw_catalog_id, checked_at FROM catalog_no_stock_cache')
-        ->fetchAll(PDO::FETCH_KEY_PAIR);
-    $staleBefore = date('c', strtotime('-' . REGISTER_NO_STOCK_RECHECK_DAYS . ' days'));
+    // $stage === 'inventory'
+    $page = (int) register_catalog_sync_meta_get($pdo, 'inventory_page', '1');
+    $rows = register_cw_list_page('/procurement/catalog', "productClass='Inventory' and inactiveFlag=false", ['id', 'identifier'], $page, REGISTER_CATALOG_LIST_PAGE_SIZE);
 
-    $insertFilter = $pdo->prepare(
-        "INSERT INTO cw_catalog_sync_queue (cw_catalog_id, identifier, phase, status) VALUES (:id, :identifier, 'filter', 'pending')"
-    );
-    $filterQueued = 0;
-    $skippedCached = 0;
-    foreach ($inventoryItems as $item) {
+    $noStockCache = $pdo->query('SELECT cw_catalog_id, checked_at FROM catalog_no_stock_cache')->fetchAll(PDO::FETCH_KEY_PAIR);
+    $staleBefore = date('c', strtotime('-' . REGISTER_NO_STOCK_RECHECK_DAYS . ' days'));
+    $insertFilter = $pdo->prepare("INSERT INTO cw_catalog_sync_queue (cw_catalog_id, identifier, phase, status) VALUES (:id, :identifier, 'filter', 'pending')");
+
+    $queued = 0;
+    $skipped = 0;
+    foreach ($rows as $item) {
         $cwId = (int) ($item['id'] ?? 0);
         if ($cwId === 0) {
             continue;
         }
         $checkedAt = $noStockCache[$cwId] ?? null;
         if ($checkedAt !== null && $checkedAt > $staleBefore) {
-            $skippedCached++;
+            $skipped++;
             continue;
         }
         $insertFilter->execute([':id' => $cwId, ':identifier' => (string) ($item['identifier'] ?? '')]);
-        $filterQueued++;
+        $queued++;
+    }
+    register_catalog_sync_meta_add($pdo, 'total_inventory_listed', count($rows));
+    register_catalog_sync_meta_add($pdo, 'total_filter_queued', $queued);
+    register_catalog_sync_meta_add($pdo, 'total_skipped_cached', $skipped);
+
+    if (count($rows) < REGISTER_CATALOG_LIST_PAGE_SIZE) {
+        register_catalog_sync_meta_set($pdo, 'list_stage', 'items');
+    } else {
+        register_catalog_sync_meta_set($pdo, 'inventory_page', (string) ($page + 1));
     }
 
-    $pdo->prepare("INSERT OR REPLACE INTO register_sync_meta (key, value) VALUES ('catalog_started_at', :v)")
-        ->execute([':v' => date('c')]);
-
-    return [
-        'total_agreement' => count($agreementItems),
-        'total_inventory_candidates' => count($inventoryItems),
-        'total_filter_queued' => $filterQueued,
-        'total_skipped_cached_no_stock' => $skippedCached,
-    ];
+    return array_merge(['phase' => 'list_inventory', 'processed_this_batch' => count($rows)], register_catalog_sync_totals($pdo));
 }
 
 /**
  * Processes up to $batchSize queue rows for whichever phase still has
- * pending work -- filter-phase rows are always drained first, so a
- * caller looping this until done:true sees a clean "checking stock" phase
- * followed by a "syncing catalog" phase, never an interleaved mix.
+ * pending work -- the catalog-listing stages above always run first (see
+ * register_catalog_sync_list_step()), then filter-phase rows, then
+ * sync-phase rows, so a caller looping this until done:true sees a clean
+ * sequence of phases, never an interleaved mix.
  *
  * Filter phase: one cheap /inventory-only call per Inventory candidate.
  * Zero on-hand -> recorded in catalog_no_stock_cache and dropped from the
@@ -268,6 +339,11 @@ function register_catalog_sync_start(PDO $pdo): array
  */
 function register_catalog_sync_step(PDO $pdo, int $batchSize = 20): array
 {
+    $listStage = register_catalog_sync_meta_get($pdo, 'list_stage', 'items');
+    if ($listStage === 'agreement' || $listStage === 'inventory') {
+        return register_catalog_sync_list_step($pdo, $listStage);
+    }
+
     $pendingFilter = $pdo->prepare("SELECT * FROM cw_catalog_sync_queue WHERE phase = 'filter' AND status = 'pending' ORDER BY cw_catalog_id LIMIT :n");
     $pendingFilter->bindValue(':n', $batchSize, PDO::PARAM_INT);
     $pendingFilter->execute();
@@ -380,7 +456,10 @@ function register_catalog_sync_step(PDO $pdo, int $batchSize = 20): array
 
 /**
  * Current queue state, broken out by phase, plus an overall `done` flag
- * (true only once both phases have nothing left pending).
+ * (true only once catalog listing has finished AND both the filter and
+ * sync phases have nothing left pending -- listing must be checked too,
+ * since right after sync-start every queue count is legitimately zero even
+ * though there's a whole catalog left to list).
  */
 function register_catalog_sync_totals(PDO $pdo): array
 {
@@ -398,10 +477,18 @@ function register_catalog_sync_totals(PDO $pdo): array
         'done' => (int) ($syncCounts['done'] ?? 0),
         'error' => (int) ($syncCounts['error'] ?? 0),
     ];
+    $listStage = register_catalog_sync_meta_get($pdo, 'list_stage', 'items');
 
     return [
+        'list_stage' => $listStage,
+        'listing_totals' => [
+            'agreement_listed' => (int) register_catalog_sync_meta_get($pdo, 'total_agreement_listed', '0'),
+            'inventory_listed' => (int) register_catalog_sync_meta_get($pdo, 'total_inventory_listed', '0'),
+            'filter_queued' => (int) register_catalog_sync_meta_get($pdo, 'total_filter_queued', '0'),
+            'skipped_cached' => (int) register_catalog_sync_meta_get($pdo, 'total_skipped_cached', '0'),
+        ],
         'filter_totals' => $filterTotals,
         'sync_totals' => $syncTotals,
-        'done' => $filterTotals['pending'] === 0 && $syncTotals['pending'] === 0,
+        'done' => $listStage === 'items' && $filterTotals['pending'] === 0 && $syncTotals['pending'] === 0,
     ];
 }

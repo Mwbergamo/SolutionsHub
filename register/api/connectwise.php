@@ -125,9 +125,38 @@ function register_cw_request(string $path, array $query = [], string $method = '
 }
 
 /**
+ * Fetches exactly ONE page of a ConnectWise list endpoint -- no internal
+ * looping. Added 2026-09-13 alongside catalog.php's list_agreement/
+ * list_inventory sync stages: looping through every page of a ~14,600-item
+ * candidate list (via register_cw_list() below) inside a single request is
+ * exactly the kind of unbounded synchronous ConnectWise work that caused
+ * the 2026-09-12 sync-timeout bug in the first place, just moved one level
+ * up (from per-item calls to per-page calls). Callers that need a large
+ * list now fetch it one page per request/step instead, same "never do more
+ * than a small bounded amount of ConnectWise work in one PHP request"
+ * discipline as the rest of this sync.
+ */
+function register_cw_list_page(string $path, string $conditions, array $fields, int $page, int $pageSize = 200): array
+{
+    return register_cw_request($path, [
+        'conditions' => $conditions,
+        'fields' => implode(',', $fields),
+        'pageSize' => (string) $pageSize,
+        'page' => (string) $page,
+    ]);
+}
+
+/**
  * Pages through a ConnectWise list endpoint and returns every row as a
  * single flat array. Same shape/reasoning as
  * relationships_cw_list() in relationships/api/connectwise.php.
+ *
+ * NOTE: looping through many pages inside one request risks the same
+ * execution-time-limit failure register_cw_list_page() above was added to
+ * avoid -- prefer that function (one page per call, driven by a bounded
+ * queue/step loop) for any list that could grow into dozens of pages, e.g.
+ * ConnectWise's Procurement Catalog. Kept here for small, bounded lists
+ * where a handful of pages is genuinely safe.
  */
 function register_cw_list(string $path, string $conditions, array $fields, int $pageSize = 200): array
 {
