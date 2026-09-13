@@ -40,6 +40,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
 
+register_install_error_handlers();
+
 $pdo = register_db();
 $user = register_require_login($pdo);
 

@@ -82,7 +82,7 @@
  * GET  /register/api/catalog.php?action=sync-status
  * POST /register/api/catalog.php?action=sync-start
  * POST /register/api/catalog.php?action=sync-step
- *   { batch_size?: int (default 20, max 50) -- ignored during the listing
+ *   { batch_size?: int (default 10, max 25) -- ignored during the listing
  *     stages, which always process exactly one page per call }
  *   -> { ok: true, phase?: 'list_agreement' | 'list_inventory' | 'filter' | 'sync',
  *          processed_this_batch?, list_stage, listing_totals: { agreement_listed,
@@ -98,6 +98,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/connectwise.php';
+
+register_install_error_handlers();
 
 $pdo = register_db();
 register_require_login($pdo);
@@ -163,8 +165,14 @@ if ($action === 'sync-step') {
         register_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
     }
     $data = register_read_json_body();
-    $batchSize = (int) ($data['batch_size'] ?? 20);
-    $batchSize = max(1, min(50, $batchSize));
+    // Lowered from 20/50 to 10/25 on 2026-09-13 as extra headroom after a
+    // "Sync failed partway through" failure -- each filter/sync-phase item
+    // still costs one real ConnectWise round-trip, so a smaller batch
+    // means less time any single request spends doing synchronous
+    // ConnectWise work, at the cost of a few more (cheap, same-server)
+    // sync-step round-trips overall.
+    $batchSize = (int) ($data['batch_size'] ?? 10);
+    $batchSize = max(1, min(25, $batchSize));
     $result = register_catalog_sync_step($pdo, $batchSize);
     register_respond(200, array_merge(['ok' => true], $result));
 }

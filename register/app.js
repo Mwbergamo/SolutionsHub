@@ -182,9 +182,25 @@
     });
   }
 
-  function syncStepLoop() {
-    apiPost('api/catalog.php?action=sync-step', { batch_size: 20 }).then(function (r) {
+  // A single sync-step call is retried up to this many times (with a short
+  // backoff) before the sync gives up and surfaces an error -- added
+  // 2026-09-13 after a "Sync failed partway through" mid-run failure. Each
+  // step is safe to retry as-is: the queue/no-stock-cache state lives
+  // server-side, so re-calling sync-step just resumes wherever the last
+  // (possibly failed) attempt left off, rather than losing progress or
+  // double-processing anything.
+  var REGISTER_SYNC_STEP_MAX_RETRIES = 3;
+
+  function syncStepLoop(retryCount) {
+    retryCount = retryCount || 0;
+    apiPost('api/catalog.php?action=sync-step', { batch_size: 10 }).then(function (r) {
       if (!r.data || !r.data.ok) {
+        if (retryCount < REGISTER_SYNC_STEP_MAX_RETRIES) {
+          state.syncMessage = (state.syncMessage || 'Syncing…').replace(/ \(retrying…\)$/, '') + ' (retrying…)';
+          render();
+          setTimeout(function () { syncStepLoop(retryCount + 1); }, 1000 * (retryCount + 1));
+          return;
+        }
         state.syncing = false;
         state.syncMessage = null;
         state.error = (r.data && r.data.error) || 'Sync failed partway through.';
@@ -225,6 +241,12 @@
       }
       render();
     }).catch(function () {
+      if (retryCount < REGISTER_SYNC_STEP_MAX_RETRIES) {
+        state.syncMessage = (state.syncMessage || 'Syncing…').replace(/ \(retrying…\)$/, '') + ' (retrying…)';
+        render();
+        setTimeout(function () { syncStepLoop(retryCount + 1); }, 1000 * (retryCount + 1));
+        return;
+      }
       state.syncing = false;
       state.syncMessage = null;
       state.error = 'Sync failed partway through — check your connection and try again.';
