@@ -230,6 +230,61 @@ if ($action === 'probe-inventory-list-endpoint') {
     register_respond(200, ['ok' => true, 'attempts' => $attempts]);
 }
 
+// TEMPORARY read-only diagnostic (2026-09-13, round 3) -- round 2 showed
+// productClass='Inventory' vs 'Agreement' isn't the "On-Hand" distinction
+// Michael means: both a zero-stock item (Patch Cable) and a stocked item
+// (UK703E, an HP warranty SKU CBT tracks like inventory) are
+// productClass='Inventory' -- the only real difference is their actual
+// summed on-hand quantity, which lives in the per-item /inventory
+// sub-resource, not on the catalog item itself. This tests whether
+// ConnectWise's `childconditions` param can filter the catalog list by that
+// child collection directly (avoiding a per-item call for all 14,573
+// candidates just to find the ~603 that are actually stocked). Read-only,
+// no writes. Delete once resolved.
+if ($action === 'probe-childconditions') {
+    $candidates = [
+        'childcondition_onhand_only' => ['childconditions' => 'inventory/onHand>0'],
+        'childcondition_onhand_plus_class' => [
+            'conditions' => "productClass='Inventory' and inactiveFlag=false",
+            'childconditions' => 'inventory/onHand>0',
+        ],
+    ];
+    $results = [];
+    foreach ($candidates as $label => $query) {
+        try {
+            $resp = register_cw_request('/procurement/catalog/count', $query);
+            $results[$label] = ['query' => $query, 'count' => $resp['count'] ?? $resp];
+        } catch (Throwable $e) {
+            $results[$label] = ['query' => $query, 'error' => $e->getMessage()];
+        }
+    }
+    register_respond(200, ['ok' => true, 'results' => $results]);
+}
+
+// TEMPORARY read-only diagnostic (2026-09-13, round 3) -- alternative to
+// childconditions: CBT only has 2 warehouses/bins (per round 2's
+// /procurement/warehouses probe), so if a bin-level "list what's stocked in
+// this bin" endpoint exists, walking 2 bins is far cheaper than checking
+// 14,573 catalog items one at a time. Read-only, no writes. Delete once
+// resolved.
+if ($action === 'probe-bin-inventory') {
+    $attempts = [];
+    $paths = [
+        '/procurement/warehousebins/1/inventory',
+        '/procurement/warehouses/1/inventory',
+        '/procurement/warehouses/1/bins/1/inventory',
+    ];
+    foreach ($paths as $path) {
+        try {
+            $resp = register_cw_request($path, ['pageSize' => '3']);
+            $attempts[$path] = ['ok' => true, 'sample_count' => count($resp), 'sample' => $resp];
+        } catch (Throwable $e) {
+            $attempts[$path] = ['ok' => false, 'error' => $e->getMessage()];
+        }
+    }
+    register_respond(200, ['ok' => true, 'attempts' => $attempts]);
+}
+
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
 
 /**
