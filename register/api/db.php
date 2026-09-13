@@ -63,10 +63,19 @@ function register_migrate(PDO $pdo): void
     // productClass/inactiveFlag, and on-hand quantity is NOT one of those
     // fields -- it's the sum of `onHand` across every row returned by
     // /procurement/catalog/{id}/inventory (one row per warehouse/bin).
-    // Only productClass='Inventory' items are synced at all (see
-    // catalog-sync.php) -- that's what separates a real physical item CBT
-    // stocks from a recurring/service line item found on agreements, per
-    // Michael's "On Hand" distinction.
+    //
+    // Two productClass values are synced (see catalog.php):
+    //   - 'Inventory' -- a real physical item CBT stocks. track_inventory=1,
+    //     on_hand is the real summed quantity, checkout enforces it.
+    //   - 'Agreement' -- added 2026-09-13 per Michael, confirmed via a live
+    //     probe (register/api/catalog.php's now-removed
+    //     ?action=probe-agreement-class): recurring-protection/managed-
+    //     service products (e.g. "Basic Managed Anti-Spam", "Managed
+    //     Backup") that retail staff can ring up at time of sale. Per
+    //     Michael, this rings up as a plain line item on the receipt only
+    //     -- it does NOT create or attach a real ConnectWise Agreement, so
+    //     there's no physical stock to track: track_inventory=0, on_hand is
+    //     unused/always 0, checkout never limits quantity for these.
     $pdo->exec(<<<'SQL'
         CREATE TABLE IF NOT EXISTS catalog_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,9 +91,13 @@ function register_migrate(PDO $pdo): void
             on_hand REAL NOT NULL DEFAULT 0,
             taxable_flag INTEGER NOT NULL DEFAULT 1,
             inactive_flag INTEGER NOT NULL DEFAULT 0,
+            product_class TEXT NOT NULL DEFAULT 'Inventory',
+            track_inventory INTEGER NOT NULL DEFAULT 1,
             synced_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
     SQL);
+    register_add_column_if_missing($pdo, 'catalog_items', 'product_class', "TEXT NOT NULL DEFAULT 'Inventory'");
+    register_add_column_if_missing($pdo, 'catalog_items', 'track_inventory', 'INTEGER NOT NULL DEFAULT 1');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_catalog_items_identifier ON catalog_items(identifier COLLATE NOCASE)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_catalog_items_on_hand ON catalog_items(on_hand)');
 
@@ -158,4 +171,21 @@ function register_migrate(PDO $pdo): void
             value TEXT
         )
     SQL);
+}
+
+/**
+ * SQLite has no "ADD COLUMN IF NOT EXISTS" -- check PRAGMA table_info first
+ * so re-running migrate() on a database that already has the column (every
+ * request after the first deploy of a schema change) is a no-op instead of
+ * an error. Same helper as relationships/api/db.php.
+ */
+function register_add_column_if_missing(PDO $pdo, string $table, string $column, string $type): void
+{
+    $stmt = $pdo->query('PRAGMA table_info(' . $table . ')');
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $col) {
+        if ($col['name'] === $column) {
+            return;
+        }
+    }
+    $pdo->exec("ALTER TABLE $table ADD COLUMN $column $type");
 }

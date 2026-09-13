@@ -105,7 +105,7 @@ if ($action === 'create') {
     // catalog_item_id + quantity. Also re-checks on_hand here (not just in
     // the UI) so two registers ringing up the same last unit at once can't
     // both succeed.
-    $lookup = $pdo->prepare('SELECT id, identifier, description, price, on_hand FROM catalog_items WHERE id = :id');
+    $lookup = $pdo->prepare('SELECT id, identifier, description, price, on_hand, track_inventory FROM catalog_items WHERE id = :id');
     $lineItems = [];
     $subtotal = 0.0;
 
@@ -121,7 +121,12 @@ if ($action === 'create') {
         if ($row === false) {
             register_respond(400, ['ok' => false, 'error' => 'One of the items in this sale is no longer in the catalog — remove it and try again.']);
         }
-        if ($quantity > (float) $row['on_hand']) {
+        $trackInventory = (int) $row['track_inventory'] === 1;
+        // Agreement-class items (recurring-protection products rung up as
+        // a plain line item, per Michael -- no real ConnectWise Agreement
+        // is created) have no physical stock, so there's nothing to check
+        // or decrement for them.
+        if ($trackInventory && $quantity > (float) $row['on_hand']) {
             register_respond(400, [
                 'ok' => false,
                 'error' => $row['identifier'] . ' only has ' . rtrim(rtrim((string) $row['on_hand'], '0'), '.') . ' on hand.',
@@ -138,6 +143,7 @@ if ($action === 'create') {
             'unit_price' => $unitPrice,
             'quantity' => $quantity,
             'line_total' => $lineTotal,
+            'track_inventory' => $trackInventory,
         ];
     }
 
@@ -178,7 +184,9 @@ if ($action === 'create') {
                 ':quantity' => $li['quantity'],
                 ':line_total' => $li['line_total'],
             ]);
-            $decrement->execute([':qty' => $li['quantity'], ':id' => $li['catalog_item_id']]);
+            if ($li['track_inventory']) {
+                $decrement->execute([':qty' => $li['quantity'], ':id' => $li['catalog_item_id']]);
+            }
         }
 
         $pdo->commit();

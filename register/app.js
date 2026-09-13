@@ -262,7 +262,8 @@
     if (!item) return;
     var existing = state.cart.filter(function (c) { return c.catalog_item_id === catalogItemId; })[0];
     var currentQty = existing ? existing.quantity : 0;
-    if (currentQty + 1 > item.on_hand) {
+    var trackInventory = item.track_inventory !== 0;
+    if (trackInventory && currentQty + 1 > item.on_hand) {
       state.error = 'Only ' + fmtQty(item.on_hand) + ' of "' + item.identifier + '" on hand.';
       render();
       return;
@@ -276,7 +277,8 @@
         description: item.description,
         unit_price: item.price,
         quantity: 1,
-        on_hand: item.on_hand
+        on_hand: item.on_hand,
+        track_inventory: trackInventory
       });
     }
     state.error = null;
@@ -288,7 +290,7 @@
     qty = Math.max(0, Math.floor(Number(qty) || 0));
     var line = state.cart.filter(function (c) { return c.catalog_item_id === catalogItemId; })[0];
     if (!line) return;
-    if (qty > line.on_hand) {
+    if (line.track_inventory && qty > line.on_hand) {
       qty = line.on_hand;
     }
     if (qty === 0) {
@@ -462,13 +464,19 @@
     }
     var html = '<div class="catalog-grid">';
     state.catalogItems.forEach(function (item) {
-      var outOfStock = item.on_hand <= 0;
+      // Agreement-class items (recurring-protection products, e.g.
+      // extended warranty / managed services -- added 2026-09-13) have no
+      // physical stock at all: never "out of stock", no on-hand count to
+      // show, badged instead so staff can tell them apart from a stocked
+      // product at a glance.
+      var isService = item.track_inventory === 0;
+      var outOfStock = !isService && item.on_hand <= 0;
       html += '<div class="catalog-card' + (outOfStock ? ' out-of-stock' : '') + '" ' + (outOfStock ? '' : 'data-action="add-to-cart" data-id="' + item.id + '"') + '>' +
-        '<div class="catalog-card-name">' + escapeHtml(item.identifier) + '</div>' +
+        '<div class="catalog-card-name">' + escapeHtml(item.identifier) + (isService ? ' <span class="catalog-card-badge">Protection Plan</span>' : '') + '</div>' +
         (item.description ? '<div class="catalog-card-desc">' + escapeHtml(item.description) + '</div>' : '') +
         '<div class="catalog-card-footer">' +
           '<span class="catalog-card-price">' + fmtMoney(item.price) + '</span>' +
-          '<span class="catalog-card-stock' + (outOfStock ? ' zero' : '') + '">' + (outOfStock ? 'Out of stock' : fmtQty(item.on_hand) + ' on hand') + '</span>' +
+          (isService ? '' : '<span class="catalog-card-stock' + (outOfStock ? ' zero' : '') + '">' + (outOfStock ? 'Out of stock' : fmtQty(item.on_hand) + ' on hand') + '</span>') +
         '</div>' +
       '</div>';
     });
