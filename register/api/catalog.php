@@ -285,6 +285,51 @@ if ($action === 'probe-bin-inventory') {
     register_respond(200, ['ok' => true, 'attempts' => $attempts]);
 }
 
+// TEMPORARY read-only diagnostic (2026-09-13, round 4) -- neither
+// childconditions nor a bin-level inventory endpoint exist, so ConnectWise
+// gives us no server-side way to filter the catalog list by on-hand status
+// directly -- ruling that out. Before committing to a two-phase sync (a
+// cheap /inventory-only scan of all 14,573 Inventory-class items to build a
+// short list, then a full sync of just that short list), this settles one
+// remaining question: does a zero-on-hand item like "Patch Cable" return an
+// EMPTY /inventory array (never assigned to a warehouse/bin at all), or a
+// non-empty array whose onHand rows just sum to zero (assigned, but
+// currently out of stock)? That distinguishes "item has a warehouse/bin
+// assignment at all" from "current on-hand happens to be > 0" -- either
+// could be what Michael's ConnectWise "Inventory Management" screen (whose
+// own saved view uses a trivial "On Hand >= 0" filter -- true for any
+// non-negative amount) is really keying off of. Read-only, no writes.
+// Delete once resolved.
+if ($action === 'probe-raw-inventory-rows') {
+    $out = [];
+    foreach (['zero_on_hand_743_patch_cable' => 743, 'nonzero_on_hand_833_uk703e' => 833] as $label => $cwId) {
+        try {
+            $out[$label] = register_cw_request('/procurement/catalog/' . $cwId . '/inventory');
+        } catch (Throwable $e) {
+            $out[$label . '_error'] = $e->getMessage();
+        }
+    }
+    register_respond(200, ['ok' => true, 'data' => $out]);
+}
+
+// TEMPORARY read-only diagnostic (2026-09-13, round 4) -- sanity-checks the
+// ~4% (603 of 14,573) stocked-item ratio Michael's numbers imply, against
+// what's already landed locally from the (oversized, not-yet-fixed) sync
+// that ran partway before being stopped. Read-only, no writes to
+// ConnectWise; only reads this app's own already-synced local data. Delete
+// once resolved.
+if ($action === 'probe-local-onhand-stats') {
+    $stats = $pdo->query(
+        "SELECT
+            COUNT(*) FILTER (WHERE product_class = 'Inventory') AS inventory_total,
+            COUNT(*) FILTER (WHERE product_class = 'Inventory' AND on_hand > 0) AS inventory_nonzero,
+            COUNT(*) FILTER (WHERE product_class = 'Inventory' AND on_hand = 0) AS inventory_zero,
+            COUNT(*) FILTER (WHERE product_class = 'Agreement') AS agreement_total
+         FROM catalog_items"
+    )->fetch(PDO::FETCH_ASSOC);
+    register_respond(200, ['ok' => true, 'stats' => $stats]);
+}
+
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
 
 /**
