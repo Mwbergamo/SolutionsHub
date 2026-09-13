@@ -88,7 +88,7 @@
  *          processed_this_batch?, list_stage, listing_totals: { agreement_listed,
  *          inventory_listed, filter_queued, skipped_cached }, filter_totals:
  *          { pending, error }, sync_totals: { pending, done, error }, done,
- *          errors?: [...], started_at? }
+ *          errors?: [...], started_at?, elapsed_ms }
  *
  * Every action requires a signed-in retail staff account
  * (register_require_login()).
@@ -126,6 +126,52 @@ const REGISTER_NO_STOCK_RECHECK_DAYS = 3;
  * listing stages below.
  */
 const REGISTER_CATALOG_LIST_PAGE_SIZE = 200;
+
+/**
+ * Added 2026-09-13 ("part 3", after a real-world sync still failed with the
+ * generic "Sync failed partway through — check your connection and try
+ * again" message around record ~2600, well past both the earlier
+ * sync-start-timeout and const-hoisting bugs). That message only appears
+ * client-side when fetch()/response.json() itself rejects -- i.e. the HTTP
+ * response never came back as valid JSON at all, which happens when a
+ * hosting-level gateway/proxy kills a request that's taking too long,
+ * before this app's own register_install_error_handlers() safety net ever
+ * gets a chance to run and return a real error. The filter and sync phases
+ * each make one live ConnectWise call PER ITEM in a batch, sequentially, at
+ * ConnectWise's own — often variable — response time, so a single slow
+ * call was enough to push an otherwise-fine batch over that outside limit.
+ *
+ * Fix has two parts, both here and in connectwise.php:
+ *   1. Each per-item ConnectWise call in the loops below now uses a much
+ *      shorter cURL timeout (REGISTER_CW_ITEM_TIMEOUT_SECONDS) than
+ *      register_cw_request()'s 60s default, so one hung/slow item fails
+ *      fast (and is simply retried on a later sync-step, same as any other
+ *      per-item error) instead of silently eating most of a request's
+ *      available time.
+ *   2. Each loop also tracks its own wall-clock time and stops early --
+ *      returning whatever it already finished -- once
+ *      REGISTER_SYNC_STEP_TIME_BUDGET_SECONDS has elapsed, always
+ *      completing at least one item first so a call slower than the budget
+ *      still makes forward progress. This bounds a sync-step request's
+ *      worst-case runtime by wall time, not by guessing at a safe item
+ *      count -- batch_size (still accepted, still capped at 25) now really
+ *      just sets an upper limit for a fast run, not the primary safety net.
+ *
+ * Together, a single sync-step request should finish in well under 30s in
+ * the worst realistic case (budget + one item's own timeout), comfortably
+ * inside typical shared-hosting gateway limits, regardless of how many
+ * items batch_size allows or how slow ConnectWise is being that moment.
+ */
+const REGISTER_CW_ITEM_TIMEOUT_SECONDS = 12;
+const REGISTER_CW_ITEM_CONNECT_TIMEOUT_SECONDS = 4;
+const REGISTER_SYNC_STEP_TIME_BUDGET_SECONDS = 8;
+
+// Defensive backstop only -- the real risk this bug fix targets is a
+// hosting-level gateway/proxy timeout this setting has no control over,
+// but there's no reason to also risk PHP's own limit (some shared-hosting
+// defaults are as low as 30s) cutting a request short before the time
+// budget above gets a chance to return cleanly.
+@ini_set('max_execution_time', '55');
 
 $pdo = register_db();
 register_require_login($pdo);
@@ -199,7 +245,14 @@ if ($action === 'sync-step') {
     // sync-step round-trips overall.
     $batchSize = (int) ($data['batch_size'] ?? 10);
     $batchSize = max(1, min(25, $batchSize));
+    // elapsed_ms is diagnostic only (added 2026-09-13 alongside the
+    // per-step time budget) -- if a "check your connection" failure ever
+    // recurs, whatever elapsed_ms the LAST successful step reported (the
+    // browser console/network tab, or a future server-side log of it) is a
+    // real data point instead of another guess.
+    $stepStartedAt = microtime(true);
     $result = register_catalog_sync_step($pdo, $batchSize);
+    $result['elapsed_ms'] = (int) round((microtime(true) - $stepStartedAt) * 1000);
     register_respond(200, array_merge(['ok' => true], $result));
 }
 
@@ -381,10 +434,19 @@ function register_catalog_sync_step(PDO $pdo, int $batchSize = 20): array
              ON CONFLICT(cw_catalog_id) DO UPDATE SET checked_at = excluded.checked_at, identifier = excluded.identifier"
         );
 
+        $batchStartedAt = microtime(true);
+
         foreach ($filterRows as $row) {
             $cwId = (int) $row['cw_catalog_id'];
             try {
-                $inventoryRows = register_cw_request('/procurement/catalog/' . $cwId . '/inventory');
+                $inventoryRows = register_cw_request(
+                    '/procurement/catalog/' . $cwId . '/inventory',
+                    [],
+                    'GET',
+                    null,
+                    REGISTER_CW_ITEM_TIMEOUT_SECONDS,
+                    REGISTER_CW_ITEM_CONNECT_TIMEOUT_SECONDS
+                );
                 $onHand = 0.0;
                 foreach ($inventoryRows as $invRow) {
                     $onHand += (float) ($invRow['onHand'] ?? 0);
@@ -400,6 +462,15 @@ function register_catalog_sync_step(PDO $pdo, int $batchSize = 20): array
                 $errors[] = ['cw_catalog_id' => $cwId, 'identifier' => $row['identifier'], 'phase' => 'filter', 'error' => $e->getMessage()];
             }
             $processed++;
+
+            // Stop early once this call's own time budget is spent -- see
+            // REGISTER_SYNC_STEP_TIME_BUDGET_SECONDS's docblock above.
+            // Always finishes the item already in flight (accounted for by
+            // checking AFTER incrementing $processed) so one slow-but-under-
+            // its-own-timeout item can't cause a batch of zero progress.
+            if ((microtime(true) - $batchStartedAt) >= REGISTER_SYNC_STEP_TIME_BUDGET_SECONDS) {
+                break;
+            }
         }
 
         return array_merge(['phase' => 'filter', 'processed_this_batch' => $processed, 'errors' => $errors], register_catalog_sync_totals($pdo));
@@ -436,10 +507,19 @@ function register_catalog_sync_step(PDO $pdo, int $batchSize = 20): array
             synced_at = excluded.synced_at'
     );
 
+    $batchStartedAt = microtime(true);
+
     foreach ($syncRows as $row) {
         $cwId = (int) $row['cw_catalog_id'];
         try {
-            $item = register_cw_request('/procurement/catalog/' . $cwId);
+            $item = register_cw_request(
+                '/procurement/catalog/' . $cwId,
+                [],
+                'GET',
+                null,
+                REGISTER_CW_ITEM_TIMEOUT_SECONDS,
+                REGISTER_CW_ITEM_CONNECT_TIMEOUT_SECONDS
+            );
             $productClass = (string) ($item['productClass'] ?? 'Inventory');
             $trackInventory = $productClass === 'Inventory';
             $onHand = $trackInventory ? (float) ($row['cached_on_hand'] ?? 0) : 0.0;
@@ -469,6 +549,10 @@ function register_catalog_sync_step(PDO $pdo, int $batchSize = 20): array
             $errors[] = ['cw_catalog_id' => $cwId, 'identifier' => $row['identifier'], 'phase' => 'sync', 'error' => $e->getMessage()];
         }
         $processed++;
+
+        if ((microtime(true) - $batchStartedAt) >= REGISTER_SYNC_STEP_TIME_BUDGET_SECONDS) {
+            break;
+        }
     }
 
     return array_merge(['phase' => 'sync', 'processed_this_batch' => $processed, 'errors' => $errors], register_catalog_sync_totals($pdo));

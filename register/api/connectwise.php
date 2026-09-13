@@ -59,11 +59,30 @@ function register_cw_config(): array
  * relative to the v3.0 apis root, e.g. "/procurement/catalog". $query is a
  * plain key => value array (this function handles urlencoding).
  *
+ * $timeoutSeconds/$connectTimeoutSeconds default to a generous 60/15 --
+ * fine for the small number of calls most callers make. catalog.php's
+ * sync-step passes much tighter values for its per-item filter/sync calls
+ * (added 2026-09-13 -- see catalog.php's "part 3" bug-fix note): a sync
+ * batch makes several of these calls back-to-back inside one PHP request,
+ * so a single slow/hung ConnectWise call at the default 60s timeout could
+ * by itself push that request past Bluehost's own front-end/gateway
+ * timeout -- which kills the connection before PHP's own error handlers
+ * ever get a chance to run, so the browser sees a dropped/non-JSON
+ * response and reports a generic "check your connection" failure instead
+ * of a real error. Keeping each individual call short-leashed is what
+ * actually bounds a batch's worst-case wall time, not batch size alone.
+ *
  * Returns the decoded JSON body (array). Throws RegisterConnectWiseError on
  * any transport failure, non-2xx response, or malformed JSON body.
  */
-function register_cw_request(string $path, array $query = [], string $method = 'GET', ?array $jsonBody = null): array
-{
+function register_cw_request(
+    string $path,
+    array $query = [],
+    string $method = 'GET',
+    ?array $jsonBody = null,
+    int $timeoutSeconds = 60,
+    int $connectTimeoutSeconds = 15
+): array {
     $config = register_cw_config();
     $base = rtrim((string) $config['base_url'], '/') . '/v4_6_release/apis/3.0';
     $url = $base . $path;
@@ -88,8 +107,8 @@ function register_cw_request(string $path, array $query = [], string $method = '
     $opts = [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_HTTPHEADER => $headers,
-        CURLOPT_TIMEOUT => 60,
-        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_TIMEOUT => $timeoutSeconds,
+        CURLOPT_CONNECTTIMEOUT => $connectTimeoutSeconds,
         CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_SSL_VERIFYHOST => 2,
     ];
@@ -138,12 +157,24 @@ function register_cw_request(string $path, array $query = [], string $method = '
  */
 function register_cw_list_page(string $path, string $conditions, array $fields, int $page, int $pageSize = 200): array
 {
-    return register_cw_request($path, [
-        'conditions' => $conditions,
-        'fields' => implode(',', $fields),
-        'pageSize' => (string) $pageSize,
-        'page' => (string) $page,
-    ]);
+    return register_cw_request(
+        $path,
+        [
+            'conditions' => $conditions,
+            'fields' => implode(',', $fields),
+            'pageSize' => (string) $pageSize,
+            'page' => (string) $page,
+        ],
+        'GET',
+        null,
+        // A page fetch is the only ConnectWise call a listing-stage
+        // sync-step makes, so it alone determines that request's wall
+        // time -- tighter than the 60s default, still generous for a
+        // ~200-row page, and safely under a typical hosting gateway
+        // timeout. See register_cw_request()'s docblock.
+        30,
+        8
+    );
 }
 
 /**
