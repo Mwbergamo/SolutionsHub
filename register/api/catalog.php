@@ -101,6 +101,32 @@ require_once __DIR__ . '/connectwise.php';
 
 register_install_error_handlers();
 
+// These MUST be declared before the action-dispatch block below runs --
+// added 2026-09-13 after "Undefined constant" surfaced (via the new error
+// handler above) as the real cause of what had looked like two separate
+// sync timeouts. A top-level `const` outside a class is NOT hoisted the
+// way function declarations are: it's only defined once the script's
+// execution reaches that line. These constants used to sit down by the
+// functions that use them, well after this dispatch block -- so the very
+// first call into register_catalog_sync_step() (itself reached from the
+// dispatch block, before execution ever got to the old `const` lines)
+// failed immediately. Function declarations ARE hoisted regardless of
+// where they appear, so only the constants needed to move.
+
+/**
+ * How long a confirmed-zero-stock Inventory item is trusted before it gets
+ * re-checked. Bounds the ongoing cost of re-scanning ~14,000 legacy
+ * catalog entries on every sync, while still catching an item that gets
+ * restocked later.
+ */
+const REGISTER_NO_STOCK_RECHECK_DAYS = 3;
+
+/**
+ * How many items ConnectWise returns per catalog-list page during the
+ * listing stages below.
+ */
+const REGISTER_CATALOG_LIST_PAGE_SIZE = 200;
+
 $pdo = register_db();
 register_require_login($pdo);
 
@@ -178,20 +204,6 @@ if ($action === 'sync-step') {
 }
 
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
-
-/**
- * How long a confirmed-zero-stock Inventory item is trusted before it gets
- * re-checked. Bounds the ongoing cost of re-scanning ~14,000 legacy
- * catalog entries on every sync, while still catching an item that gets
- * restocked later.
- */
-const REGISTER_NO_STOCK_RECHECK_DAYS = 3;
-
-/**
- * How many items ConnectWise returns per catalog-list page during the
- * listing stages below.
- */
-const REGISTER_CATALOG_LIST_PAGE_SIZE = 200;
 
 /**
  * Simple get/set helpers over register_sync_meta, namespaced under
