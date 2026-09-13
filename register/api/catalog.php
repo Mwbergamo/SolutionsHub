@@ -178,6 +178,58 @@ if ($action === 'probe-catalog-filter') {
     register_respond(200, ['ok' => true, 'results' => $results]);
 }
 
+// TEMPORARY read-only diagnostic (2026-09-13, round 2) -- the count probe
+// above confirmed productClass='Inventory' and inactiveFlag=false matches
+// exactly what conditions say (14,573), but that's nowhere near the 603
+// items ConnectWise's own "Inventory Management" screen shows. So
+// productClass isn't the field that screen filters on -- something else is.
+// This compares the full raw field set of an already-synced Inventory item
+// with on_hand=0 against one with on_hand>0, to spot whatever field
+// distinguishes "actually tracked/stocked" items from the rest of the
+// catalog. Read-only, no writes. Delete once the real filter is found.
+if ($action === 'probe-onhand-diff') {
+    $zero = $pdo->query("SELECT cw_catalog_id, identifier, on_hand FROM catalog_items WHERE product_class = 'Inventory' AND on_hand = 0 LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+    $nonzero = $pdo->query("SELECT cw_catalog_id, identifier, on_hand FROM catalog_items WHERE product_class = 'Inventory' AND on_hand > 0 LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+
+    $out = ['zero_on_hand_sample' => $zero, 'nonzero_on_hand_sample' => $nonzero];
+    foreach (['zero_on_hand_sample' => $zero, 'nonzero_on_hand_sample' => $nonzero] as $label => $row) {
+        if ($row) {
+            try {
+                $out[$label . '_raw'] = register_cw_request('/procurement/catalog/' . (int) $row['cw_catalog_id']);
+            } catch (Throwable $e) {
+                $out[$label . '_raw_error'] = $e->getMessage();
+            }
+        } else {
+            $out[$label . '_raw'] = null;
+        }
+    }
+
+    register_respond(200, ['ok' => true, 'data' => $out]);
+}
+
+// TEMPORARY read-only diagnostic (2026-09-13, round 2) -- probes for a
+// possible dedicated "which items currently have on-hand inventory"
+// endpoint, in case that's a cleaner way to get the 603-item set than
+// filtering the full catalog. Read-only, no writes. Delete once resolved.
+if ($action === 'probe-inventory-list-endpoint') {
+    $attempts = [];
+    $paths = [
+        '/procurement/catalog/inventory',
+        '/procurement/warehouses',
+        '/procurement/warehousebins',
+        '/procurement/adjustments',
+    ];
+    foreach ($paths as $path) {
+        try {
+            $resp = register_cw_request($path, ['pageSize' => '2']);
+            $attempts[$path] = ['ok' => true, 'sample_count' => count($resp), 'sample' => $resp];
+        } catch (Throwable $e) {
+            $attempts[$path] = ['ok' => false, 'error' => $e->getMessage()];
+        }
+    }
+    register_respond(200, ['ok' => true, 'attempts' => $attempts]);
+}
+
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
 
 /**
