@@ -144,6 +144,40 @@ if ($action === 'sync-step') {
     register_respond(200, array_merge(['ok' => true], $result));
 }
 
+// TEMPORARY read-only diagnostic (2026-09-13) -- the real sync-start just
+// queued 15,000+ items instead of the ~1,053 Michael confirmed (603
+// Inventory "On Hand" + 450 active Agreement products) via ConnectWise's own
+// UI. Rather than guess why the conditions filter isn't narrowing things
+// down, this hits ConnectWise's /count endpoint with several candidate
+// condition strings so we can see, from real data, which one actually
+// filters and which don't. Read-only, no DB writes, login-gated. Delete
+// this action once the real filter is confirmed and fixed.
+if ($action === 'probe-catalog-filter') {
+    $candidates = [
+        'no_filter_baseline' => '',
+        'inactive_false_only' => 'inactiveFlag=false',
+        'product_class_inventory' => "productClass='Inventory'",
+        'product_class_agreement' => "productClass='Agreement'",
+        'product_class_inventory_and_active' => "productClass='Inventory' and inactiveFlag=false",
+        'product_class_agreement_and_active' => "productClass='Agreement' and inactiveFlag=false",
+        'product_class_or_no_active_filter' => "(productClass='Inventory' or productClass='Agreement')",
+        'current_sync_start_conditions' => "(productClass='Inventory' or productClass='Agreement') and inactiveFlag=false",
+    ];
+
+    $results = [];
+    foreach ($candidates as $label => $conditions) {
+        $query = $conditions !== '' ? ['conditions' => $conditions] : [];
+        try {
+            $resp = register_cw_request('/procurement/catalog/count', $query);
+            $results[$label] = ['conditions' => $conditions, 'count' => $resp['count'] ?? $resp];
+        } catch (Throwable $e) {
+            $results[$label] = ['conditions' => $conditions, 'error' => $e->getMessage()];
+        }
+    }
+
+    register_respond(200, ['ok' => true, 'results' => $results]);
+}
+
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
 
 /**
