@@ -60,6 +60,28 @@ register_require_login($pdo);
 
 $action = $_GET['action'] ?? '';
 
+// TEMPORARY, READ-ONLY diagnostic -- added 2026-09-13 per Michael: he wants
+// the Register catalog search to also include "Agreement Class products
+// that retail assistants can add to customers who need recurring
+// protection at the time of sale" (e.g. extended warranty / protection
+// plans), alongside the existing productClass='Inventory' items. Same
+// discipline as every other ConnectWise integration in this project: don't
+// guess whether "Agreement" is a real productClass value or what fields
+// these items carry -- fetch real rows first. DELETE once confirmed and
+// the real sync logic is written against it (same lifecycle as the
+// now-removed cw-catalog-probe.php / cw_date_probe).
+if ($action === 'probe-agreement-class') {
+    try {
+        $rows = register_cw_request('/procurement/catalog', [
+            'conditions' => "productClass='Agreement'",
+            'pageSize' => 10,
+        ]);
+        register_respond(200, ['ok' => true, 'rows' => $rows]);
+    } catch (Throwable $e) {
+        register_respond(200, ['ok' => false, 'error' => $e->getMessage()]);
+    }
+}
+
 if ($action === 'list') {
     $q = trim((string) ($_GET['q'] ?? ''));
     $inStockOnly = ($_GET['in_stock_only'] ?? '') === '1';
