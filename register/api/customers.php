@@ -674,4 +674,93 @@ if ($action === 'probe-patch-format') {
     register_respond(200, $result);
 }
 
+/**
+ * TEMPORARY diagnostic -- tests a specific hypothesis for the "String was
+ * not recognized as a valid DateTime" error seen on EVERY JSON-Patch
+ * attempt so far (confirmed by probe-patch-format to be the correct
+ * envelope shape -- ConnectWise explicitly rejects a plain merge object --
+ * yet still fails on a harmless field like "name"). Every company here
+ * (including ones ConnectWise itself pre-populates on brand-new companies,
+ * not just ones this app created) carries several Date-type customFields
+ * whose value is null -- e.g. "OutGrow Last Touch" (id 79) -- seen on
+ * every sample record fetched so far. If ConnectWise's PATCH endpoint
+ * re-validates/re-serializes the WHOLE company object (not just the
+ * patched field) and its date parser mishandles a null Date custom field
+ * during that pass, that would explain a DateTime error on literally any
+ * PATCH regardless of target field. This fills every null Date custom
+ * field with a real value first (as its own isolated PATCH op) and then
+ * retries the actual defaultContact update, to see whether removing the
+ * nulls unblocks it.
+ */
+if ($action === 'probe-patch-format2') {
+    $companyId = isset($_GET['company_id']) ? (int) $_GET['company_id'] : 0;
+    $contactId = isset($_GET['contact_id']) ? (int) $_GET['contact_id'] : 0;
+    if ($companyId <= 0) {
+        register_respond(400, ['ok' => false, 'error' => 'company_id is required (reuse an existing ZZZ REGISTER TEST company id).']);
+    }
+
+    $result = ['ok' => true];
+    $today = gmdate('Y-m-d\T00:00:00\Z');
+
+    try {
+        $full = register_cw_request('/company/companies/' . $companyId, [], 'GET', null, 12, 4);
+    } catch (Throwable $e) {
+        register_respond(502, ['ok' => false, 'error' => 'Could not fetch the company: ' . $e->getMessage()]);
+    }
+
+    $customFields = $full['customFields'] ?? [];
+    $nullDateFieldIds = [];
+    foreach ($customFields as $cf) {
+        if (($cf['type'] ?? null) === 'Date' && ($cf['value'] ?? null) === null) {
+            $nullDateFieldIds[] = $cf['id'];
+        }
+    }
+    $result['null_date_custom_field_ids_found'] = $nullDateFieldIds;
+
+    if ($nullDateFieldIds !== []) {
+        // Fill every null Date custom field at once, in a single op.
+        $filledCustomFields = $customFields;
+        foreach ($filledCustomFields as &$cf) {
+            if (($cf['type'] ?? null) === 'Date' && ($cf['value'] ?? null) === null) {
+                $cf['value'] = $today;
+            }
+        }
+        unset($cf);
+
+        try {
+            $r = register_cw_request(
+                '/company/companies/' . $companyId,
+                [],
+                'PATCH',
+                [['op' => 'replace', 'path' => '/customFields', 'value' => $filledCustomFields]],
+                12,
+                4
+            );
+            $result['fill_null_date_custom_fields'] = ['ok' => true, 'response' => ['id' => $r['id'] ?? null]];
+        } catch (Throwable $e) {
+            $result['fill_null_date_custom_fields'] = ['ok' => false, 'error' => $e->getMessage()];
+        }
+    } else {
+        $result['fill_null_date_custom_fields'] = ['ok' => true, 'skipped' => 'No null Date custom fields found on this company.'];
+    }
+
+    if ($contactId > 0) {
+        try {
+            $r = register_cw_request(
+                '/company/companies/' . $companyId,
+                [],
+                'PATCH',
+                [['op' => 'replace', 'path' => '/defaultContact', 'value' => ['id' => $contactId]]],
+                12,
+                4
+            );
+            $result['retry_set_primary_contact'] = ['ok' => true, 'response' => ['id' => $r['id'] ?? null, 'defaultContact' => $r['defaultContact'] ?? null]];
+        } catch (Throwable $e) {
+            $result['retry_set_primary_contact'] = ['ok' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    register_respond(200, $result);
+}
+
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
