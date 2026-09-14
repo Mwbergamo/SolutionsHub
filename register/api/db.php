@@ -286,6 +286,31 @@ function register_migrate(PDO $pdo): void
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_return_items_return ON return_items(return_id)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_return_items_sale_item ON return_items(sale_item_id)');
 
+    // New Customer Sign Up screen (added 2026-09-14, front-screen redesign)
+    // -- one row per walk-in customer entered via the new home-screen tile,
+    // regardless of whether the Company/Contact was newly created in
+    // ConnectWise or an existing one was recalled. Not a sale (no `sales`
+    // row) -- this is pure onboarding + a record of whether the Terms &
+    // Conditions confirmation email actually went out, since the iPad-signed
+    // paper form is the real legal record and this email is just the
+    // customer's copy of it. email_status is 'sent' | 'failed' | 'skipped'
+    // (no email address was available to send to).
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS customer_signups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES register_users(id),
+            cw_company_id INTEGER,
+            cw_company_name TEXT,
+            cw_contact_id INTEGER,
+            cw_contact_name TEXT,
+            email_to TEXT,
+            email_status TEXT NOT NULL DEFAULT 'skipped',
+            email_error TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_customer_signups_created_at ON customer_signups(created_at)');
+
     // Small key/value table for sync run bookkeeping (started_at of the
     // current/most recent run) -- same shape as relationships' cw_sync_meta.
     $pdo->exec(<<<'SQL'

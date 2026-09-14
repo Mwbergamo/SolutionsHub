@@ -34,22 +34,26 @@ class GraphMailer
     /**
      * @param string $toEmail
      * @param string $subject
-     * @param string $textBody
+     * @param string $body Plain text, or HTML when $isHtml is true.
      * @param string|null $bccEmail
      * @param string|null $fromDisplayName Best-effort only -- Microsoft Graph
      *        may override this with the mailbox's actual configured display
      *        name. For a guaranteed result, set the display name on the
      *        mailbox itself in Exchange/Entra instead.
-     * @param string $contentType 'Text' (default) or 'HTML'.
+     * @param bool $isHtml Added 2026-09-14 for the Register app's New
+     *        Customer Sign Up confirmation email (needs the CodeBlue
+     *        letterhead/logo, not possible in a plain-text body) --
+     *        defaults to false so every existing caller (mail/send-quote.php)
+     *        is unaffected.
      * @throws GraphMailerException
      */
-    public function send(string $toEmail, string $subject, string $textBody, ?string $bccEmail = null, ?string $fromDisplayName = null, string $contentType = 'Text'): void
+    public function send(string $toEmail, string $subject, string $body, ?string $bccEmail = null, ?string $fromDisplayName = null, bool $isHtml = false): void
     {
         $token = $this->getAccessToken();
 
         $message = [
             'subject' => $subject,
-            'body' => ['contentType' => $contentType, 'content' => $textBody],
+            'body' => ['contentType' => $isHtml ? 'HTML' : 'Text', 'content' => $body],
             'toRecipients' => [
                 ['emailAddress' => ['address' => $toEmail]],
             ],

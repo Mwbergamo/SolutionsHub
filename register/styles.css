@@ -256,11 +256,11 @@ a { color: inherit; }
 
 .modal-title { font-family: 'Space Grotesk', sans-serif; font-size: 19px; font-weight: 700; margin-bottom: 16px; }
 
-.checkout-modal label {
+.checkout-modal label, .screen-panel label {
   display: block; margin-top: 14px; font-size: 11px; font-weight: 700;
   color: oklch(0.5 0.02 255); text-transform: uppercase; letter-spacing: .03em;
 }
-.checkout-modal input, .checkout-modal select {
+.checkout-modal input, .checkout-modal select, .screen-panel input, .screen-panel select {
   margin-top: 5px; width: 100%; font-size: 14px; padding: 10px 12px;
   border: 1px solid oklch(0.85 0.006 255); border-radius: 8px; font-family: 'IBM Plex Sans', sans-serif;
 }
@@ -317,11 +317,11 @@ a { color: inherit; }
 }
 
 .customer-resolved {
-  display: flex; align-items: center; gap: 10px; margin-top: 5px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 5px;
   padding: 12px 14px; background: oklch(0.94 0.05 150); border: 1px solid oklch(0.8 0.08 150); border-radius: 10px;
 }
-.customer-resolved-name { font-weight: 700; font-size: 14px; }
-.customer-resolved-company { flex: 1; font-size: 12.5px; color: oklch(0.45 0.02 255); }
+.customer-resolved-name { font-weight: 700; font-size: 14px; flex: 1 1 auto; min-width: 120px; }
+.customer-resolved-company { flex: 1 1 100%; font-size: 12.5px; color: oklch(0.45 0.02 255); }
 .customer-change-btn {
   background: transparent; border: 1px solid oklch(0.7 0.006 255); border-radius: 999px;
   padding: 5px 12px; font-size: 12px; font-weight: 700; cursor: pointer; color: oklch(0.3 0.02 255);
@@ -478,6 +478,54 @@ a { color: inherit; }
   color: oklch(0.25 0.02 255); cursor: pointer;
 }
 .return-ack-label input[type="checkbox"] { margin-top: 2px; }
+
+/* ---- Front-screen home tiles + New Customer/Customer Lookup/Returns/
+   Service Tickets screens (added 2026-09-14, front-screen redesign) ---- */
+
+.home-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px;
+  padding: 10px 0 40px;
+}
+.home-tile {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  aspect-ratio: 1.3 / 1; min-height: 150px;
+  background: oklch(0.19 0.03 255); border: 1px solid oklch(0.28 0.03 255); border-radius: 18px;
+  color: oklch(0.85 0.02 255); cursor: pointer;
+}
+.home-tile:hover { border-color: #2f8fef; background: oklch(0.22 0.04 255); }
+.home-tile-icon { font-size: 40px; line-height: 1; }
+.home-tile-label { font-family: 'Space Grotesk', sans-serif; font-size: 15px; font-weight: 700; text-align: center; padding: 0 10px; }
+
+.screen-header { display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px; }
+.screen-back-btn {
+  background: transparent; border: 1px solid oklch(0.35 0.03 255); color: oklch(0.8 0.02 255);
+  font-size: 12.5px; font-weight: 700; padding: 7px 14px; border-radius: 999px; cursor: pointer;
+}
+.screen-back-btn:hover { border-color: #2f8fef; color: #fff; }
+.screen-header-title { font-family: 'Space Grotesk', sans-serif; font-size: 20px; font-weight: 700; color: white; }
+.screen-blurb { font-size: 13px; color: oklch(0.6 0.02 255); margin: 6px 0 20px; max-width: 640px; }
+
+.screen-panel {
+  background: oklch(0.98 0.006 255); color: oklch(0.2 0.03 255);
+  border-radius: 18px; padding: 26px 28px; max-width: 480px;
+}
+
+.customer-resolved-email { flex: 1 1 100%; font-size: 12px; color: oklch(0.45 0.02 255); margin-top: -2px; }
+
+.signup-email-panel { margin-top: 18px; }
+.signup-email-sent {
+  padding: 14px 16px; background: oklch(0.94 0.05 150); border: 1px solid oklch(0.8 0.08 150);
+  border-radius: 10px; font-size: 13.5px; font-weight: 600;
+}
+.signup-email-note { font-size: 11.5px; color: oklch(0.5 0.02 255); margin-top: 6px; }
+
+.ticket-toolbar { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; flex-wrap: wrap; }
+.ticket-toolbar input[type="text"] {
+  flex: 1; min-width: 240px; background: oklch(0.98 0.006 255); border: none; border-radius: 999px;
+  padding: 11px 18px; font-size: 14px; font-family: 'IBM Plex Sans', sans-serif; color: oklch(0.2 0.03 255);
+}
 
 /* ---- Print ---- */
 

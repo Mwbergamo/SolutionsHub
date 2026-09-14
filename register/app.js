@@ -22,8 +22,22 @@
     user: null,
     error: null,
 
-    // 'register' | 'history' (Past Sales) | 'metrics'
+    // 'register' | 'history' (Past Sales) | 'metrics' | 'new-customer' |
+    // 'customer-lookup' | 'returns' | 'service-tickets' (the last four
+    // added 2026-09-14, front-screen redesign -- see the home-tile screen
+    // below, home_tiles_html()).
     view: 'register',
+
+    // Pending Service Tickets screen (added 2026-09-14) -- see
+    // api/tickets.php. Fetched once per screen-open; ticket #/company/phone
+    // search filters this fetched list client-side (see
+    // filteredServiceTickets()), no per-keystroke round trip.
+    serviceTickets: { items: null, loading: false, error: null, search: '' },
+
+    // New Customer Sign Up screen's Terms & Conditions confirmation email
+    // (added 2026-09-14) -- see api/signup-email.php. manualEmail is only
+    // used when the resolved contact has no email on file in ConnectWise.
+    newCustomerEmail: { manualEmail: '', sending: false, error: null, sent: false },
 
     // Metrics screen (added 2026-09-14) -- see api/metrics.php for the
     // definitions (today/week are TO-DATE, America/New_York local time).
@@ -113,6 +127,12 @@
       companyName: '',
       contactId: null,
       contactName: '',
+      // Email on file for the resolved contact -- set from ConnectWise's
+      // communicationItems when an existing contact is picked (see
+      // cwContactEmail()), or copied from the New Contact form's email
+      // field when one is created. Added 2026-09-14 for the New Customer
+      // Sign Up screen's confirmation email; '' means none on file.
+      contactEmail: '',
       // True only while the currently-selected company was created FRESH
       // during this checkout (not recalled) -- controls whether adding
       // the contact also triggers the required invoicing setup (Primary
@@ -138,7 +158,13 @@
       newCompanyForm: { name: '', phone: '', address_line1: '', address_line2: '', city: '', state: 'VA', zip: '' },
       newCompanySubmitting: false,
       newContactForm: { first_name: '', last_name: '', phone: '', email: '' },
-      newContactSubmitting: false
+      newContactSubmitting: false,
+      // Set true only by the New Customer Sign Up screen (added
+      // 2026-09-14) -- makes the New Contact form's email field required,
+      // since that screen's whole point is emailing the customer a copy of
+      // the terms they just signed. Left false everywhere else (checkout's
+      // customer step), where email has always been optional.
+      requireEmail: false
     };
   }
 
@@ -744,6 +770,19 @@
     return ((c.firstName || '') + ' ' + (c.lastName || '')).trim();
   }
 
+  // Extracts a Contact's email from ConnectWise's communicationItems array
+  // (added 2026-09-14 for the New Customer Sign Up confirmation email) --
+  // the same "Email" communicationType already confirmed for WRITES in
+  // api/customers.php's register_cw_create_contact(), here read back off a
+  // search result instead. Returns '' if the contact has no email item.
+  function cwContactEmail(contact) {
+    var items = contact.communicationItems || [];
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].communicationType === 'Email' && items[i].value) return items[i].value;
+    }
+    return '';
+  }
+
   function selectCompany(companyId, companyName) {
     state.customer.companyId = companyId;
     state.customer.companyName = companyName;
@@ -775,6 +814,7 @@
     }
     state.customer.contactId = contact.id;
     state.customer.contactName = contactDisplayName(contact);
+    state.customer.contactEmail = cwContactEmail(contact);
     state.customerUi.mode = 'resolved';
     state.customerUi.error = null;
     render();
@@ -844,6 +884,11 @@
       render();
       return;
     }
+    if (state.customerUi.requireEmail && !f.email.trim()) {
+      state.customerUi.error = 'Email is required to send the Terms & Conditions confirmation.';
+      render();
+      return;
+    }
     state.customerUi.newContactSubmitting = true;
     state.customerUi.error = null;
     render();
@@ -862,6 +907,7 @@
       }
       var contactId = r.data.contact.id;
       var contactName = (f.first_name.trim() + ' ' + f.last_name.trim()).trim();
+      var contactEmail = f.email.trim();
 
       if (!state.customer.isNewCompany) {
         // Existing/recalled company -- the contact is created, done. Never
@@ -870,6 +916,7 @@
         state.customerUi.newContactSubmitting = false;
         state.customer.contactId = contactId;
         state.customer.contactName = contactName;
+        state.customer.contactEmail = contactEmail;
         state.customerUi.mode = 'resolved';
         state.customerUi.error = null;
         render();
@@ -886,6 +933,7 @@
         state.customerUi.newContactSubmitting = false;
         state.customer.contactId = contactId;
         state.customer.contactName = contactName;
+        state.customer.contactEmail = contactEmail;
         state.customerUi.mode = 'resolved';
         if (fr.data && fr.data.ok) {
           state.customer.invoicingWarning = null;
@@ -904,6 +952,7 @@
         state.customerUi.newContactSubmitting = false;
         state.customer.contactId = contactId;
         state.customer.contactName = contactName;
+        state.customer.contactEmail = contactEmail;
         state.customer.invoicingWarning = 'Company and contact were created, but the invoicing setup call failed -- check your connection. The sale can still be completed; flag this account for manual setup in ConnectWise.';
         state.customerUi.mode = 'resolved';
         render();
@@ -1005,6 +1054,142 @@
     });
   }
 
+  // ---- Front-screen tiles: New Customer / Customer Lookup / Returns /
+  // Service Tickets (added 2026-09-14) --------------------------------
+  //
+  // Michael: "I would like to not show all of the products on the home
+  // screen of the register... I want to keep the top row of icons... [and
+  // four square buttons for] New Customer Sign Up, Existing Customer Look
+  // Up, Returns, [and] Pending Service Tickets." The existing Metrics/Past
+  // Sales topbar buttons are unchanged -- this only replaces what shows in
+  // the catalog pane on the truly-idle Register view (see isHomeIdle()).
+
+  function isHomeIdle() {
+    return !state.search.trim() && !state.filterType && !state.filterCategory &&
+      !state.filterSubcategory && state.cart.length === 0;
+  }
+
+  function enterNewCustomerFlow() {
+    resetCustomerState();
+    state.customerUi.requireEmail = true;
+    state.newCustomerEmail = { manualEmail: '', sending: false, error: null, sent: false };
+    state.view = 'new-customer';
+    state.error = null;
+    render();
+  }
+
+  function finishNewCustomer() {
+    resetCustomerState();
+    state.customerUi.requireEmail = true;
+    state.newCustomerEmail = { manualEmail: '', sending: false, error: null, sent: false };
+    render();
+  }
+
+  function enterCustomerLookupFlow() {
+    resetCustomerState();
+    state.view = 'customer-lookup';
+    state.error = null;
+    render();
+  }
+
+  function backToHomeFromCustomerScreen() {
+    resetCustomerState();
+    state.newCustomerEmail = { manualEmail: '', sending: false, error: null, sent: false };
+    state.view = 'register';
+    state.error = null;
+    render();
+  }
+
+  function customerLookupAnother() {
+    resetCustomerState();
+    render();
+  }
+
+  function startSaleForLookedUpCustomer() {
+    // state.customer is already resolved (companyId/contactId/names) --
+    // switching to the register view is all that's needed; checkout's own
+    // customerSectionHtml() reads that same shared state, so this customer
+    // shows up already resolved once the cart is checked out.
+    state.view = 'register';
+    state.error = null;
+    render();
+  }
+
+  function sendSignupEmail() {
+    var email = (state.customer.contactEmail || state.newCustomerEmail.manualEmail || '').trim();
+    if (!email || !state.customer.companyId || !state.customer.contactId) return;
+
+    state.newCustomerEmail.sending = true;
+    state.newCustomerEmail.error = null;
+    render();
+
+    apiPost('api/signup-email.php?action=send', {
+      company_id: state.customer.companyId,
+      company_name: state.customer.companyName,
+      contact_id: state.customer.contactId,
+      contact_name: state.customer.contactName,
+      email: email
+    }).then(function (r) {
+      state.newCustomerEmail.sending = false;
+      if (r.data && r.data.ok) {
+        state.newCustomerEmail.sent = true;
+        state.newCustomerEmail.error = null;
+      } else {
+        state.newCustomerEmail.error = (r.data && r.data.error) || 'Could not send the email — try again.';
+      }
+      render();
+    }).catch(function () {
+      state.newCustomerEmail.sending = false;
+      state.newCustomerEmail.error = 'Could not send the email — check your connection.';
+      render();
+    });
+  }
+
+  // ---- Pending Service Tickets (added 2026-09-14) ------------------------
+  //
+  // See api/tickets.php's docblock: fetches every OPEN ticket on the two
+  // Professional Services boards ONCE per screen-open, and ticket #/company
+  // name/phone search filters that fetched list client-side (no compound
+  // ConnectWise condition, per this project's "diagnose before guessing"
+  // discipline).
+
+  function loadServiceTickets() {
+    state.serviceTickets.loading = true;
+    state.serviceTickets.error = null;
+    render();
+    apiGet('api/tickets.php?action=open').then(function (r) {
+      state.serviceTickets.loading = false;
+      if (r.data && r.data.ok) {
+        state.serviceTickets.items = r.data.tickets;
+        state.serviceTickets.error = null;
+      } else {
+        state.serviceTickets.error = (r.data && r.data.error) || 'Could not load service tickets.';
+      }
+      render();
+    }).catch(function () {
+      state.serviceTickets.loading = false;
+      state.serviceTickets.error = 'Could not load service tickets — check your connection.';
+      render();
+    });
+  }
+
+  function digitsOnly(s) {
+    return String(s || '').replace(/\D/g, '');
+  }
+
+  function filteredServiceTickets() {
+    var items = state.serviceTickets.items || [];
+    var q = state.serviceTickets.search.trim().toLowerCase();
+    if (!q) return items;
+    var qDigits = digitsOnly(q);
+    return items.filter(function (t) {
+      if (String(t.ticket_number).indexOf(q) !== -1) return true;
+      if ((t.company_name || '').toLowerCase().indexOf(q) !== -1) return true;
+      if (qDigits && (digitsOnly(t.contact_phone).indexOf(qDigits) !== -1 || digitsOnly(t.company_phone).indexOf(qDigits) !== -1)) return true;
+      return false;
+    });
+  }
+
   // ---- Rendering ----------------------------------------------------
 
   function render() {
@@ -1018,7 +1203,7 @@
   // debounced search re-render (catalog search, and the 2026-09-14
   // customer/contact search boxes) would otherwise steal focus/cursor
   // position out from under whatever the rep is still typing.
-  var FOCUS_PRESERVED_INPUT_IDS = ['catalogSearchInput', 'customerSearchInput', 'customerContactSearchInput'];
+  var FOCUS_PRESERVED_INPUT_IDS = ['catalogSearchInput', 'customerSearchInput', 'customerContactSearchInput', 'newCustomerManualEmailInput', 'ticketSearchInput'];
 
   function captureSearchFocus() {
     for (var i = 0; i < FOCUS_PRESERVED_INPUT_IDS.length; i++) {
@@ -1079,16 +1264,193 @@
     if (state.view === 'metrics') {
       return html + metricsHtml();
     }
+    if (state.view === 'new-customer') {
+      return html + newCustomerHtml();
+    }
+    if (state.view === 'customer-lookup') {
+      return html + customerLookupHtml();
+    }
+    if (state.view === 'returns') {
+      return html + returnsViewHtml();
+    }
+    if (state.view === 'service-tickets') {
+      return html + serviceTicketsHtml();
+    }
     return html + registerHtml();
   }
 
   function registerHtml() {
+    var home = isHomeIdle();
     return (
       '<div class="register-layout">' +
-        '<div class="catalog-pane">' + catalogToolbarHtml() + typeNavHtml() + catalogGridHtml() + '</div>' +
+        '<div class="catalog-pane">' + catalogToolbarHtml() + typeNavHtml() + (home ? homeTilesHtml() : catalogGridHtml()) + '</div>' +
         '<div class="cart-pane">' + cartHtml() + '</div>' +
       '</div>'
     );
+  }
+
+  // Front-screen home tiles (added 2026-09-14) -- shown instead of the full
+  // product grid only when the catalog view is truly idle (no search/
+  // filter, empty cart -- see isHomeIdle()). The category chip row and
+  // search/sync toolbar above stay visible either way, per Michael.
+  function homeTilesHtml() {
+    return (
+      '<div class="home-tiles">' +
+        homeTileHtml('show-new-customer', '📝', 'New Customer Sign Up') +
+        homeTileHtml('show-customer-lookup', '🔍', 'Existing Customer Look Up') +
+        homeTileHtml('show-returns', '↩️', 'Returns') +
+        homeTileHtml('show-service-tickets', '🎫', 'Pending Service Tickets') +
+      '</div>'
+    );
+  }
+
+  function homeTileHtml(action, icon, label) {
+    return '<button type="button" class="home-tile" data-action="' + action + '">' +
+      '<span class="home-tile-icon">' + icon + '</span>' +
+      '<span class="home-tile-label">' + escapeHtml(label) + '</span>' +
+    '</button>';
+  }
+
+  // Shared "‹ Back" header for the four new front-screen sub-views.
+  // backAction defaults to plain "show-register" (Returns/Service Tickets,
+  // which touch no shared customer state); New Customer/Customer Lookup
+  // pass 'back-to-home' instead, so backing out also resets state.customer
+  // -- otherwise a customer resolved on one of those screens could
+  // silently carry over into an unrelated later sale.
+  function screenBackHeaderHtml(title, backAction) {
+    return '<div class="screen-header">' +
+      '<button type="button" class="screen-back-btn" data-action="' + (backAction || 'show-register') + '">‹ Back</button>' +
+      '<div class="screen-header-title">' + escapeHtml(title) + '</div>' +
+    '</div>';
+  }
+
+  // Compact resolved-customer card shared by the New Customer Sign Up and
+  // Existing Customer Look Up screens (added 2026-09-14) -- distinct from
+  // customerSectionHtml()'s own "resolved" branch (used inside checkout)
+  // since these two screens each need different actions below it.
+  function customerSummaryCardHtml() {
+    var html = '<div class="customer-resolved">' +
+      '<div class="customer-resolved-name">' + escapeHtml(state.customer.contactName) + '</div>' +
+      '<div class="customer-resolved-company">' + escapeHtml(state.customer.companyName) + '</div>' +
+      (state.customer.contactEmail ? '<div class="customer-resolved-email">' + escapeHtml(state.customer.contactEmail) + '</div>' : '') +
+      '<button type="button" class="customer-change-btn" data-action="customer-change">Change</button>' +
+    '</div>';
+    if (state.customer.invoicingWarning) {
+      html += '<div class="error-banner customer-warning">' + escapeHtml(state.customer.invoicingWarning) + '</div>';
+    }
+    return html;
+  }
+
+  // ---- New Customer Sign Up screen (added 2026-09-14) --------------------
+
+  function newCustomerHtml() {
+    var html = screenBackHeaderHtml('New Customer Sign Up', 'back-to-home');
+    html += '<div class="screen-blurb">For walk-in customers who need service on hardware they already own. ' +
+      'Enter them the same way as a hardware sale, then send them a copy of our rate sheet and terms — they sign the original on the iPad.</div>';
+
+    var resolved = state.customer.companyId && state.customer.contactId;
+    if (!resolved) {
+      return html + '<div class="screen-panel">' + customerSectionHtml() + '</div>';
+    }
+    return html + '<div class="screen-panel">' + customerSummaryCardHtml() + newCustomerEmailPanelHtml() + '</div>';
+  }
+
+  function newCustomerEmailPanelHtml() {
+    var ne = state.newCustomerEmail;
+    if (ne.sent) {
+      return '<div class="signup-email-panel">' +
+        '<div class="signup-email-sent">✓ Confirmation email sent to ' + escapeHtml(state.customer.contactEmail || ne.manualEmail) + '.</div>' +
+        '<div class="modal-actions"><button type="button" class="modal-confirm" data-action="new-customer-done">Done — Next Customer</button></div>' +
+      '</div>';
+    }
+
+    var effectiveEmail = (state.customer.contactEmail || ne.manualEmail || '').trim();
+    var html = '<div class="signup-email-panel">';
+    html += '<label>Email address for the Terms &amp; Conditions confirmation</label>';
+    if (!state.customer.contactEmail) {
+      html += '<input type="text" id="newCustomerManualEmailInput" data-action="new-customer-manual-email" value="' + escapeHtml(ne.manualEmail) + '" placeholder="customer@example.com">';
+      html += '<div class="signup-email-note">No email on file for this contact in ConnectWise — enter one just to send this confirmation.</div>';
+    }
+    if (ne.error) {
+      html += '<div class="error-banner">' + escapeHtml(ne.error) + '</div>';
+    }
+    html += '<div class="modal-actions">' +
+      '<button type="button" class="modal-confirm" data-action="send-signup-email" ' + (ne.sending || !effectiveEmail ? 'disabled' : '') + '>' +
+        (ne.sending ? 'Sending…' : 'Send Confirmation Email') +
+      '</button>' +
+    '</div>';
+    html += '</div>';
+    return html;
+  }
+
+  // ---- Existing Customer Look Up screen (added 2026-09-14) ---------------
+
+  function customerLookupHtml() {
+    var html = screenBackHeaderHtml('Existing Customer Look Up', 'back-to-home');
+    html += '<div class="screen-blurb">Search for a company or contact already on file.</div>';
+
+    var resolved = state.customer.companyId && state.customer.contactId;
+    if (!resolved) {
+      return html + '<div class="screen-panel">' + customerSectionHtml() + '</div>';
+    }
+    return html + '<div class="screen-panel">' + customerSummaryCardHtml() +
+      '<div class="modal-actions">' +
+        '<button type="button" class="customer-back-btn" data-action="customer-lookup-another">Look Up Another</button>' +
+        '<button type="button" class="modal-confirm" data-action="customer-start-sale">Start a Sale</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // ---- Returns (pending RMAs) direct view (added 2026-09-14) -------------
+  // Same returnsQueueSectionHtml() the Past Sales screen already shows --
+  // this is just a direct route to it from the home tiles, per Michael
+  // ("Returns would take you to pending RMA's"). Starting a NEW return is
+  // still done from a specific past sale on the Past Sales screen
+  // (unchanged) -- this is the queue view only.
+
+  function returnsViewHtml() {
+    return screenBackHeaderHtml('Returns') + returnsQueueSectionHtml();
+  }
+
+  // ---- Pending Service Tickets screen (added 2026-09-14) -----------------
+
+  function serviceTicketsHtml() {
+    var html = screenBackHeaderHtml('Pending Service Tickets');
+    html += '<div class="screen-blurb">Open tickets on the Professional Services - RIC and Professional Services - WAR boards.</div>';
+    html += '<div class="ticket-toolbar">' +
+      '<input type="text" id="ticketSearchInput" placeholder="Search by ticket #, company, or phone…" value="' + escapeHtml(state.serviceTickets.search) + '">' +
+      '<button type="button" class="sync-btn" data-action="refresh-service-tickets" ' + (state.serviceTickets.loading ? 'disabled' : '') + '>' +
+        (state.serviceTickets.loading ? 'Loading…' : '↻ Refresh') +
+      '</button>' +
+    '</div>';
+
+    if (state.serviceTickets.loading && !state.serviceTickets.items) {
+      return html + '<div class="loading">Loading tickets…</div>';
+    }
+    if (state.serviceTickets.error) {
+      return html + '<div class="error-banner">' + escapeHtml(state.serviceTickets.error) + '</div>';
+    }
+    var tickets = filteredServiceTickets();
+    if (tickets.length === 0) {
+      return html + '<div class="empty-state">No open tickets found' + (state.serviceTickets.search.trim() ? ' for this search' : '') + '.</div>';
+    }
+
+    html += '<div class="history-table-wrap"><table class="history-table"><thead><tr>' +
+      '<th>Ticket #</th><th>Company</th><th>Contact</th><th>Summary</th><th>Status</th><th>Date Entered</th><th>Phone</th>' +
+    '</tr></thead><tbody>';
+    tickets.forEach(function (t) {
+      html += '<tr class="history-row">' +
+        '<td>#' + t.ticket_number + '</td>' +
+        '<td>' + escapeHtml(t.company_name || '—') + '</td>' +
+        '<td>' + escapeHtml(t.contact_name || '—') + '</td>' +
+        '<td>' + escapeHtml(t.summary || '') + '</td>' +
+        '<td>' + escapeHtml(t.status_name || '') + '</td>' +
+        '<td>' + fmtTimestamp(t.date_entered) + '</td>' +
+        '<td>' + escapeHtml(t.contact_phone || t.company_phone || '—') + '</td>' +
+      '</tr>';
+    });
+    html += '</tbody></table></div>';
+    return html;
   }
 
   // ---- Metrics screen (added 2026-09-14) ---------------------------------
@@ -1462,7 +1824,7 @@
         '</div>' +
         '<label>Phone</label>' +
         '<input type="text" data-action="customer-new-contact-field" data-field="phone" value="' + escapeHtml(f.phone) + '">' +
-        '<label>Email</label>' +
+        '<label>Email' + (state.customerUi.requireEmail ? ' (required — for the confirmation email)' : '') + '</label>' +
         '<input type="text" data-action="customer-new-contact-field" data-field="email" value="' + escapeHtml(f.email) + '">' +
         '<div class="customer-form-actions">' +
           (state.customer.isNewCompany ? '' : '<button type="button" class="customer-back-btn" data-action="customer-back-to-contact">Cancel</button>') +
@@ -1766,6 +2128,16 @@
       if (action === 'show-register') handler = function () { state.view = 'register'; state.error = null; render(); };
       else if (action === 'show-history') handler = function () { state.view = 'history'; state.error = null; loadHistory(); loadReturnsQueue(); };
       else if (action === 'show-metrics') handler = function () { state.view = 'metrics'; state.error = null; loadMetrics(); };
+      else if (action === 'show-new-customer') handler = enterNewCustomerFlow;
+      else if (action === 'show-customer-lookup') handler = enterCustomerLookupFlow;
+      else if (action === 'show-returns') handler = function () { state.view = 'returns'; state.error = null; loadReturnsQueue(); };
+      else if (action === 'show-service-tickets') handler = function () { state.view = 'service-tickets'; state.error = null; loadServiceTickets(); };
+      else if (action === 'back-to-home') handler = backToHomeFromCustomerScreen;
+      else if (action === 'customer-lookup-another') handler = customerLookupAnother;
+      else if (action === 'customer-start-sale') handler = startSaleForLookedUpCustomer;
+      else if (action === 'send-signup-email') handler = sendSignupEmail;
+      else if (action === 'new-customer-done') handler = finishNewCustomer;
+      else if (action === 'refresh-service-tickets') handler = loadServiceTickets;
       else if (action === 'signout') handler = signOut;
       else if (action === 'sync') handler = runSync;
       else if (action === 'add-to-cart') handler = function () { addToCart(el.dataset.id); };
@@ -1903,6 +2275,20 @@
     var noteInput = root.querySelector('[data-action="note-input"]');
     if (noteInput) {
       noteInput.addEventListener('input', function () { state.checkoutForm.note = noteInput.value; });
+    }
+    var manualEmailInput = document.getElementById('newCustomerManualEmailInput');
+    if (manualEmailInput) {
+      manualEmailInput.addEventListener('input', function () {
+        state.newCustomerEmail.manualEmail = manualEmailInput.value;
+        render();
+      });
+    }
+    var ticketSearchInput = document.getElementById('ticketSearchInput');
+    if (ticketSearchInput) {
+      ticketSearchInput.addEventListener('input', function () {
+        state.serviceTickets.search = ticketSearchInput.value;
+        render();
+      });
     }
   }
 
