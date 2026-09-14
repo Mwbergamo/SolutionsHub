@@ -166,6 +166,64 @@ if ($action === 'search-contacts') {
 }
 
 /**
+ * TEMPORARY diagnostic -- read-only, no side effects. Michael specified
+ * (2026-09-14, screenshot of ConnectWise's own "New Company" screen) the
+ * exact fields a register-created Company + Primary Contact must set:
+ * Company/Phone/Address/City/State/Zip/Country, "Terms Renewal Date",
+ * "Company ID", Territory ("House Accounts"), "Account ID", "Date
+ * Acquired"; Primary Contact Name/Title("Purchaser")/Phone/Type("End
+ * User")/Account Manager("Michael Bergamo")/Sales Rep("Michael Bergamo").
+ * Several of those UI labels ("Terms Renewal Date", "Account ID", "Date
+ * Acquired", and possibly "Account Manager"/"Sales Rep") don't obviously
+ * match any standard ConnectWise REST field name confirmed so far -- they
+ * may be custom fields specific to this instance, or standard fields under
+ * different API names, or (Account Manager/Sales Rep) may actually belong
+ * to the Company "Team" sub-resource visible just below Primary Contact in
+ * the screenshot rather than the Contact itself. Guessing JSON keys for
+ * these before checking would repeat the board-name saga's mistake, so this
+ * action instead fetches real full-default records (no 'fields' param, no
+ * guessed condition -- direct by-id GETs and a couple of unconditioned
+ * small lists) plus this instance's system custom-field definitions, to
+ * read the real field/customField names and IDs straight from ConnectWise
+ * before writing create-company/create-contact for real.
+ */
+if ($action === 'probe-schema') {
+    $result = ['ok' => true];
+
+    try {
+        $result['company_full'] = register_cw_request('/company/companies/2', [], 'GET', null, 12, 4);
+    } catch (Throwable $e) {
+        $result['company_full_error'] = $e->getMessage();
+    }
+
+    try {
+        $result['companies_sample'] = register_cw_request('/company/companies', ['pageSize' => '5'], 'GET', null, 12, 4);
+    } catch (Throwable $e) {
+        $result['companies_sample_error'] = $e->getMessage();
+    }
+
+    try {
+        $result['contact_full'] = register_cw_request('/company/contacts/2', [], 'GET', null, 12, 4);
+    } catch (Throwable $e) {
+        $result['contact_full_error'] = $e->getMessage();
+    }
+
+    try {
+        $result['contacts_sample'] = register_cw_request('/company/contacts', ['pageSize' => '5'], 'GET', null, 12, 4);
+    } catch (Throwable $e) {
+        $result['contacts_sample_error'] = $e->getMessage();
+    }
+
+    try {
+        $result['system_custom_fields'] = register_cw_request('/system/customFields', ['pageSize' => '200'], 'GET', null, 12, 4);
+    } catch (Throwable $e) {
+        $result['system_custom_fields_error'] = $e->getMessage();
+    }
+
+    register_respond(200, $result);
+}
+
+/**
  * TEMPORARY diagnostic -- creates one real, clearly-labeled test Company
  * and Contact (plus one email + one phone communication item on that
  * contact) to learn ConnectWise's real required-field schema for writes.
