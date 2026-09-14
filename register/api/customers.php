@@ -63,6 +63,18 @@
  * needed, since every custom field id used above came directly off a real
  * sample record instead.
  *
+ * probe-schema2 (2026-09-14) confirmed: "House accounts" territory =
+ * system/locations id 45; Contact type "End User" = id 3 (note: the
+ * /company/contacts/types list resource labels this field "description",
+ * but it's embedded on a Contact record as "name" -- write with
+ * types:[{id:3}], no name/description needed). Account Manager/Sales Rep
+ * are NOT Contact fields at all -- they live on the Company's own
+ * teams_href sub-resource (.../company/companies/{id}/teams): each row has
+ * company, teamRole{id,name}, member{id,identifier,name}, plus
+ * accountManagerFlag/techFlag/salesFlag booleans. "Sales Rep" teamRole id 3
+ * confirmed on a real record. Michael Bergamo = member id 202 (confirmed
+ * via territoryManager on a real company).
+ *
  * GET  /register/api/customers.php?action=search-companies&q=...
  * GET  /register/api/customers.php?action=search-contacts&company_id=...&q=...
  *   (at least one of company_id/q required; company_id scopes to one
@@ -287,33 +299,65 @@ if ($action === 'probe-schema2') {
 
 /**
  * TEMPORARY diagnostic -- creates one real, clearly-labeled test Company
- * and Contact (plus one email + one phone communication item on that
- * contact) to learn ConnectWise's real required-field schema for writes.
- * Each step is isolated and its own real success/error is reported
+ * and Contact (plus a phone communication item and two Company Team role
+ * assignments) to learn ConnectWise's real required-field schema for
+ * writes. Each step is isolated and its own real success/error is reported
  * separately, same methodology as the Activity-creation saga in
  * relationships-connectwise-sync.md. Remove this action once
  * create-company/create-contact are built and confirmed working.
+ *
+ * Round 2 (2026-09-14) fills in every business field Michael specified,
+ * now that probe-schema/probe-schema2 confirmed the real names:
+ * accountNumber, dateAcquired, territory{id:45 "House accounts"},
+ * customFields id 34 "Terms Renewal Date", contact types{id:3 "End User"}.
+ * Account Manager/Sales Rep are confirmed to live on the Company's
+ * teams sub-resource (accountManagerFlag/salesFlag + a teamRole), not on
+ * the Contact -- "Sales Rep" teamRole id 3 was already seen on a real
+ * record; "Account Manager"'s teamRole id is looked up here by name from
+ * the full /company/teamRoles list (a plain unconditioned list, same
+ * "diagnose before guessing" reasoning as everywhere else in this file)
+ * rather than guessed.
  */
 if ($action === 'probe-create') {
     $stamp = date('Y-m-d H:i:s');
+    $today = date('Y-m-d\T00:00:00\Z');
     $result = ['ok' => true, 'note' => 'This created real test records in ConnectWise. Search for "ZZZ REGISTER TEST" and delete them by hand when done.'];
 
+    $accountManagerRoleId = null;
+    try {
+        $roles = register_cw_request('/company/teamRoles', ['pageSize' => '100'], 'GET', null, 12, 4);
+        $result['team_roles'] = $roles;
+        foreach ($roles as $role) {
+            if (isset($role['name']) && stripos((string) $role['name'], 'Account Manager') !== false) {
+                $accountManagerRoleId = $role['id'];
+                break;
+            }
+        }
+        $result['account_manager_role_id_found'] = $accountManagerRoleId;
+    } catch (Throwable $e) {
+        $result['team_roles_error'] = $e->getMessage();
+    }
+
+    $testName = 'ZZZ REGISTER TEST - DELETE ME (' . $stamp . ')';
     $companyId = null;
     try {
         $company = register_cw_request('/company/companies', [], 'POST', [
             'identifier' => 'ZZZREGTEST' . date('YmdHis'),
-            'name' => 'ZZZ REGISTER TEST - DELETE ME (' . $stamp . ')',
+            'name' => $testName,
             'addressLine1' => '123 Test St',
             'city' => 'Richmond',
             'state' => 'VA',
             'zip' => '23219',
+            'country' => ['id' => 1],
             'phoneNumber' => '8045550100',
-            'website' => 'https://example.invalid',
             'status' => ['id' => 1],
-            // Confirmed required 2026-09-14: the first attempt (no site)
-            // failed with ConnectWise's real validation error "Company Site
-            // name is required." -- CW auto-creates the named site record.
-            'site' => ['name' => 'Main'],
+            'site' => ['name' => 'Main'], // confirmed required, round 1
+            'territory' => ['id' => 45], // "House accounts"
+            'accountNumber' => $testName, // "Account ID" = same as Customer Name
+            'dateAcquired' => $today,
+            'customFields' => [
+                ['id' => 34, 'value' => $today], // "Terms Renewal Date" = date of entry
+            ],
         ], 12, 4);
         $companyId = $company['id'] ?? null;
         $result['create_company'] = ['ok' => true, 'response' => $company];
@@ -328,7 +372,8 @@ if ($action === 'probe-create') {
                 'firstName' => 'ZZZ-REGISTER-TEST',
                 'lastName' => 'DELETE-ME (' . $stamp . ')',
                 'company' => ['id' => $companyId],
-                'title' => 'Register diagnostic test contact',
+                'title' => 'Purchaser',
+                'types' => [['id' => 3]], // "End User"
             ], 12, 4);
             $contactId = $contact['id'] ?? null;
             $result['create_contact'] = ['ok' => true, 'response' => $contact];
@@ -338,21 +383,9 @@ if ($action === 'probe-create') {
 
         if ($contactId !== null) {
             try {
-                $email = register_cw_request('/company/contacts/' . $contactId . '/communications', [], 'POST', [
-                    'type' => ['id' => 1], // 1 = "Email", per the probe's sample_contacts communicationItems
-                    'value' => 'register-test-' . date('YmdHis') . '@example.invalid',
-                    'communicationType' => 'Email',
-                    'defaultFlag' => true,
-                ], 12, 4);
-                $result['create_contact_email'] = ['ok' => true, 'response' => $email];
-            } catch (Throwable $e) {
-                $result['create_contact_email'] = ['ok' => false, 'error' => $e->getMessage()];
-            }
-
-            try {
                 $phone = register_cw_request('/company/contacts/' . $contactId . '/communications', [], 'POST', [
-                    'type' => ['id' => 2], // 2 = "Direct", per the probe's sample_contacts communicationItems
-                    'value' => '8045550101',
+                    'type' => ['id' => 2], // "Direct" -- confirmed real on sample_contacts
+                    'value' => '8045550100', // same as company phone, per Michael's rule
                     'communicationType' => 'Phone',
                     'defaultFlag' => true,
                 ], 12, 4);
@@ -360,6 +393,36 @@ if ($action === 'probe-create') {
             } catch (Throwable $e) {
                 $result['create_contact_phone'] = ['ok' => false, 'error' => $e->getMessage()];
             }
+        }
+
+        // Company Team: Sales Rep (teamRole 3, confirmed) + Account Manager
+        // (teamRole id looked up above by name), both assigned to Michael
+        // Bergamo (member id 202, confirmed via territoryManager on a real
+        // company record).
+        try {
+            $salesRep = register_cw_request('/company/companies/' . $companyId . '/teams', [], 'POST', [
+                'teamRole' => ['id' => 3],
+                'member' => ['id' => 202],
+                'salesFlag' => true,
+            ], 12, 4);
+            $result['create_team_sales_rep'] = ['ok' => true, 'response' => $salesRep];
+        } catch (Throwable $e) {
+            $result['create_team_sales_rep'] = ['ok' => false, 'error' => $e->getMessage()];
+        }
+
+        if ($accountManagerRoleId !== null) {
+            try {
+                $accountManager = register_cw_request('/company/companies/' . $companyId . '/teams', [], 'POST', [
+                    'teamRole' => ['id' => $accountManagerRoleId],
+                    'member' => ['id' => 202],
+                    'accountManagerFlag' => true,
+                ], 12, 4);
+                $result['create_team_account_manager'] = ['ok' => true, 'response' => $accountManager];
+            } catch (Throwable $e) {
+                $result['create_team_account_manager'] = ['ok' => false, 'error' => $e->getMessage()];
+            }
+        } else {
+            $result['create_team_account_manager'] = ['ok' => false, 'error' => 'No teamRole named "Account Manager" was found in /company/teamRoles -- see team_roles above for the real list.'];
         }
     }
 
