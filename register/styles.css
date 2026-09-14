@@ -102,6 +102,46 @@ a { color: inherit; }
 .sync-btn:disabled { opacity: .6; cursor: default; }
 .sync-message { font-size: 12.5px; color: oklch(0.65 0.15 150); }
 
+/* ---- Type/Category/SubCategory browse menu (added 2026-09-14) ---- */
+
+.type-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.type-nav-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.type-nav-row-sub { padding-left: 4px; }
+
+.type-chip {
+  background: transparent;
+  border: 1px solid oklch(0.35 0.03 255);
+  color: oklch(0.75 0.02 255);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.type-chip:hover { border-color: #2f8fef; color: #fff; }
+.type-chip.active {
+  background: #2f8fef;
+  border-color: #2f8fef;
+  color: #fff;
+}
+.type-nav-row-sub .type-chip {
+  font-size: 11.5px;
+  padding: 5px 12px;
+  opacity: .9;
+}
+
 .catalog-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
@@ -129,6 +169,7 @@ a { color: inherit; }
 }
 .catalog-card-desc { font-size: 12px; color: oklch(0.5 0.02 255); line-height: 1.4; margin-bottom: 10px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.catalog-card-mfg { font-size: 10.5px; color: oklch(0.6 0.02 255); margin-bottom: 8px; letter-spacing: .01em; }
 .catalog-card-footer { display: flex; align-items: center; justify-content: space-between; }
 .catalog-card-price { font-size: 15px; font-weight: 700; color: #1a6fd6; }
 .catalog-card-stock { font-size: 11px; color: oklch(0.55 0.02 255); }

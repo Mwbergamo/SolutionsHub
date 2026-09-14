@@ -31,6 +31,17 @@
     search: '',
     inStockOnly: true,
 
+    // Nested Type > Category > SubCategory browse menu (added 2026-09-14)
+    // -- built server-side from whatever's actually synced (see api/
+    // catalog.php's register_catalog_type_menu()), not hardcoded here, so
+    // it can never drift out of sync with the real catalog. An empty
+    // filter string means "All" at that level.
+    typeMenu: [],
+    typeMenuLoading: false,
+    filterType: '',
+    filterCategory: '',
+    filterSubcategory: '',
+
     syncing: false,
     syncMessage: null,
     syncFilterTotal: 0,
@@ -108,9 +119,40 @@
       state.user = r.data.user;
       render();
       loadCatalog();
+      loadTypeMenu();
     }).catch(function () {
       window.location.href = 'login.html?next=' + encodeURIComponent('index.html');
     });
+  }
+
+  // Shared by loadCatalog()/loadCatalogNow() so the search/stock-toggle/
+  // browse-menu filters never drift out of sync between the debounced and
+  // immediate reload paths.
+  function catalogListUrl() {
+    var url = 'api/catalog.php?action=list';
+    if (state.search.trim()) url += '&q=' + encodeURIComponent(state.search.trim());
+    if (state.inStockOnly) url += '&in_stock_only=1';
+    if (state.filterType) url += '&type=' + encodeURIComponent(state.filterType);
+    if (state.filterCategory) url += '&category=' + encodeURIComponent(state.filterCategory);
+    if (state.filterSubcategory) url += '&subcategory=' + encodeURIComponent(state.filterSubcategory);
+    return url;
+  }
+
+  // Loads the nested Type > Category > SubCategory browse menu (added
+  // 2026-09-14) -- once at boot, and again after a sync finishes in case
+  // ConnectWise added a new category/subcategory. Deliberately silent on
+  // failure (catch empty): the menu is a browse convenience, not something
+  // that should block or error out the whole register if it hiccups --
+  // search and the in-stock toggle keep working either way.
+  function loadTypeMenu() {
+    state.typeMenuLoading = true;
+    apiGet('api/catalog.php?action=type-menu').then(function (r) {
+      state.typeMenuLoading = false;
+      if (r.data && r.data.ok) {
+        state.typeMenu = r.data.menu;
+        render();
+      }
+    }).catch(function () { state.typeMenuLoading = false; });
   }
 
   var searchDebounce = null;
@@ -120,10 +162,7 @@
       state.catalogLoading = true;
       state.catalogError = null;
       render();
-      var url = 'api/catalog.php?action=list';
-      if (state.search.trim()) url += '&q=' + encodeURIComponent(state.search.trim());
-      if (state.inStockOnly) url += '&in_stock_only=1';
-      apiGet(url).then(function (r) {
+      apiGet(catalogListUrl()).then(function (r) {
         state.catalogLoading = false;
         if (r.data && r.data.ok) {
           state.catalogItems = r.data.items;
@@ -235,6 +274,7 @@
         state.syncMessage = 'Synced ' + d.sync_totals.done + ' item' + (d.sync_totals.done === 1 ? '' : 's') +
           (totalErrors ? (' (' + totalErrors + ' failed)') : '') + ' from ConnectWise.';
         loadCatalogNow();
+        loadTypeMenu();
       } else {
         render();
         syncStepLoop();
@@ -257,10 +297,7 @@
   // Immediate (non-debounced) catalog reload, used right after a sync or a
   // checkout so the list/on-hand counts reflect what just happened.
   function loadCatalogNow() {
-    var url = 'api/catalog.php?action=list';
-    if (state.search.trim()) url += '&q=' + encodeURIComponent(state.search.trim());
-    if (state.inStockOnly) url += '&in_stock_only=1';
-    apiGet(url).then(function (r) {
+    apiGet(catalogListUrl()).then(function (r) {
       if (r.data && r.data.ok) {
         state.catalogItems = r.data.items;
         render();
@@ -486,7 +523,7 @@
   function registerHtml() {
     return (
       '<div class="register-layout">' +
-        '<div class="catalog-pane">' + catalogToolbarHtml() + catalogGridHtml() + '</div>' +
+        '<div class="catalog-pane">' + catalogToolbarHtml() + typeNavHtml() + catalogGridHtml() + '</div>' +
         '<div class="cart-pane">' + cartHtml() + '</div>' +
       '</div>'
     );
@@ -495,7 +532,7 @@
   function catalogToolbarHtml() {
     return (
       '<div class="catalog-toolbar">' +
-        '<input id="catalogSearchInput" type="text" placeholder="Search products…" value="' + escapeHtml(state.search) + '">' +
+        '<input id="catalogSearchInput" type="text" placeholder="Scan a barcode, or search by name, part #, SKU…" value="' + escapeHtml(state.search) + '">' +
         '<label class="in-stock-toggle"><input type="checkbox" id="inStockOnlyToggle" ' + (state.inStockOnly ? 'checked' : '') + '> In stock only</label>' +
         '<button type="button" class="sync-btn" data-action="sync" ' + (state.syncing ? 'disabled' : '') + '>' +
           (state.syncing ? 'Syncing…' : '↻ Sync from ConnectWise') +
@@ -503,6 +540,56 @@
         (state.syncMessage ? '<span class="sync-message">' + escapeHtml(state.syncMessage) + '</span>' : '') +
       '</div>'
     );
+  }
+
+  // Nested Type > Category > SubCategory browse menu (added 2026-09-14).
+  // Progressive disclosure across three chip rows rather than a permanent
+  // sidebar, so it stays out of the way for the common case (a rep just
+  // scans a barcode) but is one click deep for browsing: Type row is
+  // always visible, Category row appears once a Type is picked, SubCategory
+  // row appears once a Category is picked.
+  function typeNavHtml() {
+    if (state.typeMenu.length === 0) {
+      return state.typeMenuLoading ? '' : '';
+    }
+
+    var html = '<div class="type-nav">';
+
+    html += '<div class="type-nav-row">' +
+      chipHtml('All Types', state.filterType === '', 'select-type', '') +
+      state.typeMenu.map(function (t) {
+        return chipHtml(t.type, state.filterType === t.type, 'select-type', t.type);
+      }).join('') +
+      '</div>';
+
+    var activeTypeEntry = state.typeMenu.filter(function (t) { return t.type === state.filterType; })[0];
+    if (activeTypeEntry) {
+      var categoryNames = Object.keys(activeTypeEntry.categories);
+      html += '<div class="type-nav-row type-nav-row-sub">' +
+        chipHtml('All Categories', state.filterCategory === '', 'select-category', '') +
+        categoryNames.map(function (c) {
+          return chipHtml(c, state.filterCategory === c, 'select-category', c);
+        }).join('') +
+        '</div>';
+
+      var subcategories = state.filterCategory ? (activeTypeEntry.categories[state.filterCategory] || []) : [];
+      if (subcategories.length > 0) {
+        html += '<div class="type-nav-row type-nav-row-sub">' +
+          chipHtml('All', state.filterSubcategory === '', 'select-subcategory', '') +
+          subcategories.map(function (s) {
+            return chipHtml(s, state.filterSubcategory === s, 'select-subcategory', s);
+          }).join('') +
+          '</div>';
+      }
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function chipHtml(label, active, action, value) {
+    return '<button type="button" class="type-chip' + (active ? ' active' : '') + '" data-action="' + action + '" data-value="' + escapeHtml(value) + '">' +
+      escapeHtml(label) + '</button>';
   }
 
   function catalogGridHtml() {
@@ -513,7 +600,10 @@
       return '<div class="error-banner">' + escapeHtml(state.catalogError) + '</div>';
     }
     if (state.catalogItems.length === 0) {
-      return '<div class="empty-state">No items found. Try "Sync from ConnectWise" if the catalog looks empty or out of date.</div>';
+      var hasFilter = state.filterType || state.search.trim();
+      return '<div class="empty-state">No items found' + (hasFilter ? ' for this filter/search' : '') +
+        '. Try "Sync from ConnectWise" if the catalog looks empty or out of date' +
+        (state.filterType ? ', or clear the type filter above' : '') + '.</div>';
     }
     var html = '<div class="catalog-grid">';
     state.catalogItems.forEach(function (item) {
@@ -524,9 +614,16 @@
       // product at a glance.
       var isService = item.track_inventory === 0;
       var outOfStock = !isService && item.on_hand <= 0;
+      // Mfg part number shown when present (added 2026-09-14) -- lets a
+      // rep who just scanned a box label visually confirm they landed on
+      // the right part, since ConnectWise has no barcode/UPC field to
+      // match against instead.
+      var mfgLine = item.manufacturer_part_number && item.manufacturer_part_number !== item.identifier
+        ? '<div class="catalog-card-mfg">MFG#: ' + escapeHtml(item.manufacturer_part_number) + '</div>' : '';
       html += '<div class="catalog-card' + (outOfStock ? ' out-of-stock' : '') + '" ' + (outOfStock ? '' : 'data-action="add-to-cart" data-id="' + item.id + '"') + '>' +
         '<div class="catalog-card-name">' + escapeHtml(item.identifier) + (isService ? ' <span class="catalog-card-badge">Protection Plan</span>' : '') + '</div>' +
         (item.description ? '<div class="catalog-card-desc">' + escapeHtml(item.description) + '</div>' : '') +
+        mfgLine +
         '<div class="catalog-card-footer">' +
           '<span class="catalog-card-price">' + fmtMoney(item.price) + '</span>' +
           (isService ? '' : '<span class="catalog-card-stock' + (outOfStock ? ' zero' : '') + '">' + (outOfStock ? 'Out of stock' : fmtQty(item.on_hand) + ' on hand') + '</span>') +
@@ -687,6 +784,16 @@
     if (searchInput) {
       searchInput.addEventListener('input', function () {
         state.search = searchInput.value;
+        // A scan or a typed search always searches the WHOLE catalog --
+        // added 2026-09-14 so a rep browsing "Voice over IP" who then
+        // scans an unrelated part's barcode doesn't get a confusing
+        // "No items found" from a stale type/category filter. Browsing
+        // the menu chips is unaffected (they don't touch the search box).
+        if (searchInput.value.trim() && (state.filterType || state.filterCategory || state.filterSubcategory)) {
+          state.filterType = '';
+          state.filterCategory = '';
+          state.filterSubcategory = '';
+        }
         loadCatalog();
       });
     }
@@ -718,6 +825,23 @@
         if (line) setCartQty(el.dataset.id, line.quantity - 1);
       };
       else if (action === 'clear-cart') handler = function () { state.cart = []; render(); };
+      else if (action === 'select-type') handler = function () {
+        // Picking a different Type invalidates whatever Category/
+        // SubCategory was selected under the old one.
+        state.filterType = el.dataset.value;
+        state.filterCategory = '';
+        state.filterSubcategory = '';
+        loadCatalogNow();
+      };
+      else if (action === 'select-category') handler = function () {
+        state.filterCategory = el.dataset.value;
+        state.filterSubcategory = '';
+        loadCatalogNow();
+      };
+      else if (action === 'select-subcategory') handler = function () {
+        state.filterSubcategory = el.dataset.value;
+        loadCatalogNow();
+      };
       else if (action === 'open-checkout') handler = openCheckout;
       else if (action === 'close-checkout') handler = closeCheckout;
       else if (action === 'close-checkout-backdrop') handler = closeCheckout;

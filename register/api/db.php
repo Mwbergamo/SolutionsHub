@@ -98,8 +98,18 @@ function register_migrate(PDO $pdo): void
     SQL);
     register_add_column_if_missing($pdo, 'catalog_items', 'product_class', "TEXT NOT NULL DEFAULT 'Inventory'");
     register_add_column_if_missing($pdo, 'catalog_items', 'track_inventory', 'INTEGER NOT NULL DEFAULT 1');
+    // Added 2026-09-14 for the Type/Category/SubCategory catalog reorg --
+    // confirmed live (register/api/catalog.php's now-removed
+    // ?action=probe-fields) that ConnectWise catalog items have no
+    // barcode/UPC field at all, but DO carry a real `manufacturerPartNumber`
+    // and `vendorSku`. A rep scanning a part's box label is almost always
+    // scanning one of these (a UPC sticker specifically was never found),
+    // so both are now synced and searchable alongside identifier.
+    register_add_column_if_missing($pdo, 'catalog_items', 'manufacturer_part_number', 'TEXT');
+    register_add_column_if_missing($pdo, 'catalog_items', 'vendor_sku', 'TEXT');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_catalog_items_identifier ON catalog_items(identifier COLLATE NOCASE)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_catalog_items_on_hand ON catalog_items(on_hand)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_catalog_items_mfg_part ON catalog_items(manufacturer_part_number COLLATE NOCASE)');
 
     // One row per completed checkout. subtotal/tax_amount/total are stored
     // (not recomputed from sale_items later) so a sale's recorded total

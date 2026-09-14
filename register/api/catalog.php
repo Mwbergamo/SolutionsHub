@@ -75,9 +75,22 @@
  * in order, never interleaved.
  *
  * GET  /register/api/catalog.php?action=list[&q=search+text][&in_stock_only=1]
+ *        [&type=Voice+over+IP][&category=...][&subcategory=...]
  *   -> { ok: true, items: [ { id, identifier, description, category_name,
- *          subcategory_name, unit_of_measure, price, on_hand,
- *          product_class, track_inventory, ... }, ... ] }
+ *          subcategory_name, type_name, manufacturer_part_number, vendor_sku,
+ *          unit_of_measure, price, on_hand, product_class, track_inventory,
+ *          ... }, ... ] }
+ *
+ * `type_name` groups ConnectWise's own category_name into one of the 5
+ * business lines Michael wants the front page organized by (added
+ * 2026-09-14, see register_catalog_type_for_category()'s docblock for the
+ * full mapping and why it exists as its own layer rather than a real
+ * ConnectWise field). `q` matches identifier, description,
+ * customer_description, manufacturer_part_number, AND vendor_sku --
+ * confirmed live (a since-removed ?action=probe-fields diagnostic) that
+ * ConnectWise has no barcode/UPC field on these items at all, so a rep
+ * scanning a part's box label is almost always scanning one of those two,
+ * not a separate UPC.
  *
  * GET  /register/api/catalog.php?action=sync-status
  * POST /register/api/catalog.php?action=sync-start
@@ -181,15 +194,21 @@ $action = $_GET['action'] ?? '';
 if ($action === 'list') {
     $q = trim((string) ($_GET['q'] ?? ''));
     $inStockOnly = ($_GET['in_stock_only'] ?? '') === '1';
+    // Type is derived, not a real column (see register_catalog_type_for_
+    // category()) -- filtered in PHP after the query, not in SQL.
+    $typeFilter = trim((string) ($_GET['type'] ?? ''));
+    $categoryFilter = trim((string) ($_GET['category'] ?? ''));
+    $subcategoryFilter = trim((string) ($_GET['subcategory'] ?? ''));
 
     $sql = 'SELECT id, cw_catalog_id, identifier, description, customer_description,
-                   category_name, subcategory_name, unit_of_measure, price, on_hand,
-                   product_class, track_inventory, synced_at
+                   category_name, subcategory_name, manufacturer_part_number, vendor_sku,
+                   unit_of_measure, price, on_hand, product_class, track_inventory, synced_at
             FROM catalog_items
             WHERE inactive_flag = 0';
     $params = [];
     if ($q !== '') {
-        $sql .= ' AND (identifier LIKE :q OR description LIKE :q OR customer_description LIKE :q)';
+        $sql .= ' AND (identifier LIKE :q OR description LIKE :q OR customer_description LIKE :q
+                        OR manufacturer_part_number LIKE :q OR vendor_sku LIKE :q)';
         $params[':q'] = '%' . $q . '%';
     }
     if ($inStockOnly) {
@@ -198,21 +217,38 @@ if ($action === 'list') {
         // toggle. Only Inventory-class items get filtered by on_hand.
         $sql .= ' AND (track_inventory = 0 OR on_hand > 0)';
     }
+    if ($categoryFilter !== '') {
+        $sql .= ' AND category_name = :category';
+        $params[':category'] = $categoryFilter;
+    }
+    if ($subcategoryFilter !== '') {
+        $sql .= ' AND subcategory_name = :subcategory';
+        $params[':subcategory'] = $subcategoryFilter;
+    }
     $sql .= ' ORDER BY identifier COLLATE NOCASE';
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    foreach ($items as &$item) {
+    $filtered = [];
+    foreach ($items as $item) {
         $item['id'] = (int) $item['id'];
         $item['cw_catalog_id'] = (int) $item['cw_catalog_id'];
         $item['price'] = (float) $item['price'];
         $item['on_hand'] = (float) $item['on_hand'];
         $item['track_inventory'] = (int) $item['track_inventory'];
+        $item['type_name'] = register_catalog_type_for_category($item['category_name']);
+        if ($typeFilter !== '' && $item['type_name'] !== $typeFilter) {
+            continue;
+        }
+        $filtered[] = $item;
     }
-    unset($item);
 
-    register_respond(200, ['ok' => true, 'items' => $items]);
+    register_respond(200, ['ok' => true, 'items' => $filtered]);
+}
+
+if ($action === 'type-menu') {
+    register_respond(200, ['ok' => true, 'menu' => register_catalog_type_menu($pdo)]);
 }
 
 if ($action === 'sync-status') {
@@ -256,62 +292,123 @@ if ($action === 'sync-step') {
     register_respond(200, array_merge(['ok' => true], $result));
 }
 
-// TEMPORARY read-only diagnostic (added 2026-09-14, remove once answered) --
-// Michael wants the register's front page consolidated into a nested
-// Type > Category > SubCategory menu (using his GL Accounts Map's Type
-// column: Data Center / Voice / Premise Sec / Structured Cabling /
-// IT Services) plus barcode/mfg-part-number search. Before building
-// either, need real data, not guesses: (1) what category_name/
-// subcategory_name pairs are ACTUALLY synced onto catalog_items right now,
-// so they can be checked against the GL map's Category/SubCat values, and
-// (2) the real ConnectWise field name(s) for manufacturer part number and
-// barcode/UPC, if any exist at all -- neither has ever been confirmed live,
-// same "diagnose before guessing" discipline as every ConnectWise fact
-// already recorded in this file's header and in the register-app.md
-// project doc.
-if ($action === 'probe-fields') {
-    $categoryCounts = $pdo->query(
-        "SELECT category_name, subcategory_name, product_class, COUNT(*) AS n
-         FROM catalog_items
-         GROUP BY category_name, subcategory_name, product_class
-         ORDER BY product_class, category_name, subcategory_name"
+register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
+
+/**
+ * Groups ConnectWise's own category_name into one of the 5 business lines
+ * Michael wants the register's front page organized by: IT Services, Data
+ * Center, Premise Security, Cabling, Voice over IP. Added 2026-09-14.
+ *
+ * This is NOT a real ConnectWise field -- confirmed via a live diagnostic
+ * (register/api/catalog.php's now-removed ?action=probe-fields) that
+ * catalog items DO carry a `type` field, but it's something else entirely
+ * (e.g. "Hardware" for a patch cable, "IT Services" for a managed-anti-spam
+ * Agreement item) -- essentially a duplicate of category.name in the
+ * samples checked, nothing like the 5 lines Michael wants. His GL Accounts
+ * Map's own "Type" column *does* line up with those 5 lines, but only
+ * covers ConnectWise's Agreement/service-oriented categories (Carrier,
+ * Cloud Hosting, Rack, Storage, Voice Hardware/Software, Premise Security,
+ * Structured Cabling, IT Services, etc.) -- confirmed live that the actual
+ * physical Inventory catalog (~1,815 of the ~2,600 synced items) sits under
+ * one single ConnectWise category, "Hardware", covering everything from
+ * patch cables to servers to laptops, which isn't in the GL map at all.
+ *
+ * Per Michael (2026-09-14, asked directly rather than guessed): generic
+ * "Hardware"/"Software" items -- INCLUDING the Server/Network Device/
+ * Storage subcategories, which could have plausibly read as Data Center
+ * gear -- all land in the "IT Services" catch-all rather than being split
+ * out. Only the categories ConnectWise already labels for a specific line
+ * of business (Voice/Premise Security/Structured Cabling/Data-Center's own
+ * service categories) get their own bucket.
+ *
+ * Any category_name not listed here (new to ConnectWise, or a typo/rename)
+ * falls into 'Uncategorized' rather than silently vanishing from the menu
+ * -- action=type-menu below surfaces that bucket like any other so it gets
+ * noticed and this map can be extended.
+ */
+function register_catalog_type_for_category(?string $categoryName): string
+{
+    static $map = [
+        // Voice over IP
+        'Voice Hardware/Software' => 'Voice over IP',
+        'Voice Service' => 'Voice over IP',
+        'Voice Carrier' => 'Voice over IP',
+        // Premise Security
+        'Premise Security' => 'Premise Security',
+        // Cabling (ConnectWise's own category is literally "Structured Cabling")
+        'Structured Cabling' => 'Cabling',
+        // Data Center -- ConnectWise's cloud/carrier/rack/storage service categories
+        'Carrier' => 'Data Center',
+        'Cloud' => 'Data Center',
+        'Cloud Hosting' => 'Data Center',
+        'Data Center Service' => 'Data Center',
+        'Rack' => 'Data Center',
+        'Storage' => 'Data Center',
+        // IT Services -- explicit IT Services category, plus every generic
+        // physical/software catch-all (Michael's call, 2026-09-14)
+        'IT Services' => 'IT Services',
+        'Hardware' => 'IT Services',
+        'Software' => 'IT Services',
+    ];
+    if ($categoryName === null || $categoryName === '') {
+        return 'Uncategorized';
+    }
+    return $map[$categoryName] ?? 'Uncategorized';
+}
+
+/**
+ * Builds the nested Type > Category > SubCategory tree action=type-menu
+ * responds with, powering the register front page's browse menu. Built
+ * from whatever's actually in catalog_items right now, not a hardcoded
+ * list, so it never shows an empty branch or misses a category ConnectWise
+ * adds later -- anything register_catalog_type_for_category() doesn't
+ * recognize falls into 'Uncategorized' rather than silently vanishing.
+ * Pulled out as its own function (rather than left inline in the
+ * action=type-menu dispatch block) so it's directly unit-testable.
+ *
+ * Returns a list ordered as [{ type, categories: { categoryName:
+ * [subcategoryName, ...] } }, ...] -- the 5 business lines Michael asked
+ * for, in the order he listed them, with 'Uncategorized' (if present)
+ * always sorting last so it doesn't read as a 6th intentional line.
+ */
+function register_catalog_type_menu(PDO $pdo): array
+{
+    $rows = $pdo->query(
+        "SELECT DISTINCT category_name, subcategory_name FROM catalog_items
+         WHERE inactive_flag = 0 AND category_name IS NOT NULL
+         ORDER BY category_name, subcategory_name"
     )->fetchAll(PDO::FETCH_ASSOC);
 
-    // A handful of real catalog items to inspect the FULL raw ConnectWise
-    // record on (not just the fields this app already picks out) -- one
-    // stocked Inventory item, one Agreement item, and whatever else is
-    // cheaply available, so any manufacturer-part-number/barcode field
-    // shows up if it exists at all.
-    $sampleRows = $pdo->query(
-        "SELECT cw_catalog_id, identifier, product_class FROM catalog_items WHERE product_class = 'Inventory' AND on_hand > 0 ORDER BY cw_catalog_id LIMIT 2"
-    )->fetchAll(PDO::FETCH_ASSOC);
-    $sampleRows = array_merge($sampleRows, $pdo->query(
-        "SELECT cw_catalog_id, identifier, product_class FROM catalog_items WHERE product_class = 'Agreement' ORDER BY cw_catalog_id LIMIT 1"
-    )->fetchAll(PDO::FETCH_ASSOC));
-
-    $samples = [];
-    foreach ($sampleRows as $row) {
-        try {
-            $samples[] = [
-                'cw_catalog_id' => (int) $row['cw_catalog_id'],
-                'identifier' => $row['identifier'],
-                'product_class' => $row['product_class'],
-                'raw' => register_cw_request('/procurement/catalog/' . (int) $row['cw_catalog_id']),
-            ];
-        } catch (Throwable $e) {
-            $samples[] = ['cw_catalog_id' => (int) $row['cw_catalog_id'], 'error' => $e->getMessage()];
+    $tree = [];
+    foreach ($rows as $row) {
+        $type = register_catalog_type_for_category($row['category_name']);
+        $category = $row['category_name'];
+        $subcategory = $row['subcategory_name'];
+        if (!isset($tree[$type])) {
+            $tree[$type] = [];
+        }
+        if (!isset($tree[$type][$category])) {
+            $tree[$type][$category] = [];
+        }
+        if ($subcategory !== null && $subcategory !== '' && !in_array($subcategory, $tree[$type][$category], true)) {
+            $tree[$type][$category][] = $subcategory;
         }
     }
 
-    register_respond(200, [
-        'ok' => true,
-        'category_subcategory_counts' => $categoryCounts,
-        'distinct_category_count' => count(array_unique(array_column($categoryCounts, 'category_name'))),
-        'samples' => $samples,
-    ]);
-}
+    $typeOrder = ['IT Services', 'Data Center', 'Premise Security', 'Cabling', 'Voice over IP'];
+    $menu = [];
+    foreach ($typeOrder as $type) {
+        if (isset($tree[$type])) {
+            $menu[] = ['type' => $type, 'categories' => $tree[$type]];
+            unset($tree[$type]);
+        }
+    }
+    foreach ($tree as $type => $categories) {
+        $menu[] = ['type' => $type, 'categories' => $categories];
+    }
 
-register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
+    return $menu;
+}
 
 /**
  * Simple get/set helpers over register_sync_meta, namespaced under
@@ -539,18 +636,20 @@ function register_catalog_sync_step(PDO $pdo, int $batchSize = 20): array
     $upsert = $pdo->prepare(
         'INSERT INTO catalog_items
             (cw_catalog_id, identifier, description, customer_description, category_name,
-             subcategory_name, unit_of_measure, price, cost, on_hand, taxable_flag, inactive_flag,
-             product_class, track_inventory, synced_at)
+             subcategory_name, manufacturer_part_number, vendor_sku, unit_of_measure, price, cost,
+             on_hand, taxable_flag, inactive_flag, product_class, track_inventory, synced_at)
          VALUES
             (:cw_id, :identifier, :description, :customer_description, :category_name,
-             :subcategory_name, :unit_of_measure, :price, :cost, :on_hand, :taxable_flag, :inactive_flag,
-             :product_class, :track_inventory, datetime(\'now\'))
+             :subcategory_name, :manufacturer_part_number, :vendor_sku, :unit_of_measure, :price, :cost,
+             :on_hand, :taxable_flag, :inactive_flag, :product_class, :track_inventory, datetime(\'now\'))
          ON CONFLICT(cw_catalog_id) DO UPDATE SET
             identifier = excluded.identifier,
             description = excluded.description,
             customer_description = excluded.customer_description,
             category_name = excluded.category_name,
             subcategory_name = excluded.subcategory_name,
+            manufacturer_part_number = excluded.manufacturer_part_number,
+            vendor_sku = excluded.vendor_sku,
             unit_of_measure = excluded.unit_of_measure,
             price = excluded.price,
             cost = excluded.cost,
@@ -586,6 +685,8 @@ function register_catalog_sync_step(PDO $pdo, int $batchSize = 20): array
                 ':customer_description' => (string) ($item['customerDescription'] ?? ''),
                 ':category_name' => $item['category']['name'] ?? null,
                 ':subcategory_name' => $item['subcategory']['name'] ?? null,
+                ':manufacturer_part_number' => $item['manufacturerPartNumber'] ?? null,
+                ':vendor_sku' => $item['vendorSku'] ?? null,
                 ':unit_of_measure' => $item['unitOfMeasure']['name'] ?? null,
                 ':price' => (float) ($item['price'] ?? 0),
                 ':cost' => (float) ($item['cost'] ?? 0),
