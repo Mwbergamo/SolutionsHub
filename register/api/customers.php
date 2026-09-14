@@ -82,32 +82,51 @@
  * ---- Multi-step invoicing setup (2026-09-14, per Michael) ----
  * Company creation is only step 1 of a multi-step process ConnectWise
  * needs to actually invoice and transfer to QuickBooks Online: (1) create
- * company, (2) create contact under it -- both done above and confirmed --
- * then (3) make that contact the company's Primary Contact, (4) set
- * Company Finance fields: Account ID mirrors the company name with no
- * special characters (concatenated rather than truncated mid-word where
- * it doesn't fit -- this is what transfers to QBO after invoice close),
- * Billing Terms = "Card on file" for every register sale, Bill To contact
- * = the contact just created, Invoice Delivery Method = Email.
+ * company, (2) create contact under it, (3) make that contact the
+ * company's Primary Contact, (4) set Company Finance fields: Account ID
+ * mirrors the company name with no special characters (concatenated
+ * rather than truncated mid-word where it doesn't fit -- this is what
+ * transfers to QBO after invoice close), Billing Terms = "Card on file"
+ * for every register sale, Bill To contact = the contact just created,
+ * Invoice Delivery Method = Email. All four steps are implemented and
+ * confirmed end-to-end against real ConnectWise (register_cw_create_
+ * company(), register_cw_create_contact(), register_cw_finalize_company_
+ * invoicing() below).
  *
- * register_cw_sanitize_account_id() (below) implements the Account ID
- * rule now -- pure string logic, no ConnectWise call, so no diagnostic
- * needed. It's applied to both accountNumber and identifier (Company ID),
- * since narrowing the character set can only make a create MORE likely to
- * succeed, never less.
+ * register_cw_sanitize_account_id() implements the Account ID rule --
+ * pure string logic, no ConnectWise call. Applied to both accountNumber
+ * and identifier (Company ID), since narrowing the character set can only
+ * make a create MORE likely to succeed, never less.
  *
- * The rest -- Primary Contact, Billing Terms lookup, Bill To, Invoice
- * Delivery Method -- are all NEW write surfaces (a company UPDATE/PATCH,
- * never attempted anywhere in this codebase, plus an unconfirmed
- * billingTerms id for "Card on file") and are deliberately NOT wired into
- * register_cw_create_company() yet. action=probe-finance (read-only: looks
- * up the real "Card on file" billingTerms id) and action=probe-finance-
- * write (creates one more clearly-labeled real test company+contact via
- * the now-proven create functions, then attempts each Company Finance
- * field as an isolated PATCH so a wrong guess on one doesn't block
- * learning the others) exist to confirm the real PATCH shape before any
- * of this is folded into the real create flow -- same discipline as
- * everything else in this file.
+ * register_cw_finalize_company_invoicing() (step 3+4) required its own
+ * research trail, since Company UPDATE had never been attempted anywhere
+ * in this codebase (unlike Activity creation, which took 6 rounds -- see
+ * relationships-connectwise-sync.md):
+ *   - PATCH /company/companies/{id} requires a JSON-Patch (RFC 6902)
+ *     array body -- confirmed, since a plain merge-object produces
+ *     ConnectWise's own clear 400 "expected array format" error. BUT even
+ *     with that correct envelope, every PATCH attempt -- regardless of
+ *     target field (name, defaultContact, billingContact, billingTerms,
+ *     invoiceDeliveryMethod, invoiceToEmailAddress) or payload -- 500s
+ *     identically with "String was not recognized as a valid DateTime."
+ *     A null-valued Date-type custom field triggering a full-record
+ *     revalidation bug was tested and disproved (the test company had
+ *     none, error persisted). Root cause unknown -- looks like a
+ *     ConnectWise-side quirk/bug in this instance's PATCH pipeline for
+ *     the Company entity. PATCH is NOT used for Company updates here.
+ *   - PUT (full-object replace) works instead, with one catch: sending
+ *     the fetched record straight back fails with a SPECIFIC, actionable
+ *     error -- "typeIds can only be used when creating a new company."
+ *     (ConnectWise's own internal name for the "types" field on a
+ *     Company). register_cw_finalize_company_invoicing() strips whatever
+ *     field ConnectWise names in that exact error (not hardcoded to
+ *     "types", in case a differently-shaped record hits a different
+ *     create-only field) and retries, up to 5 attempts.
+ *   - Confirmed end-to-end (2026-09-14): one PUT call, after stripping
+ *     "types", successfully sets defaultContact (Primary Contact),
+ *     billingContact (Bill To), billingTerms (id 11, "Card on File",
+ *     confirmed via /finance/billingTerms), and invoiceDeliveryMethod
+ *     (id 2, "E-Mail") all together.
  *
  * GET  /register/api/customers.php?action=search-companies&q=...
  * GET  /register/api/customers.php?action=search-contacts&company_id=...&q=...
@@ -131,16 +150,14 @@
  *      Type "End User" (Michael's rule for every register-created
  *      contact), plus phone/email communication items if given.
  *
- * GET  /register/api/customers.php?action=probe-finance (TEMPORARY,
- *   read-only) -- looks up the real billingTerms id for "Card on file".
- *
- * GET  /register/api/customers.php?action=probe-finance-write (TEMPORARY)
- *   -- creates one more real, clearly-labeled test Company + Contact and
- *   attempts each remaining Company Finance / Primary Contact field
- *   (Primary Contact, Bill To, Billing Terms, Invoice Delivery Method) as
- *   an isolated PATCH, to confirm ConnectWise's real update shape before
- *   any of it ships. DO NOT run against production without knowing it
- *   will write real records.
+ * POST /register/api/customers.php?action=finalize-company-invoicing
+ *   body: { company_id, contact_id }
+ *   -> call once, right after a BRAND-NEW company+contact pair are both
+ *      created. Makes contact_id the company's Primary Contact and Bill
+ *      To contact, and sets Billing Terms to "Card on file" and Invoice
+ *      Delivery Method to Email. Do NOT call this for an existing/
+ *      recalled company -- it overwrites whatever billing setup staff
+ *      may already have on that account.
  */
 
 declare(strict_types=1);
@@ -409,6 +426,93 @@ function register_cw_create_contact(int $companyId, string $firstName, string $l
     return $contact;
 }
 
+/**
+ * The final step of company creation per Michael's multi-step invoicing
+ * rule: makes $contactId the company's Primary Contact AND Bill To
+ * contact, and sets Company Finance's Billing Terms to "Card on file"
+ * (confirmed id 11 via /finance/billingTerms) and Invoice Delivery Method
+ * to Email (confirmed id 2). Account ID/accountNumber is already handled
+ * at company-create time by register_cw_sanitize_account_id().
+ *
+ * Confirmed live (probe-patch-format/2/3/4/5, 2026-09-14): ConnectWise's
+ * PATCH (JSON-Patch array) endpoint for Company always 500s with a
+ * generic "String was not recognized as a valid DateTime." error on this
+ * instance, regardless of target field or payload -- a server-side
+ * quirk/bug, root cause unknown, that made every field (name,
+ * defaultContact, billingContact, billingTerms, invoiceDeliveryMethod,
+ * invoiceToEmailAddress) fail identically even with the confirmed-correct
+ * JSON-Patch envelope. PUT (full-object replace) works instead, with one
+ * catch: the fetched record's "types" field trips "typeIds can only be
+ * used when creating a new company." (ConnectWise's own internal name for
+ * that field), so it must be stripped before sending the record back.
+ * This auto-strips whatever field ConnectWise names in that specific
+ * error (not just "types"), in case a differently-shaped company record
+ * hits a different create-only field -- confirmed working end-to-end for
+ * both defaultContact/billingContact and billingTerms/
+ * invoiceDeliveryMethod together (probe-patch-format5).
+ *
+ * Throws RegisterConnectWiseError if it can't resolve an error to a real
+ * field to strip, or if it doesn't succeed within $maxAttempts.
+ */
+function register_cw_finalize_company_invoicing(int $companyId, int $contactId, int $maxAttempts = 5): array
+{
+    $full = register_cw_request('/company/companies/' . $companyId, [], 'GET', null, 12, 4);
+
+    $modified = $full;
+    $modified['defaultContact'] = ['id' => $contactId];
+    $modified['billingContact'] = ['id' => $contactId];
+    $modified['billingTerms'] = ['id' => 11]; // "Card on File", confirmed via /finance/billingTerms
+    $modified['invoiceDeliveryMethod'] = ['id' => 2]; // "E-Mail", confirmed
+
+    for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+        try {
+            return register_cw_request('/company/companies/' . $companyId, [], 'PUT', $modified, 12, 4);
+        } catch (Throwable $e) {
+            $msg = $e->getMessage();
+            $jsonStart = strpos($msg, '{');
+            $decoded = $jsonStart !== false ? json_decode(substr($msg, $jsonStart), true) : null;
+            $offendingField = null;
+            if (is_array($decoded) && isset($decoded['errors']) && is_array($decoded['errors'])) {
+                foreach ($decoded['errors'] as $err) {
+                    $field = $err['field'] ?? null;
+                    $errMsg = $err['message'] ?? '';
+                    if (is_string($field) && $field !== '' && stripos($errMsg, 'can only be used when creating') !== false) {
+                        $offendingField = $field;
+                        break;
+                    }
+                }
+            }
+
+            // ConnectWise names its OWN internal field name (e.g.
+            // "typeIds"), which doesn't always match our JSON key (e.g.
+            // "types", an array of {id,name}) -- try the literal name,
+            // then the "XIds" -> "Xs" plural-array rewrite confirmed live.
+            $realKey = null;
+            if ($offendingField !== null) {
+                $candidates = [$offendingField];
+                if (substr($offendingField, -3) === 'Ids') {
+                    $base = substr($offendingField, 0, -3);
+                    $candidates[] = $base . 's';
+                    $candidates[] = $base;
+                }
+                foreach ($candidates as $candidate) {
+                    if (array_key_exists($candidate, $modified)) {
+                        $realKey = $candidate;
+                        break;
+                    }
+                }
+            }
+
+            if ($realKey === null) {
+                throw new RegisterConnectWiseError('Could not finalize company invoicing setup for company ' . $companyId . ': ' . $msg);
+            }
+            unset($modified[$realKey]);
+        }
+    }
+
+    throw new RegisterConnectWiseError('Could not finalize company invoicing setup for company ' . $companyId . ' after ' . $maxAttempts . ' attempts.');
+}
+
 if ($action === 'create-company') {
     $input = register_read_json_body();
     $name = trim((string) ($input['name'] ?? ''));
@@ -456,564 +560,27 @@ if ($action === 'create-contact') {
     }
 }
 
-/**
- * TEMPORARY diagnostic -- read-only. Looks up the real billingTerms id for
- * "Card on file" (Michael's required Billing Terms for every register
- * sale), which no code in this file has ever needed before. Tries the
- * standard-looking /finance/billingTerms list endpoint first; if that
- * 404s, falls back to sampling a broad, unconditioned set of real
- * companies and collecting whatever distinct billingTerms{id,name} values
- * are actually in use, so there's still a real answer even if the guessed
- * endpoint path is wrong.
- */
-if ($action === 'probe-finance') {
-    $result = ['ok' => true];
-    $cardOnFileId = null;
-
-    try {
-        $terms = register_cw_request('/finance/billingTerms', ['pageSize' => '100'], 'GET', null, 12, 4);
-        $result['billing_terms'] = $terms;
-        foreach ($terms as $term) {
-            if (isset($term['name']) && stripos((string) $term['name'], 'Card on file') !== false) {
-                $cardOnFileId = $term['id'];
-                break;
-            }
-        }
-    } catch (Throwable $e) {
-        $result['billing_terms_error'] = $e->getMessage();
-
-        try {
-            $companies = register_cw_request('/company/companies', [
-                'fields' => 'id,name,billingTerms',
-                'pageSize' => '100',
-            ], 'GET', null, 12, 4);
-            $seen = [];
-            foreach ($companies as $c) {
-                if (!empty($c['billingTerms']['id'])) {
-                    $seen[$c['billingTerms']['id']] = $c['billingTerms']['name'] ?? null;
-                }
-            }
-            $result['billing_terms_seen_on_companies'] = $seen;
-            foreach ($seen as $id => $name) {
-                if ($name !== null && stripos((string) $name, 'Card on file') !== false) {
-                    $cardOnFileId = $id;
-                    break;
-                }
-            }
-        } catch (Throwable $e2) {
-            $result['billing_terms_fallback_error'] = $e2->getMessage();
-        }
-    }
-
-    $result['card_on_file_id_found'] = $cardOnFileId;
-    register_respond(200, $result);
-}
-
-/**
- * TEMPORARY diagnostic -- creates one more clearly-labeled real test
- * Company + Contact (via the now-proven register_cw_create_company()/
- * register_cw_create_contact(), so this also exercises those for real),
- * then attempts each remaining Company Finance / Primary Contact field as
- * an ISOLATED PATCH to /company/companies/{id}, since a company UPDATE has
- * never been attempted anywhere in this codebase and ConnectWise's PATCH
- * body shape (a JSON-Patch-style array of {op,path,value}, guessed here --
- * unconfirmed) may not be right. Each field's real success/error is
- * reported separately so a wrong guess on one doesn't block learning the
- * others. Remove once every finding here is confirmed and folded into
- * register_cw_create_company()/a real "finalize invoicing setup" step.
- */
-if ($action === 'probe-finance-write') {
-    $stamp = date('Y-m-d H:i:s');
-    $result = ['ok' => true, 'note' => 'This created real test records in ConnectWise. Search for "ZZZ REGISTER TEST" and delete them by hand when done.'];
-
-    $testName = 'ZZZ REGISTER TEST - DELETE ME (' . $stamp . ')';
-    $companyId = null;
-    $contactId = null;
-    try {
-        $company = register_cw_create_company($testName, '8045550100', '123 Test St', '', 'Richmond', 'VA', '23219');
-        $companyId = $company['id'] ?? null;
-        $result['create_company'] = ['ok' => true, 'response' => $company];
-    } catch (Throwable $e) {
-        $result['create_company'] = ['ok' => false, 'error' => $e->getMessage()];
-    }
-
-    if ($companyId !== null) {
-        try {
-            $contact = register_cw_create_contact($companyId, 'ZZZ-REGISTER-TEST', 'DELETE-ME (' . $stamp . ')', '8045550100', 'register-test-' . date('YmdHis') . '@example.invalid');
-            $contactId = $contact['id'] ?? null;
-            $result['create_contact'] = ['ok' => true, 'response' => $contact];
-        } catch (Throwable $e) {
-            $result['create_contact'] = ['ok' => false, 'error' => $e->getMessage()];
-        }
-    }
-
-    if ($companyId !== null && $contactId !== null) {
-        // Look up "Card on file" the same way probe-finance does, so this
-        // one action can test every Company Finance field in one pass.
-        $cardOnFileId = null;
-        try {
-            $terms = register_cw_request('/finance/billingTerms', ['pageSize' => '100'], 'GET', null, 12, 4);
-            $result['billing_terms'] = $terms;
-            foreach ($terms as $term) {
-                if (isset($term['name']) && stripos((string) $term['name'], 'Card on file') !== false) {
-                    $cardOnFileId = $term['id'];
-                    break;
-                }
-            }
-        } catch (Throwable $e) {
-            $result['billing_terms_error'] = $e->getMessage();
-        }
-
-        $patches = [
-            'set_primary_contact' => [['op' => 'replace', 'path' => '/defaultContact', 'value' => ['id' => $contactId]]],
-            'set_bill_to_contact' => [['op' => 'replace', 'path' => '/billingContact', 'value' => ['id' => $contactId]]],
-            'set_invoice_delivery_email' => [['op' => 'replace', 'path' => '/invoiceDeliveryMethod', 'value' => ['id' => 2]]], // "E-Mail", confirmed read-only
-            'set_invoice_to_email_address' => [['op' => 'replace', 'path' => '/invoiceToEmailAddress', 'value' => 'register-test-' . date('YmdHis') . '@example.invalid']],
-        ];
-        if ($cardOnFileId !== null) {
-            $patches['set_billing_terms_card_on_file'] = [['op' => 'replace', 'path' => '/billingTerms', 'value' => ['id' => $cardOnFileId]]];
-        } else {
-            $result['set_billing_terms_card_on_file'] = ['ok' => false, 'error' => 'No billingTerms named "Card on file" was found -- see billing_terms above for the real list.'];
-        }
-        foreach ($patches as $key => $patchBody) {
-            try {
-                $response = register_cw_request('/company/companies/' . $companyId, [], 'PATCH', $patchBody, 12, 4);
-                $result[$key] = ['ok' => true, 'response' => $response];
-            } catch (Throwable $e) {
-                $result[$key] = ['ok' => false, 'error' => $e->getMessage(), 'tried_patch' => $patchBody];
-            }
-        }
-    }
-
-    register_respond(200, $result);
-}
-
-/**
- * TEMPORARY diagnostic, read-only except for the PATCH attempts on an
- * EXISTING company (no new test records created -- reuse the ones
- * probe-finance-write already made, e.g. ?company_id=7912&contact_id=16678,
- * so repeated attempts don't keep littering ConnectWise with junk data).
- *
- * probe-finance-write's every PATCH attempt failed with the SAME error --
- * "String was not recognized as a valid DateTime" -- regardless of which
- * field was targeted (defaultContact, billingContact, billingTerms,
- * invoiceDeliveryMethod, invoiceToEmailAddress). That points at the PATCH
- * envelope/body shape itself (guessed as a JSON-Patch-style array of
- * {op,path,value}), not at any one field. This isolates the question with
- * three narrower attempts:
- *   (a) the same JSON-Patch array shape, but targeting a field with
- *       nothing date-related about it at all ("name") -- if this STILL
- *       fails with the DateTime error, the envelope itself is wrong.
- *   (b) a plain merge-style object body (not an array) for that same
- *       harmless field -- {"name": "..."} instead of a JSON-Patch array.
- *   (c) a plain merge-style object body for the actual field that
- *       matters -- {"defaultContact": {"id": ...}}.
- */
-if ($action === 'probe-patch-format') {
-    $companyId = isset($_GET['company_id']) ? (int) $_GET['company_id'] : 0;
-    $contactId = isset($_GET['contact_id']) ? (int) $_GET['contact_id'] : 0;
-    if ($companyId <= 0) {
-        register_respond(400, ['ok' => false, 'error' => 'company_id is required (reuse an existing ZZZ REGISTER TEST company id).']);
-    }
-
-    $result = ['ok' => true];
-    $marker = ' [patch test ' . date('H:i:s') . ']';
-    $before = [];
-
-    try {
-        $before = register_cw_request('/company/companies/' . $companyId, [], 'GET', null, 12, 4);
-        $result['company_before'] = ['id' => $before['id'] ?? null, 'name' => $before['name'] ?? null];
-    } catch (Throwable $e) {
-        $result['company_before_error'] = $e->getMessage();
-    }
-
-    try {
-        $r = register_cw_request(
-            '/company/companies/' . $companyId,
-            [],
-            'PATCH',
-            [['op' => 'replace', 'path' => '/name', 'value' => ($before['name'] ?? 'Test') . $marker . 'A']],
-            12,
-            4
-        );
-        $result['jsonpatch_array_on_name'] = ['ok' => true, 'response' => ['id' => $r['id'] ?? null, 'name' => $r['name'] ?? null]];
-    } catch (Throwable $e) {
-        $result['jsonpatch_array_on_name'] = ['ok' => false, 'error' => $e->getMessage()];
-    }
-
-    try {
-        $r = register_cw_request(
-            '/company/companies/' . $companyId,
-            [],
-            'PATCH',
-            ['name' => ($before['name'] ?? 'Test') . $marker . 'B'],
-            12,
-            4
-        );
-        $result['merge_object_on_name'] = ['ok' => true, 'response' => ['id' => $r['id'] ?? null, 'name' => $r['name'] ?? null]];
-    } catch (Throwable $e) {
-        $result['merge_object_on_name'] = ['ok' => false, 'error' => $e->getMessage()];
-    }
-
-    if ($contactId > 0) {
-        try {
-            $r = register_cw_request(
-                '/company/companies/' . $companyId,
-                [],
-                'PATCH',
-                ['defaultContact' => ['id' => $contactId]],
-                12,
-                4
-            );
-            $result['merge_object_on_default_contact'] = ['ok' => true, 'response' => ['id' => $r['id'] ?? null, 'defaultContact' => $r['defaultContact'] ?? null]];
-        } catch (Throwable $e) {
-            $result['merge_object_on_default_contact'] = ['ok' => false, 'error' => $e->getMessage()];
-        }
-    }
-
-    register_respond(200, $result);
-}
-
-/**
- * TEMPORARY diagnostic -- tests a specific hypothesis for the "String was
- * not recognized as a valid DateTime" error seen on EVERY JSON-Patch
- * attempt so far (confirmed by probe-patch-format to be the correct
- * envelope shape -- ConnectWise explicitly rejects a plain merge object --
- * yet still fails on a harmless field like "name"). Every company here
- * (including ones ConnectWise itself pre-populates on brand-new companies,
- * not just ones this app created) carries several Date-type customFields
- * whose value is null -- e.g. "OutGrow Last Touch" (id 79) -- seen on
- * every sample record fetched so far. If ConnectWise's PATCH endpoint
- * re-validates/re-serializes the WHOLE company object (not just the
- * patched field) and its date parser mishandles a null Date custom field
- * during that pass, that would explain a DateTime error on literally any
- * PATCH regardless of target field. This fills every null Date custom
- * field with a real value first (as its own isolated PATCH op) and then
- * retries the actual defaultContact update, to see whether removing the
- * nulls unblocks it.
- */
-if ($action === 'probe-patch-format2') {
-    $companyId = isset($_GET['company_id']) ? (int) $_GET['company_id'] : 0;
-    $contactId = isset($_GET['contact_id']) ? (int) $_GET['contact_id'] : 0;
-    if ($companyId <= 0) {
-        register_respond(400, ['ok' => false, 'error' => 'company_id is required (reuse an existing ZZZ REGISTER TEST company id).']);
-    }
-
-    $result = ['ok' => true];
-    $today = gmdate('Y-m-d\T00:00:00\Z');
-
-    try {
-        $full = register_cw_request('/company/companies/' . $companyId, [], 'GET', null, 12, 4);
-    } catch (Throwable $e) {
-        register_respond(502, ['ok' => false, 'error' => 'Could not fetch the company: ' . $e->getMessage()]);
-    }
-
-    $customFields = $full['customFields'] ?? [];
-    $nullDateFieldIds = [];
-    foreach ($customFields as $cf) {
-        if (($cf['type'] ?? null) === 'Date' && ($cf['value'] ?? null) === null) {
-            $nullDateFieldIds[] = $cf['id'];
-        }
-    }
-    $result['null_date_custom_field_ids_found'] = $nullDateFieldIds;
-
-    if ($nullDateFieldIds !== []) {
-        // Fill every null Date custom field at once, in a single op.
-        $filledCustomFields = $customFields;
-        foreach ($filledCustomFields as &$cf) {
-            if (($cf['type'] ?? null) === 'Date' && ($cf['value'] ?? null) === null) {
-                $cf['value'] = $today;
-            }
-        }
-        unset($cf);
-
-        try {
-            $r = register_cw_request(
-                '/company/companies/' . $companyId,
-                [],
-                'PATCH',
-                [['op' => 'replace', 'path' => '/customFields', 'value' => $filledCustomFields]],
-                12,
-                4
-            );
-            $result['fill_null_date_custom_fields'] = ['ok' => true, 'response' => ['id' => $r['id'] ?? null]];
-        } catch (Throwable $e) {
-            $result['fill_null_date_custom_fields'] = ['ok' => false, 'error' => $e->getMessage()];
-        }
-    } else {
-        $result['fill_null_date_custom_fields'] = ['ok' => true, 'skipped' => 'No null Date custom fields found on this company.'];
-    }
-
-    if ($contactId > 0) {
-        try {
-            $r = register_cw_request(
-                '/company/companies/' . $companyId,
-                [],
-                'PATCH',
-                [['op' => 'replace', 'path' => '/defaultContact', 'value' => ['id' => $contactId]]],
-                12,
-                4
-            );
-            $result['retry_set_primary_contact'] = ['ok' => true, 'response' => ['id' => $r['id'] ?? null, 'defaultContact' => $r['defaultContact'] ?? null]];
-        } catch (Throwable $e) {
-            $result['retry_set_primary_contact'] = ['ok' => false, 'error' => $e->getMessage()];
-        }
-    }
-
-    register_respond(200, $result);
-}
-
-if ($action === 'probe-patch-format3') {
-    // Tests PUT (full-object replace) as an alternative to PATCH, since
-    // every PATCH attempt so far -- regardless of target field, regardless
-    // of payload content -- has failed identically with ConnectWise's
-    // "String was not recognized as a valid DateTime." 500 error, even
-    // with the confirmed-correct JSON-Patch array envelope. Reuses the
-    // existing ZZZ REGISTER TEST company/contact (no new junk records).
-    $companyId = isset($_GET['company_id']) ? (int) $_GET['company_id'] : 0;
-    $contactId = isset($_GET['contact_id']) ? (int) $_GET['contact_id'] : 0;
+if ($action === 'finalize-company-invoicing') {
+    // Call this once, right after a brand-new Company + Contact are both
+    // created (action=create-company then action=create-contact) --
+    // completes Michael's required multi-step invoicing setup: makes the
+    // new contact the Primary Contact and Bill To contact, and sets
+    // Billing Terms/Invoice Delivery Method. Do NOT call this for an
+    // existing/recalled Company -- it will overwrite whatever Billing
+    // Terms, Bill To, etc. staff may have already set for that account.
+    $input = register_read_json_body();
+    $companyId = isset($input['company_id']) ? (int) $input['company_id'] : 0;
+    $contactId = isset($input['contact_id']) ? (int) $input['contact_id'] : 0;
     if ($companyId <= 0 || $contactId <= 0) {
-        register_respond(400, ['ok' => false, 'error' => 'company_id and contact_id are required (reuse an existing ZZZ REGISTER TEST company/contact id).']);
-    }
-
-    $result = ['ok' => true];
-
-    try {
-        $full = register_cw_request('/company/companies/' . $companyId, [], 'GET', null, 12, 4);
-    } catch (Throwable $e) {
-        register_respond(502, ['ok' => false, 'error' => 'Could not fetch the company: ' . $e->getMessage()]);
-    }
-
-    // Attempt 1: PUT the fetched record back completely unmodified, to
-    // isolate whether PUT itself trips the same DateTime bug on this
-    // instance/record regardless of what changes -- before attributing
-    // anything to the defaultContact edit specifically.
-    try {
-        $r = register_cw_request('/company/companies/' . $companyId, [], 'PUT', $full, 12, 4);
-        $result['put_unmodified_roundtrip'] = ['ok' => true, 'response' => ['id' => $r['id'] ?? null]];
-    } catch (Throwable $e) {
-        $result['put_unmodified_roundtrip'] = ['ok' => false, 'error' => $e->getMessage()];
-    }
-
-    // Attempt 2: PUT with only defaultContact (Primary Contact) changed.
-    $modified = $full;
-    $modified['defaultContact'] = ['id' => $contactId];
-    try {
-        $r = register_cw_request('/company/companies/' . $companyId, [], 'PUT', $modified, 12, 4);
-        $result['put_set_primary_contact'] = ['ok' => true, 'response' => ['id' => $r['id'] ?? null, 'defaultContact' => $r['defaultContact'] ?? null]];
-    } catch (Throwable $e) {
-        $result['put_set_primary_contact'] = ['ok' => false, 'error' => $e->getMessage()];
-    }
-
-    register_respond(200, $result);
-}
-
-if ($action === 'probe-patch-format4') {
-    // probe-patch-format3 found that PUT (full-object replace) fails with
-    // a SPECIFIC, actionable error -- not the generic PATCH DateTime bug:
-    // "typeIds can only be used when creating a new company." (field
-    // "typeIds"). That means PUT's validator rejects certain create-only
-    // fields the GET response itself includes. This diagnostic loops:
-    // PUT the record, and if ConnectWise names a specific offending field
-    // in an "InvalidField"/"can only be used when creating" error, strip
-    // just that field and retry -- until it either succeeds or hits a
-    // field-less/unrecognized error. Reuses the existing ZZZ REGISTER
-    // TEST company/contact (no new junk records).
-    $companyId = isset($_GET['company_id']) ? (int) $_GET['company_id'] : 0;
-    $contactId = isset($_GET['contact_id']) ? (int) $_GET['contact_id'] : 0;
-    if ($companyId <= 0 || $contactId <= 0) {
-        register_respond(400, ['ok' => false, 'error' => 'company_id and contact_id are required (reuse an existing ZZZ REGISTER TEST company/contact id).']);
+        register_respond(400, ['ok' => false, 'error' => 'company_id and contact_id are required.']);
     }
 
     try {
-        $full = register_cw_request('/company/companies/' . $companyId, [], 'GET', null, 12, 4);
+        $company = register_cw_finalize_company_invoicing($companyId, $contactId);
+        register_respond(200, ['ok' => true, 'company' => $company]);
     } catch (Throwable $e) {
-        register_respond(502, ['ok' => false, 'error' => 'Could not fetch the company: ' . $e->getMessage()]);
+        register_respond(502, ['ok' => false, 'error' => 'ConnectWise company invoicing setup failed: ' . $e->getMessage()]);
     }
-
-    $modified = $full;
-    $modified['defaultContact'] = ['id' => $contactId];
-    $modified['billingContact'] = ['id' => $contactId];
-
-    $strippedFields = [];
-    $attempts = [];
-    $success = null;
-    $finalError = null;
-
-    for ($i = 0; $i < 15; $i++) {
-        try {
-            $r = register_cw_request('/company/companies/' . $companyId, [], 'PUT', $modified, 12, 4);
-            $success = [
-                'id' => $r['id'] ?? null,
-                'defaultContact' => $r['defaultContact'] ?? null,
-                'billingContact' => $r['billingContact'] ?? null,
-            ];
-            $attempts[] = ['stripped_field' => null, 'result' => 'success'];
-            break;
-        } catch (Throwable $e) {
-            $msg = $e->getMessage();
-            // Pull the JSON error body out of "...HTTP 400 for URL — {json}".
-            $jsonStart = strpos($msg, '{');
-            $decoded = $jsonStart !== false ? json_decode(substr($msg, $jsonStart), true) : null;
-            $offendingField = null;
-            if (is_array($decoded) && isset($decoded['errors']) && is_array($decoded['errors'])) {
-                foreach ($decoded['errors'] as $err) {
-                    $field = $err['field'] ?? null;
-                    $errMsg = $err['message'] ?? '';
-                    if (is_string($field) && $field !== '' && stripos($errMsg, 'can only be used when creating') !== false) {
-                        $offendingField = $field;
-                        break;
-                    }
-                }
-            }
-
-            // ConnectWise's error names its OWN internal field name, which
-            // doesn't always match our JSON key -- e.g. it said "typeIds"
-            // but the record we fetched/sent has "types" (an array of
-            // {id,name}), not a literal "typeIds" key. Try the literal
-            // name first, then the common "XIds" -> "Xs" plural-array
-            // rewrite ConnectWise uses for its *Ids-named validation
-            // fields.
-            $realKey = null;
-            if ($offendingField !== null) {
-                $candidates = [$offendingField];
-                if (substr($offendingField, -3) === 'Ids') {
-                    $base = substr($offendingField, 0, -3);
-                    $candidates[] = $base . 's';
-                    $candidates[] = $base;
-                }
-                foreach ($candidates as $candidate) {
-                    if (array_key_exists($candidate, $modified)) {
-                        $realKey = $candidate;
-                        break;
-                    }
-                }
-            }
-
-            if ($realKey !== null) {
-                $attempts[] = ['offending_field' => $offendingField, 'stripped_key' => $realKey, 'error' => $msg];
-                unset($modified[$realKey]);
-                $strippedFields[] = $realKey;
-                continue;
-            }
-
-            // Not a field we know how to auto-strip -- stop and report it,
-            // including the record's own top-level keys so we can see
-            // what's actually available to strip by hand next round.
-            $finalError = $msg;
-            $attempts[] = ['stripped_field' => null, 'offending_field' => $offendingField, 'available_keys' => array_keys($modified), 'error' => $msg];
-            break;
-        }
-    }
-
-    register_respond(200, [
-        'ok' => $success !== null,
-        'stripped_fields' => $strippedFields,
-        'attempts' => $attempts,
-        'success' => $success,
-        'final_error' => $finalError,
-    ]);
-}
-
-if ($action === 'probe-patch-format5') {
-    // probe-patch-format4 confirmed the mechanism: PUT (full-object
-    // replace) the company back, stripping the create-only "types" field
-    // (ConnectWise's error names it "typeIds"), successfully sets both
-    // defaultContact (Primary Contact) and billingContact (Bill To).
-    // This diagnostic adds the remaining two required Company Finance
-    // fields Michael specified -- Billing Terms ("Card on file", id 11)
-    // and Invoice Delivery Method (Email, id 2) -- to the same PUT, using
-    // the same auto-strip-and-retry loop, to confirm the full finance
-    // setup can be done in one call. Reuses the existing ZZZ REGISTER
-    // TEST company/contact (no new junk records).
-    $companyId = isset($_GET['company_id']) ? (int) $_GET['company_id'] : 0;
-    $contactId = isset($_GET['contact_id']) ? (int) $_GET['contact_id'] : 0;
-    if ($companyId <= 0 || $contactId <= 0) {
-        register_respond(400, ['ok' => false, 'error' => 'company_id and contact_id are required (reuse an existing ZZZ REGISTER TEST company/contact id).']);
-    }
-
-    try {
-        $full = register_cw_request('/company/companies/' . $companyId, [], 'GET', null, 12, 4);
-    } catch (Throwable $e) {
-        register_respond(502, ['ok' => false, 'error' => 'Could not fetch the company: ' . $e->getMessage()]);
-    }
-
-    $modified = $full;
-    $modified['defaultContact'] = ['id' => $contactId];
-    $modified['billingContact'] = ['id' => $contactId];
-    $modified['billingTerms'] = ['id' => 11]; // confirmed "Card on File" via /finance/billingTerms
-    $modified['invoiceDeliveryMethod'] = ['id' => 2]; // confirmed "E-Mail"
-
-    $strippedFields = [];
-    $attempts = [];
-    $success = null;
-    $finalError = null;
-
-    for ($i = 0; $i < 15; $i++) {
-        try {
-            $r = register_cw_request('/company/companies/' . $companyId, [], 'PUT', $modified, 12, 4);
-            $success = [
-                'id' => $r['id'] ?? null,
-                'defaultContact' => $r['defaultContact'] ?? null,
-                'billingContact' => $r['billingContact'] ?? null,
-                'billingTerms' => $r['billingTerms'] ?? null,
-                'invoiceDeliveryMethod' => $r['invoiceDeliveryMethod'] ?? null,
-                'accountNumber' => $r['accountNumber'] ?? null,
-            ];
-            $attempts[] = ['stripped_field' => null, 'result' => 'success'];
-            break;
-        } catch (Throwable $e) {
-            $msg = $e->getMessage();
-            $jsonStart = strpos($msg, '{');
-            $decoded = $jsonStart !== false ? json_decode(substr($msg, $jsonStart), true) : null;
-            $offendingField = null;
-            if (is_array($decoded) && isset($decoded['errors']) && is_array($decoded['errors'])) {
-                foreach ($decoded['errors'] as $err) {
-                    $field = $err['field'] ?? null;
-                    $errMsg = $err['message'] ?? '';
-                    if (is_string($field) && $field !== '' && stripos($errMsg, 'can only be used when creating') !== false) {
-                        $offendingField = $field;
-                        break;
-                    }
-                }
-            }
-
-            $realKey = null;
-            if ($offendingField !== null) {
-                $candidates = [$offendingField];
-                if (substr($offendingField, -3) === 'Ids') {
-                    $base = substr($offendingField, 0, -3);
-                    $candidates[] = $base . 's';
-                    $candidates[] = $base;
-                }
-                foreach ($candidates as $candidate) {
-                    if (array_key_exists($candidate, $modified)) {
-                        $realKey = $candidate;
-                        break;
-                    }
-                }
-            }
-
-            if ($realKey !== null) {
-                $attempts[] = ['offending_field' => $offendingField, 'stripped_key' => $realKey, 'error' => $msg];
-                unset($modified[$realKey]);
-                $strippedFields[] = $realKey;
-                continue;
-            }
-
-            $finalError = $msg;
-            $attempts[] = ['stripped_field' => null, 'offending_field' => $offendingField, 'available_keys' => array_keys($modified), 'error' => $msg];
-            break;
-        }
-    }
-
-    register_respond(200, [
-        'ok' => $success !== null,
-        'stripped_fields' => $strippedFields,
-        'attempts' => $attempts,
-        'success' => $success,
-        'final_error' => $finalError,
-    ]);
 }
 
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
