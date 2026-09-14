@@ -79,6 +79,36 @@
  * exact payload shapes proven in that round-3 run, now parameterized for
  * real checkout input instead of hardcoded test values.
  *
+ * ---- Multi-step invoicing setup (2026-09-14, per Michael) ----
+ * Company creation is only step 1 of a multi-step process ConnectWise
+ * needs to actually invoice and transfer to QuickBooks Online: (1) create
+ * company, (2) create contact under it -- both done above and confirmed --
+ * then (3) make that contact the company's Primary Contact, (4) set
+ * Company Finance fields: Account ID mirrors the company name with no
+ * special characters (concatenated rather than truncated mid-word where
+ * it doesn't fit -- this is what transfers to QBO after invoice close),
+ * Billing Terms = "Card on file" for every register sale, Bill To contact
+ * = the contact just created, Invoice Delivery Method = Email.
+ *
+ * register_cw_sanitize_account_id() (below) implements the Account ID
+ * rule now -- pure string logic, no ConnectWise call, so no diagnostic
+ * needed. It's applied to both accountNumber and identifier (Company ID),
+ * since narrowing the character set can only make a create MORE likely to
+ * succeed, never less.
+ *
+ * The rest -- Primary Contact, Billing Terms lookup, Bill To, Invoice
+ * Delivery Method -- are all NEW write surfaces (a company UPDATE/PATCH,
+ * never attempted anywhere in this codebase, plus an unconfirmed
+ * billingTerms id for "Card on file") and are deliberately NOT wired into
+ * register_cw_create_company() yet. action=probe-finance (read-only: looks
+ * up the real "Card on file" billingTerms id) and action=probe-finance-
+ * write (creates one more clearly-labeled real test company+contact via
+ * the now-proven create functions, then attempts each Company Finance
+ * field as an isolated PATCH so a wrong guess on one doesn't block
+ * learning the others) exist to confirm the real PATCH shape before any
+ * of this is folded into the real create flow -- same discipline as
+ * everything else in this file.
+ *
  * GET  /register/api/customers.php?action=search-companies&q=...
  * GET  /register/api/customers.php?action=search-contacts&company_id=...&q=...
  *   (at least one of company_id/q required; company_id scopes to one
@@ -88,17 +118,29 @@
  * POST /register/api/customers.php?action=create-company
  *   body: { name, phone, address_line1?, address_line2?, city?, state?, zip? }
  *   -> creates a Company with every business rule Michael specified: the
- *      "Main" site, "House accounts" territory, Account ID (accountNumber,
- *      truncated to 41 chars) = name, Date Acquired = today, Terms Renewal
- *      Date custom field = today, and two Company Team rows (Sales Rep +
- *      Account Manager, both Michael Bergamo). state defaults to "VA",
- *      country to United States, per Michael's stated defaults.
+ *      "Main" site, "House accounts" territory, Account ID (accountNumber
+ *      and identifier, sanitized per register_cw_sanitize_account_id()) =
+ *      name, Date Acquired = today, Terms Renewal Date custom field =
+ *      today, and two Company Team rows (Sales Rep + Account Manager,
+ *      both Michael Bergamo). state defaults to "VA", country to United
+ *      States, per Michael's stated defaults.
  *
  * POST /register/api/customers.php?action=create-contact
- *   body: { company_id, first_name, last_name, phone? }
+ *   body: { company_id, first_name, last_name, phone?, email? }
  *   -> creates a Contact under that Company with Title "Purchaser" and
  *      Type "End User" (Michael's rule for every register-created
- *      contact), plus a phone communication item if given.
+ *      contact), plus phone/email communication items if given.
+ *
+ * GET  /register/api/customers.php?action=probe-finance (TEMPORARY,
+ *   read-only) -- looks up the real billingTerms id for "Card on file".
+ *
+ * GET  /register/api/customers.php?action=probe-finance-write (TEMPORARY)
+ *   -- creates one more real, clearly-labeled test Company + Contact and
+ *   attempts each remaining Company Finance / Primary Contact field
+ *   (Primary Contact, Bill To, Billing Terms, Invoice Delivery Method) as
+ *   an isolated PATCH, to confirm ConnectWise's real update shape before
+ *   any of it ships. DO NOT run against production without knowing it
+ *   will write real records.
  */
 
 declare(strict_types=1);
@@ -220,6 +262,32 @@ if ($action === 'search-contacts') {
  * Throws RegisterConnectWiseError on failure (e.g. a duplicate identifier)
  * -- the caller/action below turns that into a real error response.
  */
+/**
+ * Implements Michael's Account ID rule (2026-09-14): mirror the company
+ * name, strip special characters, and if it's still too long, concatenate
+ * (drop spaces) rather than just chopping the name off mid-word -- this
+ * value is what transfers to QuickBooks Online as the Account ID after an
+ * invoice closes, so it's kept conservative (letters/digits/spaces only)
+ * rather than guessing which punctuation QBO itself would tolerate. Pure
+ * string logic -- no ConnectWise call, so no diagnostic was needed.
+ */
+function register_cw_sanitize_account_id(string $name, int $maxLength = 41): string
+{
+    $clean = preg_replace('/[^A-Za-z0-9 ]+/', '', $name) ?? '';
+    $clean = trim(preg_replace('/\s+/', ' ', $clean) ?? '');
+    if ($clean === '') {
+        $clean = 'Account';
+    }
+    if (mb_strlen($clean) <= $maxLength) {
+        return $clean;
+    }
+    // Too long even after stripping punctuation -- concatenate (drop the
+    // spaces) to fit more of the real name in before falling back to a
+    // hard truncate, per Michael's "concatenate where needed" rule.
+    $concatenated = str_replace(' ', '', $clean);
+    return mb_substr($concatenated, 0, $maxLength);
+}
+
 function register_cw_create_company(
     string $name,
     string $phone,
@@ -233,14 +301,14 @@ function register_cw_create_company(
     $today = gmdate('Y-m-d\T00:00:00\Z');
 
     $body = [
-        'identifier' => mb_substr($identifier ?? $name, 0, 41),
+        'identifier' => register_cw_sanitize_account_id($identifier ?? $name),
         'name' => $name,
         'phoneNumber' => $phone,
         'country' => ['id' => 1], // United States, confirmed
         'status' => ['id' => 1], // Active, confirmed
         'site' => ['name' => 'Main'], // confirmed required
         'territory' => ['id' => 45], // "House accounts", confirmed
-        'accountNumber' => mb_substr($name, 0, 41), // confirmed 41-char max
+        'accountNumber' => register_cw_sanitize_account_id($name), // "mirror the Company Name, no special characters"
         'dateAcquired' => $today,
         'customFields' => [
             ['id' => 34, 'value' => $today], // "Terms Renewal Date", confirmed
@@ -294,9 +362,15 @@ function register_cw_create_company(
  * Michael's rule that every register-created contact is the point-of-sale
  * purchaser: Title "Purchaser", Type "End User" (id 3, confirmed). Adds a
  * phone communication item (type "Direct", id 2, confirmed) if $phone is
- * given. Throws RegisterConnectWiseError on failure.
+ * given, and an email communication item (type "Email", id 1 -- confirmed
+ * read-only from real Contact records; the same POST shape already proven
+ * live for phone, just a different type id/communicationType, so no
+ * separate write diagnostic was needed) if $email is given. Throws
+ * RegisterConnectWiseError on failure of the contact create itself; a
+ * communication-item failure is logged but non-fatal, same as the Company
+ * Team rows in register_cw_create_company().
  */
-function register_cw_create_contact(int $companyId, string $firstName, string $lastName, string $phone = ''): array
+function register_cw_create_contact(int $companyId, string $firstName, string $lastName, string $phone = '', string $email = ''): array
 {
     $contact = register_cw_request('/company/contacts', [], 'POST', [
         'firstName' => $firstName,
@@ -317,6 +391,18 @@ function register_cw_create_contact(int $companyId, string $firstName, string $l
             ], 12, 4);
         } catch (Throwable $e) {
             error_log('register_cw_create_contact: failed to add phone for contact ' . $contactId . ': ' . $e->getMessage());
+        }
+    }
+    if (is_int($contactId) && $email !== '') {
+        try {
+            register_cw_request('/company/contacts/' . $contactId . '/communications', [], 'POST', [
+                'type' => ['id' => 1], // "Email", confirmed
+                'value' => $email,
+                'communicationType' => 'Email',
+                'defaultFlag' => true,
+            ], 12, 4);
+        } catch (Throwable $e) {
+            error_log('register_cw_create_contact: failed to add email for contact ' . $contactId . ': ' . $e->getMessage());
         }
     }
 
@@ -357,11 +443,149 @@ if ($action === 'create-contact') {
     }
 
     try {
-        $contact = register_cw_create_contact($companyId, $firstName, $lastName, trim((string) ($input['phone'] ?? '')));
+        $contact = register_cw_create_contact(
+            $companyId,
+            $firstName,
+            $lastName,
+            trim((string) ($input['phone'] ?? '')),
+            trim((string) ($input['email'] ?? ''))
+        );
         register_respond(200, ['ok' => true, 'contact' => $contact]);
     } catch (Throwable $e) {
         register_respond(502, ['ok' => false, 'error' => 'ConnectWise contact creation failed: ' . $e->getMessage()]);
     }
+}
+
+/**
+ * TEMPORARY diagnostic -- read-only. Looks up the real billingTerms id for
+ * "Card on file" (Michael's required Billing Terms for every register
+ * sale), which no code in this file has ever needed before. Tries the
+ * standard-looking /finance/billingTerms list endpoint first; if that
+ * 404s, falls back to sampling a broad, unconditioned set of real
+ * companies and collecting whatever distinct billingTerms{id,name} values
+ * are actually in use, so there's still a real answer even if the guessed
+ * endpoint path is wrong.
+ */
+if ($action === 'probe-finance') {
+    $result = ['ok' => true];
+    $cardOnFileId = null;
+
+    try {
+        $terms = register_cw_request('/finance/billingTerms', ['pageSize' => '100'], 'GET', null, 12, 4);
+        $result['billing_terms'] = $terms;
+        foreach ($terms as $term) {
+            if (isset($term['name']) && stripos((string) $term['name'], 'Card on file') !== false) {
+                $cardOnFileId = $term['id'];
+                break;
+            }
+        }
+    } catch (Throwable $e) {
+        $result['billing_terms_error'] = $e->getMessage();
+
+        try {
+            $companies = register_cw_request('/company/companies', [
+                'fields' => 'id,name,billingTerms',
+                'pageSize' => '100',
+            ], 'GET', null, 12, 4);
+            $seen = [];
+            foreach ($companies as $c) {
+                if (!empty($c['billingTerms']['id'])) {
+                    $seen[$c['billingTerms']['id']] = $c['billingTerms']['name'] ?? null;
+                }
+            }
+            $result['billing_terms_seen_on_companies'] = $seen;
+            foreach ($seen as $id => $name) {
+                if ($name !== null && stripos((string) $name, 'Card on file') !== false) {
+                    $cardOnFileId = $id;
+                    break;
+                }
+            }
+        } catch (Throwable $e2) {
+            $result['billing_terms_fallback_error'] = $e2->getMessage();
+        }
+    }
+
+    $result['card_on_file_id_found'] = $cardOnFileId;
+    register_respond(200, $result);
+}
+
+/**
+ * TEMPORARY diagnostic -- creates one more clearly-labeled real test
+ * Company + Contact (via the now-proven register_cw_create_company()/
+ * register_cw_create_contact(), so this also exercises those for real),
+ * then attempts each remaining Company Finance / Primary Contact field as
+ * an ISOLATED PATCH to /company/companies/{id}, since a company UPDATE has
+ * never been attempted anywhere in this codebase and ConnectWise's PATCH
+ * body shape (a JSON-Patch-style array of {op,path,value}, guessed here --
+ * unconfirmed) may not be right. Each field's real success/error is
+ * reported separately so a wrong guess on one doesn't block learning the
+ * others. Remove once every finding here is confirmed and folded into
+ * register_cw_create_company()/a real "finalize invoicing setup" step.
+ */
+if ($action === 'probe-finance-write') {
+    $stamp = date('Y-m-d H:i:s');
+    $result = ['ok' => true, 'note' => 'This created real test records in ConnectWise. Search for "ZZZ REGISTER TEST" and delete them by hand when done.'];
+
+    $testName = 'ZZZ REGISTER TEST - DELETE ME (' . $stamp . ')';
+    $companyId = null;
+    $contactId = null;
+    try {
+        $company = register_cw_create_company($testName, '8045550100', '123 Test St', '', 'Richmond', 'VA', '23219');
+        $companyId = $company['id'] ?? null;
+        $result['create_company'] = ['ok' => true, 'response' => $company];
+    } catch (Throwable $e) {
+        $result['create_company'] = ['ok' => false, 'error' => $e->getMessage()];
+    }
+
+    if ($companyId !== null) {
+        try {
+            $contact = register_cw_create_contact($companyId, 'ZZZ-REGISTER-TEST', 'DELETE-ME (' . $stamp . ')', '8045550100', 'register-test-' . date('YmdHis') . '@example.invalid');
+            $contactId = $contact['id'] ?? null;
+            $result['create_contact'] = ['ok' => true, 'response' => $contact];
+        } catch (Throwable $e) {
+            $result['create_contact'] = ['ok' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    if ($companyId !== null && $contactId !== null) {
+        // Look up "Card on file" the same way probe-finance does, so this
+        // one action can test every Company Finance field in one pass.
+        $cardOnFileId = null;
+        try {
+            $terms = register_cw_request('/finance/billingTerms', ['pageSize' => '100'], 'GET', null, 12, 4);
+            $result['billing_terms'] = $terms;
+            foreach ($terms as $term) {
+                if (isset($term['name']) && stripos((string) $term['name'], 'Card on file') !== false) {
+                    $cardOnFileId = $term['id'];
+                    break;
+                }
+            }
+        } catch (Throwable $e) {
+            $result['billing_terms_error'] = $e->getMessage();
+        }
+
+        $patches = [
+            'set_primary_contact' => [['op' => 'replace', 'path' => '/defaultContact', 'value' => ['id' => $contactId]]],
+            'set_bill_to_contact' => [['op' => 'replace', 'path' => '/billingContact', 'value' => ['id' => $contactId]]],
+            'set_invoice_delivery_email' => [['op' => 'replace', 'path' => '/invoiceDeliveryMethod', 'value' => ['id' => 2]]], // "E-Mail", confirmed read-only
+            'set_invoice_to_email_address' => [['op' => 'replace', 'path' => '/invoiceToEmailAddress', 'value' => 'register-test-' . date('YmdHis') . '@example.invalid']],
+        ];
+        if ($cardOnFileId !== null) {
+            $patches['set_billing_terms_card_on_file'] = [['op' => 'replace', 'path' => '/billingTerms', 'value' => ['id' => $cardOnFileId]]];
+        } else {
+            $result['set_billing_terms_card_on_file'] = ['ok' => false, 'error' => 'No billingTerms named "Card on file" was found -- see billing_terms above for the real list.'];
+        }
+        foreach ($patches as $key => $patchBody) {
+            try {
+                $response = register_cw_request('/company/companies/' . $companyId, [], 'PATCH', $patchBody, 12, 4);
+                $result[$key] = ['ok' => true, 'response' => $response];
+            } catch (Throwable $e) {
+                $result[$key] = ['ok' => false, 'error' => $e->getMessage(), 'tried_patch' => $patchBody];
+            }
+        }
+    }
+
+    register_respond(200, $result);
 }
 
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
