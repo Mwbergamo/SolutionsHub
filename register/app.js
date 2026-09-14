@@ -39,6 +39,17 @@
     // used when the resolved contact has no email on file in ConnectWise.
     newCustomerEmail: { manualEmail: '', sending: false, error: null, sent: false },
 
+    // New Customer Sign Up's own entry form (added 2026-09-14, second
+    // revision per Michael: "We serve both companies and residential
+    // customers so I need Company and first and last name... create their
+    // contact under the company if one exists, and use their contact
+    // (First Last Name) as their company name in ConnectWise if
+    // residential.") -- a single-screen form instead of the checkout
+    // modal's generic search-first Company/Contact picker (customerUi),
+    // since a walk-in here is always a NEW person. See
+    // newCustomerFormHtml()/submitNewCustomerSignup().
+    newCustomerSignup: initialNewCustomerSignupState(),
+
     // Metrics screen (added 2026-09-14) -- see api/metrics.php for the
     // definitions (today/week are TO-DATE, America/New_York local time).
     metrics: null,
@@ -165,6 +176,33 @@
       // the terms they just signed. Left false everywhere else (checkout's
       // customer step), where email has always been optional.
       requireEmail: false
+    };
+  }
+
+  // New Customer Sign Up's dedicated form state (added 2026-09-14, second
+  // revision). companyQuery doubles as a live search box: as staff type, it
+  // searches existing ConnectWise companies (see searchSignupCompany()) --
+  // picking a match sets matchedCompanyId and the submit skips company
+  // creation entirely, reusing the existing company (Michael: "create their
+  // contact under the company if one exists"). Left blank or unmatched, the
+  // typed text (or "First Last" if blank -- residential) becomes a brand-
+  // new company name on submit. Because a residential company is named
+  // after the customer, typing a returning residential customer's name
+  // into this same field will find that existing company too -- no
+  // separate residential-matching logic needed.
+  function initialNewCustomerSignupState() {
+    return {
+      companyQuery: '',
+      companyResults: [],
+      companyLoading: false,
+      matchedCompanyId: null,
+      matchedCompanyName: '',
+      firstName: '',
+      lastName: '',
+      phone: '',
+      email: '',
+      submitting: false,
+      error: null
     };
   }
 
@@ -1071,7 +1109,7 @@
 
   function enterNewCustomerFlow() {
     resetCustomerState();
-    state.customerUi.requireEmail = true;
+    state.newCustomerSignup = initialNewCustomerSignupState();
     state.newCustomerEmail = { manualEmail: '', sending: false, error: null, sent: false };
     state.view = 'new-customer';
     state.error = null;
@@ -1080,9 +1118,182 @@
 
   function finishNewCustomer() {
     resetCustomerState();
-    state.customerUi.requireEmail = true;
+    state.newCustomerSignup = initialNewCustomerSignupState();
     state.newCustomerEmail = { manualEmail: '', sending: false, error: null, sent: false };
     render();
+  }
+
+  var signupCompanySearchDebounce = null;
+
+  // Live company search as staff type into the New Customer Sign Up form's
+  // Company field -- same confirmed 'name like "%...%"' search as the
+  // checkout customer picker (see api/customers.php), just scoped to
+  // companies only. Any edit clears a previously-picked match, since the
+  // text no longer necessarily names that company.
+  function searchSignupCompany(query) {
+    var f = state.newCustomerSignup;
+    f.companyQuery = query;
+    f.matchedCompanyId = null;
+    f.matchedCompanyName = '';
+    f.error = null;
+    clearTimeout(signupCompanySearchDebounce);
+    if (query.trim().length < 2) {
+      f.companyResults = [];
+      f.companyLoading = false;
+      render();
+      return;
+    }
+    signupCompanySearchDebounce = setTimeout(function () {
+      f.companyLoading = true;
+      render();
+      apiGet('api/customers.php?action=search-companies&q=' + encodeURIComponent(query.trim())).then(function (r) {
+        f.companyLoading = false;
+        f.companyResults = (r.data && r.data.ok) ? r.data.companies : [];
+        render();
+      }).catch(function () {
+        f.companyLoading = false;
+        render();
+      });
+    }, 250);
+  }
+
+  function selectSignupCompany(index) {
+    var f = state.newCustomerSignup;
+    var c = f.companyResults[index];
+    if (!c) return;
+    f.matchedCompanyId = c.id;
+    f.matchedCompanyName = c.name;
+    f.companyQuery = c.name;
+    f.companyResults = [];
+    render();
+  }
+
+  function clearSignupCompanyMatch() {
+    var f = state.newCustomerSignup;
+    f.matchedCompanyId = null;
+    f.matchedCompanyName = '';
+    f.companyQuery = '';
+    f.companyResults = [];
+    render();
+  }
+
+  // Submits the New Customer Sign Up form. Company resolution:
+  //   - a picked existing company (f.matchedCompanyId) -> reuse it as-is,
+  //     never call finalize-company-invoicing (same rule as an existing/
+  //     recalled company in the checkout picker -- don't overwrite billing
+  //     setup staff may already have on that account).
+  //   - otherwise -> create a new company named after whatever's typed in
+  //     the Company field, or "First Last" if that field is blank
+  //     (residential, per Michael), then run the same required invoicing
+  //     setup as a brand-new checkout company (register_cw_finalize_
+  //     company_invoicing()).
+  // Either way, a Contact is then created under that company with Title
+  // "Purchaser"/Type "End User" (register_cw_create_contact()) -- reusing
+  // the exact same two API endpoints the checkout Company/Contact picker
+  // already uses, just driven by this screen's own simpler form instead of
+  // customerUi.
+  function submitNewCustomerSignup() {
+    var f = state.newCustomerSignup;
+    if (!f.firstName.trim() || !f.lastName.trim()) {
+      f.error = 'First and last name are required.';
+      render();
+      return;
+    }
+    if (!f.email.trim()) {
+      f.error = 'Email is required to send the Terms & Conditions confirmation.';
+      render();
+      return;
+    }
+
+    f.submitting = true;
+    f.error = null;
+    render();
+
+    var firstName = f.firstName.trim();
+    var lastName = f.lastName.trim();
+    var phone = f.phone.trim();
+    var email = f.email.trim();
+
+    function createContactUnder(companyId, companyName, isNewCompany) {
+      apiPost('api/customers.php?action=create-contact', {
+        company_id: companyId,
+        first_name: firstName,
+        last_name: lastName,
+        phone: phone,
+        email: email
+      }).then(function (r) {
+        if (!r.data || !r.data.ok || !r.data.contact || !r.data.contact.id) {
+          f.submitting = false;
+          f.error = (r.data && r.data.error) || 'Could not create the contact -- try again.';
+          render();
+          return;
+        }
+        var contactId = r.data.contact.id;
+        var contactName = (firstName + ' ' + lastName).trim();
+
+        function finish(invoicingWarning) {
+          f.submitting = false;
+          state.customer.companyId = companyId;
+          state.customer.companyName = companyName;
+          state.customer.contactId = contactId;
+          state.customer.contactName = contactName;
+          state.customer.contactEmail = email;
+          state.customer.isNewCompany = isNewCompany;
+          state.customer.invoicingWarning = invoicingWarning || null;
+          render();
+        }
+
+        if (!isNewCompany) {
+          finish(null);
+          return;
+        }
+        apiPost('api/customers.php?action=finalize-company-invoicing', {
+          company_id: companyId,
+          contact_id: contactId
+        }).then(function (fr) {
+          if (fr.data && fr.data.ok) {
+            finish(null);
+          } else {
+            finish('Company and contact were created, but the invoicing setup (Primary Contact/Billing Terms) failed: ' +
+              ((fr.data && fr.data.error) || 'unknown error') + '. The sale can still be completed; flag this account for manual setup in ConnectWise.');
+          }
+        }).catch(function () {
+          finish('Company and contact were created, but the invoicing setup call failed -- check your connection. The sale can still be completed; flag this account for manual setup in ConnectWise.');
+        });
+      }).catch(function () {
+        f.submitting = false;
+        f.error = 'Could not create the contact -- check your connection.';
+        render();
+      });
+    }
+
+    if (f.matchedCompanyId) {
+      createContactUnder(f.matchedCompanyId, f.matchedCompanyName, false);
+      return;
+    }
+
+    var companyName = f.companyQuery.trim() || (firstName + ' ' + lastName).trim();
+    apiPost('api/customers.php?action=create-company', {
+      name: companyName,
+      phone: phone,
+      address_line1: '',
+      address_line2: '',
+      city: '',
+      state: 'VA',
+      zip: ''
+    }).then(function (r) {
+      if (!r.data || !r.data.ok || !r.data.company || !r.data.company.id) {
+        f.submitting = false;
+        f.error = (r.data && r.data.error) || 'Could not create the company -- try again.';
+        render();
+        return;
+      }
+      createContactUnder(r.data.company.id, r.data.company.name || companyName, true);
+    }).catch(function () {
+      f.submitting = false;
+      f.error = 'Could not create the company -- check your connection.';
+      render();
+    });
   }
 
   function enterCustomerLookupFlow() {
@@ -1094,6 +1305,7 @@
 
   function backToHomeFromCustomerScreen() {
     resetCustomerState();
+    state.newCustomerSignup = initialNewCustomerSignupState();
     state.newCustomerEmail = { manualEmail: '', sending: false, error: null, sent: false };
     state.view = 'register';
     state.error = null;
@@ -1203,7 +1415,7 @@
   // debounced search re-render (catalog search, and the 2026-09-14
   // customer/contact search boxes) would otherwise steal focus/cursor
   // position out from under whatever the rep is still typing.
-  var FOCUS_PRESERVED_INPUT_IDS = ['catalogSearchInput', 'customerSearchInput', 'customerContactSearchInput', 'newCustomerManualEmailInput', 'ticketSearchInput'];
+  var FOCUS_PRESERVED_INPUT_IDS = ['catalogSearchInput', 'customerSearchInput', 'customerContactSearchInput', 'newCustomerManualEmailInput', 'ticketSearchInput', 'signupCompanyInput'];
 
   function captureSearchFocus() {
     for (var i = 0; i < FOCUS_PRESERVED_INPUT_IDS.length; i++) {
@@ -1350,9 +1562,64 @@
 
     var resolved = state.customer.companyId && state.customer.contactId;
     if (!resolved) {
-      return html + '<div class="screen-panel">' + customerSectionHtml() + '</div>';
+      return html + '<div class="screen-panel">' + newCustomerFormHtml() + '</div>';
     }
     return html + '<div class="screen-panel">' + customerSummaryCardHtml() + newCustomerEmailPanelHtml() + '</div>';
+  }
+
+  // Single-screen New Customer Sign Up form (added 2026-09-14, second
+  // revision, replacing the checkout modal's generic search-first Company/
+  // Contact picker for this screen only -- see submitNewCustomerSignup()'s
+  // docblock and state.newCustomerSignup's comment for why). Company is
+  // optional and doubles as a live existing-company search; First/Last
+  // Name, Phone and Email are always shown up front, per Michael.
+  function newCustomerFormHtml() {
+    var f = state.newCustomerSignup;
+    var html = '<div class="customer-form signup-form">';
+    if (f.error) {
+      html += '<div class="error-banner customer-error">' + escapeHtml(f.error) + '</div>';
+    }
+    html += '<label>Company (leave blank for a residential/individual customer)</label>';
+    html += '<input type="text" id="signupCompanyInput" class="customer-search-input" data-action="signup-company-input" ' +
+      'placeholder="Search or type a new company name…" autocomplete="off" value="' + escapeHtml(f.companyQuery) + '">';
+    if (f.matchedCompanyId) {
+      html += '<div class="signup-company-matched">Using existing company: <strong>' + escapeHtml(f.matchedCompanyName) + '</strong> ' +
+        '<button type="button" class="customer-back-btn" data-action="signup-company-clear">Change</button></div>';
+    } else {
+      if (f.companyLoading) {
+        html += '<div class="customer-search-loading">Searching…</div>';
+      } else if (f.companyResults.length > 0) {
+        html += signupCompanyResultsHtml(f.companyResults);
+      }
+    }
+    html += '<div class="customer-form-row">' +
+      '<div><label>First Name</label><input type="text" data-action="signup-field" data-field="firstName" value="' + escapeHtml(f.firstName) + '"></div>' +
+      '<div><label>Last Name</label><input type="text" data-action="signup-field" data-field="lastName" value="' + escapeHtml(f.lastName) + '"></div>' +
+    '</div>';
+    html += '<label>Phone</label>' +
+      '<input type="text" data-action="signup-field" data-field="phone" value="' + escapeHtml(f.phone) + '">';
+    html += '<label>Email (required — for the confirmation email)</label>' +
+      '<input type="text" id="signupEmailInput" data-action="signup-field" data-field="email" value="' + escapeHtml(f.email) + '">';
+    html += '<div class="customer-form-actions">' +
+      '<button type="button" class="customer-save-btn" data-action="signup-submit" ' + (f.submitting ? 'disabled' : '') + '>' +
+        (f.submitting ? 'Creating…' : 'Create Customer') +
+      '</button>' +
+    '</div>';
+    html += '</div>';
+    return html;
+  }
+
+  function signupCompanyResultsHtml(companies) {
+    var html = '<div class="customer-results">';
+    companies.forEach(function (c, i) {
+      html += '<button type="button" class="customer-result" data-action="signup-select-company" data-index="' + i + '">' +
+        '<span class="customer-result-type">Company</span>' +
+        '<span class="customer-result-name">' + escapeHtml(c.name) + '</span>' +
+        (c.city || c.state ? '<span class="customer-result-sub">' + escapeHtml([c.city, c.state].filter(Boolean).join(', ')) + '</span>' : '') +
+      '</button>';
+    });
+    html += '</div>';
+    return html;
   }
 
   function newCustomerEmailPanelHtml() {
@@ -2188,6 +2455,9 @@
       else if (action === 'customer-back-to-search') handler = backToCompanySearch;
       else if (action === 'customer-back-to-contact') handler = backToContactStep;
       else if (action === 'customer-change') handler = changeCustomer;
+      else if (action === 'signup-select-company') handler = function () { selectSignupCompany(Number(el.dataset.index)); };
+      else if (action === 'signup-company-clear') handler = clearSignupCompanyMatch;
+      else if (action === 'signup-submit') handler = submitNewCustomerSignup;
       else if (action === 'close-receipt') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'cash', payment_reference: '', tax_amount: '0.00', note: '' }; resetCustomerState(); render(); };
       else if (action === 'close-receipt-backdrop') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'cash', payment_reference: '', tax_amount: '0.00', note: '' }; resetCustomerState(); render(); };
       else if (action === 'print-receipt') handler = function () { window.print(); };
@@ -2271,6 +2541,13 @@
     });
     root.querySelectorAll('[data-action="customer-new-contact-field"]').forEach(function (el) {
       el.addEventListener('input', function () { state.customerUi.newContactForm[el.dataset.field] = el.value; });
+    });
+    var signupCompanyInput = root.querySelector('[data-action="signup-company-input"]');
+    if (signupCompanyInput) {
+      signupCompanyInput.addEventListener('input', function () { searchSignupCompany(signupCompanyInput.value); });
+    }
+    root.querySelectorAll('[data-action="signup-field"]').forEach(function (el) {
+      el.addEventListener('input', function () { state.newCustomerSignup[el.dataset.field] = el.value; });
     });
     var noteInput = root.querySelector('[data-action="note-input"]');
     if (noteInput) {
