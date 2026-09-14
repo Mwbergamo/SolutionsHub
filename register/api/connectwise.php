@@ -178,6 +178,26 @@ function register_cw_list_page(string $path, string $conditions, array $fields, 
 }
 
 /**
+ * Escapes a string for safe interpolation into a single ConnectWise
+ * "field like "%...%"" or "field = "..."" condition value (added 2026-09-14
+ * for customers.php's live Company/Contact search-as-you-type). Only
+ * single-field conditions built with this helper are used anywhere in this
+ * app -- no "and"/"or" combinations of multiple fields, since those were
+ * never confirmed against this ConnectWise instance (only single conditions
+ * were proven via customers.php's probe action: "name like ...", "lastName
+ * like ...", "company/id = ..."). Combining fields client-side in PHP after
+ * a single confirmed condition avoids guessing at compound-condition syntax
+ * -- same "diagnose before guessing" discipline as everywhere else in this
+ * project (see relationships-connectwise-sync.md's board-name saga).
+ */
+function register_cw_condition_escape(string $value): string
+{
+    $value = str_replace('\\', '\\\\', $value);
+    $value = str_replace('"', '\\"', $value);
+    return $value;
+}
+
+/**
  * Pages through a ConnectWise list endpoint and returns every row as a
  * single flat array. Same shape/reasoning as
  * relationships_cw_list() in relationships/api/connectwise.php.
