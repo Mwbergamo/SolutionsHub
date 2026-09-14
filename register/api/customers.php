@@ -75,6 +75,14 @@
  * confirmed on a real record. Michael Bergamo = member id 202 (confirmed
  * via territoryManager on a real company).
  *
+ * probe-create round 2 (2026-09-14): "Account Manager" teamRole id 1,
+ * found by name from the real /company/teamRoles list. Company create
+ * failed with a real validation error -- accountNumber has a max length of
+ * 41 chars ("The field accountNumber must be a string with a maximum
+ * length of 41."). Since "Account ID" = same as Customer Name per
+ * Michael's rule, the real feature must truncate a long customer name
+ * before writing it there. Round 3 in progress.
+ *
  * GET  /register/api/customers.php?action=search-companies&q=...
  * GET  /register/api/customers.php?action=search-contacts&company_id=...&q=...
  *   (at least one of company_id/q required; company_id scopes to one
@@ -353,7 +361,10 @@ if ($action === 'probe-create') {
             'status' => ['id' => 1],
             'site' => ['name' => 'Main'], // confirmed required, round 1
             'territory' => ['id' => 45], // "House accounts"
-            'accountNumber' => $testName, // "Account ID" = same as Customer Name
+            // Confirmed round 2: accountNumber has a real ConnectWise max
+            // length of 41 chars -- "Account ID" = same as Customer Name,
+            // so the real feature must truncate a long customer name here.
+            'accountNumber' => mb_substr($testName, 0, 41),
             'dateAcquired' => $today,
             'customFields' => [
                 ['id' => 34, 'value' => $today], // "Terms Renewal Date" = date of entry
