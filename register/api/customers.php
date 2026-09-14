@@ -44,6 +44,12 @@
  * create-company/create-contact into checkout until probe-create's real
  * ConnectWise responses confirm the required-field schema.
  *
+ * probe-create round 1 (2026-09-14): company create without a "site" field
+ * failed with a real ConnectWise validation error -- "Company Site name is
+ * required." (code InvalidField, field "site"). Confirmed fix: pass
+ * 'site' => ['name' => 'Main'] and ConnectWise creates that site record
+ * itself. Round 2 in progress.
+ *
  * GET  /register/api/customers.php?action=search-companies&q=...
  * GET  /register/api/customers.php?action=search-contacts&company_id=...&q=...
  *   (at least one of company_id/q required; company_id scopes to one
@@ -184,6 +190,10 @@ if ($action === 'probe-create') {
             'phoneNumber' => '8045550100',
             'website' => 'https://example.invalid',
             'status' => ['id' => 1],
+            // Confirmed required 2026-09-14: the first attempt (no site)
+            // failed with ConnectWise's real validation error "Company Site
+            // name is required." -- CW auto-creates the named site record.
+            'site' => ['name' => 'Main'],
         ], 12, 4);
         $companyId = $company['id'] ?? null;
         $result['create_company'] = ['ok' => true, 'response' => $company];
