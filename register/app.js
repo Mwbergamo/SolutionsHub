@@ -201,6 +201,19 @@
       lastName: '',
       phone: '',
       email: '',
+      // Site/billing address (added 2026-09-14, per Michael: "still need to
+      // prompt new user signup for address, state, zip code to properly
+      // complete the billing site in ConnectWise") -- only collected/
+      // required when this submit is actually going to CREATE a new
+      // ConnectWise company (no matchedCompanyId): an existing/recalled
+      // company already has a real address on file in ConnectWise, and
+      // this form should never overwrite it. See newCustomerFormHtml()
+      // and submitNewCustomerSignup().
+      addressLine1: '',
+      addressLine2: '',
+      city: '',
+      state: 'VA',
+      zip: '',
       submitting: false,
       error: null
     };
@@ -1204,6 +1217,16 @@
       render();
       return;
     }
+    // Address is only asked for (and only required) when this submit will
+    // actually create a brand-new ConnectWise company -- an existing/
+    // matched company already has a real billing site on file. Per
+    // Michael: "still need to prompt new user signup for address, state,
+    // zip code to properly complete the billing site in ConnectWise."
+    if (!f.matchedCompanyId && (!f.addressLine1.trim() || !f.city.trim() || !f.state.trim() || !f.zip.trim())) {
+      f.error = 'Address, city, state, and zip are required to complete the ConnectWise billing site.';
+      render();
+      return;
+    }
 
     f.submitting = true;
     f.error = null;
@@ -1213,6 +1236,11 @@
     var lastName = f.lastName.trim();
     var phone = f.phone.trim();
     var email = f.email.trim();
+    var addressLine1 = f.addressLine1.trim();
+    var addressLine2 = f.addressLine2.trim();
+    var city = f.city.trim();
+    var addrState = f.state.trim() || 'VA';
+    var zip = f.zip.trim();
 
     function createContactUnder(companyId, companyName, isNewCompany) {
       apiPost('api/customers.php?action=create-contact', {
@@ -1276,11 +1304,11 @@
     apiPost('api/customers.php?action=create-company', {
       name: companyName,
       phone: phone,
-      address_line1: '',
-      address_line2: '',
-      city: '',
-      state: 'VA',
-      zip: ''
+      address_line1: addressLine1,
+      address_line2: addressLine2,
+      city: city,
+      state: addrState,
+      zip: zip
     }).then(function (r) {
       if (!r.data || !r.data.ok || !r.data.company || !r.data.company.id) {
         f.submitting = false;
@@ -1600,6 +1628,23 @@
       '<input type="text" data-action="signup-field" data-field="phone" value="' + escapeHtml(f.phone) + '">';
     html += '<label>Email (required — for the confirmation email)</label>' +
       '<input type="text" id="signupEmailInput" data-action="signup-field" data-field="email" value="' + escapeHtml(f.email) + '">';
+    // Site/billing address -- only asked for when this submit will actually
+    // CREATE a new company (no matchedCompanyId): an existing/recalled
+    // company already has a real address on file, so this form should
+    // never prompt for (or overwrite) one. Required per Michael: "still
+    // need to prompt new user signup for address, state, zip code to
+    // properly complete the billing site in ConnectWise."
+    if (!f.matchedCompanyId) {
+      html += '<label>Address Line 1 (required — completes the ConnectWise billing site)</label>' +
+        '<input type="text" data-action="signup-field" data-field="addressLine1" value="' + escapeHtml(f.addressLine1) + '">' +
+        '<label>Address Line 2</label>' +
+        '<input type="text" data-action="signup-field" data-field="addressLine2" value="' + escapeHtml(f.addressLine2) + '">';
+      html += '<div class="customer-form-row">' +
+        '<div><label>City</label><input type="text" data-action="signup-field" data-field="city" value="' + escapeHtml(f.city) + '"></div>' +
+        '<div><label>State</label><input type="text" data-action="signup-field" data-field="state" value="' + escapeHtml(f.state) + '"></div>' +
+        '<div><label>Zip</label><input type="text" data-action="signup-field" data-field="zip" value="' + escapeHtml(f.zip) + '"></div>' +
+      '</div>';
+    }
     html += '<div class="customer-form-actions">' +
       '<button type="button" class="customer-save-btn" data-action="signup-submit" ' + (f.submitting ? 'disabled' : '') + '>' +
         (f.submitting ? 'Creating…' : 'Create Customer') +
