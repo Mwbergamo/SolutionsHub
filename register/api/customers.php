@@ -48,7 +48,20 @@
  * failed with a real ConnectWise validation error -- "Company Site name is
  * required." (code InvalidField, field "site"). Confirmed fix: pass
  * 'site' => ['name' => 'Main'] and ConnectWise creates that site record
- * itself. Round 2 in progress.
+ * itself.
+ *
+ * probe-schema (2026-09-14), reading a real company's full default field
+ * set (no 'fields' restriction) plus Michael's business-field list (see
+ * screenshot of ConnectWise's own New Company screen): "Account ID" =
+ * standard accountNumber (plain string), "Date Acquired" = standard
+ * dateAcquired (ISO date string), "Terms Renewal Date" IS a real custom
+ * field (id 34, type Date -- write via customFields:[{id:34,value:...}]),
+ * "Territory" = standard territory field, backed by a system/locations
+ * record (id, name) -- confirmed real ids so far: 40 "Trey's Accounts", 2
+ * "Richmond"; "House Accounts"'s id still needed (probe-schema2).
+ * There is no /system/customFields endpoint on this instance (404) -- not
+ * needed, since every custom field id used above came directly off a real
+ * sample record instead.
  *
  * GET  /register/api/customers.php?action=search-companies&q=...
  * GET  /register/api/customers.php?action=search-contacts&company_id=...&q=...
@@ -214,10 +227,59 @@ if ($action === 'probe-schema') {
         $result['contacts_sample_error'] = $e->getMessage();
     }
 
+    register_respond(200, $result);
+}
+
+/**
+ * TEMPORARY diagnostic, round 2 -- read-only. probe-schema (round 1)
+ * confirmed: "Account ID" = standard accountNumber (plain string), "Date
+ * Acquired" = standard dateAcquired (ISO date), "Territory" = standard
+ * territory field backed by a system/locations record (id 40 = "Trey's
+ * Accounts", id 2 = "Richmond" seen so far -- need "House Accounts"'s id).
+ * "Terms Renewal Date" IS a real custom field (id 34, type "Date"). There
+ * is no system/customFields endpoint on this instance (404) -- not needed,
+ * since every custom field id we care about already showed up directly on
+ * the sample records above.
+ *
+ * Still unknown: (a) "House Accounts" territory's location id, (b) the
+ * Contact "Type" ("End User") id -- contact.types[] is confirmed real
+ * (seen: 10=Primary Point of Contact, 4=Evaluator) but "End User" wasn't
+ * in the small sample, (c) whether "Account Manager"/"Sales Rep" are
+ * Contact fields at all -- neither appeared anywhere in contact_full's
+ * full default field list, but Company objects do expose teams_href
+ * (.../company/companies/{id}/teams), a sub-resource for per-company
+ * member role assignments, which sits directly below "Primary Contact" in
+ * the screenshot Michael sent -- likely where Account Manager/Sales Rep
+ * actually live, not on the Contact.
+ */
+if ($action === 'probe-schema2') {
+    $result = ['ok' => true];
+
     try {
-        $result['system_custom_fields'] = register_cw_request('/system/customFields', ['pageSize' => '200'], 'GET', null, 12, 4);
+        $result['locations'] = register_cw_request('/system/locations', ['pageSize' => '100'], 'GET', null, 12, 4);
     } catch (Throwable $e) {
-        $result['system_custom_fields_error'] = $e->getMessage();
+        $result['locations_error'] = $e->getMessage();
+    }
+
+    try {
+        $result['contact_types'] = register_cw_request('/company/contacts/types', ['pageSize' => '100'], 'GET', null, 12, 4);
+    } catch (Throwable $e) {
+        $result['contact_types_error'] = $e->getMessage();
+    }
+
+    // Direct sub-resource fetches (no condition guessing) on two real
+    // companies, to see the Company Team role-assignment shape and find
+    // real "Account Manager"/"Sales Rep" role ids if they exist there.
+    try {
+        $result['codeblue_team'] = register_cw_request('/company/companies/2/teams', ['pageSize' => '50'], 'GET', null, 12, 4);
+    } catch (Throwable $e) {
+        $result['codeblue_team_error'] = $e->getMessage();
+    }
+
+    try {
+        $result['connectwise_team'] = register_cw_request('/company/companies/3/teams', ['pageSize' => '50'], 'GET', null, 12, 4);
+    } catch (Throwable $e) {
+        $result['connectwise_team_error'] = $e->getMessage();
     }
 
     register_respond(200, $result);
