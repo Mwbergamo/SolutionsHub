@@ -808,4 +808,86 @@ if ($action === 'probe-patch-format3') {
     register_respond(200, $result);
 }
 
+if ($action === 'probe-patch-format4') {
+    // probe-patch-format3 found that PUT (full-object replace) fails with
+    // a SPECIFIC, actionable error -- not the generic PATCH DateTime bug:
+    // "typeIds can only be used when creating a new company." (field
+    // "typeIds"). That means PUT's validator rejects certain create-only
+    // fields the GET response itself includes. This diagnostic loops:
+    // PUT the record, and if ConnectWise names a specific offending field
+    // in an "InvalidField"/"can only be used when creating" error, strip
+    // just that field and retry -- until it either succeeds or hits a
+    // field-less/unrecognized error. Reuses the existing ZZZ REGISTER
+    // TEST company/contact (no new junk records).
+    $companyId = isset($_GET['company_id']) ? (int) $_GET['company_id'] : 0;
+    $contactId = isset($_GET['contact_id']) ? (int) $_GET['contact_id'] : 0;
+    if ($companyId <= 0 || $contactId <= 0) {
+        register_respond(400, ['ok' => false, 'error' => 'company_id and contact_id are required (reuse an existing ZZZ REGISTER TEST company/contact id).']);
+    }
+
+    try {
+        $full = register_cw_request('/company/companies/' . $companyId, [], 'GET', null, 12, 4);
+    } catch (Throwable $e) {
+        register_respond(502, ['ok' => false, 'error' => 'Could not fetch the company: ' . $e->getMessage()]);
+    }
+
+    $modified = $full;
+    $modified['defaultContact'] = ['id' => $contactId];
+    $modified['billingContact'] = ['id' => $contactId];
+
+    $strippedFields = [];
+    $attempts = [];
+    $success = null;
+    $finalError = null;
+
+    for ($i = 0; $i < 15; $i++) {
+        try {
+            $r = register_cw_request('/company/companies/' . $companyId, [], 'PUT', $modified, 12, 4);
+            $success = [
+                'id' => $r['id'] ?? null,
+                'defaultContact' => $r['defaultContact'] ?? null,
+                'billingContact' => $r['billingContact'] ?? null,
+            ];
+            $attempts[] = ['stripped_field' => null, 'result' => 'success'];
+            break;
+        } catch (Throwable $e) {
+            $msg = $e->getMessage();
+            // Pull the JSON error body out of "...HTTP 400 for URL — {json}".
+            $jsonStart = strpos($msg, '{');
+            $decoded = $jsonStart !== false ? json_decode(substr($msg, $jsonStart), true) : null;
+            $offendingField = null;
+            if (is_array($decoded) && isset($decoded['errors']) && is_array($decoded['errors'])) {
+                foreach ($decoded['errors'] as $err) {
+                    $field = $err['field'] ?? null;
+                    $errMsg = $err['message'] ?? '';
+                    if (is_string($field) && $field !== '' && stripos($errMsg, 'can only be used when creating') !== false) {
+                        $offendingField = $field;
+                        break;
+                    }
+                }
+            }
+
+            if ($offendingField !== null && array_key_exists($offendingField, $modified)) {
+                $attempts[] = ['stripped_field' => $offendingField, 'error' => $msg];
+                unset($modified[$offendingField]);
+                $strippedFields[] = $offendingField;
+                continue;
+            }
+
+            // Not a field we know how to auto-strip -- stop and report it.
+            $finalError = $msg;
+            $attempts[] = ['stripped_field' => null, 'error' => $msg];
+            break;
+        }
+    }
+
+    register_respond(200, [
+        'ok' => $success !== null,
+        'stripped_fields' => $strippedFields,
+        'attempts' => $attempts,
+        'success' => $success,
+        'final_error' => $finalError,
+    ]);
+}
+
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
