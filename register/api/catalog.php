@@ -256,6 +256,61 @@ if ($action === 'sync-step') {
     register_respond(200, array_merge(['ok' => true], $result));
 }
 
+// TEMPORARY read-only diagnostic (added 2026-09-14, remove once answered) --
+// Michael wants the register's front page consolidated into a nested
+// Type > Category > SubCategory menu (using his GL Accounts Map's Type
+// column: Data Center / Voice / Premise Sec / Structured Cabling /
+// IT Services) plus barcode/mfg-part-number search. Before building
+// either, need real data, not guesses: (1) what category_name/
+// subcategory_name pairs are ACTUALLY synced onto catalog_items right now,
+// so they can be checked against the GL map's Category/SubCat values, and
+// (2) the real ConnectWise field name(s) for manufacturer part number and
+// barcode/UPC, if any exist at all -- neither has ever been confirmed live,
+// same "diagnose before guessing" discipline as every ConnectWise fact
+// already recorded in this file's header and in the register-app.md
+// project doc.
+if ($action === 'probe-fields') {
+    $categoryCounts = $pdo->query(
+        "SELECT category_name, subcategory_name, product_class, COUNT(*) AS n
+         FROM catalog_items
+         GROUP BY category_name, subcategory_name, product_class
+         ORDER BY product_class, category_name, subcategory_name"
+    )->fetchAll(PDO::FETCH_ASSOC);
+
+    // A handful of real catalog items to inspect the FULL raw ConnectWise
+    // record on (not just the fields this app already picks out) -- one
+    // stocked Inventory item, one Agreement item, and whatever else is
+    // cheaply available, so any manufacturer-part-number/barcode field
+    // shows up if it exists at all.
+    $sampleRows = $pdo->query(
+        "SELECT cw_catalog_id, identifier, product_class FROM catalog_items WHERE product_class = 'Inventory' AND on_hand > 0 ORDER BY cw_catalog_id LIMIT 2"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $sampleRows = array_merge($sampleRows, $pdo->query(
+        "SELECT cw_catalog_id, identifier, product_class FROM catalog_items WHERE product_class = 'Agreement' ORDER BY cw_catalog_id LIMIT 1"
+    )->fetchAll(PDO::FETCH_ASSOC));
+
+    $samples = [];
+    foreach ($sampleRows as $row) {
+        try {
+            $samples[] = [
+                'cw_catalog_id' => (int) $row['cw_catalog_id'],
+                'identifier' => $row['identifier'],
+                'product_class' => $row['product_class'],
+                'raw' => register_cw_request('/procurement/catalog/' . (int) $row['cw_catalog_id']),
+            ];
+        } catch (Throwable $e) {
+            $samples[] = ['cw_catalog_id' => (int) $row['cw_catalog_id'], 'error' => $e->getMessage()];
+        }
+    }
+
+    register_respond(200, [
+        'ok' => true,
+        'category_subcategory_counts' => $categoryCounts,
+        'distinct_category_count' => count(array_unique(array_column($categoryCounts, 'category_name'))),
+        'samples' => $samples,
+    ]);
+}
+
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
 
 /**
