@@ -763,4 +763,49 @@ if ($action === 'probe-patch-format2') {
     register_respond(200, $result);
 }
 
+if ($action === 'probe-patch-format3') {
+    // Tests PUT (full-object replace) as an alternative to PATCH, since
+    // every PATCH attempt so far -- regardless of target field, regardless
+    // of payload content -- has failed identically with ConnectWise's
+    // "String was not recognized as a valid DateTime." 500 error, even
+    // with the confirmed-correct JSON-Patch array envelope. Reuses the
+    // existing ZZZ REGISTER TEST company/contact (no new junk records).
+    $companyId = isset($_GET['company_id']) ? (int) $_GET['company_id'] : 0;
+    $contactId = isset($_GET['contact_id']) ? (int) $_GET['contact_id'] : 0;
+    if ($companyId <= 0 || $contactId <= 0) {
+        register_respond(400, ['ok' => false, 'error' => 'company_id and contact_id are required (reuse an existing ZZZ REGISTER TEST company/contact id).']);
+    }
+
+    $result = ['ok' => true];
+
+    try {
+        $full = register_cw_request('/company/companies/' . $companyId, [], 'GET', null, 12, 4);
+    } catch (Throwable $e) {
+        register_respond(502, ['ok' => false, 'error' => 'Could not fetch the company: ' . $e->getMessage()]);
+    }
+
+    // Attempt 1: PUT the fetched record back completely unmodified, to
+    // isolate whether PUT itself trips the same DateTime bug on this
+    // instance/record regardless of what changes -- before attributing
+    // anything to the defaultContact edit specifically.
+    try {
+        $r = register_cw_request('/company/companies/' . $companyId, [], 'PUT', $full, 12, 4);
+        $result['put_unmodified_roundtrip'] = ['ok' => true, 'response' => ['id' => $r['id'] ?? null]];
+    } catch (Throwable $e) {
+        $result['put_unmodified_roundtrip'] = ['ok' => false, 'error' => $e->getMessage()];
+    }
+
+    // Attempt 2: PUT with only defaultContact (Primary Contact) changed.
+    $modified = $full;
+    $modified['defaultContact'] = ['id' => $contactId];
+    try {
+        $r = register_cw_request('/company/companies/' . $companyId, [], 'PUT', $modified, 12, 4);
+        $result['put_set_primary_contact'] = ['ok' => true, 'response' => ['id' => $r['id'] ?? null, 'defaultContact' => $r['defaultContact'] ?? null]];
+    } catch (Throwable $e) {
+        $result['put_set_primary_contact'] = ['ok' => false, 'error' => $e->getMessage()];
+    }
+
+    register_respond(200, $result);
+}
+
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
