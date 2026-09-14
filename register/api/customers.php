@@ -867,16 +867,41 @@ if ($action === 'probe-patch-format4') {
                 }
             }
 
-            if ($offendingField !== null && array_key_exists($offendingField, $modified)) {
-                $attempts[] = ['stripped_field' => $offendingField, 'error' => $msg];
-                unset($modified[$offendingField]);
-                $strippedFields[] = $offendingField;
+            // ConnectWise's error names its OWN internal field name, which
+            // doesn't always match our JSON key -- e.g. it said "typeIds"
+            // but the record we fetched/sent has "types" (an array of
+            // {id,name}), not a literal "typeIds" key. Try the literal
+            // name first, then the common "XIds" -> "Xs" plural-array
+            // rewrite ConnectWise uses for its *Ids-named validation
+            // fields.
+            $realKey = null;
+            if ($offendingField !== null) {
+                $candidates = [$offendingField];
+                if (substr($offendingField, -3) === 'Ids') {
+                    $base = substr($offendingField, 0, -3);
+                    $candidates[] = $base . 's';
+                    $candidates[] = $base;
+                }
+                foreach ($candidates as $candidate) {
+                    if (array_key_exists($candidate, $modified)) {
+                        $realKey = $candidate;
+                        break;
+                    }
+                }
+            }
+
+            if ($realKey !== null) {
+                $attempts[] = ['offending_field' => $offendingField, 'stripped_key' => $realKey, 'error' => $msg];
+                unset($modified[$realKey]);
+                $strippedFields[] = $realKey;
                 continue;
             }
 
-            // Not a field we know how to auto-strip -- stop and report it.
+            // Not a field we know how to auto-strip -- stop and report it,
+            // including the record's own top-level keys so we can see
+            // what's actually available to strip by hand next round.
             $finalError = $msg;
-            $attempts[] = ['stripped_field' => null, 'error' => $msg];
+            $attempts[] = ['stripped_field' => null, 'offending_field' => $offendingField, 'available_keys' => array_keys($modified), 'error' => $msg];
             break;
         }
     }
