@@ -162,6 +162,17 @@ function register_migrate(PDO $pdo): void
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id)');
 
+    // Added 2026-09-14 for the Metrics screen's "Protection Plan Sales"
+    // count -- copied onto the row at sale time (same reasoning as
+    // identifier/description/unit_price above: a metric or receipt must
+    // never depend on catalog_items still existing or still classifying
+    // this item the same way later) from the source catalog item's
+    // track_inventory=0 flag (Agreement-class / recurring-protection
+    // products -- see catalog_items' own migration comment). Sales recorded
+    // before this column existed default to 0 (not retroactively knowable),
+    // which only affects historical metrics for dates before this shipped.
+    register_add_column_if_missing($pdo, 'sale_items', 'is_protection_plan', 'INTEGER NOT NULL DEFAULT 0');
+
     // Queue of ConnectWise Procurement Catalog items to (re)sync -- added
     // 2026-09-12 after a real "Sync failed — check your connection" error
     // on a first live attempt (it ran ~4 minutes before failing): a single
@@ -219,6 +230,61 @@ function register_migrate(PDO $pdo): void
         )
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_catalog_no_stock_cache_checked_at ON catalog_no_stock_cache(checked_at)');
+
+    // Return/RMA requests -- added 2026-09-14 (Past Sales screen). Per
+    // Michael's decision after live-probing ConnectWise's actual REST API
+    // surface (confirmed: ConnectWise Manage's public API exposes only
+    // read-only RMA reference lists -- RmaActions/RmaDispositions/
+    // RmaStatuses/RmaTags -- with NO endpoint to create or write an actual
+    // RMA record), this app does NOT write to ConnectWise for returns. A
+    // return request is recorded here only, and queued (status='pending')
+    // for CBT's RMA team to manually create the real RMA in ConnectWise --
+    // status flips to 'completed' (optionally with the real ConnectWise RMA
+    // number, once known) via returns.php's action=mark-complete once
+    // that's done. restocking_fee_amount is computed and stored at request
+    // time (20% of the returned items' total, per Michael's stated
+    // stipulations) so it never drifts if catalog prices change later.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS returns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sale_id INTEGER NOT NULL REFERENCES sales(id),
+            user_id INTEGER NOT NULL REFERENCES register_users(id),
+            cw_company_id INTEGER,
+            cw_company_name TEXT,
+            cw_contact_id INTEGER,
+            cw_contact_name TEXT,
+            reason TEXT,
+            items_total REAL NOT NULL DEFAULT 0,
+            restocking_fee_amount REAL NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'pending',
+            cw_rma_number TEXT,
+            completed_at TEXT,
+            completed_by_user_id INTEGER REFERENCES register_users(id),
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_returns_sale ON returns(sale_id)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_returns_status ON returns(status, created_at)');
+
+    // Line items on a return request. sale_item_id is nullable + ON DELETE
+    // SET NULL for the same reason sale_items.catalog_item_id is -- a
+    // return's own record must survive even if the originating sale_item
+    // row is ever removed; identifier/description/unit_price/quantity are
+    // copied at return time.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS return_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            return_id INTEGER NOT NULL REFERENCES returns(id) ON DELETE CASCADE,
+            sale_item_id INTEGER REFERENCES sale_items(id) ON DELETE SET NULL,
+            identifier TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            unit_price REAL NOT NULL DEFAULT 0,
+            quantity REAL NOT NULL DEFAULT 1,
+            line_total REAL NOT NULL DEFAULT 0
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_return_items_return ON return_items(return_id)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_return_items_sale_item ON return_items(sale_item_id)');
 
     // Small key/value table for sync run bookkeeping (started_at of the
     // current/most recent run) -- same shape as relationships' cw_sync_meta.

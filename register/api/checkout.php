@@ -169,6 +169,12 @@ if ($action === 'create') {
             'quantity' => $quantity,
             'line_total' => $lineTotal,
             'track_inventory' => $trackInventory,
+            // Agreement-class items (track_inventory=0) are CBT's recurring-
+            // protection/managed-service products -- copied onto the row now
+            // so the Metrics screen's "Protection Plan Sales" count never
+            // depends on catalog_items still classifying this item the same
+            // way later. See db.php's sale_items migration comment.
+            'is_protection_plan' => !$trackInventory,
         ];
     }
 
@@ -197,8 +203,8 @@ if ($action === 'create') {
         $saleId = (int) $pdo->lastInsertId();
 
         $insertItem = $pdo->prepare(
-            'INSERT INTO sale_items (sale_id, catalog_item_id, identifier, description, unit_price, quantity, line_total)
-             VALUES (:sale_id, :catalog_item_id, :identifier, :description, :unit_price, :quantity, :line_total)'
+            'INSERT INTO sale_items (sale_id, catalog_item_id, identifier, description, unit_price, quantity, line_total, is_protection_plan)
+             VALUES (:sale_id, :catalog_item_id, :identifier, :description, :unit_price, :quantity, :line_total, :is_protection_plan)'
         );
         $decrement = $pdo->prepare('UPDATE catalog_items SET on_hand = on_hand - :qty WHERE id = :id');
 
@@ -211,6 +217,7 @@ if ($action === 'create') {
                 ':unit_price' => $li['unit_price'],
                 ':quantity' => $li['quantity'],
                 ':line_total' => $li['line_total'],
+                ':is_protection_plan' => $li['is_protection_plan'] ? 1 : 0,
             ]);
             if ($li['track_inventory']) {
                 $decrement->execute([':qty' => $li['quantity'], ':id' => $li['catalog_item_id']]);
@@ -251,14 +258,17 @@ function register_load_receipt(PDO $pdo, int $saleId): ?array
     $sale['cw_contact_id'] = $sale['cw_contact_id'] !== null ? (int) $sale['cw_contact_id'] : null;
 
     $itemsStmt = $pdo->prepare(
-        'SELECT identifier, description, unit_price, quantity, line_total FROM sale_items WHERE sale_id = :id ORDER BY id'
+        'SELECT id AS sale_item_id, identifier, description, unit_price, quantity, line_total, is_protection_plan
+         FROM sale_items WHERE sale_id = :id ORDER BY id'
     );
     $itemsStmt->execute([':id' => $saleId]);
     $items = $itemsStmt->fetchAll(PDO::FETCH_ASSOC);
     foreach ($items as &$item) {
+        $item['sale_item_id'] = (int) $item['sale_item_id'];
         $item['unit_price'] = (float) $item['unit_price'];
         $item['quantity'] = (float) $item['quantity'];
         $item['line_total'] = (float) $item['line_total'];
+        $item['is_protection_plan'] = (int) $item['is_protection_plan'] === 1;
     }
     unset($item);
     $sale['items'] = $items;

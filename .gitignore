@@ -37,3 +37,8 @@ Thumbs.db
 /register/data/*.sqlite-wal
 /register/data/*.sqlite-shm
 /register/data/sessions/
+
+# Scratch/output folder used by Claude sessions for file delivery -- not
+# part of the app's source, and has held stray credential-file copies
+# before (2026-09-14). Never commit it.
+/Claude outputs/

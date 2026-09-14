@@ -22,8 +22,14 @@
     user: null,
     error: null,
 
-    // 'register' | 'history'
+    // 'register' | 'history' (Past Sales) | 'metrics'
     view: 'register',
+
+    // Metrics screen (added 2026-09-14) -- see api/metrics.php for the
+    // definitions (today/week are TO-DATE, America/New_York local time).
+    metrics: null,
+    metricsLoading: false,
+    metricsError: null,
 
     catalogItems: [],
     catalogLoading: false,
@@ -71,8 +77,35 @@
     receipt: null,
 
     history: null,
-    historyLoading: false
+    historyLoading: false,
+
+    // Returns/RMA queue (added 2026-09-14, Past Sales screen) -- local
+    // records only, see api/returns.php's docblock for why this app never
+    // writes to ConnectWise for a return.
+    returnsQueue: null,
+    returnsQueueLoading: false,
+    returnsQueueFilter: 'pending', // 'pending' | 'completed' | '' (all)
+    returnsQueueRmaInputs: {}, // return_id -> in-progress cw_rma_number text
+
+    // Start-a-return modal (per past sale) -- see returnUi().
+    returnFlow: initialReturnFlowState()
   };
+
+  function initialReturnFlowState() {
+    return {
+      open: false,
+      saleId: null,
+      sale: null,
+      items: [],       // from api/returns.php?action=returnable
+      selections: {},  // sale_item_id -> quantity to return (0 = not selected)
+      reason: '',
+      acknowledged: false,
+      loading: false,
+      submitting: false,
+      error: null,
+      result: null      // set after a successful submit -- shows the confirmation panel
+    };
+  }
 
   function initialCustomerState() {
     return {
@@ -113,6 +146,17 @@
     state.customer = initialCustomerState();
     state.customerUi = initialCustomerUiState();
   }
+
+  // Return stipulations (Michael's stated rules, 2026-09-14) -- shown to
+  // staff on every return request before it can be submitted. Kept in sync
+  // by hand with api/returns.php's docblock (same four rules) since this
+  // codebase has no shared JS/PHP constants file.
+  var RETURN_STIPULATIONS = [
+    'Item must be in its original packaging.',
+    'Return must be within 15 days of the purchase date.',
+    'Any manufacturer defects must be listed.',
+    'A 20% restocking fee applies.'
+  ];
 
   function escapeHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -383,6 +427,166 @@
       render();
     }).catch(function () {
       state.error = 'Could not load that receipt — check your connection.';
+      render();
+    });
+  }
+
+  // ---- Metrics (added 2026-09-14) --------------------------------------
+
+  function loadMetrics() {
+    state.metricsLoading = true;
+    state.metricsError = null;
+    render();
+    apiGet('api/metrics.php?action=summary').then(function (r) {
+      state.metricsLoading = false;
+      if (r.data && r.data.ok) {
+        state.metrics = r.data;
+      } else {
+        state.metricsError = (r.data && r.data.error) || 'Could not load metrics.';
+      }
+      render();
+    }).catch(function () {
+      state.metricsLoading = false;
+      state.metricsError = 'Could not load metrics — check your connection.';
+      render();
+    });
+  }
+
+  // ---- Returns/RMA queue (added 2026-09-14) -----------------------------
+  //
+  // See api/returns.php's docblock: a return request is recorded in THIS
+  // app only (no ConnectWise write -- ConnectWise's REST API has no
+  // endpoint to create an RMA record, confirmed live 2026-09-14) and
+  // queued here for CBT's RMA team to manually enter into ConnectWise.
+
+  function loadReturnsQueue() {
+    state.returnsQueueLoading = true;
+    render();
+    var url = 'api/returns.php?action=list';
+    if (state.returnsQueueFilter) url += '&status=' + encodeURIComponent(state.returnsQueueFilter);
+    apiGet(url).then(function (r) {
+      state.returnsQueueLoading = false;
+      if (r.data && r.data.ok) {
+        state.returnsQueue = r.data.returns;
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not load the returns queue.';
+      }
+      render();
+    }).catch(function () {
+      state.returnsQueueLoading = false;
+      state.error = 'Could not load the returns queue — check your connection.';
+      render();
+    });
+  }
+
+  function setReturnsQueueFilter(filter) {
+    state.returnsQueueFilter = filter;
+    loadReturnsQueue();
+  }
+
+  function markReturnComplete(returnId) {
+    var rmaNumber = (state.returnsQueueRmaInputs[returnId] || '').trim();
+    apiPost('api/returns.php?action=mark-complete', { id: returnId, cw_rma_number: rmaNumber }).then(function (r) {
+      if (r.data && r.data.ok) {
+        delete state.returnsQueueRmaInputs[returnId];
+        loadReturnsQueue();
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not update that return.';
+        render();
+      }
+    }).catch(function () {
+      state.error = 'Could not update that return — check your connection.';
+      render();
+    });
+  }
+
+  // ---- Start-a-return flow (per past sale) -------------------------------
+
+  function openReturnFlow(saleId) {
+    state.returnFlow = initialReturnFlowState();
+    state.returnFlow.open = true;
+    state.returnFlow.saleId = saleId;
+    state.returnFlow.loading = true;
+    render();
+    apiGet('api/returns.php?action=returnable&sale_id=' + encodeURIComponent(saleId)).then(function (r) {
+      state.returnFlow.loading = false;
+      if (r.data && r.data.ok) {
+        state.returnFlow.sale = r.data.sale;
+        state.returnFlow.items = r.data.items;
+      } else {
+        state.returnFlow.error = (r.data && r.data.error) || 'Could not load this sale.';
+      }
+      render();
+    }).catch(function () {
+      state.returnFlow.loading = false;
+      state.returnFlow.error = 'Could not load this sale — check your connection.';
+      render();
+    });
+  }
+
+  function closeReturnFlow() {
+    state.returnFlow = initialReturnFlowState();
+    render();
+  }
+
+  function setReturnItemQty(saleItemId, qty) {
+    var item = state.returnFlow.items.filter(function (i) { return i.sale_item_id === saleItemId; })[0];
+    if (!item) return;
+    // Clamp to [0, returnable_qty] without forcing an integer floor --
+    // sale_items.quantity is a REAL column, so a fractional returnable
+    // amount (rare, but possible) stays selectable.
+    qty = Math.max(0, Math.min(item.returnable_qty, Number(qty) || 0));
+    if (qty === 0) {
+      delete state.returnFlow.selections[saleItemId];
+    } else {
+      state.returnFlow.selections[saleItemId] = qty;
+    }
+    render();
+  }
+
+  function returnFlowSelectedTotal() {
+    var total = 0;
+    state.returnFlow.items.forEach(function (item) {
+      var qty = state.returnFlow.selections[item.sale_item_id] || 0;
+      total += qty * item.unit_price;
+    });
+    return total;
+  }
+
+  function submitReturn() {
+    var selections = state.returnFlow.selections;
+    var items = Object.keys(selections).map(function (id) {
+      return { sale_item_id: Number(id), quantity: selections[id] };
+    });
+    if (items.length === 0) {
+      state.returnFlow.error = 'Select at least one item to return.';
+      render();
+      return;
+    }
+    if (!state.returnFlow.acknowledged) {
+      state.returnFlow.error = 'Confirm the return stipulations with the customer before submitting.';
+      render();
+      return;
+    }
+    state.returnFlow.submitting = true;
+    state.returnFlow.error = null;
+    render();
+    apiPost('api/returns.php?action=create', {
+      sale_id: state.returnFlow.saleId,
+      items: items,
+      reason: state.returnFlow.reason
+    }).then(function (r) {
+      state.returnFlow.submitting = false;
+      if (r.data && r.data.ok) {
+        state.returnFlow.result = r.data.return;
+        loadReturnsQueue();
+      } else {
+        state.returnFlow.error = (r.data && r.data.error) || 'Could not submit this return — try again.';
+      }
+      render();
+    }).catch(function () {
+      state.returnFlow.submitting = false;
+      state.returnFlow.error = 'Could not submit this return — check your connection.';
       render();
     });
   }
@@ -805,7 +1009,7 @@
 
   function render() {
     var searchFocus = captureSearchFocus();
-    root.innerHTML = topbarHtml() + '<div class="main">' + mainHtml() + '</div>' + checkoutModalHtml() + receiptOverlayHtml();
+    root.innerHTML = topbarHtml() + '<div class="main">' + mainHtml() + '</div>' + checkoutModalHtml() + receiptOverlayHtml() + returnFlowModalHtml();
     bindEvents();
     restoreSearchFocus(searchFocus);
   }
@@ -845,8 +1049,15 @@
           '</div>' +
           '<nav class="topbar-nav">' +
             '<button class="nav-btn ' + (state.view === 'register' ? 'active' : '') + '" type="button" data-action="show-register">Register</button>' +
-            '<button class="nav-btn ' + (state.view === 'history' ? 'active' : '') + '" type="button" data-action="show-history">Sale History</button>' +
           '</nav>' +
+          '<div class="topbar-tiles">' +
+            '<button class="tile-btn ' + (state.view === 'metrics' ? 'active' : '') + '" type="button" data-action="show-metrics" title="Metrics">' +
+              '<span class="tile-btn-icon">📊</span><span class="tile-btn-label">Metrics</span>' +
+            '</button>' +
+            '<button class="tile-btn ' + (state.view === 'history' ? 'active' : '') + '" type="button" data-action="show-history" title="Past Sales">' +
+              '<span class="tile-btn-icon">🧾</span><span class="tile-btn-label">Past Sales</span>' +
+            '</button>' +
+          '</div>' +
           '<a class="back-to-hub" href="' + HUB_URL + '">← Solutions Hub</a>' +
         '</div>' +
         '<div class="topbar-right">' +
@@ -865,6 +1076,9 @@
     if (state.view === 'history') {
       return html + historyHtml();
     }
+    if (state.view === 'metrics') {
+      return html + metricsHtml();
+    }
     return html + registerHtml();
   }
 
@@ -875,6 +1089,59 @@
         '<div class="cart-pane">' + cartHtml() + '</div>' +
       '</div>'
     );
+  }
+
+  // ---- Metrics screen (added 2026-09-14) ---------------------------------
+
+  function metricsHtml() {
+    if (state.metricsLoading && !state.metrics) {
+      return '<div class="loading">Loading metrics…</div>';
+    }
+    if (state.metricsError) {
+      return '<div class="error-banner">' + escapeHtml(state.metricsError) + '</div>';
+    }
+    if (!state.metrics) {
+      return '<div class="loading">Loading…</div>';
+    }
+    var m = state.metrics;
+    return (
+      '<div class="metrics-layout">' +
+        metricsGroupHtml('Sales for the Day', [
+          { label: 'Number of Sales', value: m.today.sales_count },
+          { label: 'Number of Customers', value: m.today.customers_count },
+          { label: 'Protection Plan Sales', value: m.today.protection_plan_sales }
+        ]) +
+        metricsGroupHtml('Sales for the Week (since ' + fmtDateOnly(m.week_start) + ')', [
+          { label: 'Number of Sales', value: m.week.sales_count },
+          { label: 'Number of Customers', value: m.week.customers_count },
+          { label: 'Protection Plan Sales', value: m.week.protection_plan_sales }
+        ]) +
+        metricsGroupHtml('Return Customers (this week)', [
+          { label: 'New Customers', value: m.return_customers_week.new_customers },
+          { label: 'Returning Customers', value: m.return_customers_week.returning_customers }
+        ]) +
+      '</div>'
+    );
+  }
+
+  function metricsGroupHtml(title, stats) {
+    return (
+      '<div class="metrics-group">' +
+        '<div class="metrics-group-title">' + escapeHtml(title) + '</div>' +
+        '<div class="metrics-stat-row">' +
+          stats.map(function (s) {
+            return '<div class="metrics-stat-tile"><div class="metrics-stat-value">' + s.value + '</div><div class="metrics-stat-label">' + escapeHtml(s.label) + '</div></div>';
+          }).join('') +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function fmtDateOnly(isoDate) {
+    if (!isoDate) return '';
+    var d = new Date(isoDate + 'T00:00:00');
+    if (isNaN(d.getTime())) return isoDate;
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
 
   function catalogToolbarHtml() {
@@ -1259,7 +1526,15 @@
     );
   }
 
+  // Past Sales screen -- the sale history table (unchanged from before) plus
+  // (added 2026-09-14) a "Return" action per sale and a Returns/RMA queue
+  // section. Per Michael's spec: "one square button that takes you to a
+  // screen of past sales" with Returns underneath it.
   function historyHtml() {
+    return returnsQueueSectionHtml() + pastSalesTableHtml();
+  }
+
+  function pastSalesTableHtml() {
     if (state.historyLoading) {
       return '<div class="loading">Loading sale history…</div>';
     }
@@ -1269,22 +1544,190 @@
     if (state.history.length === 0) {
       return '<div class="empty-state">No sales recorded yet.</div>';
     }
-    var html = '<div class="history-table-wrap"><table class="history-table"><thead><tr>' +
-      '<th>Sale #</th><th>Date</th><th>Customer</th><th>Items</th><th>Payment</th><th>Cashier</th><th>Total</th>' +
+    var html = '<div class="past-sales-title">Sales</div>';
+    html += '<div class="history-table-wrap"><table class="history-table"><thead><tr>' +
+      '<th>Sale #</th><th>Date</th><th>Customer</th><th>Items</th><th>Payment</th><th>Cashier</th><th>Total</th><th></th>' +
     '</tr></thead><tbody>';
     state.history.forEach(function (s) {
-      html += '<tr class="history-row" data-action="view-receipt" data-id="' + s.id + '">' +
-        '<td>#' + s.id + '</td>' +
-        '<td>' + fmtTimestamp(s.created_at) + '</td>' +
-        '<td>' + (customerLineHtml(s) || '—') + '</td>' +
-        '<td>' + s.item_count + '</td>' +
-        '<td>' + escapeHtml(s.payment_method) + '</td>' +
-        '<td>' + escapeHtml(s.cashier_name) + '</td>' +
-        '<td class="history-total">' + fmtMoney(s.total) + '</td>' +
+      html += '<tr class="history-row">' +
+        '<td data-action="view-receipt" data-id="' + s.id + '">#' + s.id + '</td>' +
+        '<td data-action="view-receipt" data-id="' + s.id + '">' + fmtTimestamp(s.created_at) + '</td>' +
+        '<td data-action="view-receipt" data-id="' + s.id + '">' + (customerLineHtml(s) || '—') + '</td>' +
+        '<td data-action="view-receipt" data-id="' + s.id + '">' + s.item_count + '</td>' +
+        '<td data-action="view-receipt" data-id="' + s.id + '">' + escapeHtml(s.payment_method) + '</td>' +
+        '<td data-action="view-receipt" data-id="' + s.id + '">' + escapeHtml(s.cashier_name) + '</td>' +
+        '<td class="history-total" data-action="view-receipt" data-id="' + s.id + '">' + fmtMoney(s.total) + '</td>' +
+        '<td><button type="button" class="return-start-btn" data-action="start-return" data-id="' + s.id + '">Return</button></td>' +
       '</tr>';
     });
     html += '</tbody></table></div>';
     return html;
+  }
+
+  // ---- Returns/RMA queue section (added 2026-09-14) ----------------------
+
+  function returnsQueueSectionHtml() {
+    var html = '<div class="returns-queue">';
+    html += '<div class="returns-queue-header">' +
+      '<div class="past-sales-title">Returns' + (state.returnsQueueFilter === 'pending' ? ' — awaiting ConnectWise entry' : '') + '</div>' +
+      '<div class="returns-queue-filters">' +
+        ['pending', 'completed', ''].map(function (f) {
+          var label = f === 'pending' ? 'Pending' : (f === 'completed' ? 'Completed' : 'All');
+          return '<button type="button" class="returns-filter-chip' + (state.returnsQueueFilter === f ? ' active' : '') + '" data-action="returns-queue-filter" data-value="' + f + '">' + label + '</button>';
+        }).join('') +
+      '</div>' +
+    '</div>';
+
+    if (state.returnsQueueLoading && !state.returnsQueue) {
+      html += '<div class="loading">Loading returns…</div>';
+      html += '</div>';
+      return html;
+    }
+    if (!state.returnsQueue || state.returnsQueue.length === 0) {
+      html += '<div class="empty-state returns-empty">No ' + (state.returnsQueueFilter || '') + ' returns.</div>';
+      html += '</div>';
+      return html;
+    }
+
+    html += '<div class="history-table-wrap"><table class="history-table returns-table"><thead><tr>' +
+      '<th>Return #</th><th>Date</th><th>Sale</th><th>Customer</th><th>Items</th><th>Restocking Fee</th><th>Requested By</th><th>Status</th><th></th>' +
+    '</tr></thead><tbody>';
+    state.returnsQueue.forEach(function (r) {
+      html += '<tr class="history-row">' +
+        '<td>#' + r.id + '</td>' +
+        '<td>' + fmtTimestamp(r.created_at) + '</td>' +
+        '<td><button type="button" class="return-sale-link" data-action="view-receipt" data-id="' + r.sale_id + '">Sale #' + r.sale_id + '</button></td>' +
+        '<td>' + (r.cw_contact_name ? escapeHtml(r.cw_contact_name) + ' — ' : '') + escapeHtml(r.cw_company_name || '—') + '</td>' +
+        '<td>' + r.item_count + '</td>' +
+        '<td>' + fmtMoney(r.restocking_fee_amount) + '</td>' +
+        '<td>' + escapeHtml(r.requested_by_name) + '</td>' +
+        '<td>' + (r.status === 'completed'
+          ? '<span class="returns-status-badge completed">Entered' + (r.cw_rma_number ? ' — RMA ' + escapeHtml(r.cw_rma_number) : '') + '</span>'
+          : '<span class="returns-status-badge pending">Pending</span>') +
+        '</td>' +
+        '<td>' + (r.status === 'pending'
+          ? '<div class="returns-complete-row">' +
+              '<input type="text" class="returns-rma-input" placeholder="RMA #" data-action="returns-rma-input" data-id="' + r.id + '" value="' + escapeHtml(state.returnsQueueRmaInputs[r.id] || '') + '">' +
+              '<button type="button" class="returns-complete-btn" data-action="mark-return-complete" data-id="' + r.id + '">Mark Entered</button>' +
+            '</div>'
+          : '') +
+        '</td>' +
+      '</tr>';
+    });
+    html += '</tbody></table></div></div>';
+    return html;
+  }
+
+  // ---- Start-a-return modal (added 2026-09-14) ---------------------------
+
+  function returnFlowModalHtml() {
+    var f = state.returnFlow;
+    if (!f.open) return '';
+
+    return (
+      '<div class="modal-backdrop" data-action="close-return-backdrop">' +
+        '<div class="modal return-modal" data-stop-propagation="1">' +
+          (f.result ? returnResultHtml(f.result) : returnFormHtml(f)) +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function returnFormHtml(f) {
+    var html = '<div class="modal-title">Start a Return' + (f.sale ? ' — Sale #' + f.sale.id : '') + '</div>';
+
+    if (f.loading) {
+      html += '<div class="loading">Loading sale…</div>';
+      html += '<div class="modal-actions"><button type="button" class="modal-cancel" data-action="close-return">Close</button></div>';
+      return html;
+    }
+    if (f.error) {
+      html += '<div class="error-banner">' + escapeHtml(f.error) + '</div>';
+    }
+    if (!f.sale) {
+      html += '<div class="modal-actions"><button type="button" class="modal-cancel" data-action="close-return">Close</button></div>';
+      return html;
+    }
+
+    html += '<div class="return-customer-line">' + (customerLineHtml(f.sale) || '—') + '</div>';
+
+    var returnableItems = f.items.filter(function (i) { return i.returnable_qty > 0; });
+    if (returnableItems.length === 0) {
+      html += '<div class="empty-state">Every item on this sale has already been claimed by a return request.</div>';
+      html += '<div class="modal-actions"><button type="button" class="modal-cancel" data-action="close-return">Close</button></div>';
+      return html;
+    }
+
+    html += '<label>Select parts to return</label>';
+    html += '<div class="return-items-list">';
+    f.items.forEach(function (item) {
+      var qty = f.selections[item.sale_item_id] || 0;
+      var disabled = item.returnable_qty <= 0;
+      html += '<div class="return-item-row' + (disabled ? ' disabled' : '') + '">' +
+        '<div class="return-item-main">' +
+          '<div class="return-item-name">' + escapeHtml(item.identifier) + '</div>' +
+          '<div class="return-item-sub">' + fmtMoney(item.unit_price) + ' each — ' +
+            (disabled ? 'fully claimed by an earlier return' : fmtQty(item.returnable_qty) + ' of ' + fmtQty(item.quantity) + ' returnable') +
+          '</div>' +
+        '</div>' +
+        '<div class="return-item-qty">' +
+          '<button type="button" data-action="return-qty-dec" data-id="' + item.sale_item_id + '" ' + (disabled ? 'disabled' : '') + '>–</button>' +
+          '<input type="text" inputmode="numeric" value="' + fmtQty(qty) + '" data-action="return-qty-input" data-id="' + item.sale_item_id + '" ' + (disabled ? 'disabled' : '') + '>' +
+          '<button type="button" data-action="return-qty-inc" data-id="' + item.sale_item_id + '" ' + (disabled ? 'disabled' : '') + '>+</button>' +
+        '</div>' +
+      '</div>';
+    });
+    html += '</div>';
+
+    var selectedTotal = returnFlowSelectedTotal();
+    var restockingFee = Math.round(selectedTotal * 0.20 * 100) / 100;
+    html += '<div class="return-fee-preview">' +
+      '<div class="return-fee-row"><span>Items selected</span><span>' + fmtMoney(selectedTotal) + '</span></div>' +
+      '<div class="return-fee-row"><span>Restocking fee (20%)</span><span>' + fmtMoney(restockingFee) + '</span></div>' +
+    '</div>';
+
+    html += '<label>Reason (optional)</label>' +
+      '<input type="text" data-action="return-reason-input" value="' + escapeHtml(f.reason) + '">';
+
+    html += '<div class="return-stipulations">' +
+      '<div class="return-stipulations-title">Return Stipulations</div>' +
+      '<ul>' + RETURN_STIPULATIONS.map(function (s) { return '<li>' + escapeHtml(s) + '</li>'; }).join('') + '</ul>' +
+      '<label class="return-ack-label">' +
+        '<input type="checkbox" data-action="return-acknowledge-toggle" ' + (f.acknowledged ? 'checked' : '') + '>' +
+        ' I\'ve reviewed these stipulations with the customer.' +
+      '</label>' +
+    '</div>';
+
+    var canSubmit = !f.submitting && Object.keys(f.selections).length > 0 && f.acknowledged;
+    html += '<div class="modal-actions">' +
+      '<button type="button" class="modal-cancel" data-action="close-return">Cancel</button>' +
+      '<button type="button" class="modal-confirm" data-action="submit-return" ' + (canSubmit ? '' : 'disabled') + '>' +
+        (f.submitting ? 'Submitting…' : 'Submit Return Request') +
+      '</button>' +
+    '</div>';
+
+    return html;
+  }
+
+  function returnResultHtml(ret) {
+    return (
+      '<div class="modal-title">Return #' + ret.id + ' Recorded</div>' +
+      '<div class="return-result-note">This has NOT been entered into ConnectWise yet — it\'s queued below on the Past Sales screen for the RMA team to create the real RMA manually.</div>' +
+      '<div class="return-items-list return-result-items">' +
+        ret.items.map(function (item) {
+          return '<div class="return-item-row disabled"><div class="return-item-main">' +
+            '<div class="return-item-name">' + fmtQty(item.quantity) + ' × ' + escapeHtml(item.identifier) + '</div>' +
+          '</div><div class="return-item-total">' + fmtMoney(item.line_total) + '</div></div>';
+        }).join('') +
+      '</div>' +
+      '<div class="return-fee-preview">' +
+        '<div class="return-fee-row"><span>Items total</span><span>' + fmtMoney(ret.items_total) + '</span></div>' +
+        '<div class="return-fee-row"><span>Restocking fee (20%)</span><span>' + fmtMoney(ret.restocking_fee_amount) + '</span></div>' +
+      '</div>' +
+      '<div class="modal-actions">' +
+        '<button type="button" class="modal-confirm" data-action="close-return">Done</button>' +
+      '</div>'
+    );
   }
 
   // ---- Event binding ----------------------------------------------------
@@ -1321,7 +1764,8 @@
       var handler = null;
 
       if (action === 'show-register') handler = function () { state.view = 'register'; state.error = null; render(); };
-      else if (action === 'show-history') handler = function () { state.view = 'history'; state.error = null; loadHistory(); };
+      else if (action === 'show-history') handler = function () { state.view = 'history'; state.error = null; loadHistory(); loadReturnsQueue(); };
+      else if (action === 'show-metrics') handler = function () { state.view = 'metrics'; state.error = null; loadMetrics(); };
       else if (action === 'signout') handler = signOut;
       else if (action === 'sync') handler = runSync;
       else if (action === 'add-to-cart') handler = function () { addToCart(el.dataset.id); };
@@ -1376,6 +1820,24 @@
       else if (action === 'close-receipt-backdrop') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'cash', payment_reference: '', tax_amount: '0.00', note: '' }; resetCustomerState(); render(); };
       else if (action === 'print-receipt') handler = function () { window.print(); };
       else if (action === 'view-receipt') handler = function () { viewPastReceipt(el.dataset.id); };
+      else if (action === 'returns-queue-filter') handler = function () { setReturnsQueueFilter(el.dataset.value); };
+      else if (action === 'mark-return-complete') handler = function () { markReturnComplete(Number(el.dataset.id)); };
+      else if (action === 'start-return') handler = function () { openReturnFlow(Number(el.dataset.id)); };
+      else if (action === 'close-return') handler = closeReturnFlow;
+      else if (action === 'close-return-backdrop') handler = closeReturnFlow;
+      else if (action === 'submit-return') handler = submitReturn;
+      else if (action === 'return-acknowledge-toggle') handler = function () { state.returnFlow.acknowledged = !state.returnFlow.acknowledged; render(); };
+      else if (action === 'return-qty-inc') handler = function () {
+        var id = Number(el.dataset.id);
+        var item = state.returnFlow.items.filter(function (i) { return i.sale_item_id === id; })[0];
+        var current = state.returnFlow.selections[id] || 0;
+        if (item) setReturnItemQty(id, current + 1);
+      };
+      else if (action === 'return-qty-dec') handler = function () {
+        var id = Number(el.dataset.id);
+        var current = state.returnFlow.selections[id] || 0;
+        setReturnItemQty(id, current - 1);
+      };
 
       if (handler) {
         var evt = (el.tagName === 'INPUT' && action === 'qty-input') ? 'change' : 'click';
@@ -1395,6 +1857,16 @@
     var qtyInput = root.querySelector('[data-action="qty-input"]');
     root.querySelectorAll('input[data-action="qty-input"]').forEach(function (el) {
       el.addEventListener('change', function () { setCartQty(el.dataset.id, el.value); });
+    });
+    root.querySelectorAll('input[data-action="return-qty-input"]').forEach(function (el) {
+      el.addEventListener('change', function () { setReturnItemQty(Number(el.dataset.id), el.value); });
+    });
+    var returnReasonInput = root.querySelector('[data-action="return-reason-input"]');
+    if (returnReasonInput) {
+      returnReasonInput.addEventListener('input', function () { state.returnFlow.reason = returnReasonInput.value; });
+    }
+    root.querySelectorAll('input[data-action="returns-rma-input"]').forEach(function (el) {
+      el.addEventListener('input', function () { state.returnsQueueRmaInputs[el.dataset.id] = el.value; });
     });
 
     var taxInput = root.querySelector('[data-action="tax-input"]');
