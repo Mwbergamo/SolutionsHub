@@ -176,7 +176,21 @@
     activityInvoicesLoading: false,
     activityInvoiceNumber: null, // shown as the drilldown title while loading
     activityInvoiceDetail: null, // object | 'error' | null
-    activityInvoiceDetailLoading: false
+    activityInvoiceDetailLoading: false,
+
+    // Customer Service Summary print view (added 2026-09-14, per Michael) --
+    // a formatted, printable page for Relationship Coordinators: Service
+    // Tickets YTD + top-3-by-hours tickets as check-in talking points,
+    // services currently in place (Pillar / product description / qty),
+    // and pillar services not yet in place (IT/DC/VoIP/Security only,
+    // using the same cross_sell_eligible flag as the Cross-Sell
+    // Opportunities roster) with a short factual blurb + free-comparison
+    // offer for each. printTickets is loaded independently of
+    // activityTickets so opening the print view doesn't disturb whatever's
+    // open in the Service Tickets drill-down (or vice versa).
+    printSummaryOpen: false,
+    printTickets: null, // array | 'error' | null (not loaded yet)
+    printTicketsLoading: false
   };
 
   function escapeHtml(s) {
@@ -314,6 +328,9 @@
     state.activityInvoiceNumber = null;
     state.activityInvoiceDetail = null;
     state.activityInvoiceDetailLoading = false;
+    state.printSummaryOpen = false;
+    state.printTickets = null;
+    state.printTicketsLoading = false;
   }
 
   // Fired once, right after a customer's dashboard loads -- non-blocking
@@ -941,6 +958,160 @@
       });
     });
     return roster;
+  }
+
+  // ---- Customer Service Summary (print) --------------------------------
+
+  // The 4 pillars included in the printed summary, in display order --
+  // Data Cabling is deliberately excluded, per Michael's request.
+  var PRINT_SUMMARY_PILLAR_IDS = ['it', 'dc', 'voip', 'security'];
+
+  // Short, factual blurb per "not in place" candidate service, ending with
+  // a free-comparison offer -- per Michael's 2026-09-14 request, strictly
+  // factual (no persuasive/salesy language). Keyed "pillarId::serviceId".
+  // Only covers services that are cross_sell_eligible (see missingRoster()
+  // above), since Michael chose to match the existing cross-sell list
+  // rather than the full catalog for this feature's "not in place" filter.
+  // That means Data Center Services has no entries here at all -- this app
+  // currently has no cross-sell definition for that pillar (see
+  // relationships_cross_sell_map() in catalog.php), so DC's "not in place"
+  // section never has anything to show, and Voice over IP is narrowed to
+  // Cloud Voice System only. Flagged to Michael when this shipped.
+  var PRINT_SUMMARY_BLURBS = {
+    'it::managed-it': 'Managed IT Services provides proactive monitoring, maintenance, and support for a customer\u2019s servers, workstations, and network under a single agreement, rather than on a break-fix basis. CodeBlue offers a free, no-obligation comparison of your current IT support arrangement against a Managed IT Services agreement.',
+    'it::cyber-security': 'Cyber Security adds layered protection \u2014 including endpoint detection, email security, and ongoing vulnerability monitoring \u2014 beyond what\u2019s included in standard IT support. CodeBlue offers a free, no-obligation comparison of your current security coverage against CodeBlue\u2019s Cyber Security offering.',
+    'it::provided-equipment': 'Provided Equipment supplies and maintains the workstations, servers, and related hardware a business runs on, in place of purchasing and managing that equipment separately. CodeBlue offers a free, no-obligation comparison of your current equipment arrangement against CodeBlue\u2019s Provided Equipment program.',
+    'voip::cloud-voice': 'A Cloud Voice System delivers phone service hosted in the cloud \u2014 calling, voicemail, and desktop/mobile apps \u2014 without on-site phone system hardware to maintain. CodeBlue offers a free, no-obligation comparison of your current phone system against CodeBlue\u2019s Cloud Voice System.',
+    'security::ip-cameras': 'IP Security Camera Systems provide networked video surveillance for a customer\u2019s premises, with remote viewing and recorded footage available from any location. CodeBlue offers a free, no-obligation comparison of your current camera setup (or lack of one) against a CodeBlue IP Security Camera System.',
+    'security::access-control': 'Access Control Systems replace or supplement traditional keys with badge, fob, or code-based entry, along with a log of who accessed a location and when. CodeBlue offers a free, no-obligation comparison of your current access setup (or lack of one) against a CodeBlue Access Control System.'
+  };
+
+  function loadPrintTickets(customerId) {
+    state.printTicketsLoading = true;
+    state.printTickets = null;
+    render();
+    apiGet('api/activity.php?action=tickets&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      state.printTicketsLoading = false;
+      if (r.data && r.data.ok) {
+        state.printTickets = r.data.tickets;
+      } else {
+        state.printTickets = 'error';
+      }
+      render();
+    }).catch(function () {
+      state.printTicketsLoading = false;
+      state.printTickets = 'error';
+      render();
+    });
+  }
+
+  function printSummaryHtml(detail) {
+    var customer = detail.customer;
+    var summary = state.activitySummary;
+    var ticketsAvailable = !!(summary && summary.available !== false);
+
+    var html = '<div class="print-summary-panel">';
+    html += '<div class="print-summary-toolbar no-print">' +
+      '<div class="drilldown-title">Print Service Summary \u2014 ' + escapeHtml(customer.name) + '</div>' +
+      '<div class="print-summary-toolbar-actions">' +
+        '<button class="svc-action-btn primary" type="button" data-action="print-summary-go">Print</button>' +
+        '<button class="drilldown-back" type="button" data-action="close-print-summary" aria-label="Close">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>' +
+        '</button>' +
+      '</div>' +
+    '</div>';
+
+    html += '<div id="printableSummary">';
+    html += '<div class="print-doc-header">' +
+      '<div class="print-doc-title">Service Summary</div>' +
+      '<div class="print-doc-customer">' + escapeHtml(customer.name) + '</div>' +
+      '<div class="print-doc-date">Prepared ' + escapeHtml(fmtDate(new Date().toISOString())) + '</div>' +
+    '</div>';
+
+    // Service Tickets YTD + highlighted highest-hours tickets
+    html += '<div class="print-section">';
+    html += '<div class="print-section-title">Service Tickets \u2014 Year to Date</div>';
+    if (!ticketsAvailable) {
+      html += '<div class="print-empty">Not available for this customer (no ConnectWise record on file).</div>';
+    } else {
+      html += '<div class="print-ticket-count">' + summary.ticket_count_ytd + ' ticket' + (summary.ticket_count_ytd === 1 ? '' : 's') + ' so far this year</div>';
+      if (state.printTicketsLoading || state.printTickets === null) {
+        html += '<div class="print-empty no-print">Loading highlighted tickets\u2026</div>';
+      } else if (state.printTickets === 'error') {
+        html += '<div class="print-empty">Could not load ticket detail from ConnectWise.</div>';
+      } else {
+        var top = state.printTickets.slice().sort(function (a, b) { return (b.hours || 0) - (a.hours || 0); }).slice(0, 3).filter(function (t) { return (t.hours || 0) > 0; });
+        if (top.length === 0) {
+          html += '<div class="print-empty">No tickets with logged hours this year.</div>';
+        } else {
+          html += '<div class="print-subhead">Highest-Hours Tickets \u2014 Check-In Talking Points</div>';
+          html += '<table class="activity-table print-table"><thead><tr>' +
+            '<th>Date</th><th>Ticket #</th><th>Summary</th><th>Engineer</th><th>Hours</th>' +
+          '</tr></thead><tbody>';
+          top.forEach(function (t) {
+            html += '<tr><td>' + escapeHtml(fmtDate(t.date)) + '</td><td>#' + t.ticket_number + '</td>' +
+              '<td>' + escapeHtml(t.summary) + '</td><td>' + escapeHtml(t.engineer) + '</td>' +
+              '<td>' + t.hours + '</td></tr>';
+          });
+          html += '</tbody></table>';
+        }
+      }
+    }
+    html += '</div>';
+
+    // Services currently in place
+    html += '<div class="print-section">';
+    html += '<div class="print-section-title">Services Currently In Place</div>';
+    var anyActive = false;
+    PRINT_SUMMARY_PILLAR_IDS.forEach(function (pillarId) {
+      var pillar = detail.pillars.filter(function (p) { return p.id === pillarId; })[0];
+      if (!pillar) return;
+      var activeServices = pillar.services.filter(function (s) { return s.active; });
+      if (activeServices.length === 0) return;
+      anyActive = true;
+      html += '<div class="print-pillar-block">';
+      html += '<div class="print-pillar-name">' + escapeHtml(pillar.name) + '</div>';
+      activeServices.forEach(function (svc) {
+        svc.products.forEach(function (p) {
+          html += '<div class="product-row"><span>' + escapeHtml(p.label) + '</span><span class="product-qty">' + fmtQty(p) + '</span></div>';
+        });
+      });
+      html += '</div>';
+    });
+    if (!anyActive) {
+      html += '<div class="print-empty">No active services in these pillars.</div>';
+    }
+    html += '</div>';
+
+    // Pillar services not yet in place
+    html += '<div class="print-section">';
+    html += '<div class="print-section-title">Pillar Services Not Yet In Place</div>';
+    var anyMissing = false;
+    PRINT_SUMMARY_PILLAR_IDS.forEach(function (pillarId) {
+      var pillar = detail.pillars.filter(function (p) { return p.id === pillarId; })[0];
+      if (!pillar) return;
+      var missing = pillar.services.filter(function (s) { return !s.active && s.cross_sell_eligible; });
+      if (missing.length === 0) return;
+      anyMissing = true;
+      html += '<div class="print-pillar-block">';
+      html += '<div class="print-pillar-name">' + escapeHtml(pillar.name) + '</div>';
+      missing.forEach(function (svc) {
+        var blurb = PRINT_SUMMARY_BLURBS[pillarId + '::' + svc.id] || '';
+        html += '<div class="print-missing-service">' +
+          '<div class="print-missing-service-name">' + escapeHtml(svc.name) + '</div>' +
+          (blurb ? '<div class="print-missing-service-blurb">' + escapeHtml(blurb) + '</div>' : '') +
+        '</div>';
+      });
+      html += '</div>';
+    });
+    if (!anyMissing) {
+      html += '<div class="print-empty">This customer already has every eligible service in these pillars.</div>';
+    }
+    html += '</div>';
+
+    html += '</div>'; // #printableSummary
+    html += '</div>'; // .print-summary-panel
+    return html;
   }
 
   // ---- Rendering ----------------------------------------------------
@@ -1738,7 +1909,10 @@
         '<div class="customer-name">' + escapeHtml(detail.customer.name) + '</div>' +
         (detail.customer.is_peoplefirst ? peopleFirstBadgeHtml() : (detail.customer.is_prospect_only ? prospectBadgeHtml() : '')) +
       '</div>' +
-      '<button class="change-customer-btn" type="button" data-action="change-customer">Search a different customer</button>' +
+      '<div class="customer-header-right">' +
+        '<button class="print-summary-btn" type="button" data-action="open-print-summary">Print Service Summary</button>' +
+        '<button class="change-customer-btn" type="button" data-action="change-customer">Search a different customer</button>' +
+      '</div>' +
     '</div>';
     if (detail.customer.is_peoplefirst) {
       html += '<div class="peoplefirst-note">PeopleFirst Support Members - Quarterly Risk Scans and Monthly Client Checkin\'s are required.</div>';
@@ -1795,6 +1969,10 @@
       if (pillar) {
         html += drilldownHtml(pillar, detail.customer);
       }
+    }
+
+    if (state.printSummaryOpen) {
+      html += printSummaryHtml(detail);
     }
 
     return html;
@@ -2034,6 +2212,19 @@
         state.overviewSort.direction = state.overviewSort.direction === 'asc' ? 'desc' : 'asc';
       }
       render();
+    } else if (action === 'open-print-summary') {
+      state.printSummaryOpen = true;
+      render();
+      if (state.printTickets === null && !state.printTicketsLoading) {
+        loadPrintTickets(state.selectedCustomer.customer.id);
+      }
+      var psPanel = document.querySelector('.print-summary-panel');
+      if (psPanel) psPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (action === 'close-print-summary') {
+      state.printSummaryOpen = false;
+      render();
+    } else if (action === 'print-summary-go') {
+      window.print();
     } else if (action === 'signout') {
       signOut();
     }

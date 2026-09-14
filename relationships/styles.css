@@ -505,6 +505,25 @@ a { color: inherit; }
 
 .peoplefirst-summary-number { font-size: 16px; font-weight: 700; }
 
+.customer-header-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.print-summary-btn {
+  background: #2f8fef;
+  border: none;
+  color: white;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 8px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.print-summary-btn:hover { background: #4a9cf2; }
+
 .change-customer-btn {
   background: transparent;
   border: none;
@@ -513,6 +532,107 @@ a { color: inherit; }
   font-weight: 600;
   cursor: pointer;
   padding: 6px 0;
+}
+
+/* Customer Service Summary print view -- added 2026-09-14, per Michael.
+   .print-summary-panel/-toolbar match the .drilldown card look already
+   used elsewhere on this dashboard; #printableSummary is what actually
+   gets shown when the browser prints (see @media print below), matching
+   the same visibility-toggle technique used by Register's receipt print
+   (SolutionsHub/register/styles.css). */
+.print-summary-panel {
+  margin-top: 26px;
+  background: oklch(0.17 0.016 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 20px;
+  padding: 26px 28px 30px;
+}
+
+.print-summary-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.print-summary-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.print-doc-header {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid oklch(0.3 0.02 255);
+}
+.print-doc-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: white;
+}
+.print-doc-customer { font-size: 16px; font-weight: 600; margin-top: 4px; }
+.print-doc-date { font-size: 12.5px; color: oklch(0.6 0.02 255); margin-top: 4px; }
+
+.print-section { margin-top: 22px; }
+.print-section-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: white;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid oklch(0.28 0.02 255);
+}
+.print-subhead {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: oklch(0.6 0.02 255);
+  margin: 14px 0 8px;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+.print-ticket-count { font-size: 20px; font-weight: 700; color: white; }
+.print-empty { font-size: 13px; color: oklch(0.55 0.015 255); padding: 6px 0; }
+
+.print-pillar-block { margin-top: 14px; }
+.print-pillar-block:first-child { margin-top: 0; }
+.print-pillar-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #8fc3ff;
+  margin-bottom: 4px;
+}
+
+.print-missing-service { margin-top: 12px; }
+.print-missing-service:first-child { margin-top: 0; }
+.print-missing-service-name { font-size: 13.5px; font-weight: 700; color: white; }
+.print-missing-service-blurb { font-size: 12.5px; color: oklch(0.72 0.006 255); margin-top: 3px; line-height: 1.5; }
+
+.print-table { margin-top: 8px; width: 100%; }
+
+/* Only #printableSummary (and its children) survive to the printed page --
+   everything else on the dashboard (topbar, search, pillar grid, the
+   toolbar's own Print/Close buttons) is hidden. Forces black-on-white
+   since the dashboard's dark-navy theme isn't meant for paper. */
+@media print {
+  body * { visibility: hidden; }
+  #printableSummary, #printableSummary * { visibility: visible; }
+  #printableSummary {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background: white;
+    padding: 0;
+  }
+  #printableSummary * { color: black !important; }
+  #printableSummary .print-doc-header,
+  #printableSummary .print-section-title { border-color: #999 !important; }
+  #printableSummary table, #printableSummary th, #printableSummary td { border-color: #ccc !important; }
+  .no-print { display: none !important; }
 }
 
 .dashboard-grid {
