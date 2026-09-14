@@ -55,7 +55,16 @@
     checkoutOpen: false,
     checkoutSubmitting: false,
     checkoutError: null,
-    checkoutForm: { payment_method: 'cash', payment_reference: '', tax_amount: '0.00', customer_name: '', note: '' },
+    checkoutForm: { payment_method: 'cash', payment_reference: '', tax_amount: '0.00', note: '' },
+
+    // Customer (Company/Contact) resolution -- added 2026-09-14, replacing
+    // the old free-text customer_name field. Per Michael: live ConnectWise
+    // search, no free-text/walk-in fallback -- every sale must resolve to
+    // a real Company AND Contact (a Contact is always tied to a Company in
+    // ConnectWise, so picking either one resolves both together). See
+    // api/customers.php for the search/create/finalize-invoicing backend.
+    customer: initialCustomerState(),
+    customerUi: initialCustomerUiState(),
 
     // Set right after a successful checkout (or when reopening one from
     // History) -- the receipt overlay shows whenever this is non-null.
@@ -64,6 +73,46 @@
     history: null,
     historyLoading: false
   };
+
+  function initialCustomerState() {
+    return {
+      companyId: null,
+      companyName: '',
+      contactId: null,
+      contactName: '',
+      // True only while the currently-selected company was created FRESH
+      // during this checkout (not recalled) -- controls whether adding
+      // the contact also triggers the required invoicing setup (Primary
+      // Contact/Bill To/Billing Terms/Invoice Delivery Method). Never set
+      // for a recalled/existing company, which must keep whatever billing
+      // setup it already has.
+      isNewCompany: false,
+      invoicingWarning: null
+    };
+  }
+
+  function initialCustomerUiState() {
+    return {
+      // 'search' (combined Company+Contact search) | 'new-company' |
+      // 'contact' (contact search scoped to the chosen company) |
+      // 'new-contact'
+      mode: 'search',
+      query: '',
+      loading: false,
+      error: null,
+      companyResults: [],
+      contactResults: [],
+      newCompanyForm: { name: '', phone: '', address_line1: '', address_line2: '', city: '', state: 'VA', zip: '' },
+      newCompanySubmitting: false,
+      newContactForm: { first_name: '', last_name: '', phone: '', email: '' },
+      newContactSubmitting: false
+    };
+  }
+
+  function resetCustomerState() {
+    state.customer = initialCustomerState();
+    state.customerUi = initialCustomerUiState();
+  }
 
   function escapeHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -404,8 +453,288 @@
   function resetSale() {
     state.cart = [];
     state.receipt = null;
-    state.checkoutForm = { payment_method: 'cash', payment_reference: '', tax_amount: '0.00', customer_name: '', note: '' };
+    state.checkoutForm = { payment_method: 'cash', payment_reference: '', tax_amount: '0.00', note: '' };
     state.checkoutError = null;
+    resetCustomerState();
+    render();
+  }
+
+  // ---- Customer (Company/Contact) --------------------------------------
+  //
+  // Replaces the old free-text customer_name field (2026-09-14, per
+  // Michael): checkout must resolve a real ConnectWise Company AND
+  // Contact before it can complete. Three ways to resolve one:
+  //   1. Search finds an existing Contact -> both Company and Contact are
+  //      resolved together immediately (a Contact is always tied to a
+  //      Company in ConnectWise -- see the contact's `company` field).
+  //   2. Search finds an existing Company -> pick/search a Contact scoped
+  //      to it (or add a new one under it).
+  //   3. Neither exists -> "+ New Company" quick-add, then a required
+  //      "+ New Contact" quick-add under it, then -- ONLY because the
+  //      company is brand-new -- action=finalize-company-invoicing sets
+  //      Primary Contact/Bill To/Billing Terms/Invoice Delivery Method
+  //      (see api/customers.php; never called for a recalled company).
+
+  var customerSearchDebounce = null;
+
+  function searchCustomers(query) {
+    state.customerUi.query = query;
+    clearTimeout(customerSearchDebounce);
+    if (query.trim().length < 2) {
+      state.customerUi.companyResults = [];
+      state.customerUi.contactResults = [];
+      state.customerUi.loading = false;
+      render();
+      return;
+    }
+    customerSearchDebounce = setTimeout(function () {
+      state.customerUi.loading = true;
+      state.customerUi.error = null;
+      render();
+      var q = encodeURIComponent(query.trim());
+      Promise.all([
+        apiGet('api/customers.php?action=search-companies&q=' + q),
+        apiGet('api/customers.php?action=search-contacts&q=' + q)
+      ]).then(function (results) {
+        state.customerUi.loading = false;
+        var companiesR = results[0], contactsR = results[1];
+        state.customerUi.companyResults = (companiesR.data && companiesR.data.ok) ? companiesR.data.companies : [];
+        state.customerUi.contactResults = (contactsR.data && contactsR.data.ok) ? contactsR.data.contacts : [];
+        render();
+      }).catch(function () {
+        state.customerUi.loading = false;
+        state.customerUi.error = 'Could not search — check your connection.';
+        render();
+      });
+    }, 250);
+  }
+
+  var companyContactSearchDebounce = null;
+
+  // Contact search scoped to the already-chosen company (customerUi.mode
+  // === 'contact'). Called with an empty query to load every contact for
+  // that company right after it's picked.
+  function searchCompanyContacts(query) {
+    state.customerUi.query = query;
+    clearTimeout(companyContactSearchDebounce);
+    var run = function () {
+      state.customerUi.loading = true;
+      state.customerUi.error = null;
+      render();
+      var url = 'api/customers.php?action=search-contacts&company_id=' + encodeURIComponent(state.customer.companyId);
+      if (query.trim()) url += '&q=' + encodeURIComponent(query.trim());
+      apiGet(url).then(function (r) {
+        state.customerUi.loading = false;
+        state.customerUi.contactResults = (r.data && r.data.ok) ? r.data.contacts : [];
+        render();
+      }).catch(function () {
+        state.customerUi.loading = false;
+        state.customerUi.error = 'Could not search contacts — check your connection.';
+        render();
+      });
+    };
+    if (query === '') { run(); } else { companyContactSearchDebounce = setTimeout(run, 250); }
+  }
+
+  function contactDisplayName(c) {
+    return ((c.firstName || '') + ' ' + (c.lastName || '')).trim();
+  }
+
+  function selectCompany(companyId, companyName) {
+    state.customer.companyId = companyId;
+    state.customer.companyName = companyName;
+    state.customer.isNewCompany = false;
+    state.customer.contactId = null;
+    state.customer.contactName = '';
+    state.customerUi.mode = 'contact';
+    state.customerUi.error = null;
+    state.customerUi.contactResults = [];
+    render();
+    searchCompanyContacts('');
+  }
+
+  // A Contact result resolves BOTH Company and Contact at once, whether it
+  // came from the combined search (its own `company` field supplies the
+  // company) or from a company-scoped search (the company is already
+  // chosen in state.customer).
+  function selectContact(contact) {
+    if (!state.customer.companyId) {
+      var company = contact.company || {};
+      if (!company.id) {
+        state.customerUi.error = 'This contact has no company on file in ConnectWise -- search for the company instead.';
+        render();
+        return;
+      }
+      state.customer.companyId = company.id;
+      state.customer.companyName = company.name || '';
+      state.customer.isNewCompany = false;
+    }
+    state.customer.contactId = contact.id;
+    state.customer.contactName = contactDisplayName(contact);
+    state.customerUi.mode = 'resolved';
+    state.customerUi.error = null;
+    render();
+  }
+
+  function openNewCompanyForm() {
+    state.customerUi.mode = 'new-company';
+    state.customerUi.error = null;
+    state.customerUi.newCompanyForm = { name: state.customerUi.query.trim(), phone: '', address_line1: '', address_line2: '', city: '', state: 'VA', zip: '' };
+    render();
+  }
+
+  function submitNewCompany() {
+    var f = state.customerUi.newCompanyForm;
+    if (!f.name.trim()) {
+      state.customerUi.error = 'Company name is required.';
+      render();
+      return;
+    }
+    state.customerUi.newCompanySubmitting = true;
+    state.customerUi.error = null;
+    render();
+    apiPost('api/customers.php?action=create-company', {
+      name: f.name.trim(),
+      phone: f.phone.trim(),
+      address_line1: f.address_line1.trim(),
+      address_line2: f.address_line2.trim(),
+      city: f.city.trim(),
+      state: f.state.trim() || 'VA',
+      zip: f.zip.trim()
+    }).then(function (r) {
+      state.customerUi.newCompanySubmitting = false;
+      if (r.data && r.data.ok && r.data.company && r.data.company.id) {
+        state.customer.companyId = r.data.company.id;
+        state.customer.companyName = r.data.company.name || f.name.trim();
+        state.customer.isNewCompany = true;
+        state.customer.contactId = null;
+        state.customer.contactName = '';
+        // A brand-new company always needs a brand-new Primary Contact --
+        // there's nothing to recall yet, so skip straight to that form.
+        state.customerUi.mode = 'new-contact';
+        state.customerUi.newContactForm = { first_name: '', last_name: '', phone: f.phone.trim(), email: '' };
+        state.customerUi.error = null;
+        render();
+      } else {
+        state.customerUi.error = (r.data && r.data.error) || 'Could not create the company -- try again.';
+        render();
+      }
+    }).catch(function () {
+      state.customerUi.newCompanySubmitting = false;
+      state.customerUi.error = 'Could not create the company -- check your connection.';
+      render();
+    });
+  }
+
+  function openNewContactForm() {
+    state.customerUi.mode = 'new-contact';
+    state.customerUi.error = null;
+    state.customerUi.newContactForm = { first_name: '', last_name: '', phone: '', email: '' };
+    render();
+  }
+
+  function submitNewContact() {
+    var f = state.customerUi.newContactForm;
+    if (!f.first_name.trim() || !f.last_name.trim()) {
+      state.customerUi.error = 'First and last name are required.';
+      render();
+      return;
+    }
+    state.customerUi.newContactSubmitting = true;
+    state.customerUi.error = null;
+    render();
+    apiPost('api/customers.php?action=create-contact', {
+      company_id: state.customer.companyId,
+      first_name: f.first_name.trim(),
+      last_name: f.last_name.trim(),
+      phone: f.phone.trim(),
+      email: f.email.trim()
+    }).then(function (r) {
+      if (!r.data || !r.data.ok || !r.data.contact || !r.data.contact.id) {
+        state.customerUi.newContactSubmitting = false;
+        state.customerUi.error = (r.data && r.data.error) || 'Could not create the contact -- try again.';
+        render();
+        return;
+      }
+      var contactId = r.data.contact.id;
+      var contactName = (f.first_name.trim() + ' ' + f.last_name.trim()).trim();
+
+      if (!state.customer.isNewCompany) {
+        // Existing/recalled company -- the contact is created, done. Never
+        // call finalize-company-invoicing here: that would overwrite
+        // Billing Terms/Bill To/etc. staff may already have set.
+        state.customerUi.newContactSubmitting = false;
+        state.customer.contactId = contactId;
+        state.customer.contactName = contactName;
+        state.customerUi.mode = 'resolved';
+        state.customerUi.error = null;
+        render();
+        return;
+      }
+
+      // Brand-new company + brand-new contact: complete the required
+      // invoicing setup (Michael's multi-step rule -- see
+      // api/customers.php's register_cw_finalize_company_invoicing()).
+      apiPost('api/customers.php?action=finalize-company-invoicing', {
+        company_id: state.customer.companyId,
+        contact_id: contactId
+      }).then(function (fr) {
+        state.customerUi.newContactSubmitting = false;
+        state.customer.contactId = contactId;
+        state.customer.contactName = contactName;
+        state.customerUi.mode = 'resolved';
+        if (fr.data && fr.data.ok) {
+          state.customer.invoicingWarning = null;
+        } else {
+          // The Company and Contact DO exist in ConnectWise by this point
+          // -- only the finance/invoicing step failed. Surface it plainly
+          // rather than silently losing track of a real create, and let
+          // the sale still proceed (the alternative -- discarding a real
+          // ConnectWise Company/Contact because one follow-up call failed
+          // -- is worse).
+          state.customer.invoicingWarning = 'Company and contact were created, but the invoicing setup (Primary Contact/Billing Terms) failed: ' +
+            ((fr.data && fr.data.error) || 'unknown error') + '. The sale can still be completed; flag this account for manual setup in ConnectWise.';
+        }
+        render();
+      }).catch(function () {
+        state.customerUi.newContactSubmitting = false;
+        state.customer.contactId = contactId;
+        state.customer.contactName = contactName;
+        state.customer.invoicingWarning = 'Company and contact were created, but the invoicing setup call failed -- check your connection. The sale can still be completed; flag this account for manual setup in ConnectWise.';
+        state.customerUi.mode = 'resolved';
+        render();
+      });
+    }).catch(function () {
+      state.customerUi.newContactSubmitting = false;
+      state.customerUi.error = 'Could not create the contact -- check your connection.';
+      render();
+    });
+  }
+
+  // Back out of the contact-picking step to company search -- only
+  // reachable when the company was RECALLED (an existing company), since a
+  // brand-new company's only path forward is its required new-contact
+  // form (no "back" from there -- the company already exists in
+  // ConnectWise at that point).
+  function backToCompanySearch() {
+    resetCustomerState();
+    render();
+  }
+
+  // Lighter back-step: from the new-contact form back to the contact
+  // list, WITHOUT losing the already-chosen (recalled, existing) company.
+  // Only used when the company is recalled -- a brand-new company's
+  // new-contact form has no cancel path (see customerNewContactFormHtml()).
+  function backToContactStep() {
+    state.customerUi.mode = 'contact';
+    state.customerUi.error = null;
+    state.customerUi.query = '';
+    render();
+    searchCompanyContacts('');
+  }
+
+  function changeCustomer() {
+    resetCustomerState();
     render();
   }
 
@@ -431,6 +760,13 @@
       render();
       return;
     }
+    // No free-text/walk-in fallback, per Michael's explicit choice -- every
+    // sale must resolve to a real ConnectWise Company and Contact.
+    if (!state.customer.companyId || !state.customer.contactId) {
+      state.checkoutError = 'Select or create a Company and Contact before completing this sale.';
+      render();
+      return;
+    }
 
     state.checkoutSubmitting = true;
     state.checkoutError = null;
@@ -441,7 +777,10 @@
       payment_method: form.payment_method,
       payment_reference: form.payment_reference,
       tax_amount: taxAmount,
-      customer_name: form.customer_name,
+      cw_company_id: state.customer.companyId,
+      cw_company_name: state.customer.companyName,
+      cw_contact_id: state.customer.contactId,
+      cw_contact_name: state.customer.contactName,
       note: form.note
     }).then(function (r) {
       state.checkoutSubmitting = false;
@@ -449,6 +788,7 @@
         state.checkoutOpen = false;
         state.cart = [];
         state.receipt = r.data.sale;
+        resetCustomerState();
         loadCatalogNow();
       } else {
         state.checkoutError = (r.data && r.data.error) || 'Could not complete this sale — try again.';
@@ -470,17 +810,25 @@
     restoreSearchFocus(searchFocus);
   }
 
+  // IDs of text inputs that can be mid-render() while focused -- a
+  // debounced search re-render (catalog search, and the 2026-09-14
+  // customer/contact search boxes) would otherwise steal focus/cursor
+  // position out from under whatever the rep is still typing.
+  var FOCUS_PRESERVED_INPUT_IDS = ['catalogSearchInput', 'customerSearchInput', 'customerContactSearchInput'];
+
   function captureSearchFocus() {
-    var el = document.getElementById('catalogSearchInput');
-    if (el && document.activeElement === el) {
-      return { start: el.selectionStart, end: el.selectionEnd };
+    for (var i = 0; i < FOCUS_PRESERVED_INPUT_IDS.length; i++) {
+      var el = document.getElementById(FOCUS_PRESERVED_INPUT_IDS[i]);
+      if (el && document.activeElement === el) {
+        return { id: FOCUS_PRESERVED_INPUT_IDS[i], start: el.selectionStart, end: el.selectionEnd };
+      }
     }
     return null;
   }
 
   function restoreSearchFocus(focusInfo) {
     if (!focusInfo) return;
-    var el = document.getElementById('catalogSearchInput');
+    var el = document.getElementById(focusInfo.id);
     if (!el) return;
     el.focus();
     try { el.setSelectionRange(focusInfo.start, focusInfo.end); } catch (e) {}
@@ -672,6 +1020,8 @@
     var subtotal = cartSubtotal();
     var taxAmount = parseFloat(f.tax_amount) || 0;
     var total = subtotal + taxAmount;
+    var customerResolved = !!(state.customer.companyId && state.customer.contactId);
+    var canComplete = customerResolved && !state.checkoutSubmitting;
 
     return (
       '<div class="modal-backdrop" data-action="close-checkout-backdrop">' +
@@ -686,6 +1036,8 @@
             '</div>' +
             '<div class="checkout-summary-row total"><span>Total Due</span><span>' + fmtMoney(total) + '</span></div>' +
           '</div>' +
+          '<label>Customer</label>' +
+          customerSectionHtml() +
           '<label>Payment Method</label>' +
           '<select data-action="payment-method-select">' +
             ['cash', 'card', 'check', 'other'].map(function (m) {
@@ -694,19 +1046,177 @@
           '</select>' +
           '<label>Reference (optional — last 4, check #, etc.)</label>' +
           '<input type="text" data-action="payment-reference-input" value="' + escapeHtml(f.payment_reference) + '">' +
-          '<label>Customer Name (optional)</label>' +
-          '<input type="text" data-action="customer-name-input" value="' + escapeHtml(f.customer_name) + '">' +
           '<label>Note (optional)</label>' +
           '<input type="text" data-action="note-input" value="' + escapeHtml(f.note) + '">' +
           '<div class="modal-actions">' +
             '<button type="button" class="modal-cancel" data-action="close-checkout">Cancel</button>' +
-            '<button type="button" class="modal-confirm" data-action="submit-checkout" ' + (state.checkoutSubmitting ? 'disabled' : '') + '>' +
+            '<button type="button" class="modal-confirm" data-action="submit-checkout" ' + (canComplete ? '' : 'disabled') + '>' +
               (state.checkoutSubmitting ? 'Recording Sale…' : 'Record Payment & Complete') +
             '</button>' +
           '</div>' +
         '</div>' +
       '</div>'
     );
+  }
+
+  // Customer (Company/Contact) picker -- see the "---- Customer ----"
+  // functions above for the flow this renders. Lives inside the checkout
+  // modal, above Payment Method, since checkout can't complete without it.
+  function customerSectionHtml() {
+    var ui = state.customerUi;
+    var html = '<div class="customer-section">';
+
+    if (ui.error) {
+      html += '<div class="error-banner customer-error">' + escapeHtml(ui.error) + '</div>';
+    }
+
+    if (state.customer.companyId && state.customer.contactId) {
+      html += '<div class="customer-resolved">' +
+        '<div class="customer-resolved-name">' + escapeHtml(state.customer.contactName) + '</div>' +
+        '<div class="customer-resolved-company">' + escapeHtml(state.customer.companyName) + '</div>' +
+        '<button type="button" class="customer-change-btn" data-action="customer-change">Change</button>' +
+      '</div>';
+      if (state.customer.invoicingWarning) {
+        html += '<div class="error-banner customer-warning">' + escapeHtml(state.customer.invoicingWarning) + '</div>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    if (ui.mode === 'new-company') {
+      html += customerNewCompanyFormHtml();
+      html += '</div>';
+      return html;
+    }
+
+    if (ui.mode === 'new-contact') {
+      html += customerNewContactFormHtml();
+      html += '</div>';
+      return html;
+    }
+
+    if (ui.mode === 'contact') {
+      // Company already chosen (recalled) -- pick or add a Contact under it.
+      html += '<div class="customer-context-bar">' +
+        '<span>' + escapeHtml(state.customer.companyName) + '</span>' +
+        '<button type="button" class="customer-back-btn" data-action="customer-back-to-search">‹ Different company</button>' +
+      '</div>';
+      html += '<input type="text" id="customerContactSearchInput" class="customer-search-input" data-action="customer-contact-search-input" ' +
+        'placeholder="Search contacts at this company…" value="' + escapeHtml(ui.query) + '">';
+      html += customerResultsListHtml(null, ui.contactResults);
+      html += '<button type="button" class="customer-add-btn" data-action="customer-new-contact-open">+ New Contact</button>';
+      html += '</div>';
+      return html;
+    }
+
+    // 'search' -- combined Company + Contact search.
+    html += '<input type="text" id="customerSearchInput" class="customer-search-input" data-action="customer-search-input" ' +
+      'placeholder="Search company or contact name…" value="' + escapeHtml(ui.query) + '">';
+    if (ui.loading) {
+      html += '<div class="customer-search-loading">Searching…</div>';
+    } else if (ui.query.trim().length >= 2) {
+      html += customerResultsListHtml(ui.companyResults, ui.contactResults);
+    }
+    html += '<button type="button" class="customer-add-btn" data-action="customer-new-company-open">+ New Company</button>';
+    html += '</div>';
+    return html;
+  }
+
+  // Renders search results as a flat list. companies may be null (the
+  // company-scoped contact search only shows contacts).
+  function customerResultsListHtml(companies, contacts) {
+    var hasCompanies = companies && companies.length > 0;
+    var hasContacts = contacts && contacts.length > 0;
+    if (!hasCompanies && !hasContacts) {
+      return '<div class="customer-no-results">No matches. Try a different name, or add a new one below.</div>';
+    }
+    var html = '<div class="customer-results">';
+    if (hasCompanies) {
+      companies.forEach(function (c, i) {
+        html += '<button type="button" class="customer-result" data-action="customer-select-company" data-index="' + i + '">' +
+          '<span class="customer-result-type">Company</span>' +
+          '<span class="customer-result-name">' + escapeHtml(c.name) + '</span>' +
+          (c.city || c.state ? '<span class="customer-result-sub">' + escapeHtml([c.city, c.state].filter(Boolean).join(', ')) + '</span>' : '') +
+        '</button>';
+      });
+    }
+    if (hasContacts) {
+      contacts.forEach(function (c, i) {
+        var companyName = (c.company && c.company.name) || '';
+        html += '<button type="button" class="customer-result" data-action="customer-select-contact" data-index="' + i + '">' +
+          '<span class="customer-result-type">Contact</span>' +
+          '<span class="customer-result-name">' + escapeHtml(contactDisplayName(c)) + '</span>' +
+          (companyName ? '<span class="customer-result-sub">' + escapeHtml(companyName) + '</span>' : '') +
+        '</button>';
+      });
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function customerNewCompanyFormHtml() {
+    var f = state.customerUi.newCompanyForm;
+    var submitting = state.customerUi.newCompanySubmitting;
+    return (
+      '<div class="customer-form">' +
+        '<div class="customer-form-title">New Company</div>' +
+        '<label>Company Name</label>' +
+        '<input type="text" data-action="customer-new-company-field" data-field="name" value="' + escapeHtml(f.name) + '">' +
+        '<label>Phone</label>' +
+        '<input type="text" data-action="customer-new-company-field" data-field="phone" value="' + escapeHtml(f.phone) + '">' +
+        '<label>Address Line 1</label>' +
+        '<input type="text" data-action="customer-new-company-field" data-field="address_line1" value="' + escapeHtml(f.address_line1) + '">' +
+        '<label>Address Line 2</label>' +
+        '<input type="text" data-action="customer-new-company-field" data-field="address_line2" value="' + escapeHtml(f.address_line2) + '">' +
+        '<div class="customer-form-row">' +
+          '<div><label>City</label><input type="text" data-action="customer-new-company-field" data-field="city" value="' + escapeHtml(f.city) + '"></div>' +
+          '<div><label>State</label><input type="text" data-action="customer-new-company-field" data-field="state" value="' + escapeHtml(f.state) + '"></div>' +
+          '<div><label>Zip</label><input type="text" data-action="customer-new-company-field" data-field="zip" value="' + escapeHtml(f.zip) + '"></div>' +
+        '</div>' +
+        '<div class="customer-form-actions">' +
+          '<button type="button" class="customer-back-btn" data-action="customer-back-to-search">Cancel</button>' +
+          '<button type="button" class="customer-save-btn" data-action="customer-new-company-submit" ' + (submitting ? 'disabled' : '') + '>' +
+            (submitting ? 'Creating…' : 'Create Company') +
+          '</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function customerNewContactFormHtml() {
+    var f = state.customerUi.newContactForm;
+    var submitting = state.customerUi.newContactSubmitting;
+    return (
+      '<div class="customer-form">' +
+        '<div class="customer-form-title">New Contact — ' + escapeHtml(state.customer.companyName) + '</div>' +
+        '<div class="customer-form-row">' +
+          '<div><label>First Name</label><input type="text" data-action="customer-new-contact-field" data-field="first_name" value="' + escapeHtml(f.first_name) + '"></div>' +
+          '<div><label>Last Name</label><input type="text" data-action="customer-new-contact-field" data-field="last_name" value="' + escapeHtml(f.last_name) + '"></div>' +
+        '</div>' +
+        '<label>Phone</label>' +
+        '<input type="text" data-action="customer-new-contact-field" data-field="phone" value="' + escapeHtml(f.phone) + '">' +
+        '<label>Email</label>' +
+        '<input type="text" data-action="customer-new-contact-field" data-field="email" value="' + escapeHtml(f.email) + '">' +
+        '<div class="customer-form-actions">' +
+          (state.customer.isNewCompany ? '' : '<button type="button" class="customer-back-btn" data-action="customer-back-to-contact">Cancel</button>') +
+          '<button type="button" class="customer-save-btn" data-action="customer-new-contact-submit" ' + (submitting ? 'disabled' : '') + '>' +
+            (submitting ? 'Creating…' : 'Create Contact') +
+          '</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  // Formats the Company/Contact stored on a sale for the receipt/history --
+  // falls back to the old free-text customer_name for sales recorded
+  // before the 2026-09-14 ConnectWise Company/Contact checkout change.
+  function customerLineHtml(sale) {
+    if (sale.cw_contact_name) {
+      return escapeHtml(sale.cw_contact_name) + (sale.cw_company_name ? ' — ' + escapeHtml(sale.cw_company_name) : '');
+    }
+    if (sale.cw_company_name) return escapeHtml(sale.cw_company_name);
+    if (sale.customer_name) return escapeHtml(sale.customer_name);
+    return '';
   }
 
   function receiptOverlayHtml() {
@@ -728,7 +1238,7 @@
               '<div class="receipt-sub">Retail Sale Receipt</div>' +
               '<div class="receipt-meta">Sale #' + r.id + ' — ' + fmtTimestamp(r.created_at) + '</div>' +
               '<div class="receipt-meta">Rung up by ' + escapeHtml(r.cashier_name) + '</div>' +
-              (r.customer_name ? '<div class="receipt-meta">Customer: ' + escapeHtml(r.customer_name) + '</div>' : '') +
+              (customerLineHtml(r) ? '<div class="receipt-meta">Customer: ' + customerLineHtml(r) + '</div>' : '') +
             '</div>' +
             '<div class="receipt-items">' + itemsHtml + '</div>' +
             '<div class="receipt-totals">' +
@@ -766,7 +1276,7 @@
       html += '<tr class="history-row" data-action="view-receipt" data-id="' + s.id + '">' +
         '<td>#' + s.id + '</td>' +
         '<td>' + fmtTimestamp(s.created_at) + '</td>' +
-        '<td>' + escapeHtml(s.customer_name || '—') + '</td>' +
+        '<td>' + (customerLineHtml(s) || '—') + '</td>' +
         '<td>' + s.item_count + '</td>' +
         '<td>' + escapeHtml(s.payment_method) + '</td>' +
         '<td>' + escapeHtml(s.cashier_name) + '</td>' +
@@ -847,8 +1357,23 @@
       else if (action === 'close-checkout-backdrop') handler = closeCheckout;
       else if (action === 'submit-checkout') handler = submitCheckout;
       else if (action === 'payment-method-select') { /* bound below via change */ }
-      else if (action === 'close-receipt') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'cash', payment_reference: '', tax_amount: '0.00', customer_name: '', note: '' }; render(); };
-      else if (action === 'close-receipt-backdrop') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'cash', payment_reference: '', tax_amount: '0.00', customer_name: '', note: '' }; render(); };
+      else if (action === 'customer-select-company') handler = function () {
+        var c = state.customerUi.companyResults[Number(el.dataset.index)];
+        if (c) selectCompany(c.id, c.name);
+      };
+      else if (action === 'customer-select-contact') handler = function () {
+        var c = state.customerUi.contactResults[Number(el.dataset.index)];
+        if (c) selectContact(c);
+      };
+      else if (action === 'customer-new-company-open') handler = openNewCompanyForm;
+      else if (action === 'customer-new-company-submit') handler = submitNewCompany;
+      else if (action === 'customer-new-contact-open') handler = openNewContactForm;
+      else if (action === 'customer-new-contact-submit') handler = submitNewContact;
+      else if (action === 'customer-back-to-search') handler = backToCompanySearch;
+      else if (action === 'customer-back-to-contact') handler = backToContactStep;
+      else if (action === 'customer-change') handler = changeCustomer;
+      else if (action === 'close-receipt') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'cash', payment_reference: '', tax_amount: '0.00', note: '' }; resetCustomerState(); render(); };
+      else if (action === 'close-receipt-backdrop') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'cash', payment_reference: '', tax_amount: '0.00', note: '' }; resetCustomerState(); render(); };
       else if (action === 'print-receipt') handler = function () { window.print(); };
       else if (action === 'view-receipt') handler = function () { viewPastReceipt(el.dataset.id); };
 
@@ -889,10 +1414,20 @@
     if (paymentRefInput) {
       paymentRefInput.addEventListener('input', function () { state.checkoutForm.payment_reference = paymentRefInput.value; });
     }
-    var customerNameInput = root.querySelector('[data-action="customer-name-input"]');
-    if (customerNameInput) {
-      customerNameInput.addEventListener('input', function () { state.checkoutForm.customer_name = customerNameInput.value; });
+    var customerSearchInput = root.querySelector('[data-action="customer-search-input"]');
+    if (customerSearchInput) {
+      customerSearchInput.addEventListener('input', function () { searchCustomers(customerSearchInput.value); });
     }
+    var customerContactSearchInput = root.querySelector('[data-action="customer-contact-search-input"]');
+    if (customerContactSearchInput) {
+      customerContactSearchInput.addEventListener('input', function () { searchCompanyContacts(customerContactSearchInput.value); });
+    }
+    root.querySelectorAll('[data-action="customer-new-company-field"]').forEach(function (el) {
+      el.addEventListener('input', function () { state.customerUi.newCompanyForm[el.dataset.field] = el.value; });
+    });
+    root.querySelectorAll('[data-action="customer-new-contact-field"]').forEach(function (el) {
+      el.addEventListener('input', function () { state.customerUi.newContactForm[el.dataset.field] = el.value; });
+    });
     var noteInput = root.querySelector('[data-action="note-input"]');
     if (noteInput) {
       noteInput.addEventListener('input', function () { state.checkoutForm.note = noteInput.value; });

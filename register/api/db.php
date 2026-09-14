@@ -128,6 +128,17 @@ function register_migrate(PDO $pdo): void
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
     SQL);
+    // Added 2026-09-14: replaces the free-text customer_name field (kept
+    // above, unused for new sales, only so pre-existing sale rows/history
+    // still display something) with the real ConnectWise Company/Contact
+    // every sale must now resolve to -- see api/customers.php and
+    // checkout.php's action=create. Both id/name pairs are stored (not
+    // just the id) so history/receipts never need a live ConnectWise call
+    // just to display who a past sale was for.
+    register_add_column_if_missing($pdo, 'sales', 'cw_company_id', 'INTEGER');
+    register_add_column_if_missing($pdo, 'sales', 'cw_company_name', 'TEXT');
+    register_add_column_if_missing($pdo, 'sales', 'cw_contact_id', 'INTEGER');
+    register_add_column_if_missing($pdo, 'sales', 'cw_contact_name', 'TEXT');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales(created_at)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_sales_user ON sales(user_id)');
 

@@ -22,18 +22,29 @@
  *     payment_method: "cash"|"card"|"check"|"other",
  *     payment_reference: "...",      // optional, e.g. last 4 / check #
  *     tax_amount: 0,                 // optional, manually entered, default 0
- *     customer_name: "...",          // optional
+ *     cw_company_id, cw_company_name,  // REQUIRED -- see below
+ *     cw_contact_id, cw_contact_name,  // REQUIRED -- see below
  *     note: "..." }                  // optional
  *   -> { ok: true, sale: { id, created_at, subtotal, tax_amount, total,
- *          payment_method, payment_reference, customer_name, cashier_name,
+ *          payment_method, payment_reference, cw_company_id, cw_company_name,
+ *          cw_contact_id, cw_contact_name, customer_name, cashier_name,
  *          items: [ { identifier, description, unit_price, quantity, line_total } ] } }
+ *
+ * cw_company_id/cw_contact_id (both a real ConnectWise Company id and a
+ * real ConnectWise Contact id) are REQUIRED, per Michael's explicit
+ * choice (2026-09-14 AskUserQuestion): no free-text/walk-in fallback --
+ * every sale must resolve to a real Company AND Contact via
+ * api/customers.php's search/create/finalize-invoicing endpoints before
+ * checkout can complete. The old free-text customer_name column still
+ * exists (for pre-2026-09-14 sale history) but is no longer written.
  *
  * GET /register/api/checkout.php?action=receipt&id=123
  *   -> same `sale` shape as above, for reprinting/re-viewing a past sale.
  *
  * GET /register/api/checkout.php?action=history[&limit=50]
  *   -> { ok: true, sales: [ { id, created_at, total, payment_method,
- *          customer_name, cashier_name, item_count }, ... ] }
+ *          cw_company_name, cw_contact_name, customer_name, cashier_name,
+ *          item_count }, ... ] }
  */
 
 declare(strict_types=1);
@@ -50,7 +61,8 @@ $action = $_GET['action'] ?? '';
 if ($action === 'history') {
     $limit = max(1, min(200, (int) ($_GET['limit'] ?? 50)));
     $stmt = $pdo->prepare(
-        'SELECT s.id, s.created_at, s.total, s.payment_method, s.customer_name, u.name AS cashier_name,
+        'SELECT s.id, s.created_at, s.total, s.payment_method, s.customer_name,
+                s.cw_company_name, s.cw_contact_name, u.name AS cashier_name,
                 (SELECT COUNT(*) FROM sale_items si WHERE si.sale_id = s.id) AS item_count
          FROM sales s
          JOIN register_users u ON u.id = s.user_id
@@ -88,8 +100,16 @@ if ($action === 'create') {
     $paymentMethod = strtolower(trim((string) ($data['payment_method'] ?? '')));
     $paymentReference = trim((string) ($data['payment_reference'] ?? '')) ?: null;
     $taxAmount = round((float) ($data['tax_amount'] ?? 0), 2);
-    $customerName = trim((string) ($data['customer_name'] ?? '')) ?: null;
     $note = trim((string) ($data['note'] ?? '')) ?: null;
+
+    // No free-text/walk-in fallback (Michael's explicit choice,
+    // 2026-09-14 AskUserQuestion) -- every sale must resolve to a real
+    // ConnectWise Company AND Contact via api/customers.php before
+    // checkout can complete.
+    $cwCompanyId = isset($data['cw_company_id']) ? (int) $data['cw_company_id'] : 0;
+    $cwCompanyName = trim((string) ($data['cw_company_name'] ?? ''));
+    $cwContactId = isset($data['cw_contact_id']) ? (int) $data['cw_contact_id'] : 0;
+    $cwContactName = trim((string) ($data['cw_contact_name'] ?? ''));
 
     $validMethods = ['cash', 'card', 'check', 'other'];
     if (!in_array($paymentMethod, $validMethods, true)) {
@@ -100,6 +120,9 @@ if ($action === 'create') {
     }
     if ($taxAmount < 0) {
         register_respond(400, ['ok' => false, 'error' => 'Tax amount cannot be negative.']);
+    }
+    if ($cwCompanyId <= 0 || $cwCompanyName === '' || $cwContactId <= 0 || $cwContactName === '') {
+        register_respond(400, ['ok' => false, 'error' => 'Select or create a Company and Contact before completing this sale.']);
     }
 
     // Look up every requested catalog item fresh from the DB -- never trust
@@ -155,8 +178,8 @@ if ($action === 'create') {
     $pdo->beginTransaction();
     try {
         $insertSale = $pdo->prepare(
-            'INSERT INTO sales (user_id, subtotal, tax_amount, total, payment_method, payment_reference, customer_name, note)
-             VALUES (:user_id, :subtotal, :tax_amount, :total, :payment_method, :payment_reference, :customer_name, :note)'
+            'INSERT INTO sales (user_id, subtotal, tax_amount, total, payment_method, payment_reference, cw_company_id, cw_company_name, cw_contact_id, cw_contact_name, note)
+             VALUES (:user_id, :subtotal, :tax_amount, :total, :payment_method, :payment_reference, :cw_company_id, :cw_company_name, :cw_contact_id, :cw_contact_name, :note)'
         );
         $insertSale->execute([
             ':user_id' => $user['id'],
@@ -165,7 +188,10 @@ if ($action === 'create') {
             ':total' => $total,
             ':payment_method' => $paymentMethod,
             ':payment_reference' => $paymentReference,
-            ':customer_name' => $customerName,
+            ':cw_company_id' => $cwCompanyId,
+            ':cw_company_name' => $cwCompanyName,
+            ':cw_contact_id' => $cwContactId,
+            ':cw_contact_name' => $cwContactName,
             ':note' => $note,
         ]);
         $saleId = (int) $pdo->lastInsertId();
@@ -206,7 +232,8 @@ function register_load_receipt(PDO $pdo, int $saleId): ?array
 {
     $stmt = $pdo->prepare(
         'SELECT s.id, s.created_at, s.subtotal, s.tax_amount, s.total, s.payment_method,
-                s.payment_reference, s.customer_name, s.note, u.name AS cashier_name
+                s.payment_reference, s.customer_name, s.cw_company_id, s.cw_company_name,
+                s.cw_contact_id, s.cw_contact_name, s.note, u.name AS cashier_name
          FROM sales s
          JOIN register_users u ON u.id = s.user_id
          WHERE s.id = :id'
@@ -220,6 +247,8 @@ function register_load_receipt(PDO $pdo, int $saleId): ?array
     $sale['subtotal'] = (float) $sale['subtotal'];
     $sale['tax_amount'] = (float) $sale['tax_amount'];
     $sale['total'] = (float) $sale['total'];
+    $sale['cw_company_id'] = $sale['cw_company_id'] !== null ? (int) $sale['cw_company_id'] : null;
+    $sale['cw_contact_id'] = $sale['cw_contact_id'] !== null ? (int) $sale['cw_contact_id'] : null;
 
     $itemsStmt = $pdo->prepare(
         'SELECT identifier, description, unit_price, quantity, line_total FROM sale_items WHERE sale_id = :id ORDER BY id'
