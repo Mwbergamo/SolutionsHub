@@ -588,4 +588,90 @@ if ($action === 'probe-finance-write') {
     register_respond(200, $result);
 }
 
+/**
+ * TEMPORARY diagnostic, read-only except for the PATCH attempts on an
+ * EXISTING company (no new test records created -- reuse the ones
+ * probe-finance-write already made, e.g. ?company_id=7912&contact_id=16678,
+ * so repeated attempts don't keep littering ConnectWise with junk data).
+ *
+ * probe-finance-write's every PATCH attempt failed with the SAME error --
+ * "String was not recognized as a valid DateTime" -- regardless of which
+ * field was targeted (defaultContact, billingContact, billingTerms,
+ * invoiceDeliveryMethod, invoiceToEmailAddress). That points at the PATCH
+ * envelope/body shape itself (guessed as a JSON-Patch-style array of
+ * {op,path,value}), not at any one field. This isolates the question with
+ * three narrower attempts:
+ *   (a) the same JSON-Patch array shape, but targeting a field with
+ *       nothing date-related about it at all ("name") -- if this STILL
+ *       fails with the DateTime error, the envelope itself is wrong.
+ *   (b) a plain merge-style object body (not an array) for that same
+ *       harmless field -- {"name": "..."} instead of a JSON-Patch array.
+ *   (c) a plain merge-style object body for the actual field that
+ *       matters -- {"defaultContact": {"id": ...}}.
+ */
+if ($action === 'probe-patch-format') {
+    $companyId = isset($_GET['company_id']) ? (int) $_GET['company_id'] : 0;
+    $contactId = isset($_GET['contact_id']) ? (int) $_GET['contact_id'] : 0;
+    if ($companyId <= 0) {
+        register_respond(400, ['ok' => false, 'error' => 'company_id is required (reuse an existing ZZZ REGISTER TEST company id).']);
+    }
+
+    $result = ['ok' => true];
+    $marker = ' [patch test ' . date('H:i:s') . ']';
+    $before = [];
+
+    try {
+        $before = register_cw_request('/company/companies/' . $companyId, [], 'GET', null, 12, 4);
+        $result['company_before'] = ['id' => $before['id'] ?? null, 'name' => $before['name'] ?? null];
+    } catch (Throwable $e) {
+        $result['company_before_error'] = $e->getMessage();
+    }
+
+    try {
+        $r = register_cw_request(
+            '/company/companies/' . $companyId,
+            [],
+            'PATCH',
+            [['op' => 'replace', 'path' => '/name', 'value' => ($before['name'] ?? 'Test') . $marker . 'A']],
+            12,
+            4
+        );
+        $result['jsonpatch_array_on_name'] = ['ok' => true, 'response' => ['id' => $r['id'] ?? null, 'name' => $r['name'] ?? null]];
+    } catch (Throwable $e) {
+        $result['jsonpatch_array_on_name'] = ['ok' => false, 'error' => $e->getMessage()];
+    }
+
+    try {
+        $r = register_cw_request(
+            '/company/companies/' . $companyId,
+            [],
+            'PATCH',
+            ['name' => ($before['name'] ?? 'Test') . $marker . 'B'],
+            12,
+            4
+        );
+        $result['merge_object_on_name'] = ['ok' => true, 'response' => ['id' => $r['id'] ?? null, 'name' => $r['name'] ?? null]];
+    } catch (Throwable $e) {
+        $result['merge_object_on_name'] = ['ok' => false, 'error' => $e->getMessage()];
+    }
+
+    if ($contactId > 0) {
+        try {
+            $r = register_cw_request(
+                '/company/companies/' . $companyId,
+                [],
+                'PATCH',
+                ['defaultContact' => ['id' => $contactId]],
+                12,
+                4
+            );
+            $result['merge_object_on_default_contact'] = ['ok' => true, 'response' => ['id' => $r['id'] ?? null, 'defaultContact' => $r['defaultContact'] ?? null]];
+        } catch (Throwable $e) {
+            $result['merge_object_on_default_contact'] = ['ok' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    register_respond(200, $result);
+}
+
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
