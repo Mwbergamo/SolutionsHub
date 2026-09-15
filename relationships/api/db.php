@@ -392,6 +392,102 @@ function relationships_migrate(PDO $pdo): void
         )
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_outgrow_history_customer ON outgrow_last_touch_history(customer_id, id)');
+
+    // "Current vendor if not CodeBlue" -- added 2026-09-15 per Michael's
+    // Customer Meeting Capture request. One editable note PER PILLAR (not
+    // per individual service -- confirmed via AskUserQuestion 2026-09-15):
+    // which outside vendor a customer uses for that whole pillar, when
+    // they're not sourcing it from CodeBlue. Single current value + who/when
+    // last touched it -- same "value + updated_at + updated_by" shape as
+    // customers.last_client_checkin_at/by (PeopleFirst), NOT a full history
+    // log like outgrow_last_touch_history -- Michael only asked to "see the
+    // last time it was updated," not a history list. UNIQUE(customer_id,
+    // pillar_id) makes 'set' a plain upsert (delete+insert, same pattern
+    // checklist_progress uses) rather than needing a separate lookup path.
+    // No ConnectWise sync -- not mentioned in the request, unlike OutGrow
+    // Last Touch.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS pillar_vendor_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            pillar_id TEXT NOT NULL,
+            vendor_name TEXT NOT NULL DEFAULT '',
+            updated_at TEXT,
+            updated_by_user_id INTEGER REFERENCES crc_users(id),
+            updated_by_name TEXT,
+            UNIQUE(customer_id, pillar_id)
+        )
+    SQL);
+
+    // Customer Meeting Capture -- added 2026-09-15 per Michael. A logged
+    // meeting (subject, date, notes) against a customer, attributed to the
+    // CRC who logged it. Each meeting also tries to create a ConnectWise
+    // Activity under that customer's Company -- see
+    // connectwise-meeting-activity.php -- using the SAME lookup/date/
+    // fallback machinery connectwise-activity-create.php already built and
+    // proved out for checklist-step completions ("following the same
+    // format we use for the Check-list items," per Michael). cw_push_status/
+    // cw_push_error/cw_activity_id record that attempt's outcome directly on
+    // this row (rather than a separate log table, like
+    // outgrow_last_touch_history does) -- one meeting, one Activity attempt,
+    // nothing here is ever retried automatically.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS customer_meetings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            subject TEXT NOT NULL,
+            meeting_date TEXT NOT NULL,
+            notes TEXT NOT NULL DEFAULT '',
+            logged_by_user_id INTEGER REFERENCES crc_users(id),
+            logged_by_name TEXT NOT NULL,
+            cw_activity_id TEXT,
+            cw_push_status TEXT,
+            cw_push_error TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_customer_meetings_customer ON customer_meetings(customer_id, id DESC)');
+
+    // To-do tasks logged under a meeting -- each ALSO tries to create its
+    // own ConnectWise Activity, at CREATION time (confirmed via
+    // AskUserQuestion 2026-09-15: "so we have historical references to
+    // what's been done" reads as logging the assignment as it happens, not
+    // waiting for completion -- unlike the cross-sell checklist, which only
+    // fires on completion). Assignable to exactly one of the 7 fixed
+    // roster names (relationships_todo_roster() in catalog.php).
+    // assigned_to_user_id is nullable and OPTIMISTIC: it's filled in by
+    // matching assigned_to_name against crc_users.name (case-insensitive)
+    // at save time if that person has a Relationships login yet, but
+    // assigned_to_name is always stored regardless -- registration is
+    // self-service (auth.php's 'register' action, any @codebluetechnology.com
+    // email) and a teammate who hasn't signed in yet must still be
+    // assignable today, not block the meeting note. customer_id is
+    // denormalized off the parent meeting (not just meeting_id) so the
+    // global to-do dashboard and per-customer queries don't need a JOIN.
+    // completed_at/by is a plain local mark -- no second ConnectWise push on
+    // completion, per Michael's answer (CW only fires once, at creation).
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS meeting_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            meeting_id INTEGER NOT NULL REFERENCES customer_meetings(id) ON DELETE CASCADE,
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            description TEXT NOT NULL,
+            assigned_to_user_id INTEGER REFERENCES crc_users(id),
+            assigned_to_name TEXT NOT NULL,
+            created_by_user_id INTEGER REFERENCES crc_users(id),
+            created_by_name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            completed_at TEXT,
+            completed_by_user_id INTEGER REFERENCES crc_users(id),
+            completed_by_name TEXT,
+            cw_activity_id TEXT,
+            cw_push_status TEXT,
+            cw_push_error TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_meeting_tasks_meeting ON meeting_tasks(meeting_id)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_meeting_tasks_customer ON meeting_tasks(customer_id, id DESC)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_meeting_tasks_assignee ON meeting_tasks(assigned_to_name, completed_at)');
 }
 
 /**

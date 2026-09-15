@@ -1463,3 +1463,314 @@ a { color: inherit; }
   border-radius: 8px;
   border-left: 2px solid oklch(0.55 0.18 30);
 }
+
+/* ==========================================================================
+   Customer Meeting Capture -- added 2026-09-15 per Michael:
+   - "Current vendor if not CodeBlue" field, above each pillar tile
+   - Meetings box + Meeting To-Dos box, stacked under Cross-Sell Opportunities
+   - Front-page two-column layout + Global To-Do dashboard (right column)
+   ========================================================================== */
+
+/* Pillar tile now wraps its vendor field + the tile itself, so the grid
+   still lays out one cell per pillar (pillar-grid's grid-template-columns
+   is unaffected -- pillar-tile-wrap is simply what now sits in each cell). */
+.pillar-tile-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pillar-tile-wrap .pillar-tile { flex: 1 1 auto; }
+
+.vendor-field {
+  font-size: 11.5px;
+  padding: 8px 10px;
+  background: oklch(0.16 0.012 255);
+  border: 1px solid oklch(0.24 0.016 255);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vendor-field-label {
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  font-size: 9.5px;
+  color: oklch(0.5 0.015 255);
+  flex: 1 1 100%;
+}
+
+.vendor-field-value { color: oklch(0.78 0.006 255); font-weight: 600; flex: 1 1 auto; }
+.vendor-field-name { color: oklch(0.82 0.006 255); }
+.vendor-field-empty { color: oklch(0.5 0.015 255); font-weight: 500; }
+.vendor-field-meta { margin-left: 6px; font-size: 10.5px; font-weight: 500; color: oklch(0.55 0.015 255); }
+
+.vendor-field-edit-btn {
+  background: transparent;
+  border: 1px solid oklch(0.34 0.02 255);
+  color: oklch(0.7 0.02 255);
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.vendor-field-edit-btn:hover { border-color: #2f8fef; color: #8fc3ff; }
+
+.vendor-field.editing { flex-direction: column; align-items: stretch; }
+
+.vendor-field-input {
+  background: oklch(0.98 0.006 255);
+  border: none;
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 12.5px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: oklch(0.2 0.03 255);
+  width: 100%;
+}
+
+.vendor-field-actions { display: flex; gap: 8px; margin-top: 2px; }
+
+.vendor-field-btn {
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.vendor-field-btn.primary { background: #2f8fef; color: white; border: none; }
+.vendor-field-btn.secondary { background: transparent; color: oklch(0.7 0.02 255); border: 1px solid oklch(0.34 0.02 255); }
+.vendor-field-btn:disabled { opacity: .6; cursor: default; }
+
+.vendor-field-error { margin-top: 4px; font-size: 11px; color: #f87171; }
+
+/* Right-hand column of the customer dashboard -- stacks Cross-Sell
+   Opportunities, Meetings, and Meeting To-Dos as separate boxes, one under
+   the next, all within dashboard-grid's fixed-width second column. */
+.right-column {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.meetings-panel, .meeting-tasks-panel {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 18px;
+  padding: 18px 18px 10px;
+}
+
+.meetings-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.meetings-add-btn {
+  background: oklch(0.78 0.15 85 / 0.16);
+  border: 1px solid oklch(0.78 0.15 85 / 0.4);
+  color: oklch(0.78 0.15 85);
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.meetings-add-btn:hover { background: oklch(0.78 0.15 85 / 0.26); }
+.meetings-add-btn.small { margin-top: 10px; padding: 5px 10px; font-size: 11px; }
+
+.meetings-error {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #f87171;
+}
+
+.meeting-add-form, .task-add-form {
+  margin-top: 14px;
+  padding: 12px;
+  background: oklch(0.16 0.012 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.meeting-form-input, .meeting-form-textarea, .meeting-form-select {
+  background: oklch(0.98 0.006 255);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: oklch(0.2 0.03 255);
+  width: 100%;
+  box-sizing: border-box;
+}
+.meeting-form-textarea { resize: vertical; font-family: inherit; }
+
+.meeting-form-actions { display: flex; gap: 8px; margin-top: 2px; }
+
+.meeting-list { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+
+.meeting-row {
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.meeting-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+.meeting-row-head:hover { background: oklch(0.21 0.016 255); }
+
+.meeting-row-subject { font-size: 13px; font-weight: 700; color: white; }
+
+.meeting-row-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: oklch(0.55 0.015 255);
+}
+
+.meeting-row-toggle { color: oklch(0.55 0.015 255); font-size: 13px; flex: 0 0 auto; }
+
+.meeting-row-body {
+  padding: 0 14px 14px;
+  border-top: 1px solid oklch(0.26 0.02 255);
+}
+
+.meeting-row-notes {
+  margin-top: 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: oklch(0.75 0.01 255);
+  white-space: pre-line;
+}
+
+.meeting-cw-warn {
+  margin-top: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #f87171;
+}
+
+.meeting-task-cw-warn { color: #f87171; }
+
+.meeting-task-list { margin-top: 14px; display: flex; flex-direction: column; gap: 2px; }
+
+.meeting-task-with-context {
+  padding: 9px 4px;
+  border-top: 1px solid oklch(0.25 0.02 255);
+}
+.meeting-task-with-context:first-child { border-top: none; }
+.meeting-task-with-context .checklist-step { padding: 0; }
+
+.meeting-task-context {
+  margin-top: 2px;
+  margin-left: 25px;
+  font-size: 10.5px;
+  color: oklch(0.5 0.015 255);
+}
+
+/* Front page: left (existing Customer Information/overview) + right
+   (new Global To-Do dashboard), per Michael 2026-09-15. */
+.frontpage-grid {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 26px;
+  align-items: start;
+}
+@media (max-width: 980px) {
+  .frontpage-grid { grid-template-columns: 1fr; }
+}
+
+.global-todo-panel {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 18px;
+  padding: 20px 20px 12px;
+}
+.global-todo-panel .view-header { margin-bottom: 14px; }
+.global-todo-panel .view-title { font-size: 17px; }
+.global-todo-panel .view-sub { font-size: 11.5px; }
+
+.global-todo-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.global-todo-summary-item {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  background: oklch(0.16 0.012 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.global-todo-summary-item.zero { opacity: .55; }
+
+.global-todo-summary-count {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  color: #8fc3ff;
+}
+
+.global-todo-summary-name {
+  font-size: 11px;
+  color: oklch(0.7 0.01 255);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.global-todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 560px;
+  overflow-y: auto;
+}
+
+.global-todo-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 6px;
+  border-top: 1px solid oklch(0.25 0.02 255);
+  cursor: pointer;
+}
+.global-todo-item:first-child { border-top: none; }
+.global-todo-item:hover .global-todo-item-desc { color: #8fc3ff; }
+.global-todo-item.done { opacity: .6; }
+
+.global-todo-item-desc { font-size: 12.5px; font-weight: 600; color: oklch(0.82 0.006 255); }
+.global-todo-item.done .global-todo-item-desc { text-decoration: line-through; }
+
+.global-todo-item-meta {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: oklch(0.55 0.015 255);
+}
+
+.global-todo-item-go { font-size: 11px; color: oklch(0.5 0.015 255); flex: 0 0 auto; }
+.global-todo-item-done-meta {
+  font-size: 10.5px;
+  color: oklch(0.55 0.18 145);
+  flex: 0 0 auto;
+  text-align: right;
+}

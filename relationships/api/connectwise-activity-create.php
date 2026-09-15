@@ -172,23 +172,36 @@ function relationships_checklist_first_contact_id(PDO $pdo, int $customerId): ?s
 }
 
 /**
- * Builds and POSTs the ConnectWise Activity for one newly-completed
- * checklist step, with the two-tier fallback described in the file header.
+ * Builds and POSTs a ConnectWise Activity, with the two-tier fallback
+ * described in the file header -- the shared engine behind every Activity
+ * this integration creates (checklist-step completions, and, added
+ * 2026-09-15, Customer Meeting Capture's meeting-logged and meeting-task
+ * Activities in connectwise-meeting-activity.php). Extracted 2026-09-15
+ * from what was originally checklist-only code (relationships_cw_create_checklist_activity()
+ * below is now a thin wrapper over this) SPECIFICALLY so meetings/tasks
+ * reuse the exact same proven type/status lookup, date format, contact
+ * lookup, and full-payload-then-core-payload fallback -- per Michael's
+ * "following the same format we use for the Check-list items." Nothing
+ * about the ConnectWise-facing behavior changed in this extraction, only
+ * where the summary/notes/assignee come from.
+ *
  * Never throws for an ordinary ConnectWise-side rejection of the full
  * payload (that's the expected, handled case) -- only for something this
  * function has no fallback for at all (can't resolve the ActivityType/
  * ActivityStatus id, or the reduced/core payload ALSO gets rejected).
  *
- * $ctx keys: customer_id (int), cw_company_id (string, ConnectWise Company
- * id -- NOT this app's own customer_id), service_name (string),
- * step_number (int), step_label (string), completed_by_name (string),
- * completed_by_email (string), completed_at_display (string, human-readable
- * Eastern timestamp for the Notes field).
+ * $ctx keys: customer_id (int, this app's own id -- used only for the
+ * contact lookup), cw_company_id (string, ConnectWise Company id), summary
+ * (string, becomes the Activity `name` -- truncated to 100 chars here, so
+ * callers don't each need to remember the limit), notes (string), assign_to_email
+ * (string|null -- looked up as a ConnectWise Member and set as `assignTo`;
+ * null just means the Activity is created memberless, same graceful
+ * degradation as a failed lookup).
  *
  * Returns ['id' => string, 'variant' => 'full'|'core'] on success.
  * Throws RelationshipsConnectWiseError if neither attempt succeeds.
  */
-function relationships_cw_create_checklist_activity(PDO $pdo, array $ctx): array
+function relationships_cw_create_activity(PDO $pdo, array $ctx): array
 {
     $typeId = relationships_cw_activity_type_id($pdo);
     $statusId = relationships_cw_activity_status_id($pdo);
@@ -199,16 +212,15 @@ function relationships_cw_create_checklist_activity(PDO $pdo, array $ctx): array
         );
     }
 
-    $summary = $ctx['service_name'] . ' - ' . $ctx['step_number'] . ', ' . $ctx['step_label'];
+    $summary = (string) $ctx['summary'];
     // ConnectWise's documented Activity `name` field is commonly capped
     // around 100 chars in older on-prem releases like this one's
     // v4_6_release -- truncate defensively rather than risk the whole
-    // create failing on an over-length summary for an unusually long
-    // service/step combination.
+    // create failing on an over-length summary.
     if (strlen($summary) > 100) {
         $summary = substr($summary, 0, 97) . '...';
     }
-    $notes = $ctx['step_label'] . ' - ' . $ctx['completed_by_name'] . ' - ' . $ctx['completed_at_display'];
+    $notes = (string) $ctx['notes'];
 
     // 2026-09-11: TWO guessed date formats were both REJECTED by real
     // POST /sales/activities calls -- first ATOM with a timezone offset
@@ -246,41 +258,32 @@ function relationships_cw_create_checklist_activity(PDO $pdo, array $ctx): array
     // access to System > Member Maintenance (a ConnectWise-side permissions
     // config issue, NOT a wrong endpoint/field -- /system/members itself is
     // correct). That error, left unguarded, aborted the ENTIRE Activity
-    // create -- the checklist step's completion never reached ConnectWise at
-    // all just because one optional field couldn't be looked up. Guarded the
-    // same way the $fullPayload/$corePayload split above already handles
-    // other optional-field failures: swallow it, create the Activity without
-    // an assigned member, and let Michael notice/fix the permission on his
-    // own schedule rather than losing the whole record every time someone
-    // checks a box until he does.
-    try {
-        $memberId = relationships_cw_member_id_by_email($ctx['completed_by_email']);
-    } catch (RelationshipsConnectWiseError $e) {
-        $memberId = null;
+    // create. Guarded the same way the $fullPayload/$corePayload split
+    // below already handles other optional-field failures: swallow it,
+    // create the Activity without an assigned member, and let Michael
+    // notice/fix the permission on his own schedule.
+    $assignToEmail = $ctx['assign_to_email'] ?? null;
+    $memberId = null;
+    if ($assignToEmail !== null && $assignToEmail !== '') {
+        try {
+            $memberId = relationships_cw_member_id_by_email($assignToEmail);
+        } catch (RelationshipsConnectWiseError $e) {
+            $memberId = null;
+        }
     }
     if ($memberId !== null) {
-        // Per Michael (2026-09-11 AskUserQuestion): the completing RC is the
-        // Activity's one assigned member -- no separate "Assigned By:
-        // Michael" field is forced onto every activity.
-        //
-        // Field name is `assignTo`, confirmed for real this time -- a live
-        // POST /sales/activities test came back with a real ConnectWise
-        // validation error: {"code":"MissingRequiredField","message":"The
-        // assignTo/id field is required.","field":"assignTo"}. The docs
-        // PDF's example response body showed a field called `assignedBy`
-        // (an {id, identifier, name, dailyCapacity, ...} object) in that
-        // same position, which is what led to the previous (wrong) fix --
-        // but that's apparently a different/related field ConnectWise's
-        // response includes, not the one the create request actually
-        // requires. A live 400 naming the exact required field beats a
-        // static docs screenshot; trust this one.
+        // Field name is `assignTo`, confirmed for real (2026-09-11) -- a
+        // live POST /sales/activities test came back with a real
+        // ConnectWise validation error naming it as the required field.
+        // See connectwise-activity-create.php's original 2026-09-11
+        // history for the full story (docs PDF showed a similarly-named
+        // but different response field, `assignedBy`, which is NOT this).
         //
         // NOTE: ConnectWise treats assignTo/id as REQUIRED, not optional --
-        // so if relationships_cw_member_id_by_email() can't resolve an id
-        // (no match, or blocked again by a ConnectWise permission), this
-        // POST will still fail server-side rather than silently creating a
-        // memberless Activity. The try/catch above only prevents a crash on
-        // the *lookup* itself; it doesn't make the field optional on
+        // so if the member lookup can't resolve an id, this POST will
+        // still fail server-side rather than silently creating a
+        // memberless Activity. The try/catch above only prevents a crash
+        // on the *lookup* itself; it doesn't make the field optional on
         // ConnectWise's side.
         $corePayload['assignTo'] = ['id' => $memberId];
     }
@@ -290,17 +293,16 @@ function relationships_cw_create_checklist_activity(PDO $pdo, array $ctx): array
         $corePayload['contact'] = ['id' => (int) $contactId];
     }
 
-    // Fields the user's spec also asked for but that this file has the
-    // LEAST confidence in (no corroborating field-name source beyond the
-    // one third-party reference -- see file header): "Where: In-house" and
-    // "Schedule Status: Firm". Tried together in the full payload; if
+    // Fields the user's original checklist spec also asked for but that
+    // this integration has the LEAST confidence in (no corroborating
+    // field-name source beyond one third-party reference -- see file
+    // header): "Where: In-house" and "Schedule Status: Firm". Tried
+    // together in the full payload for every Activity this engine creates
+    // (checklist, meeting, and task alike) so they stay consistent; if
     // ConnectWise rejects the request over either one, the retry below
     // drops both rather than guessing again at which one was wrong.
     $fullPayload = $corePayload + [
         'where' => 'In-house',
-        // Speculative field name for the Schedule section's separate
-        // "Firm"/"Tentative" status -- genuinely unconfirmed, most likely
-        // to be dropped on the fallback attempt below.
         'scheduleStatus' => 'Firm',
     ];
 
@@ -315,8 +317,7 @@ function relationships_cw_create_checklist_activity(PDO $pdo, array $ctx): array
     } catch (RelationshipsConnectWiseError $e) {
         // Expected/handled case: one of the speculative fields above was
         // wrong. Falls through to the core-payload retry. The full error
-        // is still logged by the caller (relationships_checklist_completion_create_cw_activity)
-        // for Michael to check.
+        // is still logged by the caller for Michael to check.
     }
 
     $created = relationships_cw_request('/sales/activities', [], 'POST', $corePayload);
@@ -327,6 +328,37 @@ function relationships_cw_create_checklist_activity(PDO $pdo, array $ctx): array
         );
     }
     return ['id' => (string) $created['id'], 'variant' => 'core'];
+}
+
+/**
+ * Checklist-specific wrapper over relationships_cw_create_activity() --
+ * builds the checklist step's summary/notes/assignee and delegates.
+ * Unchanged behavior from before the 2026-09-15 extraction above; kept as
+ * its own named function (rather than inlining at the call site) since
+ * relationships_checklist_completion_create_cw_activity() already calls it
+ * by this name and there's no reason to touch that working code.
+ *
+ * $ctx keys: customer_id (int), cw_company_id (string, ConnectWise Company
+ * id -- NOT this app's own customer_id), service_name (string),
+ * step_number (int), step_label (string), completed_by_name (string),
+ * completed_by_email (string), completed_at_display (string, human-readable
+ * Eastern timestamp for the Notes field).
+ *
+ * Returns ['id' => string, 'variant' => 'full'|'core'] on success.
+ * Throws RelationshipsConnectWiseError if neither attempt succeeds.
+ */
+function relationships_cw_create_checklist_activity(PDO $pdo, array $ctx): array
+{
+    $summary = $ctx['service_name'] . ' - ' . $ctx['step_number'] . ', ' . $ctx['step_label'];
+    $notes = $ctx['step_label'] . ' - ' . $ctx['completed_by_name'] . ' - ' . $ctx['completed_at_display'];
+
+    return relationships_cw_create_activity($pdo, [
+        'customer_id' => $ctx['customer_id'],
+        'cw_company_id' => $ctx['cw_company_id'],
+        'summary' => $summary,
+        'notes' => $notes,
+        'assign_to_email' => $ctx['completed_by_email'],
+    ]);
 }
 
 /**

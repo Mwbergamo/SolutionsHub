@@ -205,7 +205,46 @@
     outgrowEditing: false,
     outgrowDraftDate: '', // "YYYY-MM-DD" -- bound to the <input type="date"> while editing
     outgrowSaving: false,
-    outgrowError: null // shown inline -- a save failure, or a "saved here but didn't reach ConnectWise" warning
+    outgrowError: null, // shown inline -- a save failure, or a "saved here but didn't reach ConnectWise" warning
+
+    // "Current vendor if not CodeBlue" -- one editable note per pillar
+    // (api/vendor.php), added 2026-09-15 per Michael's Customer Meeting
+    // Capture request. No history list (unlike OutGrow above) -- just the
+    // current value + who/when it was last touched.
+    vendorNotes: null, // { "<pillar_id>": {vendor_name, updated_at, updated_by_name} | null, ... } once loaded
+    vendorEditingPillarId: null,
+    vendorDraft: '',
+    vendorSaving: false,
+    vendorError: null,
+
+    // Customer Meeting Capture -- meetings logged against a customer, and
+    // the to-do tasks logged under them (api/meetings.php), added
+    // 2026-09-15 per Michael.
+    meetingsLoading: false,
+    meetings: null, // array once loaded (newest meeting first), each with a nested .tasks array (oldest first)
+    meetingsRoster: [], // the 7 fixed assignee names, from the server (relationships_todo_roster())
+    meetingsError: null,
+    meetingAddOpen: false,
+    meetingDraftSubject: '',
+    meetingDraftDate: '',
+    meetingDraftNotes: '',
+    meetingSaving: false,
+    openMeetingId: null, // which logged meeting is expanded, if any
+    taskAddOpenForMeeting: null, // meeting id whose "+ Add Task" form is open, if any
+    taskDraftDescription: '',
+    taskDraftAssignee: '',
+    taskSaving: false,
+    taskTogglingId: null, // task id currently mid-toggle (checkbox disabled while true)
+    // Deep-link target set by openCustomerAtTask() (global to-do panel ->
+    // a specific customer's task) -- consumed once inside selectCustomer(),
+    // same pattern state.pendingFocus already uses for the checklist.
+    pendingTaskFocus: null, // { meetingId, taskId } | null
+
+    // Global master to-do dashboard -- the Relationships front page's new
+    // right-hand panel (api/meetings.php?action=global), added 2026-09-15.
+    globalTodosLoading: false,
+    globalTodos: null, // { roster, counts, tasks } once loaded
+    globalTodosError: null
   };
 
   function escapeHtml(s) {
@@ -276,6 +315,7 @@
       state.user = r.data.user;
       render();
       loadOverview();
+      loadGlobalTodos();
     }).catch(function () {
       window.location.href = 'login.html?next=' + encodeURIComponent('index.html');
     });
@@ -495,6 +535,216 @@
     return html;
   }
 
+  // ---- "Current vendor if not CodeBlue" (per pillar) --------------------
+
+  function resetVendorState() {
+    state.vendorNotes = null;
+    state.vendorEditingPillarId = null;
+    state.vendorDraft = '';
+    state.vendorSaving = false;
+    state.vendorError = null;
+  }
+
+  function loadVendorNotes(customerId) {
+    var requestFor = Number(customerId);
+    apiGet('api/vendor.php?action=list&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      if (r.data && r.data.ok) {
+        state.vendorNotes = r.data.notes;
+        render();
+      }
+    }).catch(function () { /* silent -- the field still renders, just without a saved value yet */ });
+  }
+
+  function saveVendorNote(customerId, pillarId) {
+    state.vendorSaving = true;
+    state.vendorError = null;
+    render();
+    apiPost('api/vendor.php?action=set', { customer_id: customerId, pillar_id: pillarId, vendor_name: state.vendorDraft }).then(function (r) {
+      state.vendorSaving = false;
+      if (r.data && r.data.ok) {
+        if (!state.vendorNotes) state.vendorNotes = {};
+        state.vendorNotes[pillarId] = r.data.note;
+        state.vendorEditingPillarId = null;
+      } else {
+        state.vendorError = (r.data && r.data.error) || 'Could not save.';
+      }
+      render();
+    }).catch(function () {
+      state.vendorSaving = false;
+      state.vendorError = 'Could not save \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  // ---- Customer Meeting Capture (meetings + their to-do tasks) ----------
+
+  function resetMeetingsState() {
+    state.meetingsLoading = false;
+    state.meetings = null;
+    state.meetingsRoster = [];
+    state.meetingsError = null;
+    state.meetingAddOpen = false;
+    state.meetingDraftSubject = '';
+    state.meetingDraftDate = '';
+    state.meetingDraftNotes = '';
+    state.meetingSaving = false;
+    state.openMeetingId = null;
+    state.taskAddOpenForMeeting = null;
+    state.taskDraftDescription = '';
+    state.taskDraftAssignee = '';
+    state.taskSaving = false;
+    state.taskTogglingId = null;
+    // pendingTaskFocus is deliberately NOT cleared here -- openCustomerAtTask()
+    // sets it BEFORE calling selectCustomer(), which calls resetMeetingsState()
+    // on its way to loadMeetings(); clearing it here would lose the deep-link
+    // target before loadMeetings() ever gets to consume it.
+  }
+
+  function loadMeetings(customerId) {
+    state.meetingsLoading = true;
+    var requestFor = Number(customerId);
+    apiGet('api/meetings.php?action=list&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.meetingsLoading = false;
+      var focusTaskId = null;
+      if (r.data && r.data.ok) {
+        state.meetings = r.data.meetings;
+        state.meetingsRoster = r.data.roster;
+        if (state.taskDraftAssignee === '' && r.data.roster.length) {
+          state.taskDraftAssignee = r.data.roster[0];
+        }
+        if (state.pendingTaskFocus) {
+          state.openMeetingId = state.pendingTaskFocus.meetingId;
+          focusTaskId = state.pendingTaskFocus.taskId;
+          state.pendingTaskFocus = null;
+        }
+      } else {
+        state.meetingsError = (r.data && r.data.error) || 'Could not load meetings.';
+      }
+      render();
+      if (focusTaskId) {
+        var el = document.querySelector('[data-task-row="' + focusTaskId + '"]');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.meetingsLoading = false;
+      state.meetingsError = 'Could not load meetings \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  function saveMeeting(customerId) {
+    var subject = (state.meetingDraftSubject || '').trim();
+    var date = state.meetingDraftDate;
+    if (!subject || !date) {
+      state.meetingsError = 'Enter a subject and a date.';
+      render();
+      return;
+    }
+    state.meetingSaving = true;
+    state.meetingsError = null;
+    render();
+    apiPost('api/meetings.php?action=create_meeting', {
+      customer_id: customerId, subject: subject, meeting_date: date, notes: state.meetingDraftNotes || ''
+    }).then(function (r) {
+      state.meetingSaving = false;
+      if (r.data && r.data.ok) {
+        state.meetings = [r.data.meeting].concat(state.meetings || []);
+        state.meetingAddOpen = false;
+        state.meetingDraftSubject = '';
+        state.meetingDraftDate = '';
+        state.meetingDraftNotes = '';
+        state.openMeetingId = r.data.meeting.id;
+        if (r.data.meeting.cw_push && r.data.meeting.cw_push.status === 'error') {
+          state.meetingsError = 'Saved here, but didn\u2019t reach ConnectWise: ' + r.data.meeting.cw_push.error;
+        }
+      } else {
+        state.meetingsError = (r.data && r.data.error) || 'Could not save the meeting.';
+      }
+      render();
+    }).catch(function () {
+      state.meetingSaving = false;
+      state.meetingsError = 'Could not save the meeting \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  function saveTask(meetingId) {
+    var description = (state.taskDraftDescription || '').trim();
+    var assignee = state.taskDraftAssignee;
+    if (!description || !assignee) {
+      state.meetingsError = 'Enter a task description and pick who it\u2019s assigned to.';
+      render();
+      return;
+    }
+    state.taskSaving = true;
+    state.meetingsError = null;
+    render();
+    apiPost('api/meetings.php?action=add_task', {
+      meeting_id: meetingId, description: description, assigned_to_name: assignee
+    }).then(function (r) {
+      state.taskSaving = false;
+      if (r.data && r.data.ok) {
+        (state.meetings || []).forEach(function (m) {
+          if (m.id === meetingId) m.tasks.push(r.data.task);
+        });
+        state.taskAddOpenForMeeting = null;
+        state.taskDraftDescription = '';
+        if (r.data.task.cw_push && r.data.task.cw_push.status === 'error') {
+          state.meetingsError = 'Task saved here, but didn\u2019t reach ConnectWise: ' + r.data.task.cw_push.error;
+        }
+      } else {
+        state.meetingsError = (r.data && r.data.error) || 'Could not save the task.';
+      }
+      render();
+    }).catch(function () {
+      state.taskSaving = false;
+      state.meetingsError = 'Could not save the task \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  function toggleTaskDone(taskId, completed) {
+    state.taskTogglingId = taskId;
+    render();
+    apiPost('api/meetings.php?action=set_task_done', { task_id: taskId, completed: completed }).then(function (r) {
+      state.taskTogglingId = null;
+      if (r.data && r.data.ok) {
+        (state.meetings || []).forEach(function (m) {
+          m.tasks = m.tasks.map(function (t) { return t.id === r.data.task.id ? r.data.task : t; });
+        });
+      }
+      render();
+    }).catch(function () {
+      state.taskTogglingId = null;
+      render();
+    });
+  }
+
+  // ---- Global master to-do dashboard (Relationships front page) ---------
+
+  function loadGlobalTodos() {
+    if (state.globalTodosLoading) return;
+    state.globalTodosLoading = true;
+    state.globalTodosError = null;
+    render();
+    apiGet('api/meetings.php?action=global').then(function (r) {
+      state.globalTodosLoading = false;
+      if (r.data && r.data.ok) {
+        state.globalTodos = r.data;
+      } else {
+        state.globalTodosError = (r.data && r.data.error) || 'Could not load the to-do dashboard.';
+      }
+      render();
+    }).catch(function () {
+      state.globalTodosLoading = false;
+      state.globalTodosError = 'Could not load the to-do dashboard \u2014 check your connection.';
+      render();
+    });
+  }
+
   // Fired once, right after a customer's dashboard loads -- non-blocking
   // (the rest of the dashboard renders immediately; these two stat cards
   // show their own loading state) since this means 1-2 extra live
@@ -620,6 +870,10 @@
         loadActivitySummary(id);
         resetOutgrowState();
         loadOutgrow(id);
+        resetVendorState();
+        loadVendorNotes(id);
+        resetMeetingsState();
+        loadMeetings(id);
         if (state.pendingFocus) {
           var pf = state.pendingFocus;
           state.pendingFocus = null;
@@ -1101,6 +1355,18 @@
     selectCustomer(customerId);
   }
 
+  // Global to-do panel -> a specific customer's task, same deep-link
+  // pattern as openCustomerAtChecklist() above (click something in a
+  // cross-customer view -> jump straight to that customer's dashboard,
+  // focused on the item). loadMeetings() (called from inside
+  // selectCustomer()) is what actually consumes state.pendingTaskFocus
+  // once the customer's meetings have loaded.
+  function openCustomerAtTask(customerId, meetingId, taskId) {
+    state.view = 'dashboard';
+    state.pendingTaskFocus = { meetingId: meetingId, taskId: taskId };
+    selectCustomer(customerId);
+  }
+
   function signOut() {
     apiPost('api/auth.php?action=logout', {}).finally(function () {
       window.location.href = 'login.html';
@@ -1365,7 +1631,13 @@
     } else if (state.selectedCustomer) {
       html += customerDashboardHtml(state.selectedCustomer);
     } else {
-      html += overviewHtml();
+      // Front page split left/right, per Michael 2026-09-15: existing
+      // Customer Information/overview stays left-justified, the new
+      // Global Check-List To-Do's dashboard is right-justified.
+      html += '<div class="frontpage-grid">' +
+        '<div class="frontpage-left">' + overviewHtml() + '</div>' +
+        '<div class="frontpage-right">' + globalTodosPanelHtml() + '</div>' +
+      '</div>';
     }
 
     return html;
@@ -2102,16 +2374,21 @@
       var countText = isHostedVoip
         ? 'Hosted by manufacturer — not marketed by CodeBlue'
         : activeCount + ' of ' + totalCount + ' service areas in use';
-      html += '<div class="pillar-tile ' + tileClass + '" data-action="open-pillar" data-pillar="' + pillar.id + '"' +
+      html += '<div class="pillar-tile-wrap">' +
+        vendorFieldHtml(detail.customer.id, pillar) +
+        '<div class="pillar-tile ' + tileClass + '" data-action="open-pillar" data-pillar="' + pillar.id + '"' +
         (isHostedVoip ? ' title="Voice hosted directly by the manufacturer' + (detail.customer.voip_hosted_agreement_name ? ' (' + escapeHtml(detail.customer.voip_hosted_agreement_name) + ')' : '') + ' — do not market phone/VoIP services to this customer."' : '') + '>' +
-        '<div>' +
-          '<div class="pillar-tile-name">' + escapeHtml(pillar.name) + '</div>' +
-          '<div class="pillar-tile-count">' + countText + '</div>' +
+          '<div>' +
+            '<div class="pillar-tile-name">' + escapeHtml(pillar.name) + '</div>' +
+            '<div class="pillar-tile-count">' + countText + '</div>' +
+          '</div>' +
+          '<div class="pillar-tile-status">' + statusText + '</div>' +
         '</div>' +
-        '<div class="pillar-tile-status">' + statusText + '</div>' +
       '</div>';
     });
     html += '</div>';
+
+    html += '<div class="right-column">';
 
     html += '<div class="roster-panel">' +
       '<div class="roster-title">Cross-Sell Opportunities</div>' +
@@ -2128,6 +2405,15 @@
       });
     }
     html += '</div></div>';
+
+    // Customer Meeting Capture -- added 2026-09-15 per Michael: a
+    // "Meetings" box, and a separate "Meeting To-Dos" box formatted like
+    // the Cross-Sell Checklist, both stacked directly under Cross-Sell
+    // Opportunities in the same right-hand column.
+    html += meetingsPanelHtml(detail.customer.id);
+    html += meetingTasksPanelHtml();
+
+    html += '</div>'; // .right-column
 
     html += '</div>'; // .dashboard-grid
 
@@ -2165,6 +2451,245 @@
       '<button class="peoplefirst-log-btn" type="button" data-action="log-peoplefirst" data-customer="' + customer.id + '" data-type="' + type + '" ' +
         (isLogging ? 'disabled' : '') + '>' + (isLogging ? 'Logging…' : 'Log Today') + '</button>' +
     '</div>';
+  }
+
+  // ---- "Current vendor if not CodeBlue" (per pillar) --------------------
+
+  function vendorFieldHtml(customerId, pillar) {
+    var pillarId = pillar.id;
+    var note = state.vendorNotes ? state.vendorNotes[pillarId] : null;
+    var isEditing = state.vendorEditingPillarId === pillarId;
+
+    if (isEditing) {
+      return '<div class="vendor-field editing">' +
+        '<input type="text" id="vendorFieldInput" class="vendor-field-input" placeholder="Vendor name" value="' + escapeHtml(state.vendorDraft) + '" maxlength="200">' +
+        '<div class="vendor-field-actions">' +
+          '<button type="button" class="vendor-field-btn primary" data-action="vendor-save" data-pillar="' + pillarId + '" ' + (state.vendorSaving ? 'disabled' : '') + '>' + (state.vendorSaving ? 'Saving…' : 'Save') + '</button>' +
+          '<button type="button" class="vendor-field-btn secondary" data-action="vendor-edit-cancel" ' + (state.vendorSaving ? 'disabled' : '') + '>Cancel</button>' +
+        '</div>' +
+        (state.vendorError ? '<div class="vendor-field-error">' + escapeHtml(state.vendorError) + '</div>' : '') +
+      '</div>';
+    }
+
+    var valueHtml;
+    if (note) {
+      valueHtml = (note.vendor_name
+        ? '<span class="vendor-field-name">' + escapeHtml(note.vendor_name) + '</span>'
+        : '<span class="vendor-field-empty">(cleared)</span>') +
+        '<span class="vendor-field-meta">' + escapeHtml(fmtTimestamp(note.updated_at)) + ' · ' + escapeHtml(note.updated_by_name) + '</span>';
+    } else {
+      valueHtml = '<span class="vendor-field-empty">Not recorded</span>';
+    }
+
+    return '<div class="vendor-field">' +
+      '<span class="vendor-field-label">Current Vendor (if not CodeBlue)</span>' +
+      '<span class="vendor-field-value">' + valueHtml + '</span>' +
+      '<button type="button" class="vendor-field-edit-btn" data-action="vendor-edit-start" data-pillar="' + pillarId + '">Edit</button>' +
+    '</div>';
+  }
+
+  // ---- Customer Meeting Capture: Meetings box ----------------------------
+
+  function meetingsPanelHtml(customerId) {
+    var html = '<div class="meetings-panel">';
+    html += '<div class="meetings-panel-header">' +
+      '<div class="roster-title">Meetings</div>' +
+      '<button type="button" class="meetings-add-btn" data-action="meeting-add-open">+ Log a Meeting</button>' +
+    '</div>';
+
+    if (state.meetingsError) {
+      html += '<div class="meetings-error">' + escapeHtml(state.meetingsError) + '</div>';
+    }
+
+    if (state.meetingAddOpen) {
+      html += '<div class="meeting-add-form">' +
+        '<input type="text" id="meetingSubjectInput" class="meeting-form-input" placeholder="Subject (e.g. CRC Check-in 9/15/2026 - Services Review)" value="' + escapeHtml(state.meetingDraftSubject) + '" maxlength="200">' +
+        '<input type="date" id="meetingDateInput" class="meeting-form-input" value="' + escapeHtml(state.meetingDraftDate) + '">' +
+        '<textarea id="meetingNotesInput" class="meeting-form-textarea" placeholder="Notes from the meeting…" rows="3">' + escapeHtml(state.meetingDraftNotes) + '</textarea>' +
+        '<div class="meeting-form-actions">' +
+          '<button type="button" class="vendor-field-btn primary" data-action="meeting-save" data-customer="' + customerId + '" ' + (state.meetingSaving ? 'disabled' : '') + '>' + (state.meetingSaving ? 'Saving…' : 'Save Meeting') + '</button>' +
+          '<button type="button" class="vendor-field-btn secondary" data-action="meeting-add-cancel" ' + (state.meetingSaving ? 'disabled' : '') + '>Cancel</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    if (state.meetingsLoading && !state.meetings) {
+      html += '<div class="loading">Loading meetings…</div>';
+    } else if (!state.meetings || state.meetings.length === 0) {
+      html += '<div class="roster-empty">No meetings logged yet.</div>';
+    } else {
+      html += '<div class="meeting-list">';
+      state.meetings.forEach(function (m) {
+        html += meetingRowHtml(m);
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function meetingRowHtml(m) {
+    var isOpen = state.openMeetingId === m.id;
+    var openTaskCount = m.tasks.filter(function (t) { return !t.completed_at; }).length;
+    var cwWarn = m.cw_push && m.cw_push.status === 'error'
+      ? '<div class="meeting-cw-warn" title="' + escapeHtml(m.cw_push.error || '') + '">Didn’t sync to ConnectWise</div>'
+      : '';
+
+    var html = '<div class="meeting-row">' +
+      '<div class="meeting-row-head" data-action="meeting-toggle" data-meeting="' + m.id + '">' +
+        '<div class="meeting-row-main">' +
+          '<div class="meeting-row-subject">' + escapeHtml(m.subject) + '</div>' +
+          '<div class="meeting-row-meta">' + escapeHtml(fmtOutgrowDate(m.meeting_date)) + ' · logged by ' + escapeHtml(m.logged_by_name) +
+            (openTaskCount ? ' · ' + openTaskCount + ' open task' + (openTaskCount === 1 ? '' : 's') : '') +
+          '</div>' +
+        '</div>' +
+        '<div class="meeting-row-toggle">' + (isOpen ? '▴' : '▾') + '</div>' +
+      '</div>';
+
+    if (isOpen) {
+      html += '<div class="meeting-row-body">';
+      if (m.notes) {
+        html += '<div class="meeting-row-notes">' + escapeHtml(m.notes).replace(/\n/g, '<br>') + '</div>';
+      }
+      html += cwWarn;
+
+      if (state.taskAddOpenForMeeting === m.id) {
+        html += '<div class="task-add-form">' +
+          '<input type="text" id="taskDescriptionInput" class="meeting-form-input" placeholder="Task description" value="' + escapeHtml(state.taskDraftDescription) + '" maxlength="500">' +
+          '<select id="taskAssigneeSelect" class="meeting-form-select">' +
+            state.meetingsRoster.map(function (name) {
+              return '<option value="' + escapeHtml(name) + '"' + (state.taskDraftAssignee === name ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
+            }).join('') +
+          '</select>' +
+          '<div class="meeting-form-actions">' +
+            '<button type="button" class="vendor-field-btn primary" data-action="task-save" data-meeting="' + m.id + '" ' + (state.taskSaving ? 'disabled' : '') + '>' + (state.taskSaving ? 'Saving…' : 'Add Task') + '</button>' +
+            '<button type="button" class="vendor-field-btn secondary" data-action="task-add-cancel" ' + (state.taskSaving ? 'disabled' : '') + '>Cancel</button>' +
+          '</div>' +
+        '</div>';
+      } else {
+        html += '<button type="button" class="meetings-add-btn small" type="button" data-action="task-add-open" data-meeting="' + m.id + '">+ Add Task</button>';
+      }
+
+      html += '</div>'; // .meeting-row-body
+    }
+
+    html += '</div>'; // .meeting-row
+    return html;
+  }
+
+  // Same visual formatting as the 7-step Cross-Sell Checklist
+  // (.checklist-step / checklistHtml() above) -- per Michael: "It should
+  // follow the same formatting as the Check-list items."
+  function meetingTaskItemHtml(t) {
+    var isDone = !!t.completed_at;
+    var toggling = state.taskTogglingId === t.id;
+    var metaLine = isDone
+      ? '✓ ' + escapeHtml(t.completed_by_name) + ' — ' + escapeHtml(fmtTimestamp(t.completed_at))
+      : 'Assigned to ' + escapeHtml(t.assigned_to_name);
+    var cwWarn = t.cw_push && t.cw_push.status === 'error'
+      ? ' <span class="meeting-task-cw-warn" title="' + escapeHtml(t.cw_push.error || '') + '">⚠</span>'
+      : '';
+
+    return '<label class="checklist-step ' + (isDone ? 'done' : '') + '" data-task-row="' + t.id + '">' +
+      '<input type="checkbox" ' + (isDone ? 'checked' : '') + (toggling ? ' disabled' : '') +
+        ' data-action="task-toggle-done" data-task="' + t.id + '" data-completed="' + (isDone ? '1' : '0') + '">' +
+      '<div class="checklist-step-text">' +
+        '<div class="checklist-step-label">' + escapeHtml(t.description) + cwWarn + '</div>' +
+        '<div class="checklist-step-meta">' + metaLine + '</div>' +
+      '</div>' +
+    '</label>';
+  }
+
+  // The separate box "under the Cross-Sell Opportunities box" Michael
+  // asked for -- every task from every one of this customer's meetings,
+  // flattened into one checklist-styled list (open first).
+  function meetingTasksPanelHtml() {
+    var html = '<div class="meeting-tasks-panel">';
+    html += '<div class="roster-title">Meeting To-Dos</div>';
+    html += '<div class="roster-sub">Tasks from this customer’s meetings. Check one off when it’s done.</div>';
+
+    var allTasks = [];
+    (state.meetings || []).forEach(function (m) {
+      m.tasks.forEach(function (t) { allTasks.push({ task: t, meetingSubject: m.subject }); });
+    });
+    allTasks.sort(function (a, b) {
+      var aDone = a.task.completed_at ? 1 : 0;
+      var bDone = b.task.completed_at ? 1 : 0;
+      return aDone - bDone;
+    });
+
+    if (state.meetingsLoading && !state.meetings) {
+      html += '<div class="loading">Loading…</div>';
+    } else if (allTasks.length === 0) {
+      html += '<div class="roster-empty">No tasks yet — add one from a logged meeting above.</div>';
+    } else {
+      html += '<div class="meeting-task-list">';
+      allTasks.forEach(function (item) {
+        html += '<div class="meeting-task-with-context">' +
+          meetingTaskItemHtml(item.task) +
+          '<div class="meeting-task-context">from “' + escapeHtml(item.meetingSubject) + '”</div>' +
+        '</div>';
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  // ---- Global master to-do dashboard (Relationships front page) ---------
+
+  function globalTodosPanelHtml() {
+    var html = '<div class="global-todo-panel">';
+    html += '<div class="view-header">' +
+      '<div class="view-title">Global To-Do Checklist</div>' +
+      '<div class="view-sub">Open tasks from every customer’s meetings. Click one to open that company and complete it there.</div>' +
+    '</div>';
+
+    if (state.globalTodosError) {
+      html += '<div class="error-banner">' + escapeHtml(state.globalTodosError) + '</div>';
+    }
+
+    if (state.globalTodosLoading && !state.globalTodos) {
+      return html + '<div class="loading">Loading…</div></div>';
+    }
+    if (!state.globalTodos) {
+      return html + '</div>';
+    }
+
+    var g = state.globalTodos;
+    html += '<div class="global-todo-summary">';
+    g.roster.forEach(function (name) {
+      var n = g.counts[name] || 0;
+      html += '<div class="global-todo-summary-item' + (n === 0 ? ' zero' : '') + '">' +
+        '<span class="global-todo-summary-count">' + n + '</span>' +
+        '<span class="global-todo-summary-name">' + escapeHtml(name) + '</span>' +
+      '</div>';
+    });
+    html += '</div>';
+
+    if (g.tasks.length === 0) {
+      html += '<div class="roster-empty">No meeting tasks yet.</div>';
+    } else {
+      html += '<div class="global-todo-list">';
+      g.tasks.forEach(function (t) {
+        var isDone = !!t.completed_at;
+        html += '<div class="global-todo-item' + (isDone ? ' done' : '') + '" data-action="open-customer-task" data-customer="' + t.customer_id + '" data-meeting="' + t.meeting_id + '" data-task="' + t.id + '">' +
+          '<div class="global-todo-item-main">' +
+            '<div class="global-todo-item-desc">' + escapeHtml(t.description) + '</div>' +
+            '<div class="global-todo-item-meta">' + escapeHtml(t.customer_name) + ' · “' + escapeHtml(t.meeting_subject) + '” · ' + escapeHtml(t.assigned_to_name) + '</div>' +
+          '</div>' +
+          (isDone
+            ? '<div class="global-todo-item-done-meta">✓ ' + escapeHtml(t.completed_by_name) + ' — ' + escapeHtml(fmtTimestamp(t.completed_at)) + '</div>'
+            : '<div class="global-todo-item-go">Open →</div>') +
+        '</div>';
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
   }
 
   function drilldownHtml(pillar, customer) {
@@ -2280,6 +2805,45 @@
         state.outgrowDraftDate = e.target.value;
       });
     }
+
+    var vendorFieldInput = document.getElementById('vendorFieldInput');
+    if (vendorFieldInput) {
+      vendorFieldInput.addEventListener('input', function (e) {
+        state.vendorDraft = e.target.value;
+      });
+    }
+
+    var meetingSubjectInput = document.getElementById('meetingSubjectInput');
+    if (meetingSubjectInput) {
+      meetingSubjectInput.addEventListener('input', function (e) {
+        state.meetingDraftSubject = e.target.value;
+      });
+    }
+    var meetingDateInput = document.getElementById('meetingDateInput');
+    if (meetingDateInput) {
+      meetingDateInput.addEventListener('input', function (e) {
+        state.meetingDraftDate = e.target.value;
+      });
+    }
+    var meetingNotesInput = document.getElementById('meetingNotesInput');
+    if (meetingNotesInput) {
+      meetingNotesInput.addEventListener('input', function (e) {
+        state.meetingDraftNotes = e.target.value;
+      });
+    }
+
+    var taskDescriptionInput = document.getElementById('taskDescriptionInput');
+    if (taskDescriptionInput) {
+      taskDescriptionInput.addEventListener('input', function (e) {
+        state.taskDraftDescription = e.target.value;
+      });
+    }
+    var taskAssigneeSelect = document.getElementById('taskAssigneeSelect');
+    if (taskAssigneeSelect) {
+      taskAssigneeSelect.addEventListener('change', function (e) {
+        state.taskDraftAssignee = e.target.value;
+      });
+    }
   }
 
   function onRootClick(e) {
@@ -2297,8 +2861,11 @@
       state.resultsOpen = false;
       resetActivityState();
       resetOutgrowState();
+      resetVendorState();
+      resetMeetingsState();
       render();
       if (!state.overview) loadOverview();
+      loadGlobalTodos();
     } else if (action === 'open-pillar') {
       state.activePillarId = el.getAttribute('data-pillar');
       render();
@@ -2316,6 +2883,7 @@
       state.error = null;
       render();
       if (!state.selectedCustomer && !state.overview) loadOverview();
+      if (!state.selectedCustomer) loadGlobalTodos();
     } else if (action === 'show-sync') {
       state.view = 'sync';
       state.error = null;
@@ -2414,6 +2982,56 @@
     } else if (action === 'outgrow-history-toggle') {
       state.outgrowHistoryOpen = !state.outgrowHistoryOpen;
       render();
+    } else if (action === 'vendor-edit-start') {
+      var vPillarId = el.getAttribute('data-pillar');
+      var vNote = state.vendorNotes ? state.vendorNotes[vPillarId] : null;
+      state.vendorEditingPillarId = vPillarId;
+      state.vendorDraft = (vNote && vNote.vendor_name) || '';
+      state.vendorError = null;
+      render();
+    } else if (action === 'vendor-edit-cancel') {
+      state.vendorEditingPillarId = null;
+      state.vendorError = null;
+      render();
+    } else if (action === 'vendor-save') {
+      saveVendorNote(state.selectedCustomer.customer.id, el.getAttribute('data-pillar'));
+    } else if (action === 'meeting-add-open') {
+      state.meetingAddOpen = true;
+      state.meetingDraftDate = outgrowTodayYmd();
+      state.meetingsError = null;
+      render();
+    } else if (action === 'meeting-add-cancel') {
+      state.meetingAddOpen = false;
+      state.meetingsError = null;
+      render();
+    } else if (action === 'meeting-save') {
+      saveMeeting(state.selectedCustomer.customer.id);
+    } else if (action === 'meeting-toggle') {
+      var mId = parseInt(el.getAttribute('data-meeting'), 10);
+      state.openMeetingId = state.openMeetingId === mId ? null : mId;
+      state.taskAddOpenForMeeting = null;
+      render();
+    } else if (action === 'task-add-open') {
+      state.taskAddOpenForMeeting = parseInt(el.getAttribute('data-meeting'), 10);
+      state.taskDraftDescription = '';
+      state.taskDraftAssignee = state.meetingsRoster[0] || '';
+      state.meetingsError = null;
+      render();
+    } else if (action === 'task-add-cancel') {
+      state.taskAddOpenForMeeting = null;
+      state.meetingsError = null;
+      render();
+    } else if (action === 'task-save') {
+      saveTask(parseInt(el.getAttribute('data-meeting'), 10));
+    } else if (action === 'task-toggle-done') {
+      var wasDone = el.getAttribute('data-completed') === '1';
+      toggleTaskDone(parseInt(el.getAttribute('data-task'), 10), !wasDone);
+    } else if (action === 'open-customer-task') {
+      openCustomerAtTask(
+        parseInt(el.getAttribute('data-customer'), 10),
+        parseInt(el.getAttribute('data-meeting'), 10),
+        parseInt(el.getAttribute('data-task'), 10)
+      );
     } else if (action === 'signout') {
       signOut();
     }

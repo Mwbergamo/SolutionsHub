@@ -94,6 +94,31 @@ function relationships_cross_sell_map(): array
     ];
 }
 
+/**
+ * The fixed 7-person assignee roster for meeting to-dos (Customer Meeting
+ * Capture, added 2026-09-15 per Michael) -- verbatim names/order as given.
+ * Not a crc_users query: this list is the source of truth for which 7
+ * names the assignee dropdown always offers, regardless of who has
+ * actually registered a Relationships login yet (registration is
+ * self-service -- auth.php's 'register' action -- so a teammate who hasn't
+ * signed in yet must still be assignable). meetings.php matches a picked
+ * name against crc_users by name (case-insensitive) to fill in
+ * assigned_to_user_id when a real account already exists, but always
+ * stores the plain name regardless of whether that match succeeds.
+ */
+function relationships_todo_roster(): array
+{
+    return [
+        'Claire Hayden',
+        'Jake Bradshaw',
+        'Casey Mayes',
+        'Michael Bergamo',
+        'Chester Sienko',
+        'Moe Okeilli',
+        'Walter Drew',
+    ];
+}
+
 function relationships_is_cross_sell_eligible(string $pillarId, string $serviceId): bool
 {
     $map = relationships_cross_sell_map();
