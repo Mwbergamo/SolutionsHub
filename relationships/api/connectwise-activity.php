@@ -358,20 +358,84 @@ function relationships_cw_activity_billing_series_from_totals(array $byMonth, in
 }
 
 /**
- * The invoice list for one specific "YYYY-MM" month (the "click on the
- * total dollars billed" drill-down): invoice #, date, type, and which
- * agreement it's against -- grouped by that agreement's type (IT
- * Services, Voice, etc.) so a CRC can see where the month's expense is
- * actually recognized, per Michael's request. One extra batched lookup
- * against /finance/agreements resolves each invoice's agreement type
- * (the invoice's own "agreement" field is just an {id, name} reference).
+ * Annual-cadence counterpart to relationships_cw_activity_monthly_billing()
+ * above -- added 2026-09-15 per Michael: "For accounts that are only
+ * being billed annually, I want to see their last 3 years of billings,
+ * just like the last 3 months for normal monthly customers." Same
+ * Agreement-invoice fetch (relationships_cw_activity_agreement_invoices(),
+ * the same confirmed applyToType/applyToId classification -- nothing new
+ * or unverified there), just bucketed by calendar year over a 3-year
+ * window instead of by month over 6 months.
  */
-function relationships_cw_activity_invoices_for_month(string $cwCompanyId, string $yearMonth): array
+function relationships_cw_activity_yearly_billing(string $cwCompanyId, int $years = 3): array
 {
-    $start = DateTimeImmutable::createFromFormat('Y-m-d', $yearMonth . '-01') ?: new DateTimeImmutable('first day of this month');
-    $end = $start->modify('+1 month');
-    $invoices = relationships_cw_activity_agreement_invoices($cwCompanyId, $start, $end);
+    $start = new DateTimeImmutable((((int) date('Y')) - ($years - 1)) . '-01-01 00:00:00');
+    $invoices = relationships_cw_activity_agreement_invoices($cwCompanyId, $start);
 
+    $byYear = [];
+    foreach ($invoices as $inv) {
+        $date = (string) ($inv['date'] ?? '');
+        if ($date === '') {
+            continue;
+        }
+        $key = substr($date, 0, 4); // "YYYY"
+        $byYear[$key] = ($byYear[$key] ?? 0.0) + (float) ($inv['total'] ?? 0);
+    }
+
+    return relationships_cw_activity_yearly_billing_series_from_totals($byYear, $years);
+}
+
+/**
+ * Yearly counterpart to relationships_cw_activity_billing_series_from_totals()
+ * above -- $years calendar years (oldest -> newest) of { year, label,
+ * total }, plus a trend. With only 3 buckets (not 6, like the monthly
+ * series), the monthly helper's recent-3-vs-prior-3-month-average split
+ * doesn't apply here -- this compares the single most recent year to the
+ * single year before it instead. Like the monthly trend definition, this
+ * is this build's interpretation of "going up or down," not something
+ * Michael specified exactly -- flagged the same way.
+ */
+function relationships_cw_activity_yearly_billing_series_from_totals(array $byYear, int $years = 3): array
+{
+    $series = [];
+    $thisYear = (int) date('Y');
+    for ($i = $years - 1; $i >= 0; $i--) {
+        $y = (string) ($thisYear - $i);
+        $series[] = [
+            'year' => $y,
+            'label' => $y,
+            'total' => round((float) ($byYear[$y] ?? 0.0), 2),
+        ];
+    }
+
+    $recentTotal = $series[count($series) - 1]['total'] ?? 0.0;
+    $priorTotal = $series[count($series) - 2]['total'] ?? 0.0;
+
+    if ($priorTotal <= 0.0) {
+        $trend = ['direction' => $recentTotal > 0 ? 'up' : 'flat', 'percent' => null];
+    } else {
+        $percent = (($recentTotal - $priorTotal) / $priorTotal) * 100;
+        $direction = abs($percent) < 1.0 ? 'flat' : ($percent > 0 ? 'up' : 'down');
+        $trend = ['direction' => $direction, 'percent' => round(abs($percent), 1)];
+    }
+
+    return ['series' => $series, 'trend' => $trend];
+}
+
+/**
+ * Shared by relationships_cw_activity_invoices_for_month() and (added
+ * 2026-09-15 for the annual-billing-cadence feature)
+ * relationships_cw_activity_invoices_for_year(): resolves a list of raw
+ * Agreement invoice rows (already date-range-filtered by the caller) into
+ * the drill-down's real shape -- invoice #, date, type, and which
+ * agreement it's against, grouped by that agreement's type (IT Services,
+ * Voice, etc.) so a CRC can see where the period's expense is actually
+ * recognized, per Michael's request. One extra batched lookup against
+ * /finance/agreements resolves each invoice's agreement type (the
+ * invoice's own "agreement" field is just an {id, name} reference).
+ */
+function relationships_cw_activity_invoices_resolve(array $invoices): array
+{
     $agreementIds = array_values(array_unique(array_filter(array_map(
         static fn (array $inv): ?int => isset($inv['applyToId']) ? (int) $inv['applyToId'] : null,
         $invoices
@@ -405,6 +469,34 @@ function relationships_cw_activity_invoices_for_month(string $cwCompanyId, strin
 
     usort($result, static fn (array $a, array $b): int => strcmp((string) $a['date'], (string) $b['date']));
     return $result;
+}
+
+/**
+ * The invoice list for one specific "YYYY-MM" month (the "click on the
+ * total dollars billed" drill-down for a normal monthly-cadence
+ * customer's bar) -- see relationships_cw_activity_invoices_resolve()
+ * above for the actual field resolution.
+ */
+function relationships_cw_activity_invoices_for_month(string $cwCompanyId, string $yearMonth): array
+{
+    $start = DateTimeImmutable::createFromFormat('Y-m-d', $yearMonth . '-01') ?: new DateTimeImmutable('first day of this month');
+    $end = $start->modify('+1 month');
+    $invoices = relationships_cw_activity_agreement_invoices($cwCompanyId, $start, $end);
+    return relationships_cw_activity_invoices_resolve($invoices);
+}
+
+/**
+ * Year counterpart to relationships_cw_activity_invoices_for_month() above
+ * -- added 2026-09-15 for the annual-billing-cadence feature's yearly
+ * bars, same drill-down shape, just a whole calendar year's Agreement
+ * invoices instead of one month's.
+ */
+function relationships_cw_activity_invoices_for_year(string $cwCompanyId, string $year): array
+{
+    $start = DateTimeImmutable::createFromFormat('Y-m-d', $year . '-01-01') ?: new DateTimeImmutable('first day of January this year');
+    $end = $start->modify('+1 year');
+    $invoices = relationships_cw_activity_agreement_invoices($cwCompanyId, $start, $end);
+    return relationships_cw_activity_invoices_resolve($invoices);
 }
 
 /**

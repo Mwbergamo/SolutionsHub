@@ -102,6 +102,19 @@ function relationships_migrate(PDO $pdo): void
     // from an actual agreement) and connectwise-prospect-sync-core.php
     // (only ever sets it on a customer with zero customer_services rows).
     relationships_add_column_if_missing($pdo, 'customers', 'is_prospect_only', 'INTEGER NOT NULL DEFAULT 0');
+    // 'monthly' (default) or 'annual' -- set by the Monthly Billing sync
+    // (connectwise-billing-sync-core.php) when a customer's normal
+    // trailing-6-month Agreement-invoice window comes back entirely $0 but
+    // a wider 3-year check finds real Agreement billing anyway (e.g. one
+    // large invoice a year, in one month, like Evolution Divorce & Family
+    // Law -- see claude/relationships-annual-billing-cadence.md). Read by
+    // relationships_cw_billing_stored_series() to decide whether to read
+    // customer_monthly_billing (6 months) or customer_yearly_billing (3
+    // years) for this customer's Monthly Billing panel. Recomputed from
+    // scratch on every billing sync run, same as is_peoplefirst/
+    // is_prospect_only above, so a customer whose billing pattern changes
+    // isn't stuck on a stale cadence forever.
+    relationships_add_column_if_missing($pdo, 'customers', 'billing_cadence', "TEXT NOT NULL DEFAULT 'monthly'");
 
     // One row per active ConnectWise agreement addition (mocked for now —
     // `source` distinguishes seeded sample rows from anything a future real
@@ -173,6 +186,28 @@ function relationships_migrate(PDO $pdo): void
             total REAL NOT NULL DEFAULT 0,
             synced_at TEXT NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (customer_id, month)
+        )
+    SQL);
+
+    // Annual-cadence counterpart to customer_monthly_billing above -- added
+    // 2026-09-15 per Michael: "For accounts that are only being billed
+    // annually, I want to see their last 3 years of billings, just like
+    // the last 3 months for normal monthly customers." Only ever written
+    // for a customer whose billing_cadence (customers table, above) is
+    // 'annual' -- see connectwise-billing-sync-core.php. Kept as its own
+    // table (year keys, not reused "YYYY" rows inside
+    // customer_monthly_billing) specifically so the portfolio-wide Monthly
+    // Billing gauge (dashboard.php's `SELECT month, SUM(total) ... FROM
+    // customer_monthly_billing GROUP BY month`) can never accidentally mix
+    // an annual lump sum into a monthly total -- that gauge and this table
+    // are completely untouched by the annual-cadence feature.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS customer_yearly_billing (
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            year TEXT NOT NULL,
+            total REAL NOT NULL DEFAULT 0,
+            synced_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (customer_id, year)
         )
     SQL);
 

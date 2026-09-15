@@ -171,7 +171,7 @@
     activityView: null,
     activityTickets: null, // array | 'error' | null (not loaded yet)
     activityTicketsLoading: false,
-    activityInvoicesMonth: null, // { month: "YYYY-MM", label: "Aug 2026" }
+    activityInvoicesPeriod: null, // { type: 'month'|'year', value: "YYYY-MM"|"YYYY", label }
     activityInvoices: null, // array | 'error' | null
     activityInvoicesLoading: false,
     activityInvoiceNumber: null, // shown as the drilldown title while loading
@@ -377,7 +377,7 @@
     state.activityView = null;
     state.activityTickets = null;
     state.activityTicketsLoading = false;
-    state.activityInvoicesMonth = null;
+    state.activityInvoicesPeriod = null;
     state.activityInvoices = null;
     state.activityInvoicesLoading = false;
     state.activityInvoiceNumber = null;
@@ -805,15 +805,19 @@
     });
   }
 
-  function loadActivityInvoices(customerId, month, label) {
+  // periodType is 'month' (periodValue "YYYY-MM") or 'year' (periodValue
+  // "YYYY", added 2026-09-15 for the annual-billing-cadence bars) --
+  // whichever kind of Monthly Billing bar was clicked.
+  function loadActivityInvoices(customerId, periodType, periodValue, label) {
     state.activityView = 'invoices';
-    state.activityInvoicesMonth = { month: month, label: label };
+    state.activityInvoicesPeriod = { type: periodType, value: periodValue, label: label };
     state.activityInvoicesLoading = true;
     state.activityInvoices = null;
     state.error = null;
     render();
+    var paramName = periodType === 'year' ? 'year' : 'month';
     apiGet(
-      'api/activity.php?action=invoices&customer_id=' + encodeURIComponent(customerId) + '&month=' + encodeURIComponent(month)
+      'api/activity.php?action=invoices&customer_id=' + encodeURIComponent(customerId) + '&' + paramName + '=' + encodeURIComponent(periodValue)
     ).then(function (r) {
       state.activityInvoicesLoading = false;
       if (r.data && r.data.ok) {
@@ -2172,30 +2176,44 @@
       '</div>';
     } else {
       var billing = summary.billing;
+      var isAnnual = billing.mode === 'annual';
       var maxTotal = Math.max.apply(null, billing.series.map(function (m) { return m.total; }).concat([1]));
       var trend = billing.trend;
       var trendIcon = trend.direction === 'up' ? '▲' : (trend.direction === 'down' ? '▼' : '—');
       var trendPctText = trend.percent == null ? '' : (trend.percent + '%');
       var trendSummary = trend.direction === 'flat'
         ? 'Holding steady'
-        : ('Trending ' + trend.direction + (trendPctText ? ' ' + trendPctText : '') + ' on average');
+        : ('Trending ' + trend.direction + (trendPctText ? ' ' + trendPctText : '') + (isAnnual ? '' : ' on average'));
 
+      // Annual-cadence customers (added 2026-09-15, per Michael: "For
+      // accounts that are only being billed annually, I want to see
+      // their last 3 years of billings, just like the last 3 months for
+      // normal monthly customers.") -- see billing.php's/connectwise-
+      // billing-sync-core.php's cadence detection. Same bar-chart markup,
+      // just keyed by `year` instead of `month` and captioned for a
+      // year-over-year comparison instead of the monthly rolling average.
       html += '<div class="activity-card billing-card">' +
         '<div class="activity-card-label-row">' +
-          '<div class="activity-card-label">Monthly Billing</div>' +
+          '<div class="activity-card-label">' + (isAnnual ? 'Annual Billing' : 'Monthly Billing') + '</div>' +
           '<div class="trend-badge ' + trend.direction + '">' + trendIcon + (trendPctText ? ' ' + trendPctText : '') + '</div>' +
         '</div>' +
         '<div class="billing-chart">' +
           billing.series.map(function (m) {
             var pct = maxTotal > 0 ? Math.max(4, Math.round((m.total / maxTotal) * 100)) : 4;
-            return '<button class="billing-bar-col" type="button" data-action="open-invoices" data-month="' + m.month + '" data-label="' + escapeHtml(m.label) + '" title="' + escapeHtml(m.label) + ': ' + fmtCurrency(m.total) + '">' +
+            var periodAttr = isAnnual ? ('data-year="' + m.year + '"') : ('data-month="' + m.month + '"');
+            var barLabel = isAnnual ? m.label : m.label.split(' ')[0];
+            return '<button class="billing-bar-col" type="button" data-action="open-invoices" ' + periodAttr + ' data-label="' + escapeHtml(m.label) + '" title="' + escapeHtml(m.label) + ': ' + fmtCurrency(m.total) + '">' +
               '<div class="billing-bar-value">' + fmtCurrency(m.total) + '</div>' +
               '<div class="billing-bar-track"><div class="billing-bar-fill" style="height:' + pct + '%"></div></div>' +
-              '<div class="billing-bar-label">' + escapeHtml(m.label.split(' ')[0]) + '</div>' +
+              '<div class="billing-bar-label">' + escapeHtml(barLabel) + '</div>' +
             '</button>';
           }).join('') +
         '</div>' +
-        '<div class="activity-card-sub">' + escapeHtml(trendSummary) + ' vs. the prior 3 months — Agreement invoices only, click a bar for detail. Synced ' + escapeHtml(fmtTimestamp(summary.billing_synced_at)) + '.</div>' +
+        '<div class="activity-card-sub">' +
+          (isAnnual
+            ? ('Billed annually — ' + escapeHtml(trendSummary) + ' vs. the prior year — Agreement invoices only, click a bar for detail.')
+            : (escapeHtml(trendSummary) + ' vs. the prior 3 months — Agreement invoices only, click a bar for detail.')) +
+          ' Synced ' + escapeHtml(fmtTimestamp(summary.billing_synced_at)) + '.</div>' +
       '</div>';
     }
 
@@ -2236,7 +2254,7 @@
         html += '</tbody></table></div>';
       }
     } else if (state.activityView === 'invoices') {
-      var m = state.activityInvoicesMonth || {};
+      var m = state.activityInvoicesPeriod || {};
       html += '<div class="drilldown-header">' + activityDrilldownBackBtn('activity-close', 'Close') +
         '<div class="drilldown-title">Agreement Invoices — ' + escapeHtml(m.label || '') + '</div>' +
       '</div>';
@@ -2245,7 +2263,7 @@
       } else if (state.activityInvoices === 'error') {
         html += '<div class="activity-error">Could not load invoices from ConnectWise.</div>';
       } else if (state.activityInvoices.length === 0) {
-        html += '<div class="empty-state">No Agreement invoices this month.</div>';
+        html += '<div class="empty-state">No Agreement invoices this ' + (m.type === 'year' ? 'year' : 'month') + '.</div>';
       } else {
         html += invoicesByAgreementTypeHtml(state.activityInvoices);
       }
@@ -2938,7 +2956,9 @@
     } else if (action === 'open-tickets') {
       loadActivityTickets(state.selectedCustomer.customer.id);
     } else if (action === 'open-invoices') {
-      loadActivityInvoices(state.selectedCustomer.customer.id, el.getAttribute('data-month'), el.getAttribute('data-label'));
+      var periodType = el.getAttribute('data-year') !== null ? 'year' : 'month';
+      var periodValue = periodType === 'year' ? el.getAttribute('data-year') : el.getAttribute('data-month');
+      loadActivityInvoices(state.selectedCustomer.customer.id, periodType, periodValue, el.getAttribute('data-label'));
     } else if (action === 'open-invoice-detail') {
       loadActivityInvoiceDetail(el.getAttribute('data-invoice'), el.getAttribute('data-number'));
     } else if (action === 'activity-close') {

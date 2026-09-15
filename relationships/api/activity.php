@@ -12,24 +12,40 @@
  *
  * GET /relationships/api/activity.php?action=summary&customer_id=1
  *   -> { ok: true, ticket_count_ytd: int,
- *        billing: { series: [{month,label,total}] x6, trend: {direction, percent} },
+ *        billing: { mode: 'monthly'|'annual', series: [{month,label,total}] x6 OR [{year,label,total}] x3, trend: {direction, percent} },
  *        billing_synced_at: string|null }
  *
  * ticket_count_ytd is a live ConnectWise query on every call (see
  * connectwise-activity.php). billing is read from the nightly-synced
- * customer_monthly_billing table instead (connectwise-billing-sync-core.php)
- * -- added 2026-09-10 per Michael, to stop paying a ConnectWise round-trip
- * on every single dashboard open for a number that doesn't need to be
- * second-by-second current. billing_synced_at is null when this customer
- * hasn't been covered by a billing sync run yet (new customer, or the
- * billing sync has never run) -- the UI uses that to show "not yet
- * synced" instead of a chart that looks like a confirmed $0.
+ * customer_monthly_billing/customer_yearly_billing tables instead
+ * (connectwise-billing-sync-core.php) -- added 2026-09-10 per Michael, to
+ * stop paying a ConnectWise round-trip on every single dashboard open for
+ * a number that doesn't need to be second-by-second current.
+ * billing_synced_at is null when this customer hasn't been covered by a
+ * billing sync run yet (new customer, or the billing sync has never run)
+ * -- the UI uses that to show "not yet synced" instead of a chart that
+ * looks like a confirmed $0.
+ *
+ * `billing.mode` (added 2026-09-15, per Michael: "For accounts that are
+ * only being billed annually, I want to see their last 3 years of
+ * billings, just like the last 3 months for normal monthly customers.")
+ * is 'annual' for a customer whose Agreement billing only shows up once
+ * a year (see connectwise-billing-sync-core.php's cadence-detection
+ * step) -- `series` then has 3 { year, label, total } entries instead of
+ * 6 { month, label, total } ones. Every customer before 2026-09-15
+ * defaults to 'monthly'.
  *
  * GET /relationships/api/activity.php?action=tickets&customer_id=1
  *   -> { ok: true, tickets: [{ id, ticket_number, date, summary, engineer, hours, status }, ...] }
  *
  * GET /relationships/api/activity.php?action=invoices&customer_id=1&month=2026-08
  *   -> { ok: true, month: "2026-08",
+ *        invoices: [{ id, invoice_number, date, type, agreement_id, agreement_name, agreement_type, total }, ...] }
+ *
+ * GET /relationships/api/activity.php?action=invoices&customer_id=1&year=2026
+ *   (added 2026-09-15 for the annual-cadence bars' drill-down -- mutually
+ *   exclusive with `month` above, same response shape otherwise)
+ *   -> { ok: true, year: "2026",
  *        invoices: [{ id, invoice_number, date, type, agreement_id, agreement_name, agreement_type, total }, ...] }
  *
  * GET /relationships/api/activity.php?action=invoice-detail&invoice_id=12345
@@ -107,8 +123,30 @@ if ($action === 'tickets') {
 if ($action === 'invoices') {
     $customerId = (int) ($_GET['customer_id'] ?? 0);
     $month = (string) ($_GET['month'] ?? '');
+    $year = (string) ($_GET['year'] ?? '');
+
+    // 'year' added 2026-09-15 for the annual-billing-cadence bars' own
+    // drill-down -- mutually exclusive with 'month' (a request never
+    // needs both; the frontend sends exactly one depending on which kind
+    // of bar was clicked).
+    if ($year !== '') {
+        if (!preg_match('/^\d{4}$/', $year)) {
+            relationships_respond(400, ['ok' => false, 'error' => 'year must be "YYYY".']);
+        }
+        $cwId = relationships_activity_cw_id($pdo, $customerId);
+        if ($cwId === null) {
+            relationships_respond(200, ['ok' => true, 'year' => $year, 'invoices' => []]);
+        }
+        try {
+            $invoices = relationships_cw_activity_invoices_for_year($cwId, $year);
+            relationships_respond(200, ['ok' => true, 'year' => $year, 'invoices' => $invoices]);
+        } catch (RelationshipsConnectWiseError $e) {
+            relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
+        }
+    }
+
     if (!preg_match('/^\d{4}-\d{2}$/', $month)) {
-        relationships_respond(400, ['ok' => false, 'error' => 'month must be "YYYY-MM".']);
+        relationships_respond(400, ['ok' => false, 'error' => 'month must be "YYYY-MM" (or pass year=YYYY instead).']);
     }
     $cwId = relationships_activity_cw_id($pdo, $customerId);
     if ($cwId === null) {

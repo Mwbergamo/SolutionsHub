@@ -21,6 +21,18 @@
  * field mapping -- see that file's header for the invoiceDate/applyToType
  * fixes this inherits automatically) covers a customer's whole 6-month
  * series in one shot.
+ *
+ * 2026-09-15: gained annual-cadence detection, per Michael, after he
+ * noticed Evolution Divorce & Family Law's Monthly Billing panel showing
+ * $0 across all 6 months despite real Agreement invoices existing in
+ * ConnectWise -- turned out to be a real, non-erroring $0: that customer
+ * bills once a year (in March), which the trailing-6-month window simply
+ * never catches. When the normal monthly series comes back all-$0, this
+ * step now also checks a wider 3-year window (relationships_cw_activity_yearly_billing())
+ * and, if THAT finds real billing, stores it in customer_yearly_billing
+ * and marks customers.billing_cadence = 'annual' instead of writing a
+ * silently-empty monthly chart. See claude/relationships-annual-billing-cadence.md
+ * in the project for the full write-up.
  */
 
 declare(strict_types=1);
@@ -76,11 +88,18 @@ function relationships_cw_billing_sync_step(PDO $pdo, int $batchSize = 20): arra
     $pending->execute();
     $rows = $pending->fetchAll(PDO::FETCH_ASSOC);
 
-    $upsert = $pdo->prepare(
+    $upsertMonth = $pdo->prepare(
         'INSERT INTO customer_monthly_billing (customer_id, month, total, synced_at)
          VALUES (:cid, :month, :total, datetime(\'now\'))
          ON CONFLICT(customer_id, month) DO UPDATE SET total = excluded.total, synced_at = excluded.synced_at'
     );
+    $upsertYear = $pdo->prepare(
+        'INSERT INTO customer_yearly_billing (customer_id, year, total, synced_at)
+         VALUES (:cid, :year, :total, datetime(\'now\'))
+         ON CONFLICT(customer_id, year) DO UPDATE SET total = excluded.total, synced_at = excluded.synced_at'
+    );
+    $deleteYears = $pdo->prepare('DELETE FROM customer_yearly_billing WHERE customer_id = :cid');
+    $setCadence = $pdo->prepare('UPDATE customers SET billing_cadence = :cadence WHERE id = :cid');
 
     $processed = 0;
     $errors = [];
@@ -89,8 +108,41 @@ function relationships_cw_billing_sync_step(PDO $pdo, int $batchSize = 20): arra
         try {
             $billing = relationships_cw_activity_monthly_billing((string) $row['connectwise_id']);
             foreach ($billing['series'] as $point) {
-                $upsert->execute([':cid' => $customerId, ':month' => $point['month'], ':total' => $point['total']]);
+                $upsertMonth->execute([':cid' => $customerId, ':month' => $point['month'], ':total' => $point['total']]);
             }
+
+            // Annual-cadence detection (2026-09-15, per Michael -- see
+            // claude/relationships-annual-billing-cadence.md): only when
+            // the normal trailing-6-month window is entirely $0 does this
+            // do a second, wider (3-year) check, so the extra API call and
+            // execution-time cost stay off the sync for the majority of
+            // ordinary monthly-billed customers. "Genuinely no Agreement
+            // billing at all" and "billed annually, just not in the last 6
+            // months" both start out looking identical (all-$0 monthly
+            // series) -- this second check is what tells them apart.
+            $monthlyTotal = array_sum(array_column($billing['series'], 'total'));
+            $cadence = 'monthly';
+            if ($monthlyTotal <= 0.0) {
+                $yearly = relationships_cw_activity_yearly_billing((string) $row['connectwise_id'], 3);
+                $yearlyTotal = array_sum(array_column($yearly['series'], 'total'));
+                if ($yearlyTotal > 0.0) {
+                    $cadence = 'annual';
+                    $deleteYears->execute([':cid' => $customerId]);
+                    foreach ($yearly['series'] as $point) {
+                        $upsertYear->execute([':cid' => $customerId, ':year' => $point['year'], ':total' => $point['total']]);
+                    }
+                }
+            }
+            if ($cadence === 'monthly') {
+                // Recomputed from scratch every run (same reasoning as
+                // is_peoplefirst/is_prospect_only in db.php) -- a customer
+                // that no longer qualifies as annual loses stale yearly
+                // rows too, rather than being stuck showing an old 3-year
+                // chart forever.
+                $deleteYears->execute([':cid' => $customerId]);
+            }
+            $setCadence->execute([':cadence' => $cadence, ':cid' => $customerId]);
+
             $pdo->prepare('UPDATE cw_billing_sync_queue SET status = \'done\', processed_at = datetime(\'now\'), error_message = NULL WHERE customer_id = :id')
                 ->execute([':id' => $customerId]);
         } catch (Throwable $e) {
@@ -118,23 +170,44 @@ function relationships_cw_billing_sync_step(PDO $pdo, int $batchSize = 20): arra
 }
 
 /**
- * Reads back the stored 6-month series for one customer, for
- * activity.php's summary action. Always returns exactly $months entries
- * oldest -> newest, zero-filled for any month with no synced row (a
- * genuinely $0 month and "never synced" both read as 0 here -- callers
- * that need to tell those apart should check relationships_cw_billing_last_synced_at()
- * too, which is null only for the latter). Trend uses the exact same
- * recent-3-vs-prior-3 math as the live path (shared helper in
- * connectwise-activity.php), so switching from live to synced never
- * changes what the trend badge means.
+ * Reads back the stored billing series for one customer, for
+ * activity.php's summary action. Always includes a `mode` key
+ * ('monthly' | 'annual') alongside the usual { series, trend } shape, so
+ * the frontend knows which chart to render -- see billing_cadence's
+ * doc comment in db.php and connectwise-billing-sync-core.php's
+ * cadence-detection step above.
+ *
+ * 'monthly' (the default, and every customer before 2026-09-15): exactly
+ * $months entries oldest -> newest, zero-filled for any month with no
+ * synced row (a genuinely $0 month and "never synced" both read as 0
+ * here -- callers that need to tell those apart should check
+ * relationships_cw_billing_last_synced_at() too, which is null only for
+ * the latter). Trend uses the exact same recent-3-vs-prior-3 math as the
+ * live path (shared helper in connectwise-activity.php), so switching
+ * from live to synced never changes what the trend badge means.
+ *
+ * 'annual': exactly $years entries oldest -> newest from
+ * customer_yearly_billing instead, same zero-fill/trend-sharing idea via
+ * relationships_cw_activity_yearly_billing_series_from_totals().
  */
-function relationships_cw_billing_stored_series(PDO $pdo, int $customerId, int $months = 6): array
+function relationships_cw_billing_stored_series(PDO $pdo, int $customerId, int $months = 6, int $years = 3): array
 {
+    $cadenceStmt = $pdo->prepare('SELECT billing_cadence FROM customers WHERE id = :id');
+    $cadenceStmt->execute([':id' => $customerId]);
+    $cadence = (string) ($cadenceStmt->fetchColumn() ?: 'monthly');
+
+    if ($cadence === 'annual') {
+        $stmt = $pdo->prepare('SELECT year, total FROM customer_yearly_billing WHERE customer_id = :id');
+        $stmt->execute([':id' => $customerId]);
+        $byYear = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+        return ['mode' => 'annual'] + relationships_cw_activity_yearly_billing_series_from_totals($byYear, $years);
+    }
+
     $stmt = $pdo->prepare('SELECT month, total FROM customer_monthly_billing WHERE customer_id = :id');
     $stmt->execute([':id' => $customerId]);
     $byMonth = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
 
-    return relationships_cw_activity_billing_series_from_totals($byMonth, $months);
+    return ['mode' => 'monthly'] + relationships_cw_activity_billing_series_from_totals($byMonth, $months);
 }
 
 /**
