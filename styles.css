@@ -27,10 +27,6 @@ button { font-family: 'IBM Plex Sans', sans-serif; }
 ::-webkit-scrollbar-thumb { background: oklch(0.32 0.03 255); border-radius: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-@keyframes accessoryReminder {
-  0%, 100% { box-shadow: 0 0 0 0 oklch(0.78 0.14 85 / 0), 0 0 0 0 oklch(0.78 0.14 85 / 0); }
-  50% { box-shadow: 0 0 0 3px oklch(0.78 0.14 85 / 0.55), 0 0 22px 4px oklch(0.78 0.14 85 / 0.35); }
-}
 
 @media print {
   body * { visibility: hidden; }
@@ -113,4 +109,99 @@ body { overflow-x: hidden; }
    guard against any stray overflow while the viewport is very narrow. */
 @media (max-width: 375px) {
   .app-shell, .app-body { overflow-x: hidden; }
+}
+
+/* ============================= MOTION ============================= */
+/* Added per the animation/design-eng audit (2026-09-15). Tokens, press
+   feedback, view/modal entrance, and a compositor-only cross-sell glow
+   replacing the old animated-box-shadow version. */
+
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --dur-fast: 160ms;
+  --dur-view: 200ms;
+}
+
+/* Visible keyboard focus everywhere. Previously only the search input set
+   outline:none, with nothing anywhere replacing it. */
+:focus-visible {
+  outline: 2px solid oklch(0.78 0.14 85);
+  outline-offset: 2px;
+}
+
+/* Press feedback for every clickable control, targeted via the inline
+   cursor:pointer style already present on every button/tile (91 spots
+   across index.html + app.js) instead of adding a class to each one. */
+[style*="cursor:pointer"] {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+[style*="cursor:pointer"]:active {
+  transform: scale(0.97);
+}
+
+/* Top-level view entrance (Overview / Pillar / Service drill-down) -- the
+   most-repeated transition in the whole app. Exit stays an instant cut:
+   sc-if removes the subtree synchronously in runtime.js, so an exit
+   transition needs a runtime.js change, not just CSS. */
+.view-enter {
+  animation: viewEnter var(--dur-view) var(--ease-out) both;
+}
+@keyframes viewEnter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Image lightbox entrance. transform-origin stays centered (correct for
+   a modal, unlike a trigger-anchored popover). */
+.modal-backdrop-enter {
+  animation: modalBackdropEnter var(--dur-view) ease both;
+}
+@keyframes modalBackdropEnter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.modal-panel-enter {
+  animation: modalPanelEnter var(--dur-view) var(--ease-out) both;
+}
+@keyframes modalPanelEnter {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Cross-sell attention ring -- compositor-only (transform/opacity) via a
+   pseudo-element, replacing the old animated box-shadow (a paint
+   property looping forever on the iPads this app targets). */
+.cross-sell-glow {
+  position: relative;
+}
+.cross-sell-glow::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  box-shadow: 0 0 0 3px oklch(0.78 0.14 85 / 0.55), 0 0 22px 4px oklch(0.78 0.14 85 / 0.35);
+  opacity: 0;
+  transform: scale(0.96);
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cross-sell-glow::after {
+    animation: crossSellPulse 2.2s var(--ease-out) infinite;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cross-sell-glow::after {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+}
+@keyframes crossSellPulse {
+  0%, 100% { opacity: 0; transform: scale(0.96); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view-enter, .modal-backdrop-enter, .modal-panel-enter {
+    animation: none;
+  }
 }

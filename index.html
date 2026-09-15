@@ -54,7 +54,7 @@
 
     <!-- OVERVIEW -->
     <sc-if value="{{isOverview}}" hint-placeholder-val="{{true}}">
-      <div class="view-pad" style="padding:44px 56px 40px;">
+      <div class="view-pad view-enter" style="padding:44px 56px 40px;">
         <div style="display:flex;align-items:flex-start;gap:28px;flex-wrap:wrap;">
           <img src="assets/clyde-solution-helper.png" alt="CodeBlue Clyde — Solution Helper" style="width:150px;max-width:38vw;height:auto;flex:0 0 auto;" />
           <div style="flex:1;min-width:300px;">
@@ -102,7 +102,7 @@
 
         <div style="margin-top:36px;display:flex;flex-wrap:wrap;gap:24px;justify-content:flex-start;">
 
-          <div data-on-click="{{goToIT}}" style="{{itCardStyle}}">
+          <div class="{{itCrossSellClass}}" data-on-click="{{goToIT}}" style="{{itCardStyle}}">
             <div style="display:flex;align-items:center;justify-content:space-between;">
               <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
@@ -217,7 +217,7 @@
 
     <!-- PILLAR DRILL-DOWN -->
     <sc-if value="{{isPillar}}" hint-placeholder-val="{{false}}">
-      <div class="view-pad" style="padding:36px 56px 40px;">
+      <div class="view-pad view-enter" style="padding:36px 56px 40px;">
         <div style="display:flex;align-items:center;gap:14px;">
           <div data-on-click="{{backToOverview}}" style="width:36px;height:36px;border-radius:999px;background:oklch(0.22 0.03 255);display:flex;align-items:center;justify-content:center;cursor:pointer;">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
@@ -228,7 +228,7 @@
 
         <div style="margin-top:26px;margin-left:50px;display:flex;flex-direction:column;gap:10px;max-width:820px;">
           <sc-for list="{{currentPillar.services}}" as="svc" hint-placeholder-count="6">
-            <div data-on-click="{{svc.onClick}}" style="{{svc.cardStyle}}">
+            <div class="{{svc.crossSellClass}}" data-on-click="{{svc.onClick}}" style="{{svc.cardStyle}}">
               <div style="padding-right:16px;">
                 <div style="font-weight:700;font-size:15px;color:oklch(0.2 0.03 255);">{{svc.name}}</div>
                 <div style="font-size:13px;color:oklch(0.48 0.02 255);margin-top:3px;line-height:1.4;">{{svc.blurb}}</div>
@@ -252,7 +252,7 @@
 
     <!-- SERVICE DETAIL -->
     <sc-if value="{{isService}}" hint-placeholder-val="{{false}}">
-      <div class="view-pad" style="padding:36px 56px 48px;">
+      <div class="view-pad view-enter" style="padding:36px 56px 48px;">
         <div style="display:flex;align-items:center;gap:14px;">
           <div data-on-click="{{backToPillar}}" style="width:36px;height:36px;border-radius:999px;background:oklch(0.22 0.03 255);display:flex;align-items:center;justify-content:center;cursor:pointer;">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
@@ -718,7 +718,7 @@
             <div style="margin-top:4px;font-size:12.5px;color:oklch(0.58 0.02 255);">Tap into a category to see the relevant products.</div>
             <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:14px;">
               <sc-for list="{{categoryServiceVM.categories}}" as="cat" hint-placeholder-count="4">
-                <div data-on-click="{{cat.onClick}}" style="{{cat.cardStyle}}">
+                <div class="{{cat.crossSellClass}}" data-on-click="{{cat.onClick}}" style="{{cat.cardStyle}}">
                   <div style="display:flex;align-items:center;justify-content:space-between;">
                     <div style="font-weight:700;font-size:16px;color:oklch(0.2 0.03 255);">{{cat.name}}</div>
                     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.55 0.02 255)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"></polyline></svg>
@@ -750,7 +750,7 @@
 
     <!-- CATEGORY DRILL-DOWN (Cyber Security sub-categories) -->
     <sc-if value="{{isCategory}}" hint-placeholder-val="{{false}}">
-      <div class="view-pad" style="padding:36px 56px 48px;">
+      <div class="view-pad view-enter" style="padding:36px 56px 48px;">
         <div style="display:flex;align-items:center;gap:14px;">
           <div data-on-click="{{currentCategory.backToService}}" style="width:36px;height:36px;border-radius:999px;background:oklch(0.22 0.03 255);display:flex;align-items:center;justify-content:center;cursor:pointer;">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
@@ -795,7 +795,7 @@
                 </sc-if>
                 <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px;">
                   <sc-for list="{{grp.products}}" as="prod" hint-placeholder-count="4">
-                    <div style="{{prod.cardStyle}}">
+                    <div class="{{prod.crossSellClass}}" style="{{prod.cardStyle}}">
                       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;">
                         <div style="display:flex;align-items:flex-start;gap:14px;flex:1;min-width:0;">
                           <sc-if value="{{prod.hasImage}}" hint-placeholder-val="{{false}}">
@@ -1094,7 +1094,7 @@
 
     <!-- SUMMARY -->
     <sc-if value="{{isSummary}}" hint-placeholder-val="{{false}}">
-      <div class="summary-print-area view-pad" style="padding:36px 56px 48px;max-width:800px;">
+      <div class="summary-print-area view-pad view-enter" style="padding:36px 56px 48px;max-width:800px;">
         <div style="display:flex;align-items:center;justify-content:space-between;">
           <div style="font-family:'Space Grotesk',sans-serif;font-size:27px;font-weight:700;color:white;">Your Solution</div>
           <button data-on-click="{{closeSummary}}" style="background:oklch(0.22 0.03 255);border:1px solid oklch(0.32 0.03 255);color:white;font-size:13.5px;font-weight:600;padding:9px 18px;border-radius:999px;cursor:pointer;">Close</button>
@@ -1261,7 +1261,7 @@
 
     <!-- PEOPLEFIRST CHECK OUT -->
     <sc-if value="{{isCheckout}}" hint-placeholder-val="{{false}}">
-      <div class="checkout-print-area view-pad" style="padding:36px 56px 48px;max-width:800px;">
+      <div class="checkout-print-area view-pad view-enter" style="padding:36px 56px 48px;max-width:800px;">
         <div style="display:flex;align-items:center;justify-content:space-between;">
           <div style="font-family:'Space Grotesk',sans-serif;font-size:27px;font-weight:700;color:white;">PeopleFirst Check Out</div>
           <button data-on-click="{{checkoutVM.backToSummary}}" style="background:oklch(0.22 0.03 255);border:1px solid oklch(0.32 0.03 255);color:white;font-size:13.5px;font-weight:600;padding:9px 18px;border-radius:999px;cursor:pointer;">← Back to Solution</button>
@@ -1551,8 +1551,8 @@
        imagePreview root state (see Component.openImagePreview in app.js).
        Dismiss by tapping the dim backdrop or the close button. -->
   <sc-if value="{{imagePreview.isOpen}}" hint-placeholder-val="{{false}}">
-    <div data-on-click="{{imagePreview.onClose}}" style="position:fixed;inset:0;background:rgba(8,12,22,0.82);z-index:1000;display:flex;align-items:center;justify-content:center;padding:40px;">
-      <div data-on-click="{{imagePreview.onStop}}" style="position:relative;max-width:min(640px, 90vw);max-height:90vh;display:flex;flex-direction:column;align-items:center;">
+    <div class="modal-backdrop-enter" data-on-click="{{imagePreview.onClose}}" style="position:fixed;inset:0;background:rgba(8,12,22,0.82);z-index:1000;display:flex;align-items:center;justify-content:center;padding:40px;">
+      <div class="modal-panel-enter" data-on-click="{{imagePreview.onStop}}" style="position:relative;max-width:min(640px, 90vw);max-height:90vh;display:flex;flex-direction:column;align-items:center;">
         <button data-on-click="{{imagePreview.onClose}}" aria-label="Close preview" style="position:absolute;top:-14px;right:-14px;width:34px;height:34px;border-radius:999px;background:white;border:none;color:oklch(0.2 0.03 255);font-size:16px;font-weight:700;cursor:pointer;line-height:1;box-shadow:0 6px 18px rgba(0,0,0,0.4);">✕</button>
         <img src="{{imagePreview.url}}" alt="{{imagePreview.caption}}" style="display:block;max-width:100%;max-height:80vh;border-radius:14px;background:white;object-fit:contain;box-shadow:0 20px 60px rgba(0,0,0,0.5);" />
         <sc-if value="{{imagePreview.hasCaption}}" hint-placeholder-val="{{false}}">

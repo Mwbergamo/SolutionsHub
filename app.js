@@ -2703,7 +2703,7 @@ class Component extends DCLogic {
     var computerCyberFlag = computerEdrFlag || computerPatchFlag;
     var serverCyberFlag = serverEdrFlag || serverPatchFlag;
     var cyberSecFlag = computerCyberFlag || serverCyberFlag;
-    var CROSS_SELL_GLOW = 'border:2px solid oklch(0.78 0.14 85);box-shadow:0 0 0 3px oklch(0.78 0.14 85 / 0.35),0 0 24px 4px oklch(0.78 0.14 85 / 0.3);animation:accessoryReminder 2.2s ease-in-out infinite;';
+    var CROSS_SELL_GLOW = 'border:2px solid oklch(0.78 0.14 85);position:relative;';
 
     // Policy: selling Guardz requires 1 SentinelOne license alongside it —
     // Guardz does not include endpoint protection. When a rep has any
@@ -2806,6 +2806,7 @@ class Component extends DCLogic {
               selected: !!selections[s.id],
               isCyberHighlighted: svcCyberHighlighted,
               cardStyle: svcCardStyle,
+              crossSellClass: svcCyberHighlighted ? 'cross-sell-glow' : '',
               onClick: function () { self.openService(p.id, s.id); }
             };
           })
@@ -3103,6 +3104,7 @@ class Component extends DCLogic {
             productCount: cat.products ? cat.products.length : 0,
             hasProducts: !!(cat.products && cat.products.length > 0),
             isHighlighted: isHighlighted, highlightBadgeText: highlightBadgeText, cardStyle: cardStyle,
+            crossSellClass: isHighlighted ? 'cross-sell-glow' : '',
             onClick: function () { self.openCategory(catSvcPillar.id, catSvcForTiles.id, cat.id); }
           };
         })
@@ -3405,6 +3407,7 @@ class Component extends DCLogic {
             hasImage: !!p.image, image: p.image || '',
             onImageClick: p.image ? function () { self.openImagePreview(p.image, p.label); } : null,
             isCrossSellHighlighted: isCrossSellItem, crossSellBadgeText: crossSellBadgeText, cardStyle: prodCardStyle,
+            crossSellClass: isCrossSellItem ? 'cross-sell-glow' : '',
             onInc: function () { self.incCategoryProduct(catCategoryId, p.id, step); },
             onDec: function () { self.incCategoryProduct(catCategoryId, p.id, -step); }
           };
@@ -3796,6 +3799,7 @@ class Component extends DCLogic {
       selectionCount: selectionCount,
       goOverview: function () { self.goOverview(); },
       itCyberSellFlag: cyberSecFlag,
+      itCrossSellClass: cyberSecFlag ? 'cross-sell-glow' : '',
       itCardStyle: 'width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
         (cyberSecFlag ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
       goToIT: function () { self.openPillar('it'); },
