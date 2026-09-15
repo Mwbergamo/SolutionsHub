@@ -300,6 +300,61 @@ a { color: inherit; }
 
 .overview-dash { color: oklch(0.5 0.015 255); }
 
+/* Customer-list filter toggle buttons (added 2026-09-15 per Michael) --
+   Prospects on/off, and singling out PeopleFirst-only. Sit above the
+   sortable column header, inside the same .overview-list-wrap. Active
+   colors intentionally match .prospect-badge / .peoplefirst-badge so a
+   button's "on" color always means the same thing its badge does
+   elsewhere in this app. */
+.overview-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 18px 14px;
+}
+
+.overview-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.3 0.02 255);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: oklch(0.6 0.015 255);
+  cursor: pointer;
+}
+.overview-filter-btn:hover { border-color: oklch(0.42 0.02 255); color: oklch(0.85 0.01 255); }
+
+.overview-filter-count {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  opacity: .85;
+}
+
+.overview-filter-btn.prospects.active {
+  background: oklch(0.72 0.14 300 / 0.16);
+  border-color: oklch(0.72 0.14 300 / 0.55);
+  color: oklch(0.72 0.14 300);
+}
+
+.overview-filter-btn.peoplefirst.active {
+  background: oklch(0.78 0.15 85 / 0.16);
+  border-color: oklch(0.78 0.15 85 / 0.55);
+  color: oklch(0.78 0.15 85);
+}
+
+.overview-list-empty {
+  padding: 18px;
+  text-align: center;
+  font-size: 13px;
+  color: oklch(0.55 0.015 255);
+}
+
+
 @media (max-width: 700px) {
   .overview-list-header { display: none; }
   .overview-row {

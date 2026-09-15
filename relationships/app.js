@@ -128,6 +128,16 @@
     // Purely a display concern -- re-sorts state.overview.customers on
     // every render rather than mutating the fetched data.
     overviewSort: { column: 'name', direction: 'asc' },
+    // Customer-list filters (added 2026-09-15 per Michael) -- both are
+    // purely client-side display filters over the same state.overview.
+    // customers array dashboard.php already returns is_prospect_only /
+    // is_peoplefirst for; see filteredOverviewCustomers(). overviewShowProspects
+    // defaults true (nothing hidden until the CRC turns it off);
+    // overviewPeopleFirstOnly defaults false and, when on, takes
+    // precedence over the prospects toggle (PeopleFirst members are never
+    // prospects, so there's nothing to conflict).
+    overviewShowProspects: true,
+    overviewPeopleFirstOnly: false,
 
     // Checklist data, keyed by "customerId::pillarId::serviceId". Each
     // value is: undefined (not fetched yet), 'error', or an array of the
@@ -2032,10 +2042,51 @@
   // scroll area (see adjustOverviewListScroll(), called after every
   // render()) instead of growing the whole page -- roughly the first 25
   // stay visible without scrolling.
+  // Client-side filters for the front-page customer list -- added
+  // 2026-09-15 per Michael: a Prospects on/off toggle, and a "PeopleFirst
+  // Only" toggle that singles out just the PeopleFirst member companies.
+  // Both read the same is_prospect_only / is_peoplefirst flags the row
+  // badges already use, so no API change is needed. PeopleFirst Only wins
+  // when both are somehow set, since a PeopleFirst company is never also
+  // a prospect.
+  function filteredOverviewCustomers(customers) {
+    if (state.overviewPeopleFirstOnly) {
+      return customers.filter(function (c) { return c.is_peoplefirst; });
+    }
+    if (!state.overviewShowProspects) {
+      return customers.filter(function (c) { return !c.is_prospect_only; });
+    }
+    return customers;
+  }
+
+  // Toolbar of filter toggle buttons shown above the list header. Counts
+  // are always computed off the *unfiltered* customers array so a hidden
+  // group's count doesn't disappear along with its rows.
+  function overviewFilterBarHtml(customers) {
+    var prospectCount = customers.filter(function (c) { return c.is_prospect_only; }).length;
+    var peopleFirstCount = customers.filter(function (c) { return c.is_peoplefirst; }).length;
+    var prospectsShown = !!state.overviewShowProspects;
+    var pfOnly = !!state.overviewPeopleFirstOnly;
+    return '<div class="overview-filter-bar">' +
+      '<button class="overview-filter-btn prospects' + (prospectsShown ? ' active' : '') + '" type="button" ' +
+        'data-action="toggle-overview-prospects" title="' + (prospectsShown ? 'Hide Prospect companies from this list' : 'Show Prospect companies in this list') + '">' +
+        '◇ ' + (prospectsShown ? 'Prospects Shown' : 'Prospects Hidden') +
+        ' <span class="overview-filter-count">' + prospectCount + '</span>' +
+      '</button>' +
+      '<button class="overview-filter-btn peoplefirst' + (pfOnly ? ' active' : '') + '" type="button" ' +
+        'data-action="toggle-overview-peoplefirst" title="Show only PeopleFirst member companies">' +
+        '★ PeopleFirst Only' +
+        ' <span class="overview-filter-count">' + peopleFirstCount + '</span>' +
+      '</button>' +
+    '</div>';
+  }
+
   function customerOverviewListHtml(customers) {
     if (!customers.length) return '';
-    var sorted = sortOverviewCustomers(customers);
+    var filtered = filteredOverviewCustomers(customers);
+    var sorted = sortOverviewCustomers(filtered);
     var html = '<div class="overview-list-wrap">' +
+      overviewFilterBarHtml(customers) +
       '<div class="overview-list-header">' +
         '<div class="overview-col-name">' + overviewHeaderCellHtml('name', 'Customer') + '</div>' +
         '<div class="overview-col">' + overviewHeaderCellHtml('billing_trend', 'Billing Trend (6mo)') + '</div>' +
@@ -2043,6 +2094,9 @@
         '<div class="overview-col">' + overviewHeaderCellHtml('contact_count', 'Active Contacts') + '</div>' +
       '</div>' +
       '<div class="overview-list">';
+    if (!sorted.length) {
+      html += '<div class="overview-list-empty">No customers match the current filter.</div>';
+    }
     sorted.forEach(function (c) {
       var badge = c.is_peoplefirst ? peopleFirstBadgeHtml() : (c.is_prospect_only ? prospectBadgeHtml() : '');
       html += '<div class="overview-row" data-action="select-customer" data-id="' + c.id + '">' +
@@ -2974,6 +3028,12 @@
       } else {
         state.overviewSort.direction = state.overviewSort.direction === 'asc' ? 'desc' : 'asc';
       }
+      render();
+    } else if (action === 'toggle-overview-prospects') {
+      state.overviewShowProspects = !state.overviewShowProspects;
+      render();
+    } else if (action === 'toggle-overview-peoplefirst') {
+      state.overviewPeopleFirstOnly = !state.overviewPeopleFirstOnly;
       render();
     } else if (action === 'open-print-summary') {
       state.printSummaryOpen = true;
