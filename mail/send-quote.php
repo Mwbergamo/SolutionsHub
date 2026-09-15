@@ -50,24 +50,6 @@ if (!is_file($configPath)) {
 /** @var array $config */
 $config = require $configPath;
 
-// ---- TEMPORARY diagnostic bypass (2026-09-15) -------------------------------
-// Michael is debugging "Could not send the email right now" on this endpoint.
-// send-quote.php never leaks the real Graph exception to normal callers (see
-// the catch block below), and this build environment has no network path to
-// the live server's PHP error log or to Microsoft Graph -- so there is no way
-// to see the *actual* Graph/curl error short of Michael checking Bluehost's
-// error log himself. This lets him pull it with one curl call instead.
-//
-// Trigger: header  X-Debug-Secret: cbt-quote-mail-debug-20260915
-// Effect:  (a) skips the Origin/Referer check below, so a plain curl works;
-//          (b) the catch block appends the real exception message under a
-//              "debug" key -- ONLY when this header is present and correct.
-// Normal browser traffic from app.js never sends this header, so the public
-// behavior (generic message, no leaked details) is unchanged.
-// REMOVE THIS BLOCK AND THE "debug" KEY BELOW ONCE THE CAUSE IS CONFIRMED.
-$debugSecret = 'cbt-quote-mail-debug-20260915';
-$debugMode = hash_equals($debugSecret, $_SERVER['HTTP_X_DEBUG_SECRET'] ?? '');
-
 // ---- same-origin / minimal anti-abuse check --------------------------------
 $allowedOrigins = $config['allowed_origins'] ?? [];
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -79,7 +61,7 @@ if ($referer !== '') {
         $refererOrigin = $parts['scheme'] . '://' . $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '');
     }
 }
-if (!empty($allowedOrigins) && !$debugMode) {
+if (!empty($allowedOrigins)) {
     $ok = in_array($origin, $allowedOrigins, true) || in_array($refererOrigin, $allowedOrigins, true);
     if (!$ok) {
         respond(403, ['ok' => false, 'error' => 'Request origin not allowed.']);
@@ -132,17 +114,11 @@ try {
     $fromName = (string) ($config['from_name'] ?? 'CodeBlue Technology');
     $bcc = trim((string) ($config['bcc'] ?? ''));
 
-    $mailer->send($to, $subject, $html, $bcc !== '' ? $bcc : null, $fromName, 'HTML');
+    $mailer->send($to, $subject, $html, $bcc !== '' ? $bcc : null, $fromName, true);
 
     respond(200, ['ok' => true]);
 } catch (Throwable $e) {
     // Never leak Graph credentials or internal exception details to the client.
     error_log('[send-quote] ' . $e->getMessage());
-    $payload = ['ok' => false, 'error' => 'Could not send the email right now. Please try again shortly.'];
-    if ($debugMode) {
-        // TEMPORARY -- see the diagnostic bypass block above. Remove this
-        // "debug" key once the cause is confirmed.
-        $payload['debug'] = $e->getMessage();
-    }
-    respond(502, $payload);
+    respond(502, ['ok' => false, 'error' => 'Could not send the email right now. Please try again shortly.']);
 }
