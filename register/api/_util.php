@@ -72,33 +72,31 @@ function register_read_json_body(int $maxBytes = 262144): array
     return is_array($data) ? $data : [];
 }
 
+/**
+ * As of 2026-09-15 this app no longer runs its own login session --
+ * everyone signs in once via Microsoft 365 at the SolutionsHub root (see
+ * /login.php), and every app (root, relationships/, register/) shares
+ * that ONE session. See auth/session.php for the actual session
+ * mechanics this just delegates to.
+ */
 function register_start_session(): void
 {
-    if (session_status() !== PHP_SESSION_ACTIVE) {
-        // Same reasoning as relationships/api/_util.php: Bluehost's default
-        // session.save_path can silently fail to persist, so use our own
-        // directory next to the SQLite database, which we already know is
-        // writable.
-        $sessionDir = __DIR__ . '/../data/sessions';
-        if (!is_dir($sessionDir)) {
-            mkdir($sessionDir, 0770, true);
-        }
-        session_save_path($sessionDir);
-
-        session_set_cookie_params([
-            'lifetime' => 0,
-            'path' => '/register/',
-            'httponly' => true,
-            'samesite' => 'Lax',
-        ]);
-        session_start();
-    }
+    require_once __DIR__ . '/../../auth/session.php';
+    auth_start_session();
 }
 
+/**
+ * Returns the signed-in user's row (id, name, email) or null.
+ * $_SESSION['register_user_id'] is set by auth/callback.php on successful
+ * Microsoft sign-in (see auth/local-user.php) -- it's this app's own
+ * register_users.id, kept as a real local row so existing foreign keys
+ * elsewhere in this schema, like a sale's "rung up by", keep resolving to
+ * a valid id exactly as before.
+ */
 function register_current_user(PDO $pdo): ?array
 {
     register_start_session();
-    $userId = $_SESSION['user_id'] ?? null;
+    $userId = $_SESSION['register_user_id'] ?? null;
     if (!is_int($userId)) {
         return null;
     }

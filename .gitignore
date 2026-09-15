@@ -4,6 +4,16 @@
 # reserve that filename.)
 /mail/mail-config.php
 
+# Same pattern for the shared Microsoft 365 sign-in (root, relationships/,
+# register/ all use this one) -- copy auth-config.sample.php to
+# auth-config.php on the server and fill it in there.
+/auth-config.php
+
+# Shared PHP session files for the Microsoft 365 sign-in above (see
+# auth/session.php) -- created on first sign-in. Never commit these:
+# they're live session data, not source.
+/data/sessions/
+
 # Same pattern for the ConnectWise API credentials -- copy
 # relationships/api/connectwise-config.sample.php to
 # relationships/api/connectwise-config.php on the server and fill it in

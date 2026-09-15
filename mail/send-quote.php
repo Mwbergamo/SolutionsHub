@@ -16,6 +16,12 @@
  *
  * Anti-abuse (intentionally lightweight, not bulletproof — see task notes):
  *   - only POST is accepted
+ *   - caller must be signed in via the shared Microsoft 365 session (added
+ *     2026-09-15 -- see auth/session.php; the root app itself is now
+ *     behind that same sign-in, so this was previously reachable only
+ *     through a page nothing unauthenticated could load anyway, but
+ *     checking it here too means a direct POST to this endpoint can't
+ *     bypass sign-in and send mail as CodeBlue)
  *   - Origin/Referer must match mail-config.php's allowed_origins
  *   - honeypot field must be empty
  *   - "to" must look like an email address
@@ -38,6 +44,11 @@ function respond(int $httpCode, array $payload): never
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
+}
+
+require_once __DIR__ . '/../auth/session.php';
+if (auth_current_user() === null) {
+    respond(401, ['ok' => false, 'error' => 'Not signed in.']);
 }
 
 $configPath = __DIR__ . '/mail-config.php';

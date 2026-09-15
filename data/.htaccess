@@ -1,0 +1,8 @@
+# Block all direct HTTP access to this folder -- it holds the shared
+# Microsoft 365 sign-in session files used by every SolutionsHub app (root,
+# relationships/, register/). Nothing here should ever be served to a
+# browser; only auth/session.php reads/writes it via PHP's own session
+# handler on the server side. Same pattern as relationships/data/.htaccess
+# and register/data/.htaccess.
+Order allow,deny
+Deny from all

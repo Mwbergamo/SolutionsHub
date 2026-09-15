@@ -1595,7 +1595,14 @@
 <script src="app.js?v=a25110e"></script>
 <script src="runtime.js?v=a25110e"></script>
 <script>
-  (function () {
+  // Sign-in gate (added 2026-09-15) -- app.js/runtime.js load unconditionally
+  // above (they're just static definitions; nothing runs yet), but the app
+  // is only actually mounted once /auth/me.php confirms a signed-in
+  // Microsoft 365 session. Otherwise the browser is sent to /login.php,
+  // which comes back here via ?return_to= once sign-in succeeds. See
+  // auth/session.php for the shared session every SolutionsHub app
+  // (relationships/, register/) now uses the same way.
+  function mountSolutionsHubApp() {
     var templateHtml = document.getElementById('app-template').textContent;
     var mountEl = document.getElementById('app-root');
     var component = window.SolutionsHubApp.createComponent({ accentColor: '#2f8fef' });
@@ -1615,6 +1622,21 @@
     } else if (pillarId) {
       component.openPillar(pillarId);
     }
+  }
+
+  (function () {
+    fetch('/auth/me.php', { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (!r.ok || !r.user) {
+          window.location.replace('/login.php?return_to=' + encodeURIComponent(window.location.pathname + window.location.search));
+          return;
+        }
+        mountSolutionsHubApp();
+      })
+      .catch(function () {
+        window.location.replace('/login.php?return_to=' + encodeURIComponent(window.location.pathname + window.location.search));
+      });
   })();
 </script>
 </body>

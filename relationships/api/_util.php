@@ -27,45 +27,32 @@ function relationships_read_json_body(int $maxBytes = 262144): array
     return is_array($data) ? $data : [];
 }
 
+/**
+ * As of 2026-09-15 this dashboard no longer runs its own login session --
+ * everyone signs in once via Microsoft 365 at the SolutionsHub root (see
+ * /login.php), and every app (root, relationships/, register/) shares that
+ * ONE session. See auth/session.php for the actual session mechanics this
+ * just delegates to.
+ */
 function relationships_start_session(): void
 {
-    if (session_status() !== PHP_SESSION_ACTIVE) {
-        // Shared hosting (this app runs on Bluehost) can point PHP's
-        // default session.save_path somewhere this account isn't actually
-        // able to write to, or prunes it aggressively -- when that happens
-        // session_start() doesn't error, it just silently fails to persist
-        // anything, so login/register look like they succeed but the very
-        // next request comes back signed-out. Use our own directory, which
-        // we already know is writable (db.php creates the SQLite file next
-        // to it), instead of trusting the server default. It's covered by
-        // data/.htaccess's "Deny from all", same as the database file.
-        $sessionDir = __DIR__ . '/../data/sessions';
-        if (!is_dir($sessionDir)) {
-            mkdir($sessionDir, 0770, true);
-        }
-        session_save_path($sessionDir);
-
-        session_set_cookie_params([
-            'lifetime' => 0,
-            'path' => '/relationships/',
-            'httponly' => true,
-            'samesite' => 'Lax',
-            // True only on an actual HTTPS request, so this still works
-            // during local testing over plain HTTP.
-            'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
-        ]);
-        session_name('relationships_session');
-        session_start();
-    }
+    require_once __DIR__ . '/../../auth/session.php';
+    auth_start_session();
 }
 
 /**
- * Returns the logged-in user's row (id, name, email) or null. Never throws.
+ * Returns the signed-in user's row (id, name, email) or null. Never
+ * throws. $_SESSION['crc_user_id'] is set by auth/callback.php on
+ * successful Microsoft sign-in (see auth/local-user.php) -- it's this
+ * app's own crc_users.id, kept as a real local row (rather than reading
+ * name/email straight out of the shared session) so existing foreign keys
+ * elsewhere in this schema, like checklist_progress's "completed by",
+ * keep resolving to a valid id exactly as before.
  */
 function relationships_current_user(PDO $pdo): ?array
 {
     relationships_start_session();
-    $userId = $_SESSION['user_id'] ?? null;
+    $userId = $_SESSION['crc_user_id'] ?? null;
     if (!is_int($userId)) {
         return null;
     }
