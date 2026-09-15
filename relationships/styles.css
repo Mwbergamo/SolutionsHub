@@ -727,6 +727,140 @@ a { color: inherit; }
   padding: 10px 14px;
 }
 
+/* OutGrow Last Touch -- added 2026-09-15, per Michael */
+
+.outgrow-card {
+  margin-top: 18px;
+  background: oklch(0.17 0.016 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 16px;
+  padding: 16px 20px;
+}
+
+.outgrow-card-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.outgrow-card-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: oklch(0.55 0.015 255);
+}
+
+.outgrow-history-btn {
+  background: transparent;
+  border: none;
+  color: oklch(0.6 0.02 255);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  border-radius: 999px;
+}
+.outgrow-history-btn:hover { color: #8fc3ff; background: oklch(0.24 0.02 255); }
+
+.outgrow-card-value {
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 700;
+  color: white;
+}
+
+.outgrow-card-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: oklch(0.6 0.015 255);
+}
+
+.outgrow-update-btn {
+  margin-top: 10px;
+  background: transparent;
+  border: 1px solid oklch(0.34 0.02 255);
+  color: oklch(0.7 0.02 255);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.outgrow-update-btn:hover { border-color: #2f8fef; color: #8fc3ff; }
+
+.outgrow-edit-row {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.outgrow-date-input {
+  background: oklch(0.98 0.006 255);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: oklch(0.2 0.03 255);
+}
+
+.outgrow-error {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: #f87171;
+}
+
+.outgrow-history {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid oklch(0.27 0.02 255);
+}
+
+.outgrow-history-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: oklch(0.55 0.015 255);
+  margin-bottom: 8px;
+}
+
+.outgrow-history-list { display: flex; flex-direction: column; gap: 10px; }
+
+.outgrow-history-row {
+  font-size: 12.5px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid oklch(0.24 0.016 255);
+}
+.outgrow-history-row:last-child { border-bottom: none; padding-bottom: 0; }
+
+.outgrow-history-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.outgrow-history-date { font-weight: 700; color: white; }
+.outgrow-history-who { color: oklch(0.7 0.015 255); }
+
+.outgrow-history-when {
+  margin-top: 2px;
+  font-size: 11px;
+  color: oklch(0.5 0.015 255);
+}
+
+.outgrow-history-warn {
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #f87171;
+}
+
 /* Live ConnectWise ticket/billing activity */
 
 .activity-panel {

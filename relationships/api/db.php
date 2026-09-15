@@ -355,6 +355,43 @@ function relationships_migrate(PDO $pdo): void
         )
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_checklist_cw_activity_log_customer ON checklist_cw_activity_log(customer_id)');
+
+    // OutGrow Last Touch history -- added 2026-09-15 per Michael. One row
+    // per touch date ever recorded for a customer (append-only -- nothing
+    // here is ever UPDATEd or DELETEd, so "the current value" is always
+    // just the newest row for that customer_id). Two kinds of row:
+    //   - source = 'manual': a CRC picked a date and clicked Save
+    //     (outgrow.php's 'set' action) -- set_by_user_id/set_by_name are
+    //     that CRC, from relationships_require_login().
+    //   - source = 'connectwise_seed': the ONE-TIME backfill of a value
+    //     that already existed in ConnectWise's own "OutGrow Last Touch"
+    //     Company custom field before this feature existed (per Michael:
+    //     "count that as their first historical entry") -- only ever
+    //     inserted when this customer has zero rows here yet, so it can
+    //     only ever be the very first (oldest) row for a customer. See
+    //     connectwise-outgrow.php. set_by_user_id is NULL for a seed row
+    //     (nothing to attribute it to -- it predates this feature).
+    // cw_push_status/cw_push_error record whether THIS row's value made it
+    // into ConnectWise: NULL for a seed row (that's a read, not a write --
+    // nothing was pushed), 'pushed' or 'error' for a manual row (see
+    // connectwise-outgrow.php's relationships_cw_outgrow_write()). Same
+    // "save locally regardless, never let a ConnectWise failure block or
+    // revert the local save" posture as checklist_cw_activity_log above,
+    // per Michael's standing instruction for this whole integration.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS outgrow_last_touch_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            touch_date TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'manual',
+            set_by_user_id INTEGER REFERENCES crc_users(id),
+            set_by_name TEXT NOT NULL,
+            cw_push_status TEXT,
+            cw_push_error TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_outgrow_history_customer ON outgrow_last_touch_history(customer_id, id)');
 }
 
 /**

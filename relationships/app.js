@@ -190,7 +190,22 @@
     // open in the Service Tickets drill-down (or vice versa).
     printSummaryOpen: false,
     printTickets: null, // array | 'error' | null (not loaded yet)
-    printTicketsLoading: false
+    printTicketsLoading: false,
+
+    // OutGrow Last Touch (added 2026-09-15, per Michael) -- a CRC-editable
+    // date per customer, with full history (api/outgrow.php), that also
+    // tries to push into ConnectWise's own "OutGrow Last Touch" Company
+    // custom field on every save. outgrowCurrent/outgrowHistory are reset
+    // (resetOutgrowState()) and reloaded (loadOutgrow()) whenever a
+    // different customer is opened, same as the activity state above.
+    outgrowLoading: false,
+    outgrowCurrent: null, // { touch_date, set_by_name, source, created_at } | null
+    outgrowHistory: null, // array | null (not loaded yet)
+    outgrowHistoryOpen: false,
+    outgrowEditing: false,
+    outgrowDraftDate: '', // "YYYY-MM-DD" -- bound to the <input type="date"> while editing
+    outgrowSaving: false,
+    outgrowError: null // shown inline -- a save failure, or a "saved here but didn't reach ConnectWise" warning
   };
 
   function escapeHtml(s) {
@@ -333,6 +348,153 @@
     state.printTicketsLoading = false;
   }
 
+  function resetOutgrowState() {
+    state.outgrowLoading = false;
+    state.outgrowCurrent = null;
+    state.outgrowHistory = null;
+    state.outgrowHistoryOpen = false;
+    state.outgrowEditing = false;
+    state.outgrowDraftDate = '';
+    state.outgrowSaving = false;
+    state.outgrowError = null;
+  }
+
+  function outgrowTodayYmd() {
+    var d = new Date();
+    var mm = d.getMonth() + 1;
+    var dd = d.getDate();
+    return d.getFullYear() + '-' + (mm < 10 ? '0' : '') + mm + '-' + (dd < 10 ? '0' : '') + dd;
+  }
+
+  // "YYYY-MM-DD" -> "M/D/YY" -- plain string slicing rather than
+  // new Date(ymd), which parses a bare date as UTC midnight and can roll
+  // back a day once formatted in a negative-UTC-offset timezone (US
+  // Eastern included) -- a real, silent off-by-one this avoids entirely.
+  function fmtOutgrowDate(ymd) {
+    if (!ymd) return '';
+    var parts = String(ymd).split('-');
+    if (parts.length !== 3) return ymd;
+    return parseInt(parts[1], 10) + '/' + parseInt(parts[2], 10) + '/' + parts[0].slice(2);
+  }
+
+  function loadOutgrow(customerId) {
+    state.outgrowLoading = true;
+    var requestFor = Number(customerId);
+    apiGet('api/outgrow.php?action=get&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.outgrowLoading = false;
+      if (r.data && r.data.ok) {
+        state.outgrowCurrent = r.data.current;
+        state.outgrowHistory = r.data.history;
+      }
+      render();
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.outgrowLoading = false;
+      render();
+    });
+  }
+
+  function saveOutgrow(customerId) {
+    var date = state.outgrowDraftDate;
+    if (!date) {
+      state.outgrowError = 'Pick a date first.';
+      render();
+      return;
+    }
+    state.outgrowSaving = true;
+    state.outgrowError = null;
+    render();
+    apiPost('api/outgrow.php?action=set', { customer_id: customerId, touch_date: date }).then(function (r) {
+      state.outgrowSaving = false;
+      if (r.data && r.data.ok) {
+        state.outgrowCurrent = r.data.current;
+        state.outgrowHistory = r.data.history;
+        state.outgrowEditing = false;
+        if (r.data.cw_push && r.data.cw_push.status === 'error') {
+          state.outgrowError = 'Saved here, but didn\u2019t reach ConnectWise: ' + r.data.cw_push.error;
+        }
+      } else {
+        state.outgrowError = (r.data && r.data.error) || 'Could not save.';
+      }
+      render();
+    }).catch(function () {
+      state.outgrowSaving = false;
+      state.outgrowError = 'Could not save \u2014 check your connection.';
+      render();
+    });
+  }
+
+  function outgrowFieldHtml() {
+    var current = state.outgrowCurrent;
+    var valueText = current ? fmtOutgrowDate(current.touch_date) : 'Not recorded yet';
+    var subText = current
+      ? (current.source === 'connectwise_seed' ? 'Synced from ConnectWise' : 'by ' + escapeHtml(current.set_by_name))
+      : '';
+
+    var html = '<div class="outgrow-card">';
+    html += '<div class="outgrow-card-label-row">' +
+      '<div class="outgrow-card-label">OutGrow Last Touch</div>' +
+      '<button class="outgrow-history-btn" type="button" data-action="outgrow-history-toggle" aria-label="View history" title="View history">' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15.5 14"></polyline></svg>' +
+      '</button>' +
+    '</div>';
+    html += '<div class="outgrow-card-value">' + escapeHtml(valueText) + '</div>';
+    if (subText) {
+      html += '<div class="outgrow-card-sub">' + subText + '</div>';
+    }
+
+    if (state.outgrowEditing) {
+      html += '<div class="outgrow-edit-row">' +
+        '<input type="date" id="outgrowDateInput" class="outgrow-date-input" value="' + escapeHtml(state.outgrowDraftDate) + '">' +
+        '<button class="svc-action-btn primary" type="button" data-action="outgrow-save" ' + (state.outgrowSaving ? 'disabled' : '') + '>' + (state.outgrowSaving ? 'Saving\u2026' : 'Save') + '</button>' +
+        '<button class="svc-action-btn secondary" type="button" data-action="outgrow-edit-cancel">Cancel</button>' +
+      '</div>';
+    } else {
+      html += '<button class="outgrow-update-btn" type="button" data-action="outgrow-edit-start">Update</button>';
+    }
+
+    if (state.outgrowError) {
+      html += '<div class="outgrow-error">' + escapeHtml(state.outgrowError) + '</div>';
+    }
+
+    if (state.outgrowHistoryOpen) {
+      html += outgrowHistoryHtml();
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function outgrowHistoryHtml() {
+    var html = '<div class="outgrow-history">';
+    html += '<div class="outgrow-history-title">History</div>';
+    if (state.outgrowLoading && !state.outgrowHistory) {
+      html += '<div class="loading">Loading\u2026</div>';
+    } else if (!state.outgrowHistory || state.outgrowHistory.length === 0) {
+      html += '<div class="empty-state">No history yet.</div>';
+    } else {
+      html += '<div class="outgrow-history-list">';
+      state.outgrowHistory.forEach(function (h) {
+        var warn = h.cw_push_status === 'error'
+          ? '<div class="outgrow-history-warn" title="' + escapeHtml(h.cw_push_error || '') + '">Didn\u2019t sync to ConnectWise</div>'
+          : '';
+        var whoText = h.source === 'connectwise_seed' ? 'Synced from ConnectWise' : escapeHtml(h.set_by_name);
+        html += '<div class="outgrow-history-row">' +
+          '<div class="outgrow-history-main">' +
+            '<span class="outgrow-history-date">' + escapeHtml(fmtOutgrowDate(h.touch_date)) + '</span>' +
+            '<span class="outgrow-history-who">' + whoText + '</span>' +
+          '</div>' +
+          '<div class="outgrow-history-when">' + escapeHtml(fmtTimestamp(h.created_at)) + '</div>' +
+          warn +
+        '</div>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
   // Fired once, right after a customer's dashboard loads -- non-blocking
   // (the rest of the dashboard renders immediately; these two stat cards
   // show their own loading state) since this means 1-2 extra live
@@ -456,6 +618,8 @@
         state.selectedCustomer = r.data;
         resetActivityState();
         loadActivitySummary(id);
+        resetOutgrowState();
+        loadOutgrow(id);
         if (state.pendingFocus) {
           var pf = state.pendingFocus;
           state.pendingFocus = null;
@@ -1914,6 +2078,9 @@
         '<button class="change-customer-btn" type="button" data-action="change-customer">Search a different customer</button>' +
       '</div>' +
     '</div>';
+
+    html += outgrowFieldHtml();
+
     if (detail.customer.is_peoplefirst) {
       html += '<div class="peoplefirst-note">PeopleFirst Support Members - Quarterly Risk Scans and Monthly Client Checkin\'s are required.</div>';
       html += peopleFirstFieldsHtml(detail.customer);
@@ -2106,6 +2273,13 @@
         runSearch(state.query);
       });
     }
+
+    var outgrowDateInput = document.getElementById('outgrowDateInput');
+    if (outgrowDateInput) {
+      outgrowDateInput.addEventListener('input', function (e) {
+        state.outgrowDraftDate = e.target.value;
+      });
+    }
   }
 
   function onRootClick(e) {
@@ -2122,6 +2296,7 @@
       state.results = [];
       state.resultsOpen = false;
       resetActivityState();
+      resetOutgrowState();
       render();
       if (!state.overview) loadOverview();
     } else if (action === 'open-pillar') {
@@ -2225,6 +2400,20 @@
       render();
     } else if (action === 'print-summary-go') {
       window.print();
+    } else if (action === 'outgrow-edit-start') {
+      state.outgrowEditing = true;
+      state.outgrowDraftDate = (state.outgrowCurrent && state.outgrowCurrent.touch_date) || outgrowTodayYmd();
+      state.outgrowError = null;
+      render();
+    } else if (action === 'outgrow-edit-cancel') {
+      state.outgrowEditing = false;
+      state.outgrowError = null;
+      render();
+    } else if (action === 'outgrow-save') {
+      saveOutgrow(state.selectedCustomer.customer.id);
+    } else if (action === 'outgrow-history-toggle') {
+      state.outgrowHistoryOpen = !state.outgrowHistoryOpen;
+      render();
     } else if (action === 'signout') {
       signOut();
     }
