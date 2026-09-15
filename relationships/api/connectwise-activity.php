@@ -202,6 +202,60 @@ function relationships_cw_activity_tickets_ytd(string $cwCompanyId): array
 }
 
 /**
+ * Everything the Ticket History sync (connectwise-ticket-history-sync-core.php)
+ * needs for one customer in a SINGLE /service/tickets list call: this
+ * year's Professional Services board YTD count (same board condition and
+ * date boundary as the live relationships_cw_activity_ticket_count_ytd()
+ * above) plus a sparse trailing-$months { "YYYY-MM": count } map for the
+ * trend -- unfilled months are simply absent, the same way
+ * relationships_cw_activity_monthly_billing()'s raw $byMonth is before
+ * relationships_cw_activity_billing_series_from_totals() zero-fills it on
+ * read (see relationships_cw_ticket_history_trend()).
+ *
+ * Added 2026-09-15: this function was referenced by
+ * connectwise-ticket-history-sync-core.php since the Ticket History sync
+ * was first built (2026-09-10) but was never actually written -- the
+ * sync's first real run (653 customers) failed 653/653 with an identical
+ * "Call to undefined function" Error on every row (still caught by that
+ * sync step's per-row catch (Throwable $e), which is why it failed
+ * cleanly rather than crashing the batch). Built now by reusing the
+ * exact already-confirmed board condition/date-boundary style from
+ * relationships_cw_activity_ticket_count_ytd()/relationships_cw_activity_tickets_ytd()
+ * above rather than inventing a new condition shape.
+ */
+function relationships_cw_activity_ticket_sync_data(string $cwCompanyId, int $months = 6): array
+{
+    $yearStart = new DateTimeImmutable(date('Y') . '-01-01 00:00:00');
+    $monthsStart = new DateTimeImmutable('first day of -' . ($months - 1) . ' months 00:00:00');
+    $sinceStart = $yearStart < $monthsStart ? $yearStart : $monthsStart; // whichever window reaches further back
+
+    $conditions = "company/id=$cwCompanyId and " . relationships_cw_activity_board_condition()
+        . " and dateEntered>=[" . $sinceStart->format('Y-m-d') . "T00:00:00Z]";
+    $rows = relationships_cw_list('/service/tickets', $conditions, ['id', 'dateEntered'], 200);
+
+    $monthFloor = $monthsStart->format('Y-m');
+    $yearPrefix = date('Y') . '-';
+
+    $byMonth = [];
+    $ytdCount = 0;
+    foreach ($rows as $t) {
+        $date = (string) ($t['dateEntered'] ?? '');
+        if ($date === '') {
+            continue;
+        }
+        $key = substr($date, 0, 7); // "YYYY-MM"
+        if ($key >= $monthFloor) {
+            $byMonth[$key] = ($byMonth[$key] ?? 0) + 1;
+        }
+        if (str_starts_with($date, $yearPrefix)) {
+            $ytdCount++;
+        }
+    }
+
+    return ['by_month' => $byMonth, 'ytd_count' => $ytdCount];
+}
+
+/**
  * Raw "Agreement"-type invoices for one company between $start (inclusive)
  * and $end (exclusive, defaults to open-ended/"through now"). Every other
  * function in this file that deals with invoices/billing builds on this
