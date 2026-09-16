@@ -1635,7 +1635,11 @@ class Component extends DCLogic {
       onboarding += lineOnboarding;
       var priceText = '$' + lineMonthly.toFixed(2) + '/mo';
       if (lineOnboarding > 0) priceText += ' + $' + lineOnboarding.toFixed(2) + ' onboarding';
-      partsLines.push({ label: p.label, sku: p.sku || '', qty: qty.toFixed(p.decimals || 0), brand: null, specs: [], priceText: priceText });
+      // unitPrice/extPrice (added for the Inside Sales spreadsheet-style table --
+      // see buildFullQuoteHtml's forInsideSales branch) are the plain numeric
+      // monthly rate/line-total; priceText above stays the formatted string
+      // (incl. onboarding fee) used by the customer-facing bullet list.
+      partsLines.push({ label: p.label, sku: p.sku || '', qty: qty.toFixed(p.decimals || 0), brand: null, specs: [], priceText: priceText, unitPrice: p.rate, extPrice: lineMonthly });
       return p.label + ' ×' + qty.toFixed(p.decimals || 0);
     });
     var totalsText = '$' + monthly.toFixed(2) + '/mo';
@@ -1796,7 +1800,14 @@ class Component extends DCLogic {
   // Table-based layout with inline styles throughout: Outlook's desktop renderer
   // (the Word engine) ignores most modern CSS, so this deliberately avoids
   // flexbox/grid and keeps every rule inline rather than in a <style> block.
-  buildFullQuoteHtml(includeLogo) {
+  // `forInsideSales` (added for the "Send to Inside Sales" reformat -- see
+  // sendToInsideSales()) switches the parts/BOM list from the customer-facing
+  // bulleted format to a QTY/Description/Unit Price/Ext. Price table, and adds
+  // a "Requestor" line naming the signed-in rep. It does NOT touch the
+  // scope-of-work (labor) rendering below, which stays the same for both
+  // emails -- only sendToInsideSales() passes true; sendQuoteByEmail() (the
+  // customer-facing quote) always gets the original bulleted BOM.
+  buildFullQuoteHtml(includeLogo, forInsideSales) {
     if (includeLogo === undefined) includeLogo = true;
     var co = this.state.checkout;
     var data = this.buildQuoteSectionsStructured();
@@ -1807,6 +1818,8 @@ class Component extends DCLogic {
     var NAVY = '#182857', LIGHT = '#F4F5F7', BORDER = '#E2E5EA';
 
     var metaRows = '';
+    var requestorName = (this.props.user && this.props.user.name) ? this.props.user.name : '';
+    if (forInsideSales && requestorName) metaRows += '<tr><td style="padding:2px 0;color:#5A6472;font-size:13px;font-family:Arial,Helvetica,sans-serif;"><strong style="color:#33394A;">Requestor:</strong> ' + esc(requestorName) + '</td></tr>';
     if (co.companyName) metaRows += '<tr><td style="padding:2px 0;color:#5A6472;font-size:13px;font-family:Arial,Helvetica,sans-serif;"><strong style="color:#33394A;">Prepared for:</strong> ' + esc(co.companyName) + '</td></tr>';
     if (co.contactName) metaRows += '<tr><td style="padding:2px 0;color:#5A6472;font-size:13px;font-family:Arial,Helvetica,sans-serif;"><strong style="color:#33394A;">Attn:</strong> ' + esc(co.contactName) + '</td></tr>';
     if (co.siteAddress) metaRows += '<tr><td style="padding:2px 0;color:#5A6472;font-size:13px;font-family:Arial,Helvetica,sans-serif;"><strong style="color:#33394A;">Site:</strong> ' + esc(co.siteAddress) + '</td></tr>';
@@ -1824,7 +1837,36 @@ class Component extends DCLogic {
         // optionLabel line for selections with no structured partsLines
         // (pure scope-of-work picks that never went through a parts flow).
         var bom = '';
-        if (it.partsLines && it.partsLines.length) {
+        if (it.partsLines && it.partsLines.length && forInsideSales) {
+          // Spreadsheet-style QTY / Description / Unit Price / Ext. Price
+          // table, per Michael's reference template -- Unit/Ext Price are
+          // left blank whenever a line has no unitPrice/extPrice (true of
+          // most hardware today; only recurring-priced categories set them
+          // in addCategoryToSolution()), matching the app's existing "pair
+          // each item with vendor pricing" guidance to Inside Sales.
+          var thStyle = 'padding:6px 8px;font-size:10.5px;font-family:Arial,Helvetica,sans-serif;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:#5A6472;border-bottom:1px solid ' + BORDER + ';';
+          var tdStyle = 'padding:7px 8px;font-size:12.5px;font-family:Arial,Helvetica,sans-serif;color:#1B2030;border-bottom:1px solid ' + BORDER + ';vertical-align:top;';
+          var bomRows = it.partsLines.map(function (pl) {
+            var descLabel = (pl.brand ? (esc(pl.brand) + ' — ') : '') + '<strong>' + esc(pl.label) + '</strong>';
+            var skuText = pl.sku ? (' <span style="color:#8A93A3;font-size:11px;">(SKU: ' + esc(pl.sku) + ')</span>') : '';
+            var specsLine = (pl.specs && pl.specs.length) ? ('<div style="margin-top:2px;font-size:11px;color:#6B7280;">' + pl.specs.map(esc).join(' &middot; ') + '</div>') : '';
+            var unitText = (typeof pl.unitPrice === 'number') ? ('$' + pl.unitPrice.toFixed(2)) : '';
+            var extText = (typeof pl.extPrice === 'number') ? ('$' + pl.extPrice.toFixed(2)) : '';
+            return '<tr>' +
+              '<td style="' + tdStyle + '">' + esc(String(pl.qty)) + '</td>' +
+              '<td style="' + tdStyle + '">' + descLabel + skuText + specsLine + '</td>' +
+              '<td style="' + tdStyle + 'text-align:right;white-space:nowrap;">' + unitText + '</td>' +
+              '<td style="' + tdStyle + 'text-align:right;white-space:nowrap;">' + extText + '</td>' +
+            '</tr>';
+          }).join('');
+          bom = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:6px;">' +
+            '<tr style="background:' + LIGHT + ';">' +
+              '<th align="left" style="' + thStyle + '">QTY</th>' +
+              '<th align="left" style="' + thStyle + '">Description</th>' +
+              '<th align="right" style="' + thStyle + '">Unit Price</th>' +
+              '<th align="right" style="' + thStyle + '">Ext. Price</th>' +
+            '</tr>' + bomRows + '</table>';
+        } else if (it.partsLines && it.partsLines.length) {
           var bomItems = it.partsLines.map(function (pl) {
             var brandBadge = pl.brand ? ('<span style="display:inline-block;background:' + NAVY + ';color:#FFFFFF;font-size:10px;font-family:Arial,Helvetica,sans-serif;font-weight:700;letter-spacing:.03em;text-transform:uppercase;padding:2px 7px;border-radius:3px;margin-right:7px;white-space:nowrap;">' + esc(pl.brand) + '</span>') : '';
             var skuText = pl.sku ? (' <span style="color:#8A93A3;font-size:11px;font-family:Arial,Helvetica,sans-serif;">(SKU: ' + esc(pl.sku) + ')</span>') : '';
@@ -2010,7 +2052,7 @@ class Component extends DCLogic {
       to: 'Quotes@codebluetechnology.com',
       companyName: companyName,
       subject: 'New Solution Request — ' + companyName + ' (Attn: ' + contactName + ')',
-      html: this.buildFullQuoteHtml(false),
+      html: this.buildFullQuoteHtml(false, true),
       website: '' // honeypot field — must stay empty
     };
     fetch('mail/send-quote.php', {

@@ -1602,10 +1602,13 @@
   // which comes back here via ?return_to= once sign-in succeeds. See
   // auth/session.php for the shared session every SolutionsHub app
   // (relationships/, register/) now uses the same way.
-  function mountSolutionsHubApp() {
+  function mountSolutionsHubApp(user) {
     var templateHtml = document.getElementById('app-template').textContent;
     var mountEl = document.getElementById('app-root');
-    var component = window.SolutionsHubApp.createComponent({ accentColor: '#2f8fef' });
+    // `user` (from /auth/me.php below, { name, email }) is threaded through
+    // as a prop so app.js can show the signed-in rep as "Requestor" on the
+    // Send to Inside Sales email -- see sendToInsideSales()/buildFullQuoteHtml().
+    var component = window.SolutionsHubApp.createComponent({ accentColor: '#2f8fef', user: user });
     SolutionsHubRuntime.mountApp(templateHtml, mountEl, component);
 
     // Deep-links from the Relationships dashboard (relationships/app.js),
@@ -1632,7 +1635,7 @@
           window.location.replace('/login.php?return_to=' + encodeURIComponent(window.location.pathname + window.location.search));
           return;
         }
-        mountSolutionsHubApp();
+        mountSolutionsHubApp(r.user);
       })
       .catch(function () {
         window.location.replace('/login.php?return_to=' + encodeURIComponent(window.location.pathname + window.location.search));
