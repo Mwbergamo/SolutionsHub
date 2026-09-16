@@ -269,6 +269,7 @@
     taskAddOpenForMeeting: null, // meeting id whose "+ Add Task" form is open, if any
     taskDraftDescription: '',
     taskDraftAssignee: '',
+    taskDraftDueDate: '', // "YYYY-MM-DD" | '' -- optional, added 2026-09-16 (scheduled to-dos)
     taskSaving: false,
     taskTogglingId: null, // task id currently mid-toggle (checkbox disabled while true)
     // Deep-link target set by openCustomerAtTask() (global to-do panel ->
@@ -280,7 +281,19 @@
     // right-hand panel (api/meetings.php?action=global), added 2026-09-15.
     globalTodosLoading: false,
     globalTodos: null, // { roster, counts, tasks } once loaded
-    globalTodosError: null
+    globalTodosError: null,
+
+    // Per-coordinator to-do view (state.view === 'rep-todos') -- added
+    // 2026-09-16 per Michael: click a name in the Global To-Do Checklist
+    // to see that person's own open/scheduled/recently-completed to-dos,
+    // plus a month calendar of their scheduled ones
+    // (api/meetings.php?action=rep_todos).
+    repTodosLoading: false,
+    repTodosName: null, // the roster name this view is currently showing
+    repTodosData: null, // { rep_name, roster, open_tasks, recent_completed_tasks } once loaded
+    repTodosError: null,
+    repTodosCalYear: null, // calendar's currently-shown year, set when the view opens
+    repTodosCalMonth: null // calendar's currently-shown month (1-12), set when the view opens
   };
 
   function escapeHtml(s) {
@@ -629,6 +642,7 @@
     state.taskAddOpenForMeeting = null;
     state.taskDraftDescription = '';
     state.taskDraftAssignee = '';
+    state.taskDraftDueDate = '';
     state.taskSaving = false;
     state.taskTogglingId = null;
     // pendingTaskFocus is deliberately NOT cleared here -- openCustomerAtTask()
@@ -719,7 +733,8 @@
     state.meetingsError = null;
     render();
     apiPost('api/meetings.php?action=add_task', {
-      meeting_id: meetingId, description: description, assigned_to_name: assignee
+      meeting_id: meetingId, description: description, assigned_to_name: assignee,
+      due_date: state.taskDraftDueDate || null
     }).then(function (r) {
       state.taskSaving = false;
       if (r.data && r.data.ok) {
@@ -728,6 +743,7 @@
         });
         state.taskAddOpenForMeeting = null;
         state.taskDraftDescription = '';
+        state.taskDraftDueDate = '';
         if (r.data.task.cw_push && r.data.task.cw_push.status === 'error') {
           state.meetingsError = 'Task saved here, but didn\u2019t reach ConnectWise: ' + r.data.task.cw_push.error;
         }
@@ -779,6 +795,49 @@
       state.globalTodosError = 'Could not load the to-do dashboard \u2014 check your connection.';
       render();
     });
+  }
+
+  // ---- Per-coordinator to-do view (state.view === 'rep-todos') ----------
+  // Added 2026-09-16 per Michael: click a name in the Global To-Do
+  // Checklist above to land here -- that person's own to-do list plus a
+  // month calendar of the ones they've scheduled.
+
+  function loadRepTodos(name) {
+    state.repTodosLoading = true;
+    state.repTodosError = null;
+    render();
+    apiGet('api/meetings.php?action=rep_todos&assigned_to_name=' + encodeURIComponent(name)).then(function (r) {
+      state.repTodosLoading = false;
+      if (r.data && r.data.ok) {
+        state.repTodosData = r.data;
+      } else {
+        state.repTodosError = (r.data && r.data.error) || 'Could not load that to-do list.';
+      }
+      render();
+    }).catch(function () {
+      state.repTodosLoading = false;
+      state.repTodosError = 'Could not load that to-do list \u2014 check your connection.';
+      render();
+    });
+  }
+
+  // Moves the rep-todos calendar by whole months, wrapping the year at
+  // both ends (e.g. December 2026 + 1 -> January 2027).
+  function shiftRepTodosMonth(delta) {
+    var month = state.repTodosCalMonth + delta;
+    var year = state.repTodosCalYear;
+    while (month < 1) { month += 12; year -= 1; }
+    while (month > 12) { month -= 12; year += 1; }
+    state.repTodosCalMonth = month;
+    state.repTodosCalYear = year;
+    render();
+  }
+
+  // Zero-padded 2-digit number, for building "YYYY-MM-DD" strings without
+  // relying on String.prototype.padStart (not used anywhere else in this
+  // file).
+  function rtPad2(n) {
+    return n < 10 ? '0' + n : String(n);
   }
 
   // Fired once, right after a customer's dashboard loads -- non-blocking
@@ -1795,6 +1854,9 @@
     }
     if (state.view === 'territory-admin') {
       return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + territoryAdminHtml();
+    }
+    if (state.view === 'rep-todos') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + repTodosHtml();
     }
 
     var html = '<div class="search-wrap">' + searchBoxHtml() + '</div>';
@@ -2896,6 +2958,9 @@
               return '<option value="' + escapeHtml(name) + '"' + (state.taskDraftAssignee === name ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
             }).join('') +
           '</select>' +
+          '<label class="task-due-date-label">Due date (optional)' +
+            '<input type="date" id="taskDueDateInput" class="meeting-form-input" value="' + escapeHtml(state.taskDraftDueDate) + '">' +
+          '</label>' +
           '<div class="meeting-form-actions">' +
             '<button type="button" class="vendor-field-btn primary" data-action="task-save" data-meeting="' + m.id + '" ' + (state.taskSaving ? 'disabled' : '') + '>' + (state.taskSaving ? 'Saving…' : 'Add Task') + '</button>' +
             '<button type="button" class="vendor-field-btn secondary" data-action="task-add-cancel" ' + (state.taskSaving ? 'disabled' : '') + '>Cancel</button>' +
@@ -2920,7 +2985,7 @@
     var toggling = state.taskTogglingId === t.id;
     var metaLine = isDone
       ? '✓ ' + escapeHtml(t.completed_by_name) + ' — ' + escapeHtml(fmtTimestamp(t.completed_at))
-      : 'Assigned to ' + escapeHtml(t.assigned_to_name);
+      : 'Assigned to ' + escapeHtml(t.assigned_to_name) + (t.due_date ? ' · Due ' + escapeHtml(fmtOutgrowDate(t.due_date)) : '');
     var cwWarn = t.cw_push && t.cw_push.status === 'error'
       ? ' <span class="meeting-task-cw-warn" title="' + escapeHtml(t.cw_push.error || '') + '">⚠</span>'
       : '';
@@ -2985,7 +3050,7 @@
     var html = '<div class="global-todo-panel">';
     html += '<div class="view-header">' +
       '<div class="view-title">Global To-Do Checklist</div>' +
-      '<div class="view-sub">Open tasks from every customer’s meetings. Click one to open that company and complete it there.</div>' +
+      '<div class="view-sub">Open tasks from every customer’s meetings. Click one to open that company and complete it there. Click a coordinator’s name below to see just their to-do list and calendar.</div>' +
     '</div>';
 
     if (state.globalTodosError) {
@@ -3003,7 +3068,7 @@
     html += '<div class="global-todo-summary">';
     g.roster.forEach(function (name) {
       var n = g.counts[name] || 0;
-      html += '<div class="global-todo-summary-item' + (n === 0 ? ' zero' : '') + '">' +
+      html += '<div class="global-todo-summary-item' + (n === 0 ? ' zero' : '') + '" data-action="show-rep-todos" data-rep="' + escapeHtml(name) + '" title="See ' + escapeHtml(name) + '’s to-do list and calendar">' +
         '<span class="global-todo-summary-count">' + n + '</span>' +
         '<span class="global-todo-summary-name">' + escapeHtml(name) + '</span>' +
       '</div>';
@@ -3028,6 +3093,145 @@
       });
       html += '</div>';
     }
+
+    html += '</div>';
+    return html;
+  }
+
+  // ---- Per-coordinator to-do view (state.view === 'rep-todos') ----------
+  // Added 2026-09-16 per Michael. Reached by clicking a name in the Global
+  // To-Do Checklist above (data-action="show-rep-todos"). Two columns: a
+  // month calendar of this person's scheduled to-dos on the left, and
+  // their unscheduled + recently-completed to-dos as plain lists on the
+  // right -- same click-through-to-the-customer pattern as the global
+  // panel (data-action="open-customer-task"), not an inline checkbox.
+
+  function repTodosHtml() {
+    var name = state.repTodosName || '';
+    var html = '<div class="view-header">' +
+      '<button class="back-link" type="button" data-action="rep-todos-back">← Back to Dashboard</button>' +
+      '<div class="view-title">' + escapeHtml(name) + '’s To-Dos</div>' +
+      '<div class="view-sub">Open and recently completed meeting to-dos assigned to ' + escapeHtml(name) + '. Click one to open that customer and complete it there.</div>' +
+    '</div>';
+
+    if (state.repTodosError) {
+      html += '<div class="error-banner">' + escapeHtml(state.repTodosError) + '</div>';
+    }
+
+    if (state.repTodosLoading && !state.repTodosData) {
+      return html + '<div class="loading">Loading…</div>';
+    }
+    if (!state.repTodosData) {
+      return html;
+    }
+
+    var d = state.repTodosData;
+    var openTasks = d.open_tasks || [];
+    var recentCompleted = d.recent_completed_tasks || [];
+    var openWithDate = openTasks.filter(function (t) { return !!t.due_date; });
+    var openNoDate = openTasks.filter(function (t) { return !t.due_date; });
+
+    html += '<div class="rep-todos-layout">';
+    html += '<div class="rep-todos-calendar-col">' + repTodosCalendarHtml(openWithDate, recentCompleted) + '</div>';
+    html += '<div class="rep-todos-list-col">' +
+      repTodosListSectionHtml('Unscheduled', openNoDate, 'No unscheduled to-dos — everything open has a due date.') +
+      repTodosListSectionHtml('Recently completed', recentCompleted, 'Nothing completed yet.') +
+    '</div>';
+    html += '</div>';
+
+    return html;
+  }
+
+  function repTodosListSectionHtml(title, tasks, emptyMessage) {
+    var html = '<div class="rep-todos-section">';
+    html += '<div class="roster-title">' + escapeHtml(title) + '</div>';
+    if (!tasks || tasks.length === 0) {
+      html += '<div class="roster-empty">' + escapeHtml(emptyMessage) + '</div>';
+    } else {
+      html += '<div class="global-todo-list">';
+      tasks.forEach(function (t) { html += repTodoItemHtml(t); });
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  // Same markup/behavior as a global-todo-item (click -> open that
+  // customer's task) with a due-date badge appended when the task has one.
+  function repTodoItemHtml(t) {
+    var isDone = !!t.completed_at;
+    var dueBadge = t.due_date
+      ? ' <span class="rep-todo-item-due">Due ' + escapeHtml(fmtOutgrowDate(t.due_date)) + '</span>'
+      : '';
+    return '<div class="global-todo-item' + (isDone ? ' done' : '') + '" data-action="open-customer-task" data-customer="' + t.customer_id + '" data-meeting="' + t.meeting_id + '" data-task="' + t.id + '">' +
+      '<div class="global-todo-item-main">' +
+        '<div class="global-todo-item-desc">' + escapeHtml(t.description) + dueBadge + '</div>' +
+        '<div class="global-todo-item-meta">' + escapeHtml(t.customer_name) + ' · “' + escapeHtml(t.meeting_subject) + '”</div>' +
+      '</div>' +
+      (isDone
+        ? '<div class="global-todo-item-done-meta">✓ ' + escapeHtml(t.completed_by_name) + ' — ' + escapeHtml(fmtTimestamp(t.completed_at)) + '</div>'
+        : '<div class="global-todo-item-go">Open →</div>') +
+    '</div>';
+  }
+
+  // Renders a standard month grid (Sun-Sat) for state.repTodosCalYear /
+  // state.repTodosCalMonth. openWithDate + recentCompleted (already
+  // capped to the last 10 by the server) are grouped onto the day cells
+  // they fall on; a day outside this month is left as an empty filler
+  // cell so the grid always lands on whole weeks.
+  function repTodosCalendarHtml(openWithDate, recentCompleted) {
+    var year = state.repTodosCalYear;
+    var month = state.repTodosCalMonth; // 1-12
+    var monthLabel = new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+    var tasksByDate = {};
+    openWithDate.forEach(function (t) {
+      (tasksByDate[t.due_date] = tasksByDate[t.due_date] || []).push(t);
+    });
+    recentCompleted.forEach(function (t) {
+      if (!t.due_date) return;
+      (tasksByDate[t.due_date] = tasksByDate[t.due_date] || []).push(t);
+    });
+
+    var daysInMonth = new Date(year, month, 0).getDate();
+    var startWeekday = new Date(year, month - 1, 1).getDay(); // 0 = Sunday
+
+    var html = '<div class="rep-todos-calendar">';
+    html += '<div class="rep-todos-cal-header">' +
+      '<button class="rep-todos-cal-nav" type="button" data-action="rep-todos-prev-month" aria-label="Previous month">‹</button>' +
+      '<div class="rep-todos-cal-month">' + escapeHtml(monthLabel) + '</div>' +
+      '<button class="rep-todos-cal-nav" type="button" data-action="rep-todos-next-month" aria-label="Next month">›</button>' +
+    '</div>';
+
+    html += '<div class="rep-todos-cal-grid rep-todos-cal-daylabels">';
+    ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(function (label) {
+      html += '<div class="rep-todos-cal-daylabel">' + label + '</div>';
+    });
+    html += '</div>';
+
+    html += '<div class="rep-todos-cal-grid">';
+    for (var lead = 0; lead < startWeekday; lead++) {
+      html += '<div class="rep-todos-cal-cell empty"></div>';
+    }
+    for (var day = 1; day <= daysInMonth; day++) {
+      var ymd = year + '-' + rtPad2(month) + '-' + rtPad2(day);
+      var dayTasks = tasksByDate[ymd] || [];
+      html += '<div class="rep-todos-cal-cell">' +
+        '<div class="rep-todos-cal-cell-date">' + day + '</div>';
+      dayTasks.forEach(function (t) {
+        var isDone = !!t.completed_at;
+        html += '<div class="rep-todos-cal-task' + (isDone ? ' done' : '') + '" data-action="open-customer-task" data-customer="' + t.customer_id + '" data-meeting="' + t.meeting_id + '" data-task="' + t.id + '" title="' + escapeHtml(t.customer_name + ': ' + t.description) + '">' +
+          escapeHtml(t.description) +
+        '</div>';
+      });
+      html += '</div>';
+    }
+    var totalCells = startWeekday + daysInMonth;
+    var trailing = (7 - (totalCells % 7)) % 7;
+    for (var trail = 0; trail < trailing; trail++) {
+      html += '<div class="rep-todos-cal-cell empty"></div>';
+    }
+    html += '</div>';
 
     html += '</div>';
     return html;
@@ -3183,6 +3387,12 @@
     if (taskAssigneeSelect) {
       taskAssigneeSelect.addEventListener('change', function (e) {
         state.taskDraftAssignee = e.target.value;
+      });
+    }
+    var taskDueDateInput = document.getElementById('taskDueDateInput');
+    if (taskDueDateInput) {
+      taskDueDateInput.addEventListener('input', function (e) {
+        state.taskDraftDueDate = e.target.value;
       });
     }
 
@@ -3386,10 +3596,12 @@
       state.taskAddOpenForMeeting = parseInt(el.getAttribute('data-meeting'), 10);
       state.taskDraftDescription = '';
       state.taskDraftAssignee = state.meetingsRoster[0] || '';
+      state.taskDraftDueDate = '';
       state.meetingsError = null;
       render();
     } else if (action === 'task-add-cancel') {
       state.taskAddOpenForMeeting = null;
+      state.taskDraftDueDate = '';
       state.meetingsError = null;
       render();
     } else if (action === 'task-save') {
@@ -3403,6 +3615,28 @@
         parseInt(el.getAttribute('data-meeting'), 10),
         parseInt(el.getAttribute('data-task'), 10)
       );
+    } else if (action === 'show-rep-todos') {
+      var repName = el.getAttribute('data-rep');
+      var today = new Date();
+      state.view = 'rep-todos';
+      state.error = null;
+      state.repTodosName = repName;
+      state.repTodosData = null;
+      state.repTodosError = null;
+      state.repTodosCalYear = today.getFullYear();
+      state.repTodosCalMonth = today.getMonth() + 1;
+      render();
+      loadRepTodos(repName);
+    } else if (action === 'rep-todos-back') {
+      state.view = 'dashboard';
+      state.error = null;
+      render();
+      if (!state.selectedCustomer && !state.overview) loadOverview();
+      if (!state.selectedCustomer) loadGlobalTodos();
+    } else if (action === 'rep-todos-prev-month') {
+      shiftRepTodosMonth(-1);
+    } else if (action === 'rep-todos-next-month') {
+      shiftRepTodosMonth(1);
     } else if (action === 'signout') {
       signOut();
     }

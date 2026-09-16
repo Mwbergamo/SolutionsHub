@@ -21,7 +21,7 @@
  *        { id, subject, meeting_date, notes, logged_by_name, created_at,
  *          cw_push: {status, error},
  *          tasks: [ { id, description, assigned_to_name, created_by_name,
- *                     created_at, completed_at, completed_by_name,
+ *                     created_at, due_date, completed_at, completed_by_name,
  *                     cw_push: {status, error} }, ... ] (oldest first)
  *        }, ... ] (newest meeting first) }
  *
@@ -30,8 +30,11 @@
  *   -> { ok: true, meeting: {...} }
  *
  * POST /relationships/api/meetings.php?action=add_task
- *   { meeting_id, description, assigned_to_name }
+ *   { meeting_id, description, assigned_to_name, due_date: "YYYY-MM-DD"|null }
  *   assigned_to_name must exactly match one of relationships_todo_roster().
+ *   due_date is OPTIONAL (added 2026-09-16, per Michael -- AskUserQuestion
+ *   confirmed a to-do doesn't require one; a blank due_date just never
+ *   shows on the new per-coordinator calendar).
  *   -> { ok: true, task: {...} }
  *
  * POST /relationships/api/meetings.php?action=set_task_done
@@ -46,11 +49,27 @@
  *   right column). -> { ok: true, roster: [...],
  *     counts: { "<name>": <open task count>, ... } (every roster name present, 0 if none),
  *     tasks: [ { id, description, assigned_to_name, customer_id, customer_name,
- *                meeting_id, meeting_subject, created_at, completed_at,
+ *                meeting_id, meeting_subject, created_at, due_date, completed_at,
  *                completed_by_name }, ... ] (open tasks first, newest first
  *                within each group; completed tasks kept in the same list,
  *                not dropped, so the UI can render their strikethrough --
  *                capped at 300 rows total) }
+ *
+ * GET  /relationships/api/meetings.php?action=rep_todos&assigned_to_name=Claire+Hayden
+ *   Added 2026-09-16 per Michael: "coordinators [click] on their names in
+ *   the global view... take them to a view of a list of their to-do's...
+ *   scheduled to-dos [show] on a calendar." assigned_to_name must exactly
+ *   match one of relationships_todo_roster(). -> { ok: true, roster: [...],
+ *     rep_name: "...",
+ *     open_tasks: [ { id, description, assigned_to_name, customer_id,
+ *                customer_name, meeting_id, meeting_subject, created_at,
+ *                due_date, completed_at: null, completed_by_name: null },
+ *                ... ] (every open task, scheduled or not; due_date first
+ *                by date, undated ones last),
+ *     recent_completed_tasks: [ same shape, completed_at set ] (the 10
+ *                most recently completed, newest first -- per Michael,
+ *                AskUserQuestion: "show the last 10 finished to-do's only
+ *                before they start disappearing") }
  */
 
 declare(strict_types=1);
@@ -97,6 +116,7 @@ function relationships_meeting_task_row(array $r): array
         'assigned_to_name' => $r['assigned_to_name'],
         'created_by_name' => $r['created_by_name'],
         'created_at' => $r['created_at'],
+        'due_date' => $r['due_date'] ?? null,
         'completed_at' => $r['completed_at'],
         'completed_by_name' => $r['completed_by_name'],
         'cw_push' => ['status' => $r['cw_push_status'], 'error' => $r['cw_push_error']],
@@ -118,6 +138,29 @@ function relationships_meeting_row(array $m, array $tasks): array
     ];
 }
 
+/**
+ * Shared row shape for the cross-customer task views ('global' and
+ * 'rep_todos' below) -- id, description, who/what customer/meeting it's
+ * against, created_at, due_date, and completion info. Added 2026-09-16
+ * alongside due_date/rep_todos so both endpoints stay in sync.
+ */
+function relationships_cross_customer_task_row(array $r): array
+{
+    return [
+        'id' => (int) $r['id'],
+        'description' => $r['description'],
+        'assigned_to_name' => $r['assigned_to_name'],
+        'customer_id' => (int) $r['customer_id'],
+        'customer_name' => $r['customer_name'],
+        'meeting_id' => (int) $r['meeting_id'],
+        'meeting_subject' => $r['meeting_subject'],
+        'created_at' => $r['created_at'],
+        'due_date' => $r['due_date'] ?? null,
+        'completed_at' => $r['completed_at'],
+        'completed_by_name' => $r['completed_by_name'],
+    ];
+}
+
 if ($action === 'list') {
     $customerId = (int) ($_GET['customer_id'] ?? 0);
     if ($customerId <= 0) {
@@ -133,7 +176,7 @@ if ($action === 'list') {
     $meetingRows = $meetingStmt->fetchAll(PDO::FETCH_ASSOC);
 
     $taskStmt = $pdo->prepare(
-        'SELECT id, meeting_id, description, assigned_to_name, created_by_name, created_at,
+        'SELECT id, meeting_id, description, assigned_to_name, created_by_name, created_at, due_date,
                 completed_at, completed_by_name, cw_push_status, cw_push_error, email_status, email_error
          FROM meeting_tasks WHERE customer_id = :id ORDER BY id ASC'
     );
@@ -182,7 +225,7 @@ if ($action === 'global') {
 
     $taskStmt = $pdo->prepare(
         "SELECT t.id, t.description, t.assigned_to_name, t.customer_id, c.name AS customer_name,
-                t.meeting_id, m.subject AS meeting_subject, t.created_at, t.completed_at, t.completed_by_name
+                t.meeting_id, m.subject AS meeting_subject, t.created_at, t.due_date, t.completed_at, t.completed_by_name
          FROM meeting_tasks t
          JOIN customer_meetings m ON m.id = t.meeting_id
          JOIN customers c ON c.id = t.customer_id
@@ -193,22 +236,66 @@ if ($action === 'global') {
     $taskStmt->execute($territoryFilter['params']);
     $rows = $taskStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $tasks = array_map(static function (array $r): array {
-        return [
-            'id' => (int) $r['id'],
-            'description' => $r['description'],
-            'assigned_to_name' => $r['assigned_to_name'],
-            'customer_id' => (int) $r['customer_id'],
-            'customer_name' => $r['customer_name'],
-            'meeting_id' => (int) $r['meeting_id'],
-            'meeting_subject' => $r['meeting_subject'],
-            'created_at' => $r['created_at'],
-            'completed_at' => $r['completed_at'],
-            'completed_by_name' => $r['completed_by_name'],
-        ];
-    }, $rows);
+    $tasks = array_map('relationships_cross_customer_task_row', $rows);
 
     relationships_respond(200, ['ok' => true, 'roster' => $roster, 'counts' => $counts, 'tasks' => $tasks]);
+}
+
+if ($action === 'rep_todos') {
+    // Per-coordinator to-do list + calendar (Michael, 2026-09-16): "click
+    // on their names in the global view... take them to a view of a list
+    // of their to-do's... scheduled to-dos [show] on a calendar." Same
+    // territory scoping as 'global' above -- a restricted rep only ever
+    // sees tasks against their own customers, whoever's name was clicked.
+    $repName = trim((string) ($_GET['assigned_to_name'] ?? ''));
+    $roster = relationships_todo_roster();
+    if (!in_array($repName, $roster, true)) {
+        relationships_respond(400, ['ok' => false, 'error' => 'Unknown coordinator name.']);
+    }
+
+    $territoryFilter = $allowedTerritories === null
+        ? ['sql' => '', 'params' => []]
+        : relationships_territory_filter_sql($allowedTerritories, 'c');
+
+    // Every open task, scheduled or not -- due_date first (nulls last),
+    // then oldest-created first within the same date so a rep works
+    // through their backlog in a stable order.
+    $openStmt = $pdo->prepare(
+        "SELECT t.id, t.description, t.assigned_to_name, t.customer_id, c.name AS customer_name,
+                t.meeting_id, m.subject AS meeting_subject, t.created_at, t.due_date, t.completed_at, t.completed_by_name
+         FROM meeting_tasks t
+         JOIN customer_meetings m ON m.id = t.meeting_id
+         JOIN customers c ON c.id = t.customer_id
+         WHERE t.assigned_to_name = :name AND t.completed_at IS NULL {$territoryFilter['sql']}
+         ORDER BY (t.due_date IS NULL) ASC, t.due_date ASC, t.created_at ASC"
+    );
+    $openStmt->execute([':name' => $repName] + $territoryFilter['params']);
+    $openTasks = array_map('relationships_cross_customer_task_row', $openStmt->fetchAll(PDO::FETCH_ASSOC));
+
+    // The 10 most recently completed -- per Michael (AskUserQuestion,
+    // 2026-09-16): "show the last 10 finished to-do's only before they
+    // start disappearing," so the calendar/list don't accumulate every
+    // completed task forever.
+    $doneStmt = $pdo->prepare(
+        "SELECT t.id, t.description, t.assigned_to_name, t.customer_id, c.name AS customer_name,
+                t.meeting_id, m.subject AS meeting_subject, t.created_at, t.due_date, t.completed_at, t.completed_by_name
+         FROM meeting_tasks t
+         JOIN customer_meetings m ON m.id = t.meeting_id
+         JOIN customers c ON c.id = t.customer_id
+         WHERE t.assigned_to_name = :name AND t.completed_at IS NOT NULL {$territoryFilter['sql']}
+         ORDER BY t.completed_at DESC
+         LIMIT 10"
+    );
+    $doneStmt->execute([':name' => $repName] + $territoryFilter['params']);
+    $recentCompleted = array_map('relationships_cross_customer_task_row', $doneStmt->fetchAll(PDO::FETCH_ASSOC));
+
+    relationships_respond(200, [
+        'ok' => true,
+        'roster' => $roster,
+        'rep_name' => $repName,
+        'open_tasks' => $openTasks,
+        'recent_completed_tasks' => $recentCompleted,
+    ]);
 }
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
@@ -290,6 +377,24 @@ if ($action === 'add_task') {
     $meetingId = (int) ($data['meeting_id'] ?? 0);
     $description = trim((string) ($data['description'] ?? ''));
     $assignedToName = trim((string) ($data['assigned_to_name'] ?? ''));
+    // Scheduled to-dos (Michael, 2026-09-16) -- OPTIONAL: an empty/missing
+    // due_date is valid and just means this to-do never appears on the
+    // new per-coordinator calendar (confirmed via AskUserQuestion).
+    $dueDateRaw = trim((string) ($data['due_date'] ?? ''));
+    $dueDate = null;
+    if ($dueDateRaw !== '') {
+        // DateTimeImmutable::createFromFormat() silently ROLLS OVER an
+        // out-of-range date (e.g. "2026-13-40" parses as 2027-02-09
+        // instead of failing) rather than returning false, so the regex
+        // + createFromFormat()!==false check alone isn't enough --
+        // re-format the parsed result and require it to match the input
+        // exactly, catching the roll-over case too.
+        $parsedDueDate = DateTimeImmutable::createFromFormat('Y-m-d', $dueDateRaw);
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dueDateRaw) || $parsedDueDate === false || $parsedDueDate->format('Y-m-d') !== $dueDateRaw) {
+            relationships_respond(400, ['ok' => false, 'error' => 'Invalid due date -- expected YYYY-MM-DD.']);
+        }
+        $dueDate = $dueDateRaw;
+    }
 
     $roster = relationships_todo_roster();
     if ($meetingId <= 0 || $description === '' || !in_array($assignedToName, $roster, true)) {
@@ -322,13 +427,13 @@ if ($action === 'add_task') {
 
     // Local save first, unconditionally.
     $insert = $pdo->prepare(
-        'INSERT INTO meeting_tasks (meeting_id, customer_id, description, assigned_to_user_id, assigned_to_name, created_by_user_id, created_by_name)
-         VALUES (:mid, :cid, :desc, :auid, :aname, :cuid, :cname)'
+        'INSERT INTO meeting_tasks (meeting_id, customer_id, description, assigned_to_user_id, assigned_to_name, created_by_user_id, created_by_name, due_date)
+         VALUES (:mid, :cid, :desc, :auid, :aname, :cuid, :cname, :due)'
     );
     $insert->execute([
         ':mid' => $meetingId, ':cid' => $customerId, ':desc' => $description,
         ':auid' => $assignee['id'] ?? null, ':aname' => $assignedToName,
-        ':cuid' => $user['id'], ':cname' => $user['name'],
+        ':cuid' => $user['id'], ':cname' => $user['name'], ':due' => $dueDate,
     ]);
     $taskId = (int) $pdo->lastInsertId();
 
@@ -398,7 +503,7 @@ if ($action === 'add_task') {
     }
 
     $taskStmt = $pdo->prepare(
-        'SELECT id, description, assigned_to_name, created_by_name, created_at, completed_at, completed_by_name, cw_push_status, cw_push_error, email_status, email_error
+        'SELECT id, description, assigned_to_name, created_by_name, created_at, due_date, completed_at, completed_by_name, cw_push_status, cw_push_error, email_status, email_error
          FROM meeting_tasks WHERE id = :id'
     );
     $taskStmt->execute([':id' => $taskId]);
@@ -431,7 +536,7 @@ if ($action === 'set_task_done') {
     }
 
     $taskStmt = $pdo->prepare(
-        'SELECT id, description, assigned_to_name, created_by_name, created_at, completed_at, completed_by_name, cw_push_status, cw_push_error, email_status, email_error
+        'SELECT id, description, assigned_to_name, created_by_name, created_at, due_date, completed_at, completed_by_name, cw_push_status, cw_push_error, email_status, email_error
          FROM meeting_tasks WHERE id = :id'
     );
     $taskStmt->execute([':id' => $taskId]);

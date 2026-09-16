@@ -604,6 +604,15 @@ function relationships_migrate(PDO $pdo): void
     // its outcome is just recorded here so a failure isn't silently lost.
     relationships_add_column_if_missing($pdo, 'meeting_tasks', 'email_status', 'TEXT');
     relationships_add_column_if_missing($pdo, 'meeting_tasks', 'email_error', 'TEXT');
+
+    // Scheduled to-dos -- added 2026-09-16 per Michael ("I want to add the
+    // ability to schedule to-dos with a date... show on a calendar in the
+    // coordinator's list view"). Optional (per Michael, AskUserQuestion):
+    // a to-do can be created with or without a due date; one left blank
+    // just never appears on the calendar and is listed as "Unscheduled"
+    // in the new per-coordinator to-do view instead. "YYYY-MM-DD", same
+    // convention as OutGrow Last Touch and the meeting date field.
+    relationships_add_column_if_missing($pdo, 'meeting_tasks', 'due_date', 'TEXT');
 }
 
 /**
