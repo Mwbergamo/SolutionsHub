@@ -12,11 +12,44 @@
  * ConnectWise (the first was Activity creation -- see
  * connectwise-activity-create.php, whose file header is worth reading
  * before touching this one). Same caution applies, doubled: this isn't
- * even a new-record POST, it's a PATCH into one specific custom field on
- * an EXISTING Company record -- get the field reference wrong and this
- * could silently touch the wrong field, or fail outright.
+ * even a new-record POST, it's a targeted update to one specific custom
+ * field on an EXISTING Company record -- get the field reference wrong and
+ * this could silently touch the wrong field, or fail outright.
  *
- * Two things are NOT independently confirmed against real ConnectWise data
+ * BUG FIX 2026-09-16 (Michael, live report): saving a real customer's
+ * OutGrow Last Touch date saved locally but never reached ConnectWise --
+ * "ConnectWise request returned HTTP 400 for
+ * .../company/companies/6790 -- { "code": "InvalidObject", "message":
+ * "company object is invalid", "errors": [ { "code": "OutOfRange",
+ * "message": "The field yearEstablished must be between 1900 and 9999.",
+ * "resource": "company", "field": "yearEstablished" }, { "code":
+ * "OutOfRange", "message": "The field revenueYear must be between 1900
+ * and 9999.", "resource": "company", "field": "revenueYear" } ] }". This
+ * was originally written as a JSON-Patch PATCH targeting only the one
+ * custom field's value (see the ORIGINAL design note this replaces,
+ * preserved below) -- but that error names two fields this write never
+ * touched, which means ConnectWise's Company PATCH endpoint on this
+ * instance revalidates the ENTIRE stored record on every PATCH, not just
+ * what's actually patched, and 400s if ANY field already has a bad legacy
+ * value (company 6790's yearEstablished/revenueYear, whatever they
+ * currently are, apparently aren't between 1900-9999). This is the exact
+ * same quirk already found and worked around for Company writes in the
+ * register app (register/api/customers.php's
+ * register_cw_put_company_with_retry() -- there it's a 500 with a generic
+ * DateTime error instead of a structured 400, but same root cause). Fixed
+ * by switching this write to the shared
+ * relationships_cw_put_company_with_retry() helper (connectwise.php) --
+ * PUT the full record back with just this field changed, auto-stripping
+ * whichever field ConnectWise names as invalid and retrying. See that
+ * function's docblock for the one thing this fix could NOT verify from
+ * this build environment (no live ConnectWise credentials here): whether
+ * stripping a field from the PUT payload leaves its stored value
+ * unchanged, or clears it -- Michael should check company 6790's Year
+ * Established / Revenue Year fields after the next real save.
+ *
+ * ORIGINAL design note (2026-09-15), now superseded by the PUT-based fix
+ * above but preserved for context on the two things this integration
+ * could not independently confirm against real ConnectWise data
  * (unreachable from every build environment used on this project so far --
  * see connectwise-activity.php / connectwise-activity-create.php file
  * headers for the running history of that constraint):
@@ -29,20 +62,18 @@
  *    array rather than hardcoding a field id, specifically so a wrong
  *    assumption here surfaces as a clear "field not found" error instead
  *    of silently touching the wrong thing.
- * 2. The exact PATCH shape ConnectWise expects to update ONE custom field
- *    on an existing Company. Every other ConnectWise object in this
- *    codebase (Manage v4_6_release, this on-prem instance) accepts a JSON
- *    Patch array; the best-documented pattern for a custom field is
- *    `{"op":"replace","path":"/customFields/<index>/value","value":...}`
- *    where <index> is that field's POSITION in the `customFields` array
- *    ConnectWise returns for this record (NOT its setup-level custom
- *    field id) -- so this always does a fresh GET immediately before the
- *    PATCH to find that position, rather than caching an index that could
- *    shift. The date format reuses the one format this integration has
- *    ACTUALLY confirmed ConnectWise v4_6_release accepts for a date/time
- *    value -- UTC, second precision, "Z" suffix (e.g.
- *    "2026-09-15T00:00:00Z") -- confirmed for Activity dateStart/dateEnd
- *    in connectwise-activity-create.php after two earlier guesses were
+ * 2. The exact shape ConnectWise expects to update ONE custom field on an
+ *    existing Company. The write now sends the Company's FULL customFields
+ *    array back (via the PUT-with-retry helper) with just this one entry's
+ *    `value` changed, keyed by that field's POSITION in the array
+ *    ConnectWise returns for this record (NOT its setup-level custom field
+ *    id) -- so this always does a fresh GET immediately before writing to
+ *    find that position, rather than caching an index that could shift.
+ *    The date format reuses the one format this integration has ACTUALLY
+ *    confirmed ConnectWise v4_6_release accepts for a date/time value --
+ *    UTC, second precision, "Z" suffix (e.g. "2026-09-15T00:00:00Z") --
+ *    confirmed for Activity dateStart/dateEnd in
+ *    connectwise-activity-create.php after two earlier guesses were
  *    rejected; not independently reconfirmed for a custom field
  *    specifically, but the most likely correct starting guess given that
  *    history. Real proof only comes from Michael saving one on the live
@@ -150,13 +181,20 @@ function relationships_cw_outgrow_read(string $cwCompanyId): ?string
 
 /**
  * Writes a new "OutGrow Last Touch" date to this Company's ConnectWise
- * record -- see file header for the real uncertainty here (PATCH shape,
- * date format). Re-fetches the customFields array fresh (rather than
- * trusting a value the caller might have cached) so the array position
- * used in the PATCH path is never stale. Throws RelationshipsConnectWiseError
- * if the field can't be found on this Company at all, or if ConnectWise
- * rejects the PATCH -- callers (outgrow.php) catch this and log it rather
- * than letting it block the local save.
+ * record -- see file header for the real uncertainty here (PUT-with-retry
+ * mechanics, date format). Fetches the Company's full customFields array
+ * fresh (rather than trusting a value the caller might have cached) so
+ * the array position used is never stale, then hands the whole array --
+ * with just this one entry's value changed -- to
+ * relationships_cw_put_company_with_retry() (connectwise.php), which PUTs
+ * the full Company record back rather than PATCHing just this field (see
+ * file header: PATCH on this ConnectWise instance revalidates the entire
+ * stored record and 400s/500s on any pre-existing invalid field,
+ * regardless of what's actually being changed). Throws
+ * RelationshipsConnectWiseError if the field can't be found on this
+ * Company at all, or if the write ultimately fails -- callers
+ * (outgrow.php) catch this and log it rather than letting it block the
+ * local save.
  */
 function relationships_cw_outgrow_write(string $cwCompanyId, string $dateYmd): void
 {
@@ -179,11 +217,9 @@ function relationships_cw_outgrow_write(string $cwCompanyId, string $dateYmd): v
     // custom field specifically.
     $wireValue = $d->setTime(0, 0, 0)->format('Y-m-d\T00:00:00\Z');
 
-    $patch = [[
-        'op' => 'replace',
-        'path' => '/customFields/' . (int) $field['_index'] . '/value',
-        'value' => $wireValue,
-    ]];
+    $index = (int) $field['_index'];
+    $updatedFields = $fields;
+    $updatedFields[$index]['value'] = $wireValue;
 
-    relationships_cw_request('/company/companies/' . rawurlencode($cwCompanyId), [], 'PATCH', $patch);
+    relationships_cw_put_company_with_retry($cwCompanyId, ['customFields' => $updatedFields]);
 }

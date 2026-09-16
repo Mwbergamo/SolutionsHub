@@ -179,3 +179,109 @@ function relationships_cw_list(string $path, string $conditions, array $fields, 
     }
     return $all;
 }
+
+/**
+ * Shared PUT-with-auto-strip mechanism for Company writes -- added
+ * 2026-09-16 (Bug fix: saving an OutGrow Last Touch date 400'd instead of
+ * reaching ConnectWise, see connectwise-outgrow.php's file header for the
+ * full report). ConnectWise's Company PATCH endpoint on this instance
+ * turns out to fully revalidate the ENTIRE stored record on every PATCH,
+ * regardless of which field is actually targeted -- confirmed live: a
+ * PATCH touching only the OutGrow Last Touch custom field on company 6790
+ * came back HTTP 400 "company object is invalid" citing two completely
+ * unrelated, already-invalid legacy field values ("The field
+ * yearEstablished must be between 1900 and 9999.", same for
+ * revenueYear). This is the SAME underlying quirk already found and
+ * worked around for Company writes in the register app -- see
+ * register/api/customers.php's register_cw_put_company_with_retry()
+ * docblock (there it 500s with a generic DateTime error instead of a
+ * structured 400, but the root cause and the fix are the same: PUT the
+ * full record back instead of PATCH).
+ *
+ * Fetches the full Company record, merges $fieldsToSet on top (array
+ * union -- a key present in both means $fieldsToSet's value wins, so only
+ * the fields this call actually wants to change are ever touched
+ * on purpose), and PUTs it back. If ConnectWise's response names a
+ * specific offending field -- either "X can only be used when creating a
+ * new company" (a create-only field the GET response includes but PUT
+ * rejects) or ANY OTHER named-field error (OutOfRange, etc., on a
+ * pre-existing legacy value this call never intended to change) -- that
+ * field is removed from the payload and the PUT is retried, up to
+ * $maxAttempts times (one bad field stripped per attempt, so a response
+ * naming several fields resolves over a few retries, same as the
+ * yearEstablished + revenueYear case above).
+ *
+ * IMPORTANT, NOT YET LIVE-CONFIRMED: when a field is stripped this way,
+ * it's unconfirmed whether ConnectWise's PUT leaves that field's stored
+ * value UNCHANGED (the intended, no-side-effect behavior) or resets it to
+ * null/a default -- this build environment has no ConnectWise credentials
+ * to test against real data (see connectwise-outgrow.php's file header
+ * for the standing constraint). Michael should check company 6790's Year
+ * Established / Revenue Year fields in ConnectWise right after the next
+ * real OutGrow Last Touch save to confirm neither was cleared or changed
+ * as a side effect.
+ */
+function relationships_cw_put_company_with_retry(string $cwCompanyId, array $fieldsToSet, int $maxAttempts = 5): array
+{
+    $full = relationships_cw_request('/company/companies/' . rawurlencode($cwCompanyId), []);
+    $modified = $fieldsToSet + $full;
+
+    for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+        try {
+            return relationships_cw_request('/company/companies/' . rawurlencode($cwCompanyId), [], 'PUT', $modified);
+        } catch (RelationshipsConnectWiseError $e) {
+            $realKey = relationships_cw_offending_field($e->getMessage(), $modified);
+            if ($realKey === null) {
+                throw $e;
+            }
+            unset($modified[$realKey]);
+        }
+    }
+
+    throw new RelationshipsConnectWiseError('Could not update company ' . $cwCompanyId . ' after ' . $maxAttempts . ' attempts.');
+}
+
+/**
+ * Parses the JSON body embedded in a RelationshipsConnectWiseError message
+ * (see relationships_cw_request()'s "HTTP $status ... $snippet" shape) for
+ * a ConnectWise structured `errors[]` entry naming a specific field, and
+ * resolves it to the matching key actually present in $payload -- trying
+ * the literal name first, then a plural "XIds" -> "Xs" rewrite (ConnectWise's
+ * own internal field-name convention, confirmed live via the register
+ * app's identical mechanism). Returns null if the error body isn't
+ * ConnectWise's structured shape, or names a field this payload doesn't
+ * have under any of those spellings.
+ */
+function relationships_cw_offending_field(string $errorMessage, array $payload): ?string
+{
+    $jsonStart = strpos($errorMessage, '{');
+    $decoded = $jsonStart !== false ? json_decode(substr($errorMessage, $jsonStart), true) : null;
+    if (!is_array($decoded) || !is_array($decoded['errors'] ?? null)) {
+        return null;
+    }
+
+    $offendingField = null;
+    foreach ($decoded['errors'] as $err) {
+        $field = is_array($err) ? ($err['field'] ?? null) : null;
+        if (is_string($field) && $field !== '') {
+            $offendingField = $field;
+            break;
+        }
+    }
+    if ($offendingField === null) {
+        return null;
+    }
+
+    $candidates = [$offendingField];
+    if (substr($offendingField, -3) === 'Ids') {
+        $base = substr($offendingField, 0, -3);
+        $candidates[] = $base . 's';
+        $candidates[] = $base;
+    }
+    foreach ($candidates as $candidate) {
+        if (array_key_exists($candidate, $payload)) {
+            return $candidate;
+        }
+    }
+    return null;
+}
