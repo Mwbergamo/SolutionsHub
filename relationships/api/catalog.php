@@ -119,6 +119,46 @@ function relationships_todo_roster(): array
     ];
 }
 
+/**
+ * Real ConnectWise office email for each of the 7 fixed roster names above
+ * -- added 2026-09-16 (bug fix: a meeting to-do task assigned to a roster
+ * member with no Relationships login yet couldn't reach ConnectWise at
+ * all. ConnectWise's `assignTo/id` field on an Activity is REQUIRED, not
+ * optional (confirmed 2026-09-11, see connectwise-activity-create.php's
+ * header) -- so a task whose assignee had never registered a Relationships
+ * login had no email to resolve a ConnectWise Member id from, and the
+ * WHOLE Activity create was rejected, not just that one field. Live error
+ * Michael hit: "The assignTo/id field is required.").
+ *
+ * Michael supplied these directly (chat, 2026-09-16) specifically so a
+ * meeting to-do task's ConnectWise Activity assignment never depends on
+ * whether that person has registered a Relationships login. This is now
+ * the source of truth meetings.php uses for the `assigned_to_email` it
+ * hands to relationships_cw_create_task_activity() -- separate from (and
+ * more reliable than) `relationships_meetings_user_by_name()`'s crc_users
+ * lookup, which stays in use only for the LOCAL `assigned_to_user_id`
+ * bookkeeping column, unrelated to the ConnectWise push.
+ *
+ * Returns null for any name not in the roster (shouldn't happen --
+ * meetings.php validates assigned_to_name against relationships_todo_roster()
+ * before this is ever called -- but null here just means the existing
+ * "create the Activity memberless" degradation applies, same as any other
+ * unresolved assignee).
+ */
+function relationships_todo_roster_cw_email(string $name): ?string
+{
+    static $map = [
+        'Claire Hayden' => 'Chayden@codebluetechnology.com',
+        'Jake Bradshaw' => 'Jbradshaw@codebluetechnology.com',
+        'Casey Mayes' => 'cmayes@codebluetechnology.com',
+        'Michael Bergamo' => 'Mbergamo@codebluetechnology.com',
+        'Chester Sienko' => 'Csienko@codebluetechnology.com',
+        'Moe Okeilli' => 'Mokeilli@codebluetechnology.com',
+        'Walter Drew' => 'Wdrew@codebluetechnology.com',
+    ];
+    return $map[$name] ?? null;
+}
+
 function relationships_is_cross_sell_eligible(string $pillarId, string $serviceId): bool
 {
     $map = relationships_cross_sell_map();

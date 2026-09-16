@@ -309,6 +309,13 @@ if ($action === 'add_task') {
     relationships_require_territory_scope($allowedTerritories, $meeting['territory_name']);
     $customerId = (int) $meeting['customer_id'];
 
+    // crc_users lookup -- LOCAL bookkeeping only (assigned_to_user_id
+    // below). Deliberately NOT used for the ConnectWise push anymore (see
+    // relationships_todo_roster_cw_email() in catalog.php, 2026-09-16 bug
+    // fix): it depends on that roster member having registered a
+    // Relationships login, which isn't guaranteed, and a null email there
+    // used to sink the whole ConnectWise Activity create (assignTo/id is
+    // REQUIRED on this ConnectWise instance).
     $assignee = relationships_meetings_user_by_name($pdo, $assignedToName);
 
     // Local save first, unconditionally.
@@ -333,7 +340,12 @@ if ($action === 'add_task') {
                 'description' => $description,
                 'meeting_subject' => $meeting['subject'],
                 'assigned_to_name' => $assignedToName,
-                'assigned_to_email' => $assignee['email'] ?? null,
+                // The fixed roster's real ConnectWise office email
+                // (Michael, chat, 2026-09-16) -- NOT $assignee['email'],
+                // so this always resolves regardless of Relationships
+                // login status. See relationships_todo_roster_cw_email()'s
+                // docblock in catalog.php for the full bug-fix story.
+                'assigned_to_email' => relationships_todo_roster_cw_email($assignedToName),
                 'created_by_name' => $user['name'],
                 'created_at_display' => $nowEastern->format('M j, Y g:i A T'),
             ]);
