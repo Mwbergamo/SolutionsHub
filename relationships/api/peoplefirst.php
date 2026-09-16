@@ -37,9 +37,11 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
+require_once __DIR__ . '/territory-access.php';
 
 $pdo = relationships_db();
 $user = relationships_require_login($pdo);
+$allowedTerritories = relationships_allowed_territories($pdo);
 
 $action = $_GET['action'] ?? '';
 
@@ -48,13 +50,21 @@ $action = $_GET['action'] ?? '';
  * per the calendar-month / calendar-quarter rule above. Recomputed per
  * request -- fine at CodeBlue's customer-count scale (same reasoning as
  * checklist.php's relationships_missing_services_with_progress()).
+ *
+ * Rep-based territory filtering (see territory-access.php) -- a restricted
+ * rep's PeopleFirst summary/queue only ever reflects their own customers.
  */
-function relationships_peoplefirst_status(PDO $pdo): array
+function relationships_peoplefirst_status(PDO $pdo, ?array $allowedTerritories = null): array
 {
-    $rows = $pdo->query(
+    $territoryFilter = $allowedTerritories === null
+        ? ['sql' => '', 'params' => []]
+        : relationships_territory_filter_sql($allowedTerritories, 'customers');
+    $stmt = $pdo->prepare(
         "SELECT id, name, last_client_checkin_at, last_client_checkin_by, last_risk_scan_at, last_risk_scan_by
-         FROM customers WHERE is_peoplefirst = 1 ORDER BY name ASC"
-    )->fetchAll(PDO::FETCH_ASSOC);
+         FROM customers WHERE is_peoplefirst = 1 {$territoryFilter['sql']} ORDER BY name ASC"
+    );
+    $stmt->execute($territoryFilter['params']);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $now = new DateTimeImmutable('now');
     $curMonthKey = $now->format('Y-m');
@@ -83,7 +93,7 @@ function relationships_peoplefirst_status(PDO $pdo): array
 }
 
 if ($action === 'summary') {
-    $rows = relationships_peoplefirst_status($pdo);
+    $rows = relationships_peoplefirst_status($pdo, $allowedTerritories);
     $needsCheckin = count(array_filter($rows, static fn (array $r): bool => $r['need_checkin']));
     $needsScan = count(array_filter($rows, static fn (array $r): bool => $r['need_scan']));
     relationships_respond(200, [
@@ -100,7 +110,7 @@ if ($action === 'queue') {
         relationships_respond(400, ['ok' => false, 'error' => 'type must be "checkin" or "scan".']);
     }
 
-    $rows = relationships_peoplefirst_status($pdo);
+    $rows = relationships_peoplefirst_status($pdo, $allowedTerritories);
     $needKey = $type === 'checkin' ? 'need_checkin' : 'need_scan';
     $atField = $type === 'checkin' ? 'last_client_checkin_at' : 'last_risk_scan_at';
     $byField = $type === 'checkin' ? 'last_client_checkin_by' : 'last_risk_scan_by';
@@ -127,12 +137,13 @@ if ($action === 'log') {
         relationships_respond(400, ['ok' => false, 'error' => 'Missing/invalid customer_id or type.']);
     }
 
-    $custStmt = $pdo->prepare('SELECT id, is_peoplefirst FROM customers WHERE id = :id');
+    $custStmt = $pdo->prepare('SELECT id, is_peoplefirst, territory_name FROM customers WHERE id = :id');
     $custStmt->execute([':id' => $customerId]);
     $cust = $custStmt->fetch(PDO::FETCH_ASSOC);
     if ($cust === false) {
         relationships_respond(404, ['ok' => false, 'error' => 'Customer not found.']);
     }
+    relationships_require_territory_scope($allowedTerritories, $cust['territory_name']);
     if (!$cust['is_peoplefirst']) {
         relationships_respond(400, ['ok' => false, 'error' => 'This customer is not a PeopleFirst member.']);
     }

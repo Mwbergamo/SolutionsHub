@@ -112,6 +112,32 @@
     contactsSyncStartedAt: null,
     contactsSyncErrors: [],
 
+    // Territory sync (api/sync.php's territory-* actions) -- added
+    // 2026-09-16 per Michael's rep-based territory filtering request. Runs
+    // last as part of "Run Sync Now" (after contacts), tagging every
+    // customer with its synced ConnectWise territory so a restricted rep's
+    // customer lists can be filtered -- see connectwise-territory-sync-core.php.
+    // Independent queue, by ConnectWise Company.
+    territorySyncRunning: false,
+    territorySyncDone: false,
+    territorySyncTotal: 0,
+    territorySyncProcessed: 0,
+    territorySyncTotals: null,
+    territorySyncStartedAt: null,
+    territorySyncErrors: [],
+
+    // Territory Admin screen (api/territory-admin.php) -- added 2026-09-16
+    // per Michael, restricted to territory admins only (state.user.is_territory_admin
+    // -- see territory-access.php). Manages which CRC email is restricted
+    // to which synced territory_name(s).
+    territoryAdminLoading: false,
+    territoryAdmin: null, // { assignments: [{id,email,territory_name,created_at}], territory_options: [...] } once loaded
+    territoryAdminError: null,
+    territoryAdminAddEmail: '',
+    territoryAdminAddTerritory: '',
+    territoryAdminSaving: false,
+    territoryAdminRemovingId: null,
+
     // Primary Relationship Dashboard overview (api/dashboard.php) -- added
     // 2026-09-10: the gauges + per-customer trend list shown on the front
     // page when no customer is selected. Loaded once at boot() and re-shown
@@ -1076,6 +1102,13 @@
       }
       render();
     }).catch(function () { /* silent, same as above */ });
+    apiGet('api/sync.php?action=territory-status').then(function (r) {
+      if (r.data && r.data.ok) {
+        state.territorySyncTotals = r.data.totals;
+        state.territorySyncStartedAt = r.data.started_at;
+      }
+      render();
+    }).catch(function () { /* silent, same as above */ });
   }
 
   // Kicks off a full ConnectWise sync: api/sync.php?action=start builds the
@@ -1351,7 +1384,7 @@
         state.contactsSyncRunning = false;
         state.contactsSyncDone = true;
         render();
-        loadOverview();
+        runTerritorySync();
       } else {
         render();
         contactsStepSyncLoop();
@@ -1359,6 +1392,130 @@
     }).catch(function () {
       state.contactsSyncRunning = false;
       state.error = 'Contacts sync failed partway through — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Same shape again, run last as part of "Run Sync Now" -- once this
+  // finishes, the front-page overview is reloaded so its gauges/list
+  // reflect the sync that just ran (see loadOverview()), same as contacts
+  // used to do directly before this stage was added.
+  function runTerritorySync() {
+    state.territorySyncRunning = true;
+    state.territorySyncDone = false;
+    state.territorySyncErrors = [];
+    render();
+    apiPost('api/sync.php?action=territory-start', {}).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.territorySyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Everything else synced, but could not start the territory sync.';
+        render();
+        return;
+      }
+      state.territorySyncTotal = r.data.total;
+      state.territorySyncProcessed = 0;
+      render();
+      territoryStepSyncLoop();
+    }).catch(function () {
+      state.territorySyncRunning = false;
+      state.error = 'The territory sync could not start — check your connection and try again.';
+      render();
+    });
+  }
+
+  function territoryStepSyncLoop() {
+    apiPost('api/sync.php?action=territory-step', { batch_size: 50 }).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.territorySyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Territory sync failed partway through.';
+        render();
+        return;
+      }
+      state.territorySyncTotals = r.data.totals;
+      state.territorySyncProcessed = r.data.totals.done + r.data.totals.error;
+      if (r.data.errors && r.data.errors.length) {
+        state.territorySyncErrors = state.territorySyncErrors.concat(r.data.errors);
+      }
+      if (r.data.done) {
+        state.territorySyncRunning = false;
+        state.territorySyncDone = true;
+        render();
+        loadOverview();
+      } else {
+        render();
+        territoryStepSyncLoop();
+      }
+    }).catch(function () {
+      state.territorySyncRunning = false;
+      state.error = 'Territory sync failed partway through — check your connection and try again.';
+      render();
+    });
+  }
+
+  // ---- Territory Admin (api/territory-admin.php) -----------------------
+
+  function loadTerritoryAdmin() {
+    state.territoryAdminLoading = true;
+    state.territoryAdminError = null;
+    render();
+    apiGet('api/territory-admin.php?action=list').then(function (r) {
+      state.territoryAdminLoading = false;
+      if (r.data && r.data.ok) {
+        state.territoryAdmin = { assignments: r.data.assignments, territory_options: r.data.territory_options };
+      } else {
+        state.territoryAdminError = (r.data && r.data.error) || 'Could not load territory assignments.';
+      }
+      render();
+    }).catch(function () {
+      state.territoryAdminLoading = false;
+      state.territoryAdminError = 'Could not load territory assignments — check your connection.';
+      render();
+    });
+  }
+
+  function addTerritoryAssignment() {
+    var email = state.territoryAdminAddEmail.trim();
+    var territory = state.territoryAdminAddTerritory.trim();
+    if (!email || !territory) {
+      state.territoryAdminError = 'Both an email and a territory name are required.';
+      render();
+      return;
+    }
+    state.territoryAdminSaving = true;
+    state.territoryAdminError = null;
+    render();
+    apiPost('api/territory-admin.php?action=add', { email: email, territory_name: territory }).then(function (r) {
+      state.territoryAdminSaving = false;
+      if (!r.data || !r.data.ok) {
+        state.territoryAdminError = (r.data && r.data.error) || 'Could not add that assignment.';
+        render();
+        return;
+      }
+      state.territoryAdminAddEmail = '';
+      state.territoryAdminAddTerritory = '';
+      loadTerritoryAdmin();
+    }).catch(function () {
+      state.territoryAdminSaving = false;
+      state.territoryAdminError = 'Could not add that assignment — check your connection.';
+      render();
+    });
+  }
+
+  function removeTerritoryAssignment(id) {
+    state.territoryAdminRemovingId = id;
+    state.territoryAdminError = null;
+    render();
+    apiPost('api/territory-admin.php?action=remove', { id: id }).then(function (r) {
+      state.territoryAdminRemovingId = null;
+      if (!r.data || !r.data.ok) {
+        state.territoryAdminError = (r.data && r.data.error) || 'Could not remove that assignment.';
+        render();
+        return;
+      }
+      loadTerritoryAdmin();
+    }).catch(function () {
+      state.territoryAdminRemovingId = null;
+      state.territoryAdminError = 'Could not remove that assignment — check your connection.';
       render();
     });
   }
@@ -1607,6 +1764,9 @@
             '<button class="nav-btn ' + (state.view === 'dashboard' ? 'active' : '') + '" type="button" data-action="show-dashboard">Dashboard</button>' +
             '<button class="nav-btn ' + (state.view === 'report' || state.view === 'queue' ? 'active' : '') + '" type="button" data-action="show-report">Cross-Sell Report</button>' +
             '<button class="nav-btn ' + (state.view === 'sync' ? 'active' : '') + '" type="button" data-action="show-sync">ConnectWise Sync</button>' +
+            (state.user.is_territory_admin
+              ? '<button class="nav-btn ' + (state.view === 'territory-admin' ? 'active' : '') + '" type="button" data-action="show-territory-admin">Territory Admin</button>'
+              : '') +
           '</nav>' +
           '<a class="back-to-hub" href="' + HUB_URL + '">← Solutions Hub</a>' +
         '</div>' +
@@ -1632,6 +1792,9 @@
     }
     if (state.view === 'sync') {
       return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + syncHtml();
+    }
+    if (state.view === 'territory-admin') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + territoryAdminHtml();
     }
 
     var html = '<div class="search-wrap">' + searchBoxHtml() + '</div>';
@@ -1791,13 +1954,13 @@
   function syncHtml() {
     var html = '<div class="view-header">' +
       '<div class="view-title">ConnectWise Sync</div>' +
-      '<div class="view-sub">Pulls active services from ConnectWise — IT Services, Voice, Premise Security, and Data Center agreements — into this dashboard, refreshes every customer’s Monthly Billing chart, pulls in Active/Delinquent/Special Info companies with no agreement at all as Prospects, then refreshes the front page’s Service Tickets YTD/trend and Active Contacts count/trend and search-by-contact data. Checklist progress already recorded isn’t touched.</div>' +
+      '<div class="view-sub">Pulls active services from ConnectWise — IT Services, Voice, Premise Security, and Data Center agreements — into this dashboard, refreshes every customer’s Monthly Billing chart, pulls in Active/Delinquent/Special Info companies with no agreement at all as Prospects, refreshes the front page’s Service Tickets YTD/trend and Active Contacts count/trend and search-by-contact data, then tags every company with its ConnectWise Territory so rep-based customer filtering (Territory Admin) stays current. Checklist progress already recorded isn’t touched.</div>' +
     '</div>';
 
     html += '<div class="sync-panel">';
 
     var running = state.syncRunning || state.billingSyncRunning || state.prospectSyncRunning ||
-      state.ticketHistorySyncRunning || state.contactsSyncRunning;
+      state.ticketHistorySyncRunning || state.contactsSyncRunning || state.territorySyncRunning;
 
     if (state.syncRunning) {
       var pct = state.syncTotal ? Math.min(100, Math.round((state.syncProcessed / state.syncTotal) * 100)) : 0;
@@ -1819,6 +1982,10 @@
       var cpct = state.contactsSyncTotal ? Math.min(100, Math.round((state.contactsSyncProcessed / state.contactsSyncTotal) * 100)) : 0;
       html += '<div class="sync-progress-label">Ticket history synced. Syncing Contacts… ' + state.contactsSyncProcessed + ' of ' + state.contactsSyncTotal + ' customers (' + cpct + '%)</div>' +
         '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + cpct + '%"></div></div>';
+    } else if (state.territorySyncRunning) {
+      var tpct = state.territorySyncTotal ? Math.min(100, Math.round((state.territorySyncProcessed / state.territorySyncTotal) * 100)) : 0;
+      html += '<div class="sync-progress-label">Contacts synced. Syncing Territories… ' + state.territorySyncProcessed + ' of ' + state.territorySyncTotal + ' companies (' + tpct + '%)</div>' +
+        '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + tpct + '%"></div></div>';
     }
 
     html += '<button class="sync-run-btn" type="button" data-action="run-sync"' + (running ? ' disabled' : '') + '>' + (running ? 'Syncing…' : 'Run Sync Now') + '</button>';
@@ -1878,6 +2045,17 @@
       } else if (state.contactsSyncTotals) {
         html += '<div class="sync-result">Contacts: no sync has been run yet.</div>';
       }
+
+      if (state.territorySyncDone) {
+        html += '<div class="sync-result">Territories: ' + (state.territorySyncTotals ? state.territorySyncTotals.done : 0) + ' companies synced' +
+          (state.territorySyncTotals && state.territorySyncTotals.error ? ', ' + state.territorySyncTotals.error + ' failed (see below)' : '') + '.</div>';
+      } else if (state.territorySyncTotals && (state.territorySyncTotals.done || state.territorySyncTotals.error)) {
+        html += '<div class="sync-result">Territories — last run: ' + state.territorySyncTotals.done + ' synced' +
+          (state.territorySyncTotals.error ? ', ' + state.territorySyncTotals.error + ' failed' : '') +
+          (state.territorySyncStartedAt ? ' — started ' + escapeHtml(fmtTimestamp(state.territorySyncStartedAt)) : '') + '.</div>';
+      } else if (state.territorySyncTotals) {
+        html += '<div class="sync-result">Territories: no sync has been run yet.</div>';
+      }
     }
 
     if (state.syncErrors.length) {
@@ -1918,6 +2096,90 @@
         html += '<div class="sync-error-row"><strong>' + escapeHtml(err.company_name) + '</strong>: ' + escapeHtml(err.error) + '</div>';
       });
       html += '</div>';
+    }
+
+    if (state.territorySyncErrors.length) {
+      html += '<div class="sync-errors-title">Companies whose territory failed to sync (' + state.territorySyncErrors.length + '):</div><div class="sync-errors-list">';
+      state.territorySyncErrors.forEach(function (err) {
+        html += '<div class="sync-error-row"><strong>' + escapeHtml(err.company_name) + '</strong>: ' + escapeHtml(err.error) + '</div>';
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  // Territory Admin screen -- added 2026-09-16 per Michael. Nav item is
+  // only shown to state.user.is_territory_admin (topbarHtml()), but this
+  // view is reachable by URL/state manipulation too -- territory-admin.php
+  // itself re-checks admin status server-side on every call, so there's no
+  // real access to gain by forcing this view open without the flag; the
+  // client-side gate is purely about not showing a confusing "Access
+  // Denied" nav item to every other CRC.
+  function territoryAdminHtml() {
+    var html = '<div class="view-header">' +
+      '<div class="view-title">Territory Admin</div>' +
+      '<div class="view-sub">Restrict a CRC to only their assigned territories’ customers. A rep with no rows below sees every customer, same as before this feature existed. Territory names must match the synced ConnectWise Territory exactly — pick from the list where possible rather than typing, since a typo silently shows that rep zero customers with no error anywhere.</div>' +
+    '</div>';
+
+    if (state.territoryAdminLoading || !state.territoryAdmin) {
+      return html + '<div class="loading">Loading territory assignments…</div>';
+    }
+
+    var data = state.territoryAdmin;
+
+    html += '<div class="territory-admin-panel">';
+
+    if (state.territoryAdminError) {
+      html += '<div class="error-banner">' + escapeHtml(state.territoryAdminError) + '</div>';
+    }
+
+    // Add-assignment form.
+    html += '<div class="territory-admin-add">' +
+      '<input type="email" id="territoryAdminEmailInput" placeholder="rep@codebluetechnology.com" value="' + escapeHtml(state.territoryAdminAddEmail) + '" autocomplete="off">' +
+      '<input type="text" id="territoryAdminTerritoryInput" placeholder="Territory name" value="' + escapeHtml(state.territoryAdminAddTerritory) + '" list="territoryAdminOptionsList" autocomplete="off">' +
+      '<datalist id="territoryAdminOptionsList">' +
+        data.territory_options.map(function (t) { return '<option value="' + escapeHtml(t) + '"></option>'; }).join('') +
+      '</datalist>' +
+      '<button type="button" class="territory-admin-add-btn" data-action="territory-admin-add"' + (state.territoryAdminSaving ? ' disabled' : '') + '>' +
+        (state.territoryAdminSaving ? 'Adding…' : '+ Add') +
+      '</button>' +
+    '</div>';
+
+    if (data.territory_options.length === 0) {
+      html += '<div class="territory-admin-hint">No synced territory names yet — run a ConnectWise Sync first (Territories is the last stage) to populate the picker above. You can still type a name manually.</div>';
+    }
+
+    // Current assignments, grouped by email so each rep's rows sit together.
+    var byEmail = {};
+    var emailOrder = [];
+    data.assignments.forEach(function (a) {
+      if (!byEmail[a.email]) {
+        byEmail[a.email] = [];
+        emailOrder.push(a.email);
+      }
+      byEmail[a.email].push(a);
+    });
+
+    if (emailOrder.length === 0) {
+      html += '<div class="territory-admin-empty">No restricted reps yet — every CRC currently sees every customer.</div>';
+    } else {
+      emailOrder.forEach(function (email) {
+        html += '<div class="territory-admin-rep">' +
+          '<div class="territory-admin-rep-email">' + escapeHtml(email) + '</div>' +
+          '<div class="territory-admin-rep-territories">';
+        byEmail[email].forEach(function (a) {
+          html += '<div class="territory-admin-chip">' +
+            '<span>' + escapeHtml(a.territory_name) + '</span>' +
+            '<button type="button" class="territory-admin-remove-btn" data-action="territory-admin-remove" data-id="' + a.id + '"' +
+              (state.territoryAdminRemovingId === a.id ? ' disabled' : '') + ' title="Remove">' +
+              (state.territoryAdminRemovingId === a.id ? '…' : '×') +
+            '</button>' +
+          '</div>';
+        });
+        html += '</div></div>';
+      });
     }
 
     html += '</div>';
@@ -2916,6 +3178,19 @@
         state.taskDraftAssignee = e.target.value;
       });
     }
+
+    var territoryAdminEmailInput = document.getElementById('territoryAdminEmailInput');
+    if (territoryAdminEmailInput) {
+      territoryAdminEmailInput.addEventListener('input', function (e) {
+        state.territoryAdminAddEmail = e.target.value;
+      });
+    }
+    var territoryAdminTerritoryInput = document.getElementById('territoryAdminTerritoryInput');
+    if (territoryAdminTerritoryInput) {
+      territoryAdminTerritoryInput.addEventListener('input', function (e) {
+        state.territoryAdminAddTerritory = e.target.value;
+      });
+    }
   }
 
   function onRootClick(e) {
@@ -2963,6 +3238,15 @@
       loadSyncStatus();
     } else if (action === 'run-sync') {
       runFullSync();
+    } else if (action === 'show-territory-admin') {
+      state.view = 'territory-admin';
+      state.error = null;
+      render();
+      loadTerritoryAdmin();
+    } else if (action === 'territory-admin-add') {
+      addTerritoryAssignment();
+    } else if (action === 'territory-admin-remove') {
+      removeTerritoryAssignment(parseInt(el.getAttribute('data-id'), 10));
     } else if (action === 'report-cell') {
       state.view = 'queue';
       loadQueue(

@@ -67,9 +67,11 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
+require_once __DIR__ . '/territory-access.php';
 
 $pdo = relationships_db();
 relationships_require_login($pdo);
+$allowedTerritories = relationships_allowed_territories($pdo);
 
 $action = $_GET['action'] ?? '';
 
@@ -77,29 +79,41 @@ if ($action === 'list') {
     $q = trim((string) ($_GET['q'] ?? ''));
     $matchedContact = []; // customer id => "First Last" of the contact that matched, when matched via a contact
 
+    // Rep-based territory filtering (see territory-access.php). $customers
+    // below is unqualified in the no-search/name-search branches, and
+    // aliased "c" in the contact-join branch -- build both fragments once.
+    $territoryFilter = $allowedTerritories === null
+        ? ['sql' => '', 'params' => []]
+        : relationships_territory_filter_sql($allowedTerritories, 'customers');
+    $territoryFilterC = $allowedTerritories === null
+        ? ['sql' => '', 'params' => []]
+        : relationships_territory_filter_sql($allowedTerritories, 'c');
+
     if ($q === '') {
-        $stmt = $pdo->query('SELECT id, name, is_peoplefirst, is_prospect_only FROM customers ORDER BY name ASC LIMIT 200');
+        $stmt = $pdo->prepare("SELECT id, name, is_peoplefirst, is_prospect_only FROM customers WHERE 1=1 {$territoryFilter['sql']} ORDER BY name ASC LIMIT 200");
+        $stmt->execute($territoryFilter['params']);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } else {
         $like = '%' . $q . '%';
 
-        $nameStmt = $pdo->prepare('SELECT id, name, is_peoplefirst, is_prospect_only FROM customers WHERE name LIKE :q ORDER BY name ASC LIMIT 50');
-        $nameStmt->execute([':q' => $like]);
+        $nameStmt = $pdo->prepare("SELECT id, name, is_peoplefirst, is_prospect_only FROM customers WHERE name LIKE :q {$territoryFilter['sql']} ORDER BY name ASC LIMIT 50");
+        $nameStmt->execute(array_merge([':q' => $like], $territoryFilter['params']));
         $nameRows = $nameStmt->fetchAll(PDO::FETCH_ASSOC);
 
         // Also match a synced ConnectWise Contact's first/last name or
         // email and resolve to their parent company -- local data only,
         // see the file header above.
         $contactStmt = $pdo->prepare(
-            'SELECT c.id, c.name, c.is_peoplefirst, c.is_prospect_only,
+            "SELECT c.id, c.name, c.is_peoplefirst, c.is_prospect_only,
                     ct.first_name AS matched_first_name, ct.last_name AS matched_last_name
              FROM contacts ct
              JOIN customers c ON c.id = ct.customer_id
-             WHERE ct.first_name LIKE :q1 OR ct.last_name LIKE :q2 OR ct.email LIKE :q3
-                OR (ct.first_name || \' \' || ct.last_name) LIKE :q4
-             ORDER BY c.name ASC LIMIT 50'
+             WHERE (ct.first_name LIKE :q1 OR ct.last_name LIKE :q2 OR ct.email LIKE :q3
+                OR (ct.first_name || ' ' || ct.last_name) LIKE :q4)
+                {$territoryFilterC['sql']}
+             ORDER BY c.name ASC LIMIT 50"
         );
-        $contactStmt->execute([':q1' => $like, ':q2' => $like, ':q3' => $like, ':q4' => $like]);
+        $contactStmt->execute(array_merge([':q1' => $like, ':q2' => $like, ':q3' => $like, ':q4' => $like], $territoryFilterC['params']));
         $contactRows = $contactStmt->fetchAll(PDO::FETCH_ASSOC);
 
         $rows = [];
@@ -142,7 +156,7 @@ if ($action === 'detail') {
 
     $custStmt = $pdo->prepare(
         'SELECT id, name, is_peoplefirst, last_client_checkin_at, last_client_checkin_by, last_risk_scan_at, last_risk_scan_by,
-                voip_hosted_elsewhere, voip_hosted_agreement_name, is_prospect_only
+                voip_hosted_elsewhere, voip_hosted_agreement_name, is_prospect_only, territory_name
          FROM customers WHERE id = :id'
     );
     $custStmt->execute([':id' => $id]);
@@ -150,6 +164,7 @@ if ($action === 'detail') {
     if ($customer === false) {
         relationships_respond(404, ['ok' => false, 'error' => 'Customer not found.']);
     }
+    relationships_require_territory_scope($allowedTerritories, $customer['territory_name']);
 
     $svcStmt = $pdo->prepare(
         'SELECT pillar_id, service_id, product_label, qty, unit

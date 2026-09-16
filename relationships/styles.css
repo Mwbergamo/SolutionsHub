@@ -1829,3 +1829,105 @@ a { color: inherit; }
   flex: 0 0 auto;
   text-align: right;
 }
+
+/* ==========================================================================
+   Territory Admin -- added 2026-09-16 per Michael's rep-based territory
+   filtering request. Restricted-to-admin screen managing which CRC email
+   is limited to which synced ConnectWise territory_name(s).
+   ========================================================================== */
+
+.territory-admin-panel {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 18px;
+  padding: 24px;
+  max-width: 640px;
+}
+
+.territory-admin-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.territory-admin-add input {
+  background: oklch(0.98 0.006 255);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: oklch(0.2 0.03 255);
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.territory-admin-add-btn {
+  background: #2f8fef;
+  border: none;
+  color: white;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 8px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.territory-admin-add-btn:disabled { background: oklch(0.3 0.03 255); color: oklch(0.6 0.015 255); cursor: default; }
+
+.territory-admin-hint {
+  font-size: 11.5px;
+  color: oklch(0.55 0.015 255);
+  margin-bottom: 18px;
+}
+
+.territory-admin-empty {
+  font-size: 12.5px;
+  color: oklch(0.55 0.015 255);
+  padding: 10px 0;
+}
+
+.territory-admin-rep {
+  padding: 12px 0;
+  border-top: 1px solid oklch(0.26 0.02 255);
+}
+.territory-admin-rep:first-of-type { border-top: none; margin-top: 8px; }
+
+.territory-admin-rep-email {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: oklch(0.82 0.006 255);
+  margin-bottom: 8px;
+}
+
+.territory-admin-rep-territories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.territory-admin-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: oklch(0.16 0.012 255);
+  border: 1px solid oklch(0.24 0.016 255);
+  border-radius: 999px;
+  padding: 5px 6px 5px 12px;
+  font-size: 11.5px;
+  color: oklch(0.78 0.006 255);
+}
+
+.territory-admin-remove-btn {
+  background: transparent;
+  border: none;
+  color: oklch(0.6 0.015 255);
+  font-size: 13px;
+  line-height: 1;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.territory-admin-remove-btn:hover { background: oklch(0.3 0.15 30); color: #f87171; }
+.territory-admin-remove-btn:disabled { opacity: .6; cursor: default; }

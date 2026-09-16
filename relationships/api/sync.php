@@ -76,6 +76,19 @@
  * POST /relationships/api/sync.php?action=contacts-start
  * POST /relationships/api/sync.php?action=contacts-step
  *   Same shapes again.
+ *
+ * The territory-* actions below (added 2026-09-16 per Michael, for the new
+ * rep-based territory filtering) are the same start/step shape one more
+ * time, tagging every ConnectWise Company with its Territory onto
+ * customers.territory_name -- see connectwise-territory-sync-core.php.
+ * app.js's "Run Sync Now" chains this last, after contacts, so one click
+ * still does the whole nightly-cron-equivalent sync; connectwise-cron.php
+ * runs all six in sequence too.
+ *
+ * GET  /relationships/api/sync.php?action=territory-status
+ * POST /relationships/api/sync.php?action=territory-start
+ * POST /relationships/api/sync.php?action=territory-step
+ *   Same shapes again.
  */
 
 declare(strict_types=1);
@@ -86,6 +99,7 @@ require_once __DIR__ . '/connectwise-billing-sync-core.php';
 require_once __DIR__ . '/connectwise-prospect-sync-core.php';
 require_once __DIR__ . '/connectwise-ticket-history-sync-core.php';
 require_once __DIR__ . '/connectwise-contacts-sync-core.php';
+require_once __DIR__ . '/connectwise-territory-sync-core.php';
 
 $pdo = relationships_db();
 relationships_require_login($pdo);
@@ -159,6 +173,20 @@ if ($action === 'contacts-status') {
             'error' => (int) ($counts['error'] ?? 0),
         ],
         'started_at' => $meta['contacts_started_at'] ?? null,
+    ]);
+}
+
+if ($action === 'territory-status') {
+    $counts = $pdo->query('SELECT status, COUNT(*) AS n FROM cw_territory_sync_queue GROUP BY status')->fetchAll(PDO::FETCH_KEY_PAIR);
+    $meta = $pdo->query('SELECT key, value FROM cw_sync_meta')->fetchAll(PDO::FETCH_KEY_PAIR);
+    relationships_respond(200, [
+        'ok' => true,
+        'totals' => [
+            'pending' => (int) ($counts['pending'] ?? 0),
+            'done' => (int) ($counts['done'] ?? 0),
+            'error' => (int) ($counts['error'] ?? 0),
+        ],
+        'started_at' => $meta['territory_started_at'] ?? null,
     ]);
 }
 
@@ -265,6 +293,27 @@ if ($action === 'contacts-step') {
     $batchSize = max(1, min(50, $batchSize));
     try {
         $result = relationships_cw_contacts_sync_step($pdo, $batchSize);
+        relationships_respond(200, array_merge(['ok' => true], $result));
+    } catch (RelationshipsConnectWiseError $e) {
+        relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
+    }
+}
+
+if ($action === 'territory-start') {
+    try {
+        $result = relationships_cw_territory_sync_start($pdo);
+        relationships_respond(200, ['ok' => true, 'total' => $result['total']]);
+    } catch (RelationshipsConnectWiseError $e) {
+        relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
+    }
+}
+
+if ($action === 'territory-step') {
+    $data = relationships_read_json_body();
+    $batchSize = (int) ($data['batch_size'] ?? 20);
+    $batchSize = max(1, min(50, $batchSize));
+    try {
+        $result = relationships_cw_territory_sync_step($pdo, $batchSize);
         relationships_respond(200, array_merge(['ok' => true], $result));
     } catch (RelationshipsConnectWiseError $e) {
         relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);

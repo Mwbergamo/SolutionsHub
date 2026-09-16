@@ -523,6 +523,78 @@ function relationships_migrate(PDO $pdo): void
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_meeting_tasks_meeting ON meeting_tasks(meeting_id)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_meeting_tasks_customer ON meeting_tasks(customer_id, id DESC)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_meeting_tasks_assignee ON meeting_tasks(assigned_to_name, completed_at)');
+
+    // Rep-based territory filtering -- added 2026-09-16 per Michael. Every
+    // ConnectWise Company carries a `territory{id,name}` field (see
+    // register/api/customers.php's research notes -- backed by a
+    // /system/locations record); territory_name here is that record's
+    // plain display name, kept as free text rather than a numeric id
+    // since this app never talks to /system/locations directly. Synced by
+    // connectwise-territory-sync-core.php from an UNFILTERED company list
+    // (every status, every type -- unlike the Prospect sync's filtered
+    // one) so a customer never silently loses its territory tag just
+    // because its ConnectWise status isn't one the Prospect sync's filter
+    // happens to match. NULL for a mock customer, or a real one that
+    // hasn't been through a territory sync yet.
+    relationships_add_column_if_missing($pdo, 'customers', 'territory_name', 'TEXT');
+
+    // Which CRC (by email -- matched against the shared Microsoft 365
+    // session, see auth/session.php and relationships_allowed_territories()
+    // in territory-access.php) is restricted to which territory. A CRC
+    // with zero rows here sees every customer, unrestricted -- this table
+    // is an allow-list of RESTRICTIONS, not a roster of every rep. One row
+    // per (email, territory), so a rep covering several territories (e.g.
+    // Moe Okeilli's three) just gets several rows. email is stored
+    // lowercased; territory_name should match customers.territory_name
+    // exactly (territory-admin.php's picker lists the real synced values
+    // to avoid a typo silently hiding every customer from a rep).
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS crc_territory_reps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL,
+            territory_name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(email, territory_name)
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_crc_territory_reps_email ON crc_territory_reps(email)');
+
+    // Queue for the territory sync -- same start()/step() shape as every
+    // other ConnectWise sync in this file, for the same Bluehost
+    // execution-time reason. Unlike cw_prospect_sync_queue this is never
+    // filtered by status/type: it's meant to tag EVERY company this
+    // ConnectWise instance knows about, so start() does one unconditioned
+    // /company/companies list.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS cw_territory_sync_queue (
+            connectwise_id TEXT PRIMARY KEY,
+            company_name TEXT NOT NULL,
+            territory_name TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            error_message TEXT,
+            queued_at TEXT NOT NULL DEFAULT (datetime('now')),
+            processed_at TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_cw_territory_sync_queue_status ON cw_territory_sync_queue(status)');
+
+    // Seed Michael's initial territory assignments (2026-09-16), so this
+    // ships already configured rather than starting empty. INSERT OR
+    // IGNORE -- harmless no-op on every later request once these exist;
+    // Michael can edit/remove them from the Territory Admin screen from
+    // here on, this is just the starting point.
+    $seedTerritoryReps = $pdo->prepare(
+        'INSERT OR IGNORE INTO crc_territory_reps (email, territory_name) VALUES (:email, :territory)'
+    );
+    foreach ([
+        ['email' => 'csienko@codebluetechnology.com', 'territory' => 'Arcus + Chester Sienko'],
+        ['email' => 'csienko@codebluetechnology.com', 'territory' => "Chester Sienko's Accounts"],
+        ['email' => 'mokeilli@codebluetechnology.com', 'territory' => 'ITTS Trading (old accounts)'],
+        ['email' => 'mokeilli@codebluetechnology.com', 'territory' => 'Moe Okeilli (new accounts)'],
+        ['email' => 'mokeilli@codebluetechnology.com', 'territory' => 'Trey + Moe Okeilli'],
+    ] as $seedRow) {
+        $seedTerritoryReps->execute([':email' => $seedRow['email'], ':territory' => $seedRow['territory']]);
+    }
 }
 
 /**

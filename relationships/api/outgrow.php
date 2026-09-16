@@ -59,10 +59,12 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
+require_once __DIR__ . '/territory-access.php';
 require_once __DIR__ . '/connectwise-outgrow.php';
 
 $pdo = relationships_db();
 $user = relationships_require_login($pdo);
+$allowedTerritories = relationships_allowed_territories($pdo);
 
 $action = $_GET['action'] ?? '';
 
@@ -134,6 +136,7 @@ if ($action === 'get') {
     if ($customerId <= 0) {
         relationships_respond(400, ['ok' => false, 'error' => 'Missing customer_id.']);
     }
+    relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
 
     relationships_outgrow_maybe_backfill($pdo, $customerId);
 
@@ -156,6 +159,7 @@ if ($action === 'cw_probe') {
     if ($customerId <= 0) {
         relationships_respond(400, ['ok' => false, 'error' => 'Missing customer_id.']);
     }
+    relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
     $cwId = relationships_outgrow_cw_id($pdo, $customerId);
     if ($cwId === null) {
         relationships_respond(200, ['ok' => true, 'connectwise_id' => null, 'custom_fields' => []]);
@@ -184,11 +188,13 @@ if ($action === 'set') {
         relationships_respond(400, ['ok' => false, 'error' => 'Invalid touch_date.']);
     }
 
-    $custStmt = $pdo->prepare('SELECT id FROM customers WHERE id = :id');
+    $custStmt = $pdo->prepare('SELECT id, territory_name FROM customers WHERE id = :id');
     $custStmt->execute([':id' => $customerId]);
-    if ($custStmt->fetch(PDO::FETCH_ASSOC) === false) {
+    $custRow = $custStmt->fetch(PDO::FETCH_ASSOC);
+    if ($custRow === false) {
         relationships_respond(404, ['ok' => false, 'error' => 'Customer not found.']);
     }
+    relationships_require_territory_scope($allowedTerritories, $custRow['territory_name']);
 
     // Local save first, unconditionally -- per Michael's standing "save
     // locally, log the ConnectWise failure" instruction for this whole

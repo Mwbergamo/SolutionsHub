@@ -56,10 +56,12 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
+require_once __DIR__ . '/territory-access.php';
 require_once __DIR__ . '/connectwise-meeting-activity.php';
 
 $pdo = relationships_db();
 $user = relationships_require_login($pdo);
+$allowedTerritories = relationships_allowed_territories($pdo);
 
 $action = $_GET['action'] ?? '';
 
@@ -119,6 +121,7 @@ if ($action === 'list') {
     if ($customerId <= 0) {
         relationships_respond(400, ['ok' => false, 'error' => 'Missing customer_id.']);
     }
+    relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
 
     $meetingStmt = $pdo->prepare(
         'SELECT id, subject, meeting_date, notes, logged_by_name, created_at, cw_push_status, cw_push_error
@@ -147,11 +150,24 @@ if ($action === 'list') {
 }
 
 if ($action === 'global') {
+    // Rep-based territory filtering (see territory-access.php) -- this is
+    // a genuine cross-customer view (the Global To-Do Checklist), so per
+    // Michael's "everywhere" decision a restricted rep's counts and task
+    // list here only ever reflect tasks against their own customers.
+    $territoryFilter = $allowedTerritories === null
+        ? ['sql' => '', 'params' => []]
+        : relationships_territory_filter_sql($allowedTerritories, 'c');
+
     $roster = relationships_todo_roster();
     $counts = array_fill_keys($roster, 0);
-    $countStmt = $pdo->query(
-        "SELECT assigned_to_name, COUNT(*) AS n FROM meeting_tasks WHERE completed_at IS NULL GROUP BY assigned_to_name"
+    $countStmt = $pdo->prepare(
+        "SELECT t.assigned_to_name, COUNT(*) AS n
+         FROM meeting_tasks t
+         JOIN customers c ON c.id = t.customer_id
+         WHERE t.completed_at IS NULL {$territoryFilter['sql']}
+         GROUP BY t.assigned_to_name"
     );
+    $countStmt->execute($territoryFilter['params']);
     foreach ($countStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
         // Only tally names that are still on the current roster -- a task
         // assigned before a roster edit (there isn't one today, but this
@@ -162,15 +178,18 @@ if ($action === 'global') {
         }
     }
 
-    $rows = $pdo->query(
+    $taskStmt = $pdo->prepare(
         "SELECT t.id, t.description, t.assigned_to_name, t.customer_id, c.name AS customer_name,
                 t.meeting_id, m.subject AS meeting_subject, t.created_at, t.completed_at, t.completed_by_name
          FROM meeting_tasks t
          JOIN customer_meetings m ON m.id = t.meeting_id
          JOIN customers c ON c.id = t.customer_id
+         WHERE 1=1 {$territoryFilter['sql']}
          ORDER BY (t.completed_at IS NULL) DESC, t.created_at DESC
          LIMIT 300"
-    )->fetchAll(PDO::FETCH_ASSOC);
+    );
+    $taskStmt->execute($territoryFilter['params']);
+    $rows = $taskStmt->fetchAll(PDO::FETCH_ASSOC);
 
     $tasks = array_map(static function (array $r): array {
         return [
@@ -208,12 +227,13 @@ if ($action === 'create_meeting') {
         relationships_respond(400, ['ok' => false, 'error' => 'Subject is too long (200 characters max).']);
     }
 
-    $custStmt = $pdo->prepare('SELECT id, connectwise_id, name FROM customers WHERE id = :id');
+    $custStmt = $pdo->prepare('SELECT id, connectwise_id, name, territory_name FROM customers WHERE id = :id');
     $custStmt->execute([':id' => $customerId]);
     $customer = $custStmt->fetch(PDO::FETCH_ASSOC);
     if ($customer === false) {
         relationships_respond(404, ['ok' => false, 'error' => 'Customer not found.']);
     }
+    relationships_require_territory_scope($allowedTerritories, $customer['territory_name']);
 
     // Local save first, unconditionally -- per this integration's standing
     // "save locally, log the ConnectWise failure" instruction.
@@ -278,7 +298,7 @@ if ($action === 'add_task') {
     }
 
     $meetingStmt = $pdo->prepare(
-        'SELECT m.id, m.subject, m.customer_id, c.connectwise_id
+        'SELECT m.id, m.subject, m.customer_id, c.connectwise_id, c.territory_name
          FROM customer_meetings m JOIN customers c ON c.id = m.customer_id WHERE m.id = :id'
     );
     $meetingStmt->execute([':id' => $meetingId]);
@@ -286,6 +306,7 @@ if ($action === 'add_task') {
     if ($meeting === false) {
         relationships_respond(404, ['ok' => false, 'error' => 'Meeting not found.']);
     }
+    relationships_require_territory_scope($allowedTerritories, $meeting['territory_name']);
     $customerId = (int) $meeting['customer_id'];
 
     $assignee = relationships_meetings_user_by_name($pdo, $assignedToName);
@@ -340,11 +361,17 @@ if ($action === 'set_task_done') {
     $taskId = (int) ($data['task_id'] ?? 0);
     $completed = !empty($data['completed']);
 
-    $taskStmt = $pdo->prepare('SELECT id FROM meeting_tasks WHERE id = :id');
+    $taskStmt = $pdo->prepare(
+        'SELECT t.id, c.territory_name
+         FROM meeting_tasks t JOIN customers c ON c.id = t.customer_id
+         WHERE t.id = :id'
+    );
     $taskStmt->execute([':id' => $taskId]);
-    if ($taskStmt->fetch(PDO::FETCH_ASSOC) === false) {
+    $taskRow = $taskStmt->fetch(PDO::FETCH_ASSOC);
+    if ($taskRow === false) {
         relationships_respond(404, ['ok' => false, 'error' => 'Task not found.']);
     }
+    relationships_require_territory_scope($allowedTerritories, $taskRow['territory_name']);
 
     if ($completed) {
         $pdo->prepare("UPDATE meeting_tasks SET completed_at = datetime('now'), completed_by_user_id = :uid, completed_by_name = :uname WHERE id = :id")

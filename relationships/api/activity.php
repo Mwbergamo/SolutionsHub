@@ -66,11 +66,13 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
+require_once __DIR__ . '/territory-access.php';
 require_once __DIR__ . '/connectwise-activity.php';
 require_once __DIR__ . '/connectwise-billing-sync-core.php';
 
 $pdo = relationships_db();
 relationships_require_login($pdo);
+$allowedTerritories = relationships_allowed_territories($pdo);
 
 $action = $_GET['action'] ?? '';
 
@@ -85,6 +87,7 @@ function relationships_activity_cw_id(PDO $pdo, int $customerId): ?string
 
 if ($action === 'summary') {
     $customerId = (int) ($_GET['customer_id'] ?? 0);
+    relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
     $cwId = relationships_activity_cw_id($pdo, $customerId);
     if ($cwId === null) {
         relationships_respond(200, ['ok' => true, 'available' => false, 'ticket_count_ytd' => null, 'billing' => null, 'billing_synced_at' => null]);
@@ -108,6 +111,7 @@ if ($action === 'summary') {
 
 if ($action === 'tickets') {
     $customerId = (int) ($_GET['customer_id'] ?? 0);
+    relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
     $cwId = relationships_activity_cw_id($pdo, $customerId);
     if ($cwId === null) {
         relationships_respond(200, ['ok' => true, 'tickets' => []]);
@@ -124,6 +128,7 @@ if ($action === 'invoices') {
     $customerId = (int) ($_GET['customer_id'] ?? 0);
     $month = (string) ($_GET['month'] ?? '');
     $year = (string) ($_GET['year'] ?? '');
+    relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
 
     // 'year' added 2026-09-15 for the annual-billing-cadence bars' own
     // drill-down -- mutually exclusive with 'month' (a request never

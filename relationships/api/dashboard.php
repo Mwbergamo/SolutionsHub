@@ -48,6 +48,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
+require_once __DIR__ . '/territory-access.php';
 require_once __DIR__ . '/connectwise-activity.php';
 require_once __DIR__ . '/connectwise-billing-sync-core.php';
 require_once __DIR__ . '/connectwise-ticket-history-sync-core.php';
@@ -55,14 +56,25 @@ require_once __DIR__ . '/connectwise-contacts-sync-core.php';
 
 $pdo = relationships_db();
 relationships_require_login($pdo);
+$allowedTerritories = relationships_allowed_territories($pdo);
 
 $action = $_GET['action'] ?? '';
 
 if ($action === 'overview') {
-    $customerRows = $pdo->query(
-        'SELECT id, name, is_peoplefirst, is_prospect_only, ticket_count_ytd, active_contact_count
-         FROM customers ORDER BY name ASC LIMIT 500'
-    )->fetchAll(PDO::FETCH_ASSOC);
+    // Rep-based territory filtering (see territory-access.php) -- applied
+    // both to the customer list below AND to the portfolio-wide billing
+    // gauge's SUM() further down, so a restricted rep's "Portfolio Billing
+    // Trend" reflects only their own book, not every customer's.
+    $territoryFilter = $allowedTerritories === null
+        ? ['sql' => '', 'params' => []]
+        : relationships_territory_filter_sql($allowedTerritories, 'customers');
+
+    $customerStmt = $pdo->prepare(
+        "SELECT id, name, is_peoplefirst, is_prospect_only, ticket_count_ytd, active_contact_count
+         FROM customers WHERE 1=1 {$territoryFilter['sql']} ORDER BY name ASC LIMIT 500"
+    );
+    $customerStmt->execute($territoryFilter['params']);
+    $customerRows = $customerStmt->fetchAll(PDO::FETCH_ASSOC);
 
     $customers = [];
     $totalTicketsYtd = 0;
@@ -100,9 +112,18 @@ if ($action === 'overview') {
     // to the SUM of every customer's monthly billing rather than one
     // customer's -- so the gauge means "is the whole book trending up or
     // down", not any single account's number.
-    $portfolioByMonth = $pdo->query(
-        'SELECT month, SUM(total) AS total FROM customer_monthly_billing GROUP BY month'
-    )->fetchAll(PDO::FETCH_KEY_PAIR);
+    $portfolioFilter = $allowedTerritories === null
+        ? ['sql' => '', 'params' => []]
+        : relationships_territory_filter_sql($allowedTerritories, 'customers');
+    $portfolioStmt = $pdo->prepare(
+        "SELECT customer_monthly_billing.month, SUM(customer_monthly_billing.total) AS total
+         FROM customer_monthly_billing
+         JOIN customers ON customers.id = customer_monthly_billing.customer_id
+         WHERE 1=1 {$portfolioFilter['sql']}
+         GROUP BY customer_monthly_billing.month"
+    );
+    $portfolioStmt->execute($portfolioFilter['params']);
+    $portfolioByMonth = $portfolioStmt->fetchAll(PDO::FETCH_KEY_PAIR);
     $portfolioBillingTrend = relationships_cw_activity_billing_series_from_totals($portfolioByMonth, 6)['trend'];
 
     $totalCustomers = count($customerRows);

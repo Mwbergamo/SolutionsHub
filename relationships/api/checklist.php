@@ -41,10 +41,12 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
+require_once __DIR__ . '/territory-access.php';
 require_once __DIR__ . '/connectwise-activity-create.php';
 
 $pdo = relationships_db();
 $user = relationships_require_login($pdo);
+$allowedTerritories = relationships_allowed_territories($pdo);
 
 $action = $_GET['action'] ?? '';
 
@@ -55,6 +57,7 @@ if ($action === 'get') {
     if ($customerId <= 0 || $pillarId === '' || $serviceId === '') {
         relationships_respond(400, ['ok' => false, 'error' => 'Missing customer_id/pillar_id/service_id.']);
     }
+    relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
 
     $stmt = $pdo->prepare(
         'SELECT step_number, completed_at, completed_by_name FROM checklist_progress
@@ -96,6 +99,7 @@ if ($action === 'set') {
     if ($customerId <= 0 || $pillarId === '' || $serviceId === '' || !isset($steps[$stepNumber])) {
         relationships_respond(400, ['ok' => false, 'error' => 'Invalid checklist step.']);
     }
+    relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
     if (!relationships_is_cross_sell_eligible($pillarId, $serviceId)) {
         relationships_respond(400, ['ok' => false, 'error' => 'This service is not tracked for cross-sell.']);
     }
@@ -163,7 +167,7 @@ if ($action === 'cw_log') {
 }
 
 if ($action === 'summary' || $action === 'queue') {
-    $rows = relationships_missing_services_with_progress($pdo);
+    $rows = relationships_missing_services_with_progress($pdo, $allowedTerritories);
 
     if ($action === 'summary') {
         $byKey = [];
@@ -218,10 +222,20 @@ relationships_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
  * services); if that stops being true once real ConnectWise data is
  * wired in, this is the place to push the aggregation into SQL instead.
  */
-function relationships_missing_services_with_progress(PDO $pdo): array
+function relationships_missing_services_with_progress(PDO $pdo, ?array $allowedTerritories = null): array
 {
     $catalog = relationships_catalog();
-    $customers = $pdo->query('SELECT id, name, voip_hosted_elsewhere FROM customers ORDER BY name ASC')->fetchAll(PDO::FETCH_ASSOC);
+    // Rep-based territory filtering (see territory-access.php) -- this
+    // feeds both the Cross-Sell Report summary and its drill-down queue,
+    // so a restricted rep only ever sees their own customers in either.
+    $territoryFilter = $allowedTerritories === null
+        ? ['sql' => '', 'params' => []]
+        : relationships_territory_filter_sql($allowedTerritories, 'customers');
+    $customerStmt = $pdo->prepare(
+        "SELECT id, name, voip_hosted_elsewhere FROM customers WHERE 1=1 {$territoryFilter['sql']} ORDER BY name ASC"
+    );
+    $customerStmt->execute($territoryFilter['params']);
+    $customers = $customerStmt->fetchAll(PDO::FETCH_ASSOC);
 
     $activeSet = [];
     foreach ($pdo->query('SELECT DISTINCT customer_id, pillar_id, service_id FROM customer_services') as $r) {
