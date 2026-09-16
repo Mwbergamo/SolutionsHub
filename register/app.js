@@ -90,7 +90,7 @@
     // checkout from the customer's live ConnectWise Tax Code (see
     // api/checkout.php), never entered manually. checkoutModalHtml() shows
     // a computed preview instead (see customer.taxCode).
-    checkoutForm: { payment_method: 'cash', payment_reference: '', note: '' },
+    checkoutForm: { payment_method: 'card', payment_reference: '', note: '' },
 
     // Customer (Company/Contact) resolution -- added 2026-09-14, replacing
     // the old free-text customer_name field. Per Michael: live ConnectWise
@@ -777,7 +777,7 @@
   function resetSale() {
     state.cart = [];
     state.receipt = null;
-    state.checkoutForm = { payment_method: 'cash', payment_reference: '', note: '' };
+    state.checkoutForm = { payment_method: 'card', payment_reference: '', note: '' };
     state.checkoutError = null;
     resetCustomerState();
     render();
@@ -1660,7 +1660,11 @@
     var home = isHomeIdle();
     return (
       '<div class="register-layout">' +
-        '<div class="catalog-pane">' + catalogToolbarHtml() + typeNavHtml() + (home ? homeTilesHtml() : catalogGridHtml()) + '</div>' +
+        // Type/Category/SubCategory chip nav (typeNavHtml()) removed 2026-09-16
+        // per Michael ("keep the search for parts... remove the buttons for
+        // all items, and the rest of the pillars") -- the search box in
+        // catalogToolbarHtml() is the only way to find parts now.
+        '<div class="catalog-pane">' + catalogToolbarHtml() + (home ? homeTilesHtml() : catalogGridHtml()) + '</div>' +
         '<div class="cart-pane">' + cartHtml() + '</div>' +
       '</div>'
     );
@@ -2155,7 +2159,7 @@
           customerSectionHtml() +
           '<label>Payment Method</label>' +
           '<select data-action="payment-method-select">' +
-            ['cash', 'card', 'check', 'other'].map(function (m) {
+            ['card', 'check', 'other'].map(function (m) {
               return '<option value="' + m + '"' + (f.payment_method === m ? ' selected' : '') + '>' + m.charAt(0).toUpperCase() + m.slice(1) + '</option>';
             }).join('') +
           '</select>' +
@@ -2715,8 +2719,8 @@
       else if (action === 'signup-tax-exempt-toggle') handler = function () { state.newCustomerSignup.taxExempt = !state.newCustomerSignup.taxExempt; render(); };
       else if (action === 'mark-tax-exempt') handler = markCustomerTaxExempt;
       else if (action === 'customer-new-company-tax-exempt-toggle') handler = function () { state.customerUi.newCompanyForm.tax_exempt = !state.customerUi.newCompanyForm.tax_exempt; render(); };
-      else if (action === 'close-receipt') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'cash', payment_reference: '', note: '' }; resetCustomerState(); render(); };
-      else if (action === 'close-receipt-backdrop') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'cash', payment_reference: '', note: '' }; resetCustomerState(); render(); };
+      else if (action === 'close-receipt') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'card', payment_reference: '', note: '' }; resetCustomerState(); render(); };
+      else if (action === 'close-receipt-backdrop') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'card', payment_reference: '', note: '' }; resetCustomerState(); render(); };
       else if (action === 'print-receipt') handler = function () { window.print(); };
       else if (action === 'view-receipt') handler = function () { viewPastReceipt(el.dataset.id); };
       else if (action === 'returns-queue-filter') handler = function () { setReturnsQueueFilter(el.dataset.value); };

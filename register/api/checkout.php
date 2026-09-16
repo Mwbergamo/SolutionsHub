@@ -19,7 +19,7 @@
  *
  * POST /register/api/checkout.php?action=create
  *   { items: [ { catalog_item_id, quantity } ],
- *     payment_method: "cash"|"card"|"check"|"other",
+ *     payment_method: "card"|"check"|"other", // "cash" removed 2026-09-16 per Michael
  *     payment_reference: "...",      // optional, e.g. last 4 / check #
  *     cw_company_id, cw_company_name,  // REQUIRED -- see below
  *     cw_contact_id, cw_contact_name,  // REQUIRED -- see below
@@ -124,9 +124,9 @@ if ($action === 'create') {
     $cwContactId = isset($data['cw_contact_id']) ? (int) $data['cw_contact_id'] : 0;
     $cwContactName = trim((string) ($data['cw_contact_name'] ?? ''));
 
-    $validMethods = ['cash', 'card', 'check', 'other'];
+    $validMethods = ['card', 'check', 'other'];
     if (!in_array($paymentMethod, $validMethods, true)) {
-        register_respond(400, ['ok' => false, 'error' => 'Choose a payment method (cash, card, check, or other).']);
+        register_respond(400, ['ok' => false, 'error' => 'Choose a payment method (card, check, or other).']);
     }
     if ($rawItems === []) {
         register_respond(400, ['ok' => false, 'error' => 'Add at least one item before checking out.']);
