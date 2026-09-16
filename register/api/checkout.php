@@ -21,14 +21,26 @@
  *   { items: [ { catalog_item_id, quantity } ],
  *     payment_method: "cash"|"card"|"check"|"other",
  *     payment_reference: "...",      // optional, e.g. last 4 / check #
- *     tax_amount: 0,                 // optional, manually entered, default 0
  *     cw_company_id, cw_company_name,  // REQUIRED -- see below
  *     cw_contact_id, cw_contact_name,  // REQUIRED -- see below
  *     note: "..." }                  // optional
- *   -> { ok: true, sale: { id, created_at, subtotal, tax_amount, total,
- *          payment_method, payment_reference, cw_company_id, cw_company_name,
- *          cw_contact_id, cw_contact_name, customer_name, cashier_name,
+ *   -> { ok: true, sale: { id, created_at, subtotal, tax_amount, tax_rate,
+ *          tax_code_id, tax_code_identifier, total, payment_method,
+ *          payment_reference, cw_company_id, cw_company_name, cw_contact_id,
+ *          cw_contact_name, customer_name, cashier_name,
  *          items: [ { identifier, description, unit_price, quantity, line_total } ] } }
+ *
+ * Sales tax (added 2026-09-16) is computed server-side, never trusted from
+ * the client: only catalog_items.taxable_flag=1 line items count toward the
+ * taxable subtotal, and the rate comes from a LIVE lookup of the Company's
+ * assigned ConnectWise Tax Code (register_cw_company_tax_code_id(),
+ * tax-core.php), joined against the locally-synced tax_codes table for the
+ * identifier/rate. If that live lookup fails (network error) or returns a
+ * code ConnectWise has that hasn't been synced locally yet, this falls back
+ * to the register's default tax code's rate (VA-STATE, 6%) rather than $0 --
+ * safer to over-collect than under-collect for tax compliance, consistent
+ * with this app's existing fail-open-with-a-warning pattern elsewhere. Any
+ * fallback is flagged in the response as `tax_warning`.
  *
  * cw_company_id/cw_contact_id (both a real ConnectWise Company id and a
  * real ConnectWise Contact id) are REQUIRED, per Michael's explicit
@@ -50,6 +62,8 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
+require_once __DIR__ . '/connectwise.php';
+require_once __DIR__ . '/tax-core.php';
 
 register_install_error_handlers();
 
@@ -99,7 +113,6 @@ if ($action === 'create') {
     $rawItems = is_array($data['items'] ?? null) ? $data['items'] : [];
     $paymentMethod = strtolower(trim((string) ($data['payment_method'] ?? '')));
     $paymentReference = trim((string) ($data['payment_reference'] ?? '')) ?: null;
-    $taxAmount = round((float) ($data['tax_amount'] ?? 0), 2);
     $note = trim((string) ($data['note'] ?? '')) ?: null;
 
     // No free-text/walk-in fallback (Michael's explicit choice,
@@ -118,9 +131,6 @@ if ($action === 'create') {
     if ($rawItems === []) {
         register_respond(400, ['ok' => false, 'error' => 'Add at least one item before checking out.']);
     }
-    if ($taxAmount < 0) {
-        register_respond(400, ['ok' => false, 'error' => 'Tax amount cannot be negative.']);
-    }
     if ($cwCompanyId <= 0 || $cwCompanyName === '' || $cwContactId <= 0 || $cwContactName === '') {
         register_respond(400, ['ok' => false, 'error' => 'Select or create a Company and Contact before completing this sale.']);
     }
@@ -130,9 +140,10 @@ if ($action === 'create') {
     // catalog_item_id + quantity. Also re-checks on_hand here (not just in
     // the UI) so two registers ringing up the same last unit at once can't
     // both succeed.
-    $lookup = $pdo->prepare('SELECT id, identifier, description, price, on_hand, track_inventory FROM catalog_items WHERE id = :id');
+    $lookup = $pdo->prepare('SELECT id, identifier, description, price, on_hand, track_inventory, taxable_flag FROM catalog_items WHERE id = :id');
     $lineItems = [];
     $subtotal = 0.0;
+    $taxableSubtotal = 0.0;
 
     foreach ($rawItems as $raw) {
         $catalogItemId = (int) ($raw['catalog_item_id'] ?? 0);
@@ -161,6 +172,10 @@ if ($action === 'create') {
         $unitPrice = (float) $row['price'];
         $lineTotal = round($unitPrice * $quantity, 2);
         $subtotal += $lineTotal;
+        $taxable = (int) ($row['taxable_flag'] ?? 0) === 1;
+        if ($taxable) {
+            $taxableSubtotal += $lineTotal;
+        }
         $lineItems[] = [
             'catalog_item_id' => $catalogItemId,
             'identifier' => $row['identifier'],
@@ -179,18 +194,50 @@ if ($action === 'create') {
     }
 
     $subtotal = round($subtotal, 2);
+    $taxableSubtotal = round($taxableSubtotal, 2);
+
+    // Resolve the tax rate to charge -- LIVE from ConnectWise's Company
+    // record, never trusted from the client. Falls back to the register's
+    // default tax code (VA-STATE, 6%) on any failure: a failed live lookup
+    // (network error) or a Company tax code that ConnectWise has but this
+    // app hasn't synced locally yet. See this file's docblock and
+    // tax-core.php for the full rationale.
+    $taxWarning = null;
+    $taxCodeRow = null;
+    try {
+        $liveTaxCode = register_cw_company_tax_code_id($cwCompanyId);
+        if ($liveTaxCode !== null) {
+            $taxCodeRow = register_tax_code_by_id($pdo, $liveTaxCode['id']);
+            if ($taxCodeRow === null) {
+                $taxWarning = 'ConnectWise has a tax code for this customer that has not been synced locally yet -- used the default rate instead. Run a tax code sync and re-check this sale.';
+            }
+        }
+    } catch (Throwable $e) {
+        $taxWarning = 'Could not reach ConnectWise to look up this customer\'s tax status -- used the default rate instead. Verify this sale\'s tax once ConnectWise is reachable.';
+    }
+    if ($taxCodeRow === null) {
+        $taxCodeRow = register_default_tax_code($pdo);
+        if ($taxCodeRow === null && $taxWarning === null) {
+            $taxWarning = 'No tax codes have been synced from ConnectWise yet -- this sale was recorded with $0 tax. Sync tax codes and re-check this sale.';
+        }
+    }
+    $taxRate = $taxCodeRow['rate'] ?? 0.0;
+    $taxAmount = round($taxableSubtotal * $taxRate, 2);
     $total = round($subtotal + $taxAmount, 2);
 
     $pdo->beginTransaction();
     try {
         $insertSale = $pdo->prepare(
-            'INSERT INTO sales (user_id, subtotal, tax_amount, total, payment_method, payment_reference, cw_company_id, cw_company_name, cw_contact_id, cw_contact_name, note)
-             VALUES (:user_id, :subtotal, :tax_amount, :total, :payment_method, :payment_reference, :cw_company_id, :cw_company_name, :cw_contact_id, :cw_contact_name, :note)'
+            'INSERT INTO sales (user_id, subtotal, tax_amount, tax_code_id, tax_code_identifier, tax_rate, total, payment_method, payment_reference, cw_company_id, cw_company_name, cw_contact_id, cw_contact_name, note)
+             VALUES (:user_id, :subtotal, :tax_amount, :tax_code_id, :tax_code_identifier, :tax_rate, :total, :payment_method, :payment_reference, :cw_company_id, :cw_company_name, :cw_contact_id, :cw_contact_name, :note)'
         );
         $insertSale->execute([
             ':user_id' => $user['id'],
             ':subtotal' => $subtotal,
             ':tax_amount' => $taxAmount,
+            ':tax_code_id' => $taxCodeRow['id'] ?? null,
+            ':tax_code_identifier' => $taxCodeRow['identifier'] ?? null,
+            ':tax_rate' => $taxRate,
             ':total' => $total,
             ':payment_method' => $paymentMethod,
             ':payment_reference' => $paymentReference,
@@ -230,7 +277,11 @@ if ($action === 'create') {
         register_respond(500, ['ok' => false, 'error' => 'Could not save this sale — nothing was charged or recorded. Try again.']);
     }
 
-    register_respond(200, ['ok' => true, 'sale' => register_load_receipt($pdo, $saleId)]);
+    $response = ['ok' => true, 'sale' => register_load_receipt($pdo, $saleId)];
+    if ($taxWarning !== null) {
+        $response['tax_warning'] = $taxWarning;
+    }
+    register_respond(200, $response);
 }
 
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
@@ -238,7 +289,8 @@ register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
 function register_load_receipt(PDO $pdo, int $saleId): ?array
 {
     $stmt = $pdo->prepare(
-        'SELECT s.id, s.created_at, s.subtotal, s.tax_amount, s.total, s.payment_method,
+        'SELECT s.id, s.created_at, s.subtotal, s.tax_amount, s.tax_code_id, s.tax_code_identifier,
+                s.tax_rate, s.total, s.payment_method,
                 s.payment_reference, s.customer_name, s.cw_company_id, s.cw_company_name,
                 s.cw_contact_id, s.cw_contact_name, s.note, u.name AS cashier_name
          FROM sales s
@@ -253,6 +305,8 @@ function register_load_receipt(PDO $pdo, int $saleId): ?array
     $sale['id'] = (int) $sale['id'];
     $sale['subtotal'] = (float) $sale['subtotal'];
     $sale['tax_amount'] = (float) $sale['tax_amount'];
+    $sale['tax_code_id'] = $sale['tax_code_id'] !== null ? (int) $sale['tax_code_id'] : null;
+    $sale['tax_rate'] = $sale['tax_rate'] !== null ? (float) $sale['tax_rate'] : null;
     $sale['total'] = (float) $sale['total'];
     $sale['cw_company_id'] = $sale['cw_company_id'] !== null ? (int) $sale['cw_company_id'] : null;
     $sale['cw_contact_id'] = $sale['cw_contact_id'] !== null ? (int) $sale['cw_contact_id'] : null;

@@ -158,12 +158,37 @@
  *      Delivery Method to Email. Do NOT call this for an existing/
  *      recalled company -- it overwrites whatever billing setup staff
  *      may already have on that account.
+ *
+ * ---- Sales Tax (added 2026-09-16, per Michael -- see tax.php/tax-core.php) ----
+ * create-company (above) now also accepts an optional `tax_exempt: true`
+ * flag -- resolved server-side to the real ConnectWise Tax Code id (VA-
+ * STATE, ConnectWise's own flagged default, unless tax_exempt was given, in
+ * which case Exempt), never a client-supplied id, and set directly in the
+ * Company create payload alongside territory/site.
+ *
+ * GET  /register/api/customers.php?action=company-tax&company_id=...
+ *   -> { ok: true, tax_code: { id, identifier, name, rate, is_default } | null }
+ *   Live-reads a company's CURRENT ConnectWise Tax Code (never cached/
+ *   guessed -- a customer's tax status can change in ConnectWise at any
+ *   time, independent of this app), joined against the locally-synced
+ *   tax_codes table for the rate. Call this whenever a Company is resolved
+ *   (search selection, a Contact's parent company, or right after
+ *   create-company) so checkout can show/compute real tax before totaling.
+ *
+ * POST /register/api/customers.php?action=set-tax-exempt
+ *   body: { company_id }
+ *   -> { ok: true, tax_code: {...} }
+ *   Updates that company's REAL ConnectWise Tax Code to Exempt, permanently
+ *   (Michael's explicit choice -- not a one-sale-only override). One-
+ *   directional: un-exempting a customer is a ConnectWise-side correction,
+ *   same as switching them to Out of State or a different VA locality.
  */
 
 declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/connectwise.php';
+require_once __DIR__ . '/tax-core.php';
 
 register_install_error_handlers();
 
@@ -313,7 +338,8 @@ function register_cw_create_company(
     string $city = '',
     string $state = 'VA',
     string $zip = '',
-    ?string $identifier = null
+    ?string $identifier = null,
+    ?int $taxCodeId = null
 ): array {
     $today = gmdate('Y-m-d\T00:00:00\Z');
 
@@ -331,6 +357,18 @@ function register_cw_create_company(
             ['id' => 34, 'value' => $today], // "Terms Renewal Date", confirmed
         ],
     ];
+    // Tax Code (added 2026-09-16, per Michael: new register customers get a
+    // real ConnectWise Tax Code at creation, VA-STATE by default or Exempt
+    // if chosen at signup) -- set directly in the create payload, same as
+    // territory/site above, rather than a separate follow-up write. $taxCodeId
+    // is resolved by the caller (register_default_tax_code()/
+    // register_exempt_tax_code() in tax-core.php) -- null (tax codes not yet
+    // synced) simply omits the field rather than guessing/hardcoding an id,
+    // same fail-open-without-blocking-the-create philosophy as the Company
+    // Team rows below.
+    if ($taxCodeId !== null) {
+        $body['taxCode'] = ['id' => $taxCodeId];
+    }
     if ($addressLine1 !== '') {
         $body['addressLine1'] = $addressLine1;
     }
@@ -454,15 +492,28 @@ function register_cw_create_contact(int $companyId, string $firstName, string $l
  * Throws RegisterConnectWiseError if it can't resolve an error to a real
  * field to strip, or if it doesn't succeed within $maxAttempts.
  */
-function register_cw_finalize_company_invoicing(int $companyId, int $contactId, int $maxAttempts = 5): array
+/**
+ * Shared PUT-with-auto-strip mechanism (extracted 2026-09-16 from what was
+ * originally register_cw_finalize_company_invoicing()'s own retry loop, now
+ * also used by register_cw_set_company_tax_code() below): fetches the full
+ * Company record, merges $fieldsToSet on top, and PUTs it back. ConnectWise's
+ * PATCH endpoint for Company always 500s on this instance regardless of
+ * target field (confirmed 2026-09-14, see this file's docblock) -- PUT
+ * works, with one catch: the fetched record's "types" field trips "typeIds
+ * can only be used when creating a new company." (ConnectWise's own
+ * internal name for that field), so it must be stripped before resending.
+ * This strips whatever field ConnectWise names in that specific error (not
+ * just "types"), in case a differently-shaped company record hits a
+ * different create-only field, and retries up to $maxAttempts times.
+ */
+function register_cw_put_company_with_retry(int $companyId, array $fieldsToSet, int $maxAttempts = 5): array
 {
     $full = register_cw_request('/company/companies/' . $companyId, [], 'GET', null, 12, 4);
-
-    $modified = $full;
-    $modified['defaultContact'] = ['id' => $contactId];
-    $modified['billingContact'] = ['id' => $contactId];
-    $modified['billingTerms'] = ['id' => 11]; // "Card on File", confirmed via /finance/billingTerms
-    $modified['invoiceDeliveryMethod'] = ['id' => 2]; // "E-Mail", confirmed
+    // Array union (not array_merge): for any key present in both, the LEFT
+    // operand's value wins -- so every field in $fieldsToSet overrides the
+    // fetched record, and everything else from the fetched record passes
+    // through unchanged.
+    $modified = $fieldsToSet + $full;
 
     for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
         try {
@@ -504,14 +555,45 @@ function register_cw_finalize_company_invoicing(int $companyId, int $contactId, 
             }
 
             if ($realKey === null) {
-                throw new RegisterConnectWiseError('Could not finalize company invoicing setup for company ' . $companyId . ': ' . $msg);
+                throw new RegisterConnectWiseError('Could not update company ' . $companyId . ': ' . $msg);
             }
             unset($modified[$realKey]);
         }
     }
 
-    throw new RegisterConnectWiseError('Could not finalize company invoicing setup for company ' . $companyId . ' after ' . $maxAttempts . ' attempts.');
+    throw new RegisterConnectWiseError('Could not update company ' . $companyId . ' after ' . $maxAttempts . ' attempts.');
 }
+
+function register_cw_finalize_company_invoicing(int $companyId, int $contactId): array
+{
+    return register_cw_put_company_with_retry($companyId, [
+        'defaultContact' => ['id' => $contactId],
+        'billingContact' => ['id' => $contactId],
+        'billingTerms' => ['id' => 11], // "Card on File", confirmed via /finance/billingTerms
+        'invoiceDeliveryMethod' => ['id' => 2], // "E-Mail", confirmed
+    ]);
+}
+
+/**
+ * Sets an EXISTING company's ConnectWise Tax Code -- added 2026-09-16 for
+ * the "Mark Tax Exempt" register action (Michael, AskUserQuestion: marking
+ * a customer exempt at the register should update ConnectWise permanently,
+ * not just override one sale). Reuses the same proven PUT-with-auto-strip
+ * mechanism as invoicing setup. Unlike register_cw_finalize_company_
+ * invoicing() (brand-new companies only), this is explicitly for an
+ * EXISTING/recalled company -- it only ever touches the taxCode field,
+ * never billing terms/contacts, so it's safe to call on any company.
+ */
+function register_cw_set_company_tax_code(int $companyId, int $taxCodeId): array
+{
+    return register_cw_put_company_with_retry($companyId, [
+        'taxCode' => ['id' => $taxCodeId],
+    ]);
+}
+
+// register_cw_company_tax_code_id() moved to tax-core.php 2026-09-16 so
+// checkout.php can also call it (server-side tax computation needs the
+// same live lookup this file's action=company-tax uses).
 
 if ($action === 'create-company') {
     $input = register_read_json_body();
@@ -521,6 +603,16 @@ if ($action === 'create-company') {
         register_respond(400, ['ok' => false, 'error' => 'name is required.']);
     }
 
+    // Tax Code default (2026-09-16, per Michael): a brand-new register
+    // customer gets VA-STATE unless tax_exempt was explicitly chosen at
+    // signup. Resolved from the local tax_codes table (never guessed/
+    // hardcoded) -- if tax codes haven't been synced yet, $taxCodeId stays
+    // null and register_cw_create_company() simply omits the field rather
+    // than blocking the whole company create over a missing tax sync.
+    $taxExempt = !empty($input['tax_exempt']);
+    $taxCodeRow = $taxExempt ? register_exempt_tax_code($pdo) : register_default_tax_code($pdo);
+    $taxCodeId = $taxCodeRow['id'] ?? null;
+
     try {
         $company = register_cw_create_company(
             $name,
@@ -529,11 +621,87 @@ if ($action === 'create-company') {
             trim((string) ($input['address_line2'] ?? '')),
             trim((string) ($input['city'] ?? '')),
             trim((string) ($input['state'] ?? '')) !== '' ? trim((string) $input['state']) : 'VA',
-            trim((string) ($input['zip'] ?? ''))
+            trim((string) ($input['zip'] ?? '')),
+            null,
+            $taxCodeId
         );
-        register_respond(200, ['ok' => true, 'company' => $company]);
+        $response = ['ok' => true, 'company' => $company];
+        if ($taxCodeRow !== null) {
+            $response['tax_code'] = $taxCodeRow;
+        } else {
+            // Tax codes have never been synced -- flag it rather than
+            // silently creating a company with no Tax Code set at all.
+            $response['tax_code_warning'] = 'Tax codes have not been synced from ConnectWise yet -- this company was created with no Tax Code set. Run the tax code sync, then set it manually in ConnectWise.';
+        }
+        register_respond(200, $response);
     } catch (Throwable $e) {
         register_respond(502, ['ok' => false, 'error' => 'ConnectWise company creation failed: ' . $e->getMessage()]);
+    }
+}
+
+/**
+ * Live-reads a company's currently-assigned tax code, joined against the
+ * locally-synced tax_codes table for the identifier/rate (added 2026-09-16).
+ * Called whenever a Company is resolved at checkout or Existing Customer
+ * Look Up -- so the customer panel can show their real current tax status
+ * and rate before the sale is even totaled.
+ */
+if ($action === 'company-tax') {
+    $companyId = isset($_GET['company_id']) ? (int) $_GET['company_id'] : 0;
+    if ($companyId <= 0) {
+        register_respond(400, ['ok' => false, 'error' => 'company_id is required.']);
+    }
+
+    try {
+        $live = register_cw_company_tax_code_id($companyId);
+        if ($live === null) {
+            register_respond(200, ['ok' => true, 'tax_code' => null]);
+        }
+        $local = register_tax_code_by_id($pdo, $live['id']);
+        if ($local !== null) {
+            register_respond(200, ['ok' => true, 'tax_code' => $local]);
+        }
+        // ConnectWise has this company on a real tax code, but it's not in
+        // our local sync (a code added/changed in ConnectWise since the
+        // last "Sync Tax Codes", or a cancelled one) -- surface the raw
+        // name rather than silently reporting no tax code at all, but with
+        // no rate to compute from (checkout.php falls back to the default
+        // code's rate in this case -- see its own comment).
+        register_respond(200, ['ok' => true, 'tax_code' => [
+            'id' => $live['id'], 'identifier' => null, 'name' => $live['name'], 'rate' => null, 'is_default' => false,
+        ]]);
+    } catch (Throwable $e) {
+        register_respond(502, ['ok' => false, 'error' => 'Could not read this company\'s tax code from ConnectWise: ' . $e->getMessage()]);
+    }
+}
+
+/**
+ * "Mark Tax Exempt" (added 2026-09-16, per Michael/AskUserQuestion: this
+ * updates the customer's REAL ConnectWise Tax Code permanently, not just a
+ * one-sale override). One-directional by design -- un-exempting a customer
+ * is a ConnectWise-side correction like any other tax code change (see
+ * this feature's own scope decision), not a toggle this screen offers.
+ */
+if ($action === 'set-tax-exempt') {
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        register_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
+    }
+    $input = register_read_json_body();
+    $companyId = isset($input['company_id']) ? (int) $input['company_id'] : 0;
+    if ($companyId <= 0) {
+        register_respond(400, ['ok' => false, 'error' => 'company_id is required.']);
+    }
+
+    $exemptCode = register_exempt_tax_code($pdo);
+    if ($exemptCode === null) {
+        register_respond(502, ['ok' => false, 'error' => 'Tax codes have not been synced from ConnectWise yet -- run the tax code sync first.']);
+    }
+
+    try {
+        register_cw_set_company_tax_code($companyId, $exemptCode['id']);
+        register_respond(200, ['ok' => true, 'tax_code' => $exemptCode]);
+    } catch (Throwable $e) {
+        register_respond(502, ['ok' => false, 'error' => 'Could not mark this customer Tax Exempt in ConnectWise: ' . $e->getMessage()]);
     }
 }
 

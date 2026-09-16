@@ -139,6 +139,19 @@ function register_migrate(PDO $pdo): void
     register_add_column_if_missing($pdo, 'sales', 'cw_company_name', 'TEXT');
     register_add_column_if_missing($pdo, 'sales', 'cw_contact_id', 'INTEGER');
     register_add_column_if_missing($pdo, 'sales', 'cw_contact_name', 'TEXT');
+    // Added 2026-09-16 for the ConnectWise Tax Code sync feature (see
+    // api/tax.php) -- tax_amount above is now computed from the customer's
+    // live ConnectWise-assigned tax code at checkout, rather than manually
+    // entered. tax_code_id/identifier and the rate actually applied are
+    // snapshotted onto the sale row (same "never depends on tax_codes still
+    // matching what it said at checkout" reasoning as sale_items copying
+    // identifier/unit_price) so a receipt/history row always shows exactly
+    // what was charged even if that tax code's rate later changes in
+    // ConnectWise. Nullable: sales recorded before this column existed have
+    // no tax code on record (their tax_amount, if any, was manually entered).
+    register_add_column_if_missing($pdo, 'sales', 'tax_code_id', 'INTEGER');
+    register_add_column_if_missing($pdo, 'sales', 'tax_code_identifier', 'TEXT');
+    register_add_column_if_missing($pdo, 'sales', 'tax_rate', 'REAL');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales(created_at)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_sales_user ON sales(user_id)');
 
@@ -317,6 +330,34 @@ function register_migrate(PDO $pdo): void
         CREATE TABLE IF NOT EXISTS register_sync_meta (
             key TEXT PRIMARY KEY,
             value TEXT
+        )
+    SQL);
+
+    // ConnectWise Tax Codes (added 2026-09-16, per Michael -- see api/tax.php)
+    // -- a small, rarely-changing reference table (5-6 rows in practice),
+    // synced from /finance/taxCodes. `id` is ConnectWise's own real tax code
+    // id (not autoincrement), so a Company's `taxCode.id` (confirmed live,
+    // see tax.php's probe) joins straight to this table with no separate id
+    // mapping. `rate` is the pre-summed total rate (levelOneRate through
+    // levelSixRate added together) -- ConnectWise splits a combined state+
+    // local tax (e.g. VA-Hamp, VA-NOVA) across two of those six "levels";
+    // summing them is exactly what ConnectWise's own Tax Code screen shows
+    // as "Total Tax Rate", confirmed against Michael's screenshot (VA-Hamp/
+    // VA-NOVA: 0.7% + 5.3% = 6%, matching the screenshot's 6% column).
+    // `is_default` mirrors ConnectWise's defaultFlag (true only for the
+    // active "VA"/State-New code, id 15, confirmed live) -- used as the
+    // register's own default for a brand-new customer. A cancelled/
+    // superseded code (e.g. the old "VA"/State-Old, id 11, cancelDate
+    // 2020-09-30) is never synced into this table at all -- see
+    // register_sync_tax_codes()'s cancelDate filter in tax.php.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS tax_codes (
+            id INTEGER PRIMARY KEY,
+            identifier TEXT NOT NULL,
+            name TEXT NOT NULL,
+            rate REAL NOT NULL DEFAULT 0,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            synced_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
     SQL);
 }
