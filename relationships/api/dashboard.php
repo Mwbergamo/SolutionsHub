@@ -29,11 +29,16 @@
  * gauges is deliberately a flat, ordered array (not a fixed set of named
  * fields) so more tiles can be added later -- per Michael, "there will be a
  * dozen gauges very soon" -- without changing this endpoint's shape; the
- * frontend just renders whatever comes back. The five gauges below (total
- * customers, total prospects, portfolio billing trend, tickets YTD, active
- * contacts) are a starting set covering what this feature asked for; which
- * exact gauges belong here long-term hasn't been separately confirmed with
- * Michael beyond that.
+ * frontend just renders whatever comes back. The four gauges below (total
+ * customers, total prospects, portfolio billing trend, active contacts) are
+ * a starting set covering what this feature asked for; which exact gauges
+ * belong here long-term hasn't been separately confirmed with Michael
+ * beyond that. A fifth, "Service Tickets YTD" (a portfolio-wide sum of
+ * every customer's ticket_count_ytd), was removed 2026-09-16 per Michael --
+ * it wasn't a trustworthy number at the aggregate level and he only needs
+ * ticket counts per-customer (still returned below on each customer row,
+ * and still shown in the customer list's "Tickets YTD" column and each
+ * customer's own dashboard).
  *
  * billing_trend / ticket_trend / contact_trend all use the exact same
  * recent-3-vs-prior-3-month shared helper (relationships_cw_activity_billing_series_from_totals()
@@ -77,7 +82,6 @@ if ($action === 'overview') {
     $customerRows = $customerStmt->fetchAll(PDO::FETCH_ASSOC);
 
     $customers = [];
-    $totalTicketsYtd = 0;
     $totalContacts = 0;
     $totalProspects = 0;
     foreach ($customerRows as $r) {
@@ -86,9 +90,13 @@ if ($action === 'overview') {
         if ($isProspect) {
             $totalProspects++;
         }
+        // ticket_count_ytd stays per-customer (feeds the customer list's
+        // "Tickets YTD" column and each customer's own dashboard) -- only
+        // the portfolio-wide "Service Tickets YTD" gauge below was removed
+        // 2026-09-16 per Michael: it wasn't showing a trustworthy number at
+        // the aggregate level, and he only needs this data per-customer.
         $ticketYtd = $r['ticket_count_ytd'] !== null ? (int) $r['ticket_count_ytd'] : 0;
         $contactCount = $r['active_contact_count'] !== null ? (int) $r['active_contact_count'] : 0;
-        $totalTicketsYtd += $ticketYtd;
         $totalContacts += $contactCount;
 
         $billingTrend = relationships_cw_billing_stored_series($pdo, $customerId)['trend'];
@@ -132,7 +140,6 @@ if ($action === 'overview') {
         ['key' => 'total_customers', 'label' => 'Total Customers', 'value' => $totalCustomers, 'format' => 'count'],
         ['key' => 'total_prospects', 'label' => 'Total Prospects', 'value' => $totalProspects, 'format' => 'count'],
         ['key' => 'portfolio_billing_trend', 'label' => 'Portfolio Billing Trend', 'value' => null, 'format' => 'trend', 'trend' => $portfolioBillingTrend],
-        ['key' => 'tickets_ytd', 'label' => 'Service Tickets YTD', 'value' => $totalTicketsYtd, 'format' => 'count'],
         ['key' => 'active_contacts', 'label' => 'Active Contacts', 'value' => $totalContacts, 'format' => 'count'],
     ];
 
