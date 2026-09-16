@@ -15,11 +15,15 @@
  * POST /relationships/api/auth.php?action=logout
  *
  * Every response is JSON: { ok: true, user: {...} } or { ok: false, error }.
+ * As of 2026-09-16, `user` also carries is_territory_admin -- see
+ * territory-access.php -- so app.js knows whether to show the new
+ * Territory Admin nav item, without a separate round-trip.
  */
 
 declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
+require_once __DIR__ . '/territory-access.php';
 
 $pdo = relationships_db();
 relationships_start_session();
@@ -28,6 +32,9 @@ $action = $_GET['action'] ?? '';
 
 if ($action === 'me') {
     $user = relationships_current_user($pdo);
+    if ($user !== null) {
+        $user['is_territory_admin'] = relationships_is_territory_admin_email((string) ($user['email'] ?? ''));
+    }
     relationships_respond(200, ['ok' => true, 'user' => $user]);
 }
 
