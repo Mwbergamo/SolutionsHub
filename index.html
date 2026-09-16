@@ -37,10 +37,8 @@
       </sc-if>
     </div>
     <div style="display:flex;align-items:center;gap:12px;">
-      <a href="call-experience.html" style="display:flex;align-items:center;gap:8px;background:none;border:1px solid oklch(0.32 0.03 255);color:oklch(0.85 0.01 255);font-size:13px;font-weight:600;padding:9px 16px;border-radius:999px;text-decoration:none;">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
-        Zultys Call Experience Configurator
-      </a>
+      <!-- Zultys Call Experience Configurator link moved into the Solutions
+           Creator tile grid 2026-09-16, per Michael -- no longer in the header. -->
       <button data-on-click="{{openSummary}}" style="display:flex;align-items:center;gap:8px;background:oklch(0.2 0.03 255);border:1px solid oklch(0.32 0.03 255);color:white;font-size:14px;font-weight:600;padding:10px 18px;border-radius:999px;cursor:pointer;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h2l2.4 12.2a2 2 0 0 0 2 1.6h7.2a2 2 0 0 0 2-1.6L21 8H6"></path><circle cx="9.5" cy="21" r="1"></circle><circle cx="17.5" cy="21" r="1"></circle></svg>
         Solution
@@ -62,7 +60,69 @@
         <div style="font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:700;color:white;max-width:680px;line-height:1.15;">What can we build for you today?</div>
         <div style="margin-top:10px;font-size:15px;color:oklch(0.6 0.02 255);max-width:620px;">Start wide, then tap into whatever's relevant to this conversation. Nothing here commits to anything — it's a starting point to think through together.</div>
 
-        <div style="margin-top:28px;max-width:640px;position:relative;">
+          </div>
+        </div>
+
+        <div style="margin-top:36px;display:flex;flex-wrap:wrap;gap:24px;justify-content:flex-start;">
+
+          <div data-on-click="{{goToSolutionsCreator}}" style="width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>
+              </div>
+              <sc-if value="{{scHasSelections}}" hint-placeholder-val="{{false}}">
+                <div style="background:{{accentColor}};color:white;font-size:12px;font-weight:700;padding:4px 11px;border-radius:999px;">{{scSelectedCount}} selected</div>
+              </sc-if>
+            </div>
+            <div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">Solutions Creator</div>
+              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:oklch(0.45 0.02 255);">Search or browse every service area and build out a solution.</div>
+            </div>
+            <div style="font-size:11.5px;color:oklch(0.55 0.02 255);font-weight:700;letter-spacing:.03em;">START BUILDING →</div>
+          </div>
+
+          <a href="relationships/" style="width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.4"></circle><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7"></path></svg>
+              </div>
+            </div>
+            <div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">Relationships</div>
+              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:oklch(0.45 0.02 255);">CRC dashboard — see what each customer has, and what's worth a conversation.</div>
+            </div>
+            <div style="font-size:11.5px;color:oklch(0.55 0.02 255);font-weight:700;letter-spacing:.03em;">CRC DASHBOARD →</div>
+          </a>
+
+          <a href="register/" style="width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1.4"></circle><circle cx="18" cy="20" r="1.4"></circle><path d="M2 3h2.5l2.6 12.6a2 2 0 0 0 2 1.6h8.2a2 2 0 0 0 2-1.6L21 7H6"></path></svg>
+              </div>
+            </div>
+            <div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">Register</div>
+              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:oklch(0.45 0.02 255);">Ring up in-stock products, record payment, and print a receipt.</div>
+            </div>
+            <div style="font-size:11.5px;color:oklch(0.55 0.02 255);font-weight:700;letter-spacing:.03em;">CUSTOMER CHECKOUT →</div>
+          </a>
+
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- SOLUTIONS CREATOR -->
+    <sc-if value="{{isSolutionsCreator}}" hint-placeholder-val="{{false}}">
+      <div class="view-pad view-enter" style="padding:36px 56px 40px;">
+        <div style="display:flex;align-items:center;gap:14px;">
+          <div data-on-click="{{goOverview}}" style="width:36px;height:36px;border-radius:999px;background:oklch(0.22 0.03 255);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+          </div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:25px;font-weight:700;color:white;">Solutions Creator</div>
+        </div>
+        <div style="margin-top:8px;margin-left:50px;font-size:14px;color:oklch(0.62 0.02 255);max-width:680px;">Search services, or tap into whatever's relevant to this conversation.</div>
+
+        <div style="margin-top:26px;margin-left:50px;max-width:640px;position:relative;">
           <div style="display:flex;align-items:center;gap:10px;background:oklch(0.98 0.006 255);border-radius:999px;padding:6px 8px 6px 20px;">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.5 0.02 255)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
             <input value="{{searchQuery}}" data-on-input="{{onSearchInput}}" data-on-keydown="{{onSearchKeyDown}}" placeholder="Search services — try “help desk” or “cameras”…" style="flex:1;border:none;outline:none;background:transparent;font-family:'IBM Plex Sans',sans-serif;font-size:14.5px;color:oklch(0.2 0.03 255);padding:12px 0;">
@@ -97,10 +157,7 @@
           </sc-if>
         </div>
 
-          </div>
-        </div>
-
-        <div style="margin-top:36px;display:flex;flex-wrap:wrap;gap:24px;justify-content:flex-start;">
+        <div style="margin-top:32px;margin-left:50px;display:flex;flex-wrap:wrap;gap:24px;justify-content:flex-start;">
 
           <div class="{{itCrossSellClass}}" data-on-click="{{goToIT}}" style="{{itCardStyle}}">
             <div style="display:flex;align-items:center;justify-content:space-between;">
@@ -185,30 +242,17 @@
             <div style="font-size:11.5px;color:oklch(0.55 0.02 255);font-weight:700;letter-spacing:.03em;">4 SERVICE AREAS →</div>
           </div>
 
-          <a href="relationships/" style="width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
+          <a href="call-experience.html" style="width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
             <div style="display:flex;align-items:center;justify-content:space-between;">
               <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.4"></circle><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7"></path></svg>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
               </div>
             </div>
             <div>
-              <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">Relationships</div>
-              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:oklch(0.45 0.02 255);">CRC dashboard — see what each customer has, and what's worth a conversation.</div>
+              <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">Zultys Call Experience</div>
+              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:oklch(0.45 0.02 255);">Configure a Zultys phone/call-experience setup for this deal.</div>
             </div>
-            <div style="font-size:11.5px;color:oklch(0.55 0.02 255);font-weight:700;letter-spacing:.03em;">CRC DASHBOARD →</div>
-          </a>
-
-          <a href="register/" style="width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1.4"></circle><circle cx="18" cy="20" r="1.4"></circle><path d="M2 3h2.5l2.6 12.6a2 2 0 0 0 2 1.6h8.2a2 2 0 0 0 2-1.6L21 7H6"></path></svg>
-              </div>
-            </div>
-            <div>
-              <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:oklch(0.2 0.03 255);">Register</div>
-              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:oklch(0.45 0.02 255);">Ring up in-stock products, record payment, and print a receipt.</div>
-            </div>
-            <div style="font-size:11.5px;color:oklch(0.55 0.02 255);font-weight:700;letter-spacing:.03em;">CUSTOMER CHECKOUT →</div>
+            <div style="font-size:11.5px;color:oklch(0.55 0.02 255);font-weight:700;letter-spacing:.03em;">OPEN CONFIGURATOR →</div>
           </a>
 
         </div>
@@ -219,7 +263,7 @@
     <sc-if value="{{isPillar}}" hint-placeholder-val="{{false}}">
       <div class="view-pad view-enter" style="padding:36px 56px 40px;">
         <div style="display:flex;align-items:center;gap:14px;">
-          <div data-on-click="{{backToOverview}}" style="width:36px;height:36px;border-radius:999px;background:oklch(0.22 0.03 255);display:flex;align-items:center;justify-content:center;cursor:pointer;">
+          <div data-on-click="{{backToSolutionsCreator}}" style="width:36px;height:36px;border-radius:999px;background:oklch(0.22 0.03 255);display:flex;align-items:center;justify-content:center;cursor:pointer;">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
           </div>
           <div style="font-family:'Space Grotesk',sans-serif;font-size:25px;font-weight:700;color:white;">{{currentPillar.name}}</div>
@@ -1592,8 +1636,8 @@
 </div>
 </script>
 
-<script src="app.js?v=a25110e"></script>
-<script src="runtime.js?v=a25110e"></script>
+<script src="app.js?v=e6e513b"></script>
+<script src="runtime.js?v=e6e513b"></script>
 <script>
   // Sign-in gate (added 2026-09-15) -- app.js/runtime.js load unconditionally
   // above (they're just static definitions; nothing runs yet), but the app

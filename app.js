@@ -1566,6 +1566,10 @@ class Component extends DCLogic {
   }
 
   goOverview() { this.setState({ view: 'overview' }); }
+  // Added 2026-09-16 -- Solutions Creator consolidation (per Michael): the
+  // front page's search box and 5 pillar tiles now live one level in, on
+  // their own view, rather than on the true Overview.
+  goSolutionsCreator() { this.setState({ view: 'solutions-creator' }); }
   openPillar(pillarId) { this.setState({ view: 'pillar', pillarId: pillarId }); }
   backToPillar() { this.setState({ view: 'pillar' }); }
   openService(pillarId, serviceId) { this.setState({ view: 'service', pillarId: pillarId, serviceId: serviceId }); }
@@ -2804,6 +2808,9 @@ class Component extends DCLogic {
     var voipCount = this.countForPillar('voip');
     var cablingCount = this.countForPillar('cabling');
     var securityCount = this.countForPillar('security');
+    // Added 2026-09-16 -- Solutions Creator tile badge (total selections
+    // across all 5 pillars, mirrors each pillar tile's own count).
+    var scCount = itCount + dcCount + voipCount + cablingCount + securityCount;
 
     var searchQuery = this.state.searchQuery || '';
     var searchHasQuery = searchQuery.trim().length > 0;
@@ -2825,10 +2832,14 @@ class Component extends DCLogic {
     var voiceSupported = (typeof window !== 'undefined') && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
     var voiceButtonStyle = 'width:38px;height:38px;flex:0 0 auto;border-radius:999px;border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;' + (voiceListening ? 'background:#e0413f;color:white;' : ('background:' + accentColor + ';color:white;'));
 
+    // "Solutions Creator / " prefix on pillar/service/category breadcrumbs
+    // added 2026-09-16 -- those views now nest under Solutions Creator
+    // rather than hanging directly off the true Overview.
     var breadcrumb = '';
-    if (view === 'pillar') { var pv = this.findPillar(this.state.pillarId); breadcrumb = pv ? pv.name : ''; }
-    if (view === 'service') { var sv = this.findService(this.state.pillarId, this.state.serviceId); var pv2 = this.findPillar(this.state.pillarId); breadcrumb = (pv2 ? pv2.name : '') + ' / ' + (sv ? sv.name : ''); }
-    if (view === 'category') { var sv3 = this.findService(this.state.pillarId, this.state.serviceId); var cv = this.findCategory(this.state.pillarId, this.state.serviceId, this.state.categoryId); var pv3 = this.findPillar(this.state.pillarId); breadcrumb = (pv3 ? pv3.name : '') + ' / ' + (sv3 ? sv3.name : '') + ' / ' + (cv ? cv.name : ''); }
+    if (view === 'solutions-creator') { breadcrumb = 'Solutions Creator'; }
+    if (view === 'pillar') { var pv = this.findPillar(this.state.pillarId); breadcrumb = 'Solutions Creator / ' + (pv ? pv.name : ''); }
+    if (view === 'service') { var sv = this.findService(this.state.pillarId, this.state.serviceId); var pv2 = this.findPillar(this.state.pillarId); breadcrumb = 'Solutions Creator / ' + (pv2 ? pv2.name : '') + ' / ' + (sv ? sv.name : ''); }
+    if (view === 'category') { var sv3 = this.findService(this.state.pillarId, this.state.serviceId); var cv = this.findCategory(this.state.pillarId, this.state.serviceId, this.state.categoryId); var pv3 = this.findPillar(this.state.pillarId); breadcrumb = 'Solutions Creator / ' + (pv3 ? pv3.name : '') + ' / ' + (sv3 ? sv3.name : '') + ' / ' + (cv ? cv.name : ''); }
     if (view === 'summary') { breadcrumb = 'Your Solution'; }
     if (view === 'checkout') { breadcrumb = 'Your Solution / PeopleFirst Check Out'; }
 
@@ -3833,6 +3844,7 @@ class Component extends DCLogic {
       logoWhite: CBT_LOGO_WHITE,
       logoColor: CBT_LOGO_COLOR,
       isOverview: view === 'overview',
+      isSolutionsCreator: view === 'solutions-creator',
       isPillar: view === 'pillar',
       isService: view === 'service',
       isSummary: view === 'summary',
@@ -3840,6 +3852,7 @@ class Component extends DCLogic {
       breadcrumb: breadcrumb,
       selectionCount: selectionCount,
       goOverview: function () { self.goOverview(); },
+      goToSolutionsCreator: function () { self.goSolutionsCreator(); },
       itCyberSellFlag: cyberSecFlag,
       itCrossSellClass: cyberSecFlag ? 'cross-sell-glow' : '',
       itCardStyle: 'width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
@@ -3866,7 +3879,11 @@ class Component extends DCLogic {
       voipHasSelections: voipCount > 0, voipSelectedCount: voipCount,
       cablingHasSelections: cablingCount > 0, cablingSelectedCount: cablingCount,
       securityHasSelections: securityCount > 0, securitySelectedCount: securityCount,
-      backToOverview: function () { self.goOverview(); },
+      scHasSelections: scCount > 0, scSelectedCount: scCount,
+      // Renamed from backToOverview 2026-09-16 -- the Pillar view's back
+      // arrow now returns to Solutions Creator, not the true Overview
+      // (per Michael's AskUserQuestion answer).
+      backToSolutionsCreator: function () { self.goSolutionsCreator(); },
       backToPillar: function () { self.backToPillar(); },
       currentPillar: currentPillar,
       currentService: currentService,
