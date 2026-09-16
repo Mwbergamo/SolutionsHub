@@ -16,6 +16,37 @@
   // SolutionsHub site root is one level up from /register/.
   var HUB_URL = '../index.html';
 
+  // ---- Computer upsell builder (added 2026-09-16, per Michael) --------
+  //
+  // "Computer" = one of these three ConnectWise subcategory_name values,
+  // confirmed against the synced physical-inventory catalog (see
+  // claude/register-app.md's Type/Category/SubCategory feature writeup):
+  // the full confirmed subcategory list is Accessories, Desktop, Display,
+  // IT Service Parts, Laptop, Network Device, Power, Printer, Server,
+  // Storage, Workstation -- there is currently no "Tablet" subcategory,
+  // so tablets aren't detected as computers yet. If a tablet-class item
+  // starts showing up under a different subcategory, add it here.
+  var COMPUTER_SUBCATEGORIES = ['Laptop', 'Desktop', 'Workstation'];
+
+  function isComputerItem(item) {
+    return !!item && COMPUTER_SUBCATEGORIES.indexOf(item.subcategory_name) !== -1;
+  }
+
+  // The 5 standard Protection Plan upsell items Michael wants reps
+  // steered toward whenever they ring up a computer. `identifier` must
+  // match the synced catalog's `identifier` column exactly (see
+  // api/catalog.php's ?action=list&identifiers= exact-match lookup).
+  // `fallbackLabel` is shown only if that identifier isn't found in the
+  // synced catalog (inactive, renamed, or not yet synced) -- real items
+  // always show their live catalog name/description/price instead.
+  var PROTECTION_PLAN_ITEMS_DEF = [
+    { identifier: 'CBT-CBYERBSEC-PRO', fallbackLabel: 'Cyber Security Pro' },
+    { identifier: '9999', fallbackLabel: 'System Prep' },
+    { identifier: 'Automate-Agent', fallbackLabel: 'Remote Control Support' },
+    { identifier: 'Automate-Patch', fallbackLabel: 'CodeBlue Patch Management' },
+    { identifier: 'SENT-ONE-CTRL', fallbackLabel: 'Managed Anti-Virus Protection' }
+  ];
+
   var root = document.getElementById('app-root');
 
   var state = {
@@ -82,6 +113,23 @@
 
     // cart: [{ catalog_item_id, identifier, description, unit_price, quantity, on_hand }]
     cart: [],
+
+    // Computer upsell/cross-sell builder (added 2026-09-16, per Michael):
+    // clicking a Laptop/Desktop/Workstation catalog item opens this box
+    // instead of adding straight to the cart, so the rep can attach the
+    // standard Protection Plan items and any other searched parts/
+    // services before anything lands in the cart as one bill of
+    // materials. Only one can be open at a time (Michael's choice).
+    //   { item, quantity, selectedProtectionIds: {catalogItemId: true},
+    //     extras: [{ item, quantity }], extraSearch, extraSearchResults,
+    //     extraSearchLoading }
+    computerBuilder: null,
+    // The 5 fixed Protection Plan items, fetched once by exact identifier
+    // and cached here -- null until the first computer builder opens (or
+    // if the lookup fails), then the array from the API (possibly missing
+    // entries if an identifier isn't in the synced catalog).
+    protectionPlanItems: null,
+    protectionPlanLoading: false,
 
     checkoutOpen: false,
     checkoutSubmitting: false,
@@ -704,27 +752,36 @@
 
   // ---- Cart ---------------------------------------------------------
 
-  function addToCart(catalogItemId) {
-    catalogItemId = Number(catalogItemId);
-    var item = state.catalogItems.filter(function (i) { return i.id === catalogItemId; })[0];
+  // Shared by addToCart() (single item, +1, resolved from the currently
+  // displayed state.catalogItems) and the computer builder's "Add Bill of
+  // Materials to Cart" (added 2026-09-16, potentially several items at
+  // once, resolved from its own staged item objects -- the builder's
+  // items, e.g. the Protection Plan lookups, aren't necessarily part of
+  // whatever's currently in state.catalogItems). Mutates state.cart
+  // in-place; caller is responsible for render().
+  function addItemToCartDirect(item, qtyToAdd) {
     if (!item) return;
-    var existing = state.cart.filter(function (c) { return c.catalog_item_id === catalogItemId; })[0];
+    qtyToAdd = Math.max(1, Math.floor(Number(qtyToAdd) || 1));
+    var existing = state.cart.filter(function (c) { return c.catalog_item_id === item.id; })[0];
     var currentQty = existing ? existing.quantity : 0;
     var trackInventory = item.track_inventory !== 0;
-    if (trackInventory && currentQty + 1 > item.on_hand) {
-      state.error = 'Only ' + fmtQty(item.on_hand) + ' of "' + item.identifier + '" on hand.';
-      render();
-      return;
+    var newQty = currentQty + qtyToAdd;
+    if (trackInventory && newQty > item.on_hand) {
+      if (item.on_hand <= currentQty) {
+        state.error = 'Only ' + fmtQty(item.on_hand) + ' of "' + item.identifier + '" on hand.';
+        return;
+      }
+      newQty = item.on_hand;
     }
     if (existing) {
-      existing.quantity += 1;
+      existing.quantity = newQty;
     } else {
       state.cart.push({
-        catalog_item_id: catalogItemId,
+        catalog_item_id: item.id,
         identifier: item.identifier,
         description: item.description,
         unit_price: item.price,
-        quantity: 1,
+        quantity: newQty,
         on_hand: item.on_hand,
         track_inventory: trackInventory,
         // Copied from the synced catalog item (added 2026-09-16) -- only
@@ -734,6 +791,13 @@
       });
     }
     state.error = null;
+  }
+
+  function addToCart(catalogItemId) {
+    catalogItemId = Number(catalogItemId);
+    var item = state.catalogItems.filter(function (i) { return i.id === catalogItemId; })[0];
+    if (!item) return;
+    addItemToCartDirect(item, 1);
     render();
   }
 
@@ -756,6 +820,141 @@
   function removeFromCart(catalogItemId) {
     catalogItemId = Number(catalogItemId);
     state.cart = state.cart.filter(function (c) { return c.catalog_item_id !== catalogItemId; });
+    render();
+  }
+
+  // ---- Computer upsell builder (added 2026-09-16) ----------------------
+
+  function loadProtectionPlanItems() {
+    if (state.protectionPlanItems !== null || state.protectionPlanLoading) return;
+    state.protectionPlanLoading = true;
+    var idents = PROTECTION_PLAN_ITEMS_DEF.map(function (d) { return d.identifier; }).join(',');
+    apiGet('api/catalog.php?action=list&identifiers=' + encodeURIComponent(idents)).then(function (r) {
+      state.protectionPlanLoading = false;
+      state.protectionPlanItems = (r.data && r.data.ok) ? r.data.items : [];
+      render();
+    }).catch(function () {
+      state.protectionPlanLoading = false;
+      state.protectionPlanItems = [];
+      render();
+    });
+  }
+
+  function openComputerBuilder(catalogItemId) {
+    catalogItemId = Number(catalogItemId);
+    var item = state.catalogItems.filter(function (i) { return i.id === catalogItemId; })[0];
+    if (!item) return;
+    state.computerBuilder = {
+      item: item,
+      quantity: 1,
+      selectedProtectionIds: {},
+      extras: [],
+      extraSearch: '',
+      extraSearchResults: [],
+      extraSearchLoading: false
+    };
+    loadProtectionPlanItems();
+    render();
+  }
+
+  function closeComputerBuilder() {
+    state.computerBuilder = null;
+    render();
+  }
+
+  function setBuilderQuantity(qty) {
+    if (!state.computerBuilder) return;
+    qty = Math.max(1, Math.floor(Number(qty) || 1));
+    state.computerBuilder.quantity = qty;
+    render();
+  }
+
+  function toggleBuilderProtection(catalogItemId) {
+    if (!state.computerBuilder) return;
+    catalogItemId = Number(catalogItemId);
+    var sel = state.computerBuilder.selectedProtectionIds;
+    if (sel[catalogItemId]) { delete sel[catalogItemId]; } else { sel[catalogItemId] = true; }
+    render();
+  }
+
+  var builderExtraSearchDebounce = null;
+
+  function setBuilderExtraSearch(query) {
+    if (!state.computerBuilder) return;
+    state.computerBuilder.extraSearch = query;
+    clearTimeout(builderExtraSearchDebounce);
+    var q = query.trim();
+    if (q === '') {
+      state.computerBuilder.extraSearchResults = [];
+      state.computerBuilder.extraSearchLoading = false;
+      render();
+      return;
+    }
+    builderExtraSearchDebounce = setTimeout(function () {
+      if (!state.computerBuilder) return;
+      state.computerBuilder.extraSearchLoading = true;
+      render();
+      apiGet('api/catalog.php?action=list&q=' + encodeURIComponent(q) + '&in_stock_only=1').then(function (r) {
+        // The builder may have been closed while this request was in
+        // flight -- don't resurrect it or write into a null.
+        if (!state.computerBuilder) return;
+        state.computerBuilder.extraSearchLoading = false;
+        state.computerBuilder.extraSearchResults = (r.data && r.data.ok) ? r.data.items.slice(0, 8) : [];
+        render();
+      }).catch(function () {
+        if (!state.computerBuilder) return;
+        state.computerBuilder.extraSearchLoading = false;
+        render();
+      });
+    }, 250);
+  }
+
+  function addBuilderExtra(catalogItemId) {
+    if (!state.computerBuilder) return;
+    catalogItemId = Number(catalogItemId);
+    var item = state.computerBuilder.extraSearchResults.filter(function (i) { return i.id === catalogItemId; })[0];
+    if (!item) return;
+    var existing = state.computerBuilder.extras.filter(function (e) { return e.item.id === catalogItemId; })[0];
+    if (existing) {
+      existing.quantity += 1;
+    } else {
+      state.computerBuilder.extras.push({ item: item, quantity: 1 });
+    }
+    state.computerBuilder.extraSearch = '';
+    state.computerBuilder.extraSearchResults = [];
+    render();
+  }
+
+  function setBuilderExtraQty(catalogItemId, qty) {
+    if (!state.computerBuilder) return;
+    catalogItemId = Number(catalogItemId);
+    qty = Math.max(0, Math.floor(Number(qty) || 0));
+    if (qty === 0) {
+      state.computerBuilder.extras = state.computerBuilder.extras.filter(function (e) { return e.item.id !== catalogItemId; });
+    } else {
+      var line = state.computerBuilder.extras.filter(function (e) { return e.item.id === catalogItemId; })[0];
+      if (line) line.quantity = qty;
+    }
+    render();
+  }
+
+  // Adds the computer (at the builder's own quantity), every checked
+  // Protection Plan item (qty 1 each -- deliberately independent of the
+  // computer's quantity, since a multi-unit order doesn't necessarily
+  // want the same multiple of every protection item), and every added
+  // extra (at its own chosen quantity) to the cart as one action, then
+  // closes and resets the box (Michael's choice).
+  function addBuilderBomToCart() {
+    var b = state.computerBuilder;
+    if (!b) return;
+    addItemToCartDirect(b.item, b.quantity);
+    var protectionSource = state.protectionPlanItems || [];
+    Object.keys(b.selectedProtectionIds).forEach(function (idStr) {
+      var pItem = protectionSource.filter(function (i) { return i.id === Number(idStr); })[0];
+      if (pItem) addItemToCartDirect(pItem, 1);
+    });
+    b.extras.forEach(function (e) { addItemToCartDirect(e.item, e.quantity); });
+    state.computerBuilder = null;
     render();
   }
 
@@ -1571,7 +1770,7 @@
 
   function render() {
     var searchFocus = captureSearchFocus();
-    root.innerHTML = topbarHtml() + '<div class="main">' + mainHtml() + '</div>' + checkoutModalHtml() + receiptOverlayHtml() + returnFlowModalHtml();
+    root.innerHTML = topbarHtml() + '<div class="main">' + mainHtml() + '</div>' + computerBuilderModalHtml() + checkoutModalHtml() + receiptOverlayHtml() + returnFlowModalHtml();
     bindEvents();
     restoreSearchFocus(searchFocus);
   }
@@ -1580,7 +1779,7 @@
   // debounced search re-render (catalog search, and the 2026-09-14
   // customer/contact search boxes) would otherwise steal focus/cursor
   // position out from under whatever the rep is still typing.
-  var FOCUS_PRESERVED_INPUT_IDS = ['catalogSearchInput', 'customerSearchInput', 'customerContactSearchInput', 'newCustomerManualEmailInput', 'ticketSearchInput', 'signupCompanyInput'];
+  var FOCUS_PRESERVED_INPUT_IDS = ['catalogSearchInput', 'customerSearchInput', 'customerContactSearchInput', 'newCustomerManualEmailInput', 'ticketSearchInput', 'signupCompanyInput', 'builderExtraSearchInput'];
 
   function captureSearchFocus() {
     for (var i = 0; i < FOCUS_PRESERVED_INPUT_IDS.length; i++) {
@@ -2058,8 +2257,15 @@
       // match against instead.
       var mfgLine = item.manufacturer_part_number && item.manufacturer_part_number !== item.identifier
         ? '<div class="catalog-card-mfg">MFG#: ' + escapeHtml(item.manufacturer_part_number) + '</div>' : '';
-      html += '<div class="catalog-card' + (outOfStock ? ' out-of-stock' : '') + '" ' + (outOfStock ? '' : 'data-action="add-to-cart" data-id="' + item.id + '"') + '>' +
-        '<div class="catalog-card-name">' + escapeHtml(item.identifier) + (isService ? ' <span class="catalog-card-badge">Protection Plan</span>' : '') + '</div>' +
+      // Laptop/Desktop/Workstation items open the computer upsell builder
+      // instead of adding straight to the cart (added 2026-09-16, per
+      // Michael).
+      var isComputer = isComputerItem(item);
+      var cardAction = isComputer ? 'open-computer-builder' : 'add-to-cart';
+      html += '<div class="catalog-card' + (outOfStock ? ' out-of-stock' : '') + '" ' + (outOfStock ? '' : 'data-action="' + cardAction + '" data-id="' + item.id + '"') + '>' +
+        '<div class="catalog-card-name">' + escapeHtml(item.identifier) +
+          (isService ? ' <span class="catalog-card-badge">Protection Plan</span>' : '') +
+          (isComputer ? ' <span class="catalog-card-badge computer">Configure</span>' : '') + '</div>' +
         (item.description ? '<div class="catalog-card-desc">' + escapeHtml(item.description) + '</div>' : '') +
         mfgLine +
         '<div class="catalog-card-footer">' +
@@ -2172,6 +2378,116 @@
             '<button type="button" class="modal-confirm" data-action="submit-checkout" ' + (canComplete ? '' : 'disabled') + '>' +
               (state.checkoutSubmitting ? 'Recording Sale…' : 'Record Payment & Complete') +
             '</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  // Computer upsell/cross-sell builder modal (added 2026-09-16, per
+  // Michael). Opened by clicking a Laptop/Desktop/Workstation catalog
+  // card instead of adding it straight to the cart -- see
+  // openComputerBuilder()/catalogGridHtml().
+  function computerBuilderModalHtml() {
+    var b = state.computerBuilder;
+    if (!b) return '';
+    var item = b.item;
+
+    var protectionRows = '';
+    if (state.protectionPlanLoading) {
+      protectionRows = '<div class="cb-protection-loading">Loading Protection Plan items…</div>';
+    } else {
+      var byIdentifier = {};
+      (state.protectionPlanItems || []).forEach(function (i) { byIdentifier[i.identifier.toUpperCase()] = i; });
+      protectionRows = PROTECTION_PLAN_ITEMS_DEF.map(function (def) {
+        var found = byIdentifier[def.identifier.toUpperCase()];
+        if (!found) {
+          return '<div class="cb-protection-item unavailable">' +
+            '<span class="cb-protection-name">' + escapeHtml(def.fallbackLabel) + '</span>' +
+            '<span class="cb-protection-unavailable-note">not in catalog (' + escapeHtml(def.identifier) + ')</span>' +
+          '</div>';
+        }
+        var checked = !!b.selectedProtectionIds[found.id];
+        return '<label class="cb-protection-item">' +
+          '<input type="checkbox" data-action="cb-protection-toggle" data-id="' + found.id + '" ' + (checked ? 'checked' : '') + '>' +
+          '<span class="cb-protection-name">' + escapeHtml(found.description || def.fallbackLabel) + '</span>' +
+          '<span class="cb-protection-price">' + fmtMoney(found.price) + '</span>' +
+        '</label>';
+      }).join('');
+    }
+
+    var extrasRows = b.extras.map(function (e) {
+      return '<div class="cb-extra-item">' +
+        '<div class="cb-extra-main">' +
+          '<div class="cb-extra-name">' + escapeHtml(e.item.identifier) + '</div>' +
+          '<div class="cb-extra-price">' + fmtMoney(e.item.price) + ' each</div>' +
+        '</div>' +
+        '<div class="cb-extra-qty">' +
+          '<button type="button" data-action="cb-extra-qty-dec" data-id="' + e.item.id + '">–</button>' +
+          '<input type="text" inputmode="numeric" value="' + fmtQty(e.quantity) + '" data-action="cb-extra-qty-input" data-id="' + e.item.id + '">' +
+          '<button type="button" data-action="cb-extra-qty-inc" data-id="' + e.item.id + '">+</button>' +
+        '</div>' +
+        '<button type="button" class="cb-extra-remove" data-action="cb-extra-remove" data-id="' + e.item.id + '">✕</button>' +
+      '</div>';
+    }).join('');
+
+    var searchDropdown = '';
+    if (b.extraSearch.trim()) {
+      var resultsHtml;
+      if (b.extraSearchLoading) {
+        resultsHtml = '<div class="cb-extra-search-empty">Searching…</div>';
+      } else if (b.extraSearchResults.length > 0) {
+        resultsHtml = b.extraSearchResults.map(function (i) {
+          return '<div class="cb-extra-search-result" data-action="cb-extra-add" data-id="' + i.id + '">' +
+            '<span>' + escapeHtml(i.identifier) + (i.description ? ' — ' + escapeHtml(i.description) : '') + '</span>' +
+            '<span>' + fmtMoney(i.price) + '</span>' +
+          '</div>';
+        }).join('');
+      } else {
+        resultsHtml = '<div class="cb-extra-search-empty">No matches.</div>';
+      }
+      searchDropdown = '<div class="cb-extra-search-results">' + resultsHtml + '</div>';
+    }
+
+    var bomTotal = item.price * b.quantity +
+      Object.keys(b.selectedProtectionIds).reduce(function (sum, idStr) {
+        var pItem = (state.protectionPlanItems || []).filter(function (i) { return i.id === Number(idStr); })[0];
+        return sum + (pItem ? pItem.price : 0);
+      }, 0) +
+      b.extras.reduce(function (sum, e) { return sum + e.item.price * e.quantity; }, 0);
+
+    return (
+      '<div class="modal-backdrop" data-action="close-computer-builder-backdrop">' +
+        '<div class="modal computer-builder-modal" data-stop-propagation="1">' +
+          '<div class="modal-title">Configure Computer</div>' +
+          '<div class="cb-item-row">' +
+            '<div class="cb-item-main">' +
+              '<div class="cb-item-name">' + escapeHtml(item.identifier) + '</div>' +
+              (item.description ? '<div class="cb-item-desc">' + escapeHtml(item.description) + '</div>' : '') +
+            '</div>' +
+            '<div class="cb-item-qty">' +
+              '<button type="button" data-action="cb-qty-dec">–</button>' +
+              '<input type="text" inputmode="numeric" value="' + fmtQty(b.quantity) + '" data-action="cb-qty-input">' +
+              '<button type="button" data-action="cb-qty-inc">+</button>' +
+            '</div>' +
+            '<div class="cb-item-price">' + fmtMoney(item.price) + ' each</div>' +
+          '</div>' +
+
+          '<div class="cb-section-label">Protection Plan Upsells</div>' +
+          '<div class="cb-protection-list">' + protectionRows + '</div>' +
+
+          '<div class="cb-section-label">Other Parts &amp; Services</div>' +
+          '<div class="cb-extra-search-wrap">' +
+            '<input type="text" id="builderExtraSearchInput" placeholder="Search to add another part or service…" data-action="cb-extra-search-input" value="' + escapeHtml(b.extraSearch) + '">' +
+            searchDropdown +
+          '</div>' +
+          (extrasRows ? '<div class="cb-extras-list">' + extrasRows + '</div>' : '') +
+
+          '<div class="cb-bom-total"><span>Bill of Materials Total</span><span>' + fmtMoney(bomTotal) + '</span></div>' +
+
+          '<div class="modal-actions">' +
+            '<button type="button" class="modal-cancel" data-action="close-computer-builder">Cancel</button>' +
+            '<button type="button" class="modal-confirm" data-action="add-bom-to-cart">Add Bill of Materials to Cart</button>' +
           '</div>' +
         '</div>' +
       '</div>'
@@ -2667,6 +2983,23 @@
       else if (action === 'sync') handler = runSync;
       else if (action === 'add-to-cart') handler = function () { addToCart(el.dataset.id); };
       else if (action === 'remove-from-cart') handler = function () { removeFromCart(el.dataset.id); };
+      else if (action === 'open-computer-builder') handler = function () { openComputerBuilder(el.dataset.id); };
+      else if (action === 'close-computer-builder') handler = closeComputerBuilder;
+      else if (action === 'close-computer-builder-backdrop') handler = closeComputerBuilder;
+      else if (action === 'cb-qty-inc') handler = function () { setBuilderQuantity(state.computerBuilder.quantity + 1); };
+      else if (action === 'cb-qty-dec') handler = function () { setBuilderQuantity(state.computerBuilder.quantity - 1); };
+      else if (action === 'cb-protection-toggle') handler = function () { toggleBuilderProtection(el.dataset.id); };
+      else if (action === 'cb-extra-add') handler = function () { addBuilderExtra(el.dataset.id); };
+      else if (action === 'cb-extra-remove') handler = function () { setBuilderExtraQty(el.dataset.id, 0); };
+      else if (action === 'cb-extra-qty-inc') handler = function () {
+        var line = state.computerBuilder.extras.filter(function (e) { return e.item.id === Number(el.dataset.id); })[0];
+        if (line) setBuilderExtraQty(el.dataset.id, line.quantity + 1);
+      };
+      else if (action === 'cb-extra-qty-dec') handler = function () {
+        var line = state.computerBuilder.extras.filter(function (e) { return e.item.id === Number(el.dataset.id); })[0];
+        if (line) setBuilderExtraQty(el.dataset.id, line.quantity - 1);
+      };
+      else if (action === 'add-bom-to-cart') handler = addBuilderBomToCart;
       else if (action === 'qty-inc') handler = function () {
         var line = state.cart.filter(function (c) { return c.catalog_item_id === Number(el.dataset.id); })[0];
         if (line) setCartQty(el.dataset.id, line.quantity + 1);
@@ -2764,6 +3097,16 @@
     root.querySelectorAll('input[data-action="return-qty-input"]').forEach(function (el) {
       el.addEventListener('change', function () { setReturnItemQty(Number(el.dataset.id), el.value); });
     });
+    root.querySelectorAll('input[data-action="cb-qty-input"]').forEach(function (el) {
+      el.addEventListener('change', function () { setBuilderQuantity(el.value); });
+    });
+    root.querySelectorAll('input[data-action="cb-extra-qty-input"]').forEach(function (el) {
+      el.addEventListener('change', function () { setBuilderExtraQty(el.dataset.id, el.value); });
+    });
+    var builderExtraSearchInput = root.querySelector('[data-action="cb-extra-search-input"]');
+    if (builderExtraSearchInput) {
+      builderExtraSearchInput.addEventListener('input', function () { setBuilderExtraSearch(builderExtraSearchInput.value); });
+    }
     var returnReasonInput = root.querySelector('[data-action="return-reason-input"]');
     if (returnReasonInput) {
       returnReasonInput.addEventListener('input', function () { state.returnFlow.reason = returnReasonInput.value; });

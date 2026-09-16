@@ -199,6 +199,12 @@ if ($action === 'list') {
     $typeFilter = trim((string) ($_GET['type'] ?? ''));
     $categoryFilter = trim((string) ($_GET['category'] ?? ''));
     $subcategoryFilter = trim((string) ($_GET['subcategory'] ?? ''));
+    // Exact-identifier batch lookup (added 2026-09-16, for the computer
+    // upsell builder's fixed Protection Plan item list) -- comma-separated
+    // identifiers, matched exactly (case-insensitive) rather than the
+    // partial LIKE matching `q` does below, so "9999" can't accidentally
+    // pull back other items that merely contain "9999" somewhere.
+    $identifiersFilter = trim((string) ($_GET['identifiers'] ?? ''));
 
     $sql = 'SELECT id, cw_catalog_id, identifier, description, customer_description,
                    category_name, subcategory_name, manufacturer_part_number, vendor_sku,
@@ -225,6 +231,19 @@ if ($action === 'list') {
         $sql .= ' AND subcategory_name = :subcategory';
         $params[':subcategory'] = $subcategoryFilter;
     }
+    if ($identifiersFilter !== '') {
+        $idents = array_values(array_filter(array_map('trim', explode(',', $identifiersFilter)), function ($v) { return $v !== ''; }));
+        if ($idents !== []) {
+            $placeholders = [];
+            foreach ($idents as $i => $ident) {
+                $key = ':ident' . $i;
+                $placeholders[] = $key;
+                $params[$key] = $ident;
+            }
+            $sql .= ' AND identifier COLLATE NOCASE IN (' . implode(',', $placeholders) . ')';
+        }
+    }
+
     $sql .= ' ORDER BY identifier COLLATE NOCASE';
 
     $stmt = $pdo->prepare($sql);
