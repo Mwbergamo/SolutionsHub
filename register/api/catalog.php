@@ -202,7 +202,7 @@ if ($action === 'list') {
 
     $sql = 'SELECT id, cw_catalog_id, identifier, description, customer_description,
                    category_name, subcategory_name, manufacturer_part_number, vendor_sku,
-                   unit_of_measure, price, on_hand, product_class, track_inventory, synced_at
+                   unit_of_measure, price, on_hand, taxable_flag, product_class, track_inventory, synced_at
             FROM catalog_items
             WHERE inactive_flag = 0';
     $params = [];
@@ -236,6 +236,7 @@ if ($action === 'list') {
         $item['cw_catalog_id'] = (int) $item['cw_catalog_id'];
         $item['price'] = (float) $item['price'];
         $item['on_hand'] = (float) $item['on_hand'];
+        $item['taxable_flag'] = (int) $item['taxable_flag'];
         $item['track_inventory'] = (int) $item['track_inventory'];
         $item['type_name'] = register_catalog_type_for_category($item['category_name']);
         if ($typeFilter !== '' && $item['type_name'] !== $typeFilter) {

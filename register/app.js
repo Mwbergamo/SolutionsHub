@@ -86,7 +86,11 @@
     checkoutOpen: false,
     checkoutSubmitting: false,
     checkoutError: null,
-    checkoutForm: { payment_method: 'cash', payment_reference: '', tax_amount: '0.00', note: '' },
+    // tax_amount removed 2026-09-16 -- tax is now computed server-side at
+    // checkout from the customer's live ConnectWise Tax Code (see
+    // api/checkout.php), never entered manually. checkoutModalHtml() shows
+    // a computed preview instead (see customer.taxCode).
+    checkoutForm: { payment_method: 'cash', payment_reference: '', note: '' },
 
     // Customer (Company/Contact) resolution -- added 2026-09-14, replacing
     // the old free-text customer_name field. Per Michael: live ConnectWise
@@ -151,7 +155,21 @@
       // for a recalled/existing company, which must keep whatever billing
       // setup it already has.
       isNewCompany: false,
-      invoicingWarning: null
+      invoicingWarning: null,
+
+      // Sales tax (added 2026-09-16, per Michael -- see api/tax.php/tax-
+      // core.php/customers.php's action=company-tax). taxCode is the
+      // resolved local tax_codes row `{id, identifier, name, rate,
+      // is_default}` for whatever ConnectWise currently has this Company
+      // set to, a partial `{id, identifier:null, name, rate:null,
+      // is_default:false}` row if ConnectWise has a code not yet synced
+      // locally, or null if the Company has no tax code assigned at all.
+      // Loaded live whenever a Company is resolved (never cached across
+      // customers) -- see loadCompanyTaxCode().
+      taxCode: null,
+      taxCodeLoading: false,
+      taxCodeError: null,
+      markExemptSubmitting: false
     };
   }
 
@@ -166,7 +184,11 @@
       error: null,
       companyResults: [],
       contactResults: [],
-      newCompanyForm: { name: '', phone: '', address_line1: '', address_line2: '', city: '', state: 'VA', zip: '' },
+      // tax_exempt (added 2026-09-16) drives action=create-company's
+      // optional flag -- checked only when staff can confirm exemption
+      // proof at the register for this brand-new customer; left unchecked,
+      // the new Company gets VA-STATE (ConnectWise's own default code).
+      newCompanyForm: { name: '', phone: '', address_line1: '', address_line2: '', city: '', state: 'VA', zip: '', tax_exempt: false },
       newCompanySubmitting: false,
       newContactForm: { first_name: '', last_name: '', phone: '', email: '' },
       newContactSubmitting: false,
@@ -214,6 +236,12 @@
       city: '',
       state: 'VA',
       zip: '',
+      // Tax Exempt (added 2026-09-16, per Michael: "VA-STATE would be
+      // default... with a Tax Exempt option selectable for customers that
+      // can prove tax exemption at the register") -- only meaningful (and
+      // only shown) when this submit will create a brand-new ConnectWise
+      // company, same as the address fields above.
+      taxExempt: false,
       submitting: false,
       error: null
     };
@@ -698,7 +726,11 @@
         unit_price: item.price,
         quantity: 1,
         on_hand: item.on_hand,
-        track_inventory: trackInventory
+        track_inventory: trackInventory,
+        // Copied from the synced catalog item (added 2026-09-16) -- only
+        // taxable_flag=1 line items count toward the checkout tax preview
+        // below, matching api/checkout.php's own server-side computation.
+        taxable_flag: item.taxable_flag !== 0
       });
     }
     state.error = null;
@@ -731,10 +763,21 @@
     return state.cart.reduce(function (sum, c) { return sum + c.unit_price * c.quantity; }, 0);
   }
 
+  // Taxable-only subtotal (added 2026-09-16) -- mirrors api/checkout.php's
+  // own server-side $taxableSubtotal accumulation, so the checkout preview
+  // never overstates tax on a cart with non-taxable line items.
+  function cartTaxableSubtotal() {
+    return state.cart.reduce(function (sum, c) { return sum + (c.taxable_flag ? c.unit_price * c.quantity : 0); }, 0);
+  }
+
+  function round2(n) {
+    return Math.round((Number(n) || 0) * 100) / 100;
+  }
+
   function resetSale() {
     state.cart = [];
     state.receipt = null;
-    state.checkoutForm = { payment_method: 'cash', payment_reference: '', tax_amount: '0.00', note: '' };
+    state.checkoutForm = { payment_method: 'cash', payment_reference: '', note: '' };
     state.checkoutError = null;
     resetCustomerState();
     render();
@@ -845,6 +888,7 @@
     state.customerUi.contactResults = [];
     render();
     searchCompanyContacts('');
+    loadCompanyTaxCode(companyId);
   }
 
   // A Contact result resolves BOTH Company and Contact at once, whether it
@@ -869,12 +913,13 @@
     state.customerUi.mode = 'resolved';
     state.customerUi.error = null;
     render();
+    loadCompanyTaxCode(state.customer.companyId);
   }
 
   function openNewCompanyForm() {
     state.customerUi.mode = 'new-company';
     state.customerUi.error = null;
-    state.customerUi.newCompanyForm = { name: state.customerUi.query.trim(), phone: '', address_line1: '', address_line2: '', city: '', state: 'VA', zip: '' };
+    state.customerUi.newCompanyForm = { name: state.customerUi.query.trim(), phone: '', address_line1: '', address_line2: '', city: '', state: 'VA', zip: '', tax_exempt: false };
     render();
   }
 
@@ -895,7 +940,8 @@
       address_line2: f.address_line2.trim(),
       city: f.city.trim(),
       state: f.state.trim() || 'VA',
-      zip: f.zip.trim()
+      zip: f.zip.trim(),
+      tax_exempt: !!f.tax_exempt
     }).then(function (r) {
       state.customerUi.newCompanySubmitting = false;
       if (r.data && r.data.ok && r.data.company && r.data.company.id) {
@@ -904,6 +950,12 @@
         state.customer.isNewCompany = true;
         state.customer.contactId = null;
         state.customer.contactName = '';
+        // The Tax Code was already resolved and set server-side at create
+        // time (Exempt if f.tax_exempt, otherwise VA-STATE) -- use what
+        // create-company already tells us rather than an extra live
+        // ConnectWise round trip. Null means tax codes haven't been synced
+        // yet (see r.data.tax_code_warning, not separately surfaced here).
+        state.customer.taxCode = r.data.tax_code || null;
         // A brand-new company always needs a brand-new Primary Contact --
         // there's nothing to recall yet, so skip straight to that form.
         state.customerUi.mode = 'new-contact';
@@ -1042,6 +1094,76 @@
     render();
   }
 
+  // ---- Sales tax (added 2026-09-16) ------------------------------------
+  //
+  // See api/tax-core.php/api/customers.php's action=company-tax/action=set-
+  // tax-exempt. Tax itself is always computed server-side at checkout
+  // (never trusted from the client -- see api/checkout.php) -- everything
+  // here is display/preview only, plus the one write action ("Mark Tax
+  // Exempt") this app exposes.
+
+  // Live-reads whichever Company is currently resolved (state.customer.
+  // companyId) and joins it against the locally-synced tax_codes table.
+  // Called whenever a Company becomes known (selectCompany/selectContact/
+  // a brand-new company's contact-creation path) so the checkout summary
+  // and the resolved-customer card can show real current tax status before
+  // the sale is even totaled.
+  function loadCompanyTaxCode(companyId) {
+    if (!companyId) return;
+    state.customer.taxCodeLoading = true;
+    state.customer.taxCodeError = null;
+    render();
+    apiGet('api/customers.php?action=company-tax&company_id=' + encodeURIComponent(companyId)).then(function (r) {
+      // The resolved company may have changed (or been cleared) while this
+      // request was in flight -- discard a stale response rather than
+      // overwriting a newer/different customer's tax status.
+      if (state.customer.companyId !== companyId) return;
+      state.customer.taxCodeLoading = false;
+      if (r.data && r.data.ok) {
+        state.customer.taxCode = r.data.tax_code;
+        state.customer.taxCodeError = null;
+      } else {
+        state.customer.taxCodeError = (r.data && r.data.error) || 'Could not load this customer\'s tax status.';
+      }
+      render();
+    }).catch(function () {
+      if (state.customer.companyId !== companyId) return;
+      state.customer.taxCodeLoading = false;
+      state.customer.taxCodeError = 'Could not load this customer\'s tax status — check your connection.';
+      render();
+    });
+  }
+
+  // "Mark Tax Exempt" -- permanently updates the resolved Company's REAL
+  // ConnectWise Tax Code (Michael's explicit choice, AskUserQuestion
+  // 2026-09-16: not a one-sale-only override). One-directional by design --
+  // there's no button to un-exempt a customer here; that's a ConnectWise-
+  // side correction, same as switching them to Out of State or a different
+  // VA locality.
+  function markCustomerTaxExempt() {
+    if (!state.customer.companyId || state.customer.markExemptSubmitting) return;
+    state.customer.markExemptSubmitting = true;
+    state.customer.taxCodeError = null;
+    render();
+    var companyId = state.customer.companyId;
+    apiPost('api/customers.php?action=set-tax-exempt', { company_id: companyId }).then(function (r) {
+      if (state.customer.companyId !== companyId) return;
+      state.customer.markExemptSubmitting = false;
+      if (r.data && r.data.ok) {
+        state.customer.taxCode = r.data.tax_code;
+        state.customer.taxCodeError = null;
+      } else {
+        state.customer.taxCodeError = (r.data && r.data.error) || 'Could not mark this customer Tax Exempt — try again.';
+      }
+      render();
+    }).catch(function () {
+      if (state.customer.companyId !== companyId) return;
+      state.customer.markExemptSubmitting = false;
+      state.customer.taxCodeError = 'Could not mark this customer Tax Exempt — check your connection.';
+      render();
+    });
+  }
+
   // ---- Checkout -------------------------------------------------------
 
   function openCheckout() {
@@ -1058,12 +1180,6 @@
 
   function submitCheckout() {
     var form = state.checkoutForm;
-    var taxAmount = parseFloat(form.tax_amount);
-    if (isNaN(taxAmount) || taxAmount < 0) {
-      state.checkoutError = 'Enter a valid tax amount (0 or more).';
-      render();
-      return;
-    }
     // No free-text/walk-in fallback, per Michael's explicit choice -- every
     // sale must resolve to a real ConnectWise Company and Contact.
     if (!state.customer.companyId || !state.customer.contactId) {
@@ -1076,11 +1192,15 @@
     state.checkoutError = null;
     render();
 
+    // tax_amount is no longer sent -- api/checkout.php computes it
+    // server-side from the customer's live ConnectWise Tax Code (see
+    // this file's Sales tax section above). The checkout modal's own tax
+    // line is a preview of that same computation, not what's actually
+    // charged.
     apiPost('api/checkout.php?action=create', {
       items: state.cart.map(function (c) { return { catalog_item_id: c.catalog_item_id, quantity: c.quantity }; }),
       payment_method: form.payment_method,
       payment_reference: form.payment_reference,
-      tax_amount: taxAmount,
       cw_company_id: state.customer.companyId,
       cw_company_name: state.customer.companyName,
       cw_contact_id: state.customer.contactId,
@@ -1092,6 +1212,10 @@
         state.checkoutOpen = false;
         state.cart = [];
         state.receipt = r.data.sale;
+        // Surfaced on the receipt if checkout had to fall back to the
+        // default tax rate (a failed/unsynced live tax-code lookup) rather
+        // than the customer's real assigned code -- see api/checkout.php.
+        state.receipt.tax_warning = r.data.tax_warning || null;
         resetCustomerState();
         loadCatalogNow();
       } else {
@@ -1242,7 +1366,7 @@
     var addrState = f.state.trim() || 'VA';
     var zip = f.zip.trim();
 
-    function createContactUnder(companyId, companyName, isNewCompany) {
+    function createContactUnder(companyId, companyName, isNewCompany, taxCodeFromCreate) {
       apiPost('api/customers.php?action=create-contact', {
         company_id: companyId,
         first_name: firstName,
@@ -1268,7 +1392,18 @@
           state.customer.contactEmail = email;
           state.customer.isNewCompany = isNewCompany;
           state.customer.invoicingWarning = invoicingWarning || null;
-          render();
+          if (isNewCompany) {
+            // The Tax Code was already resolved and set server-side at
+            // create-company time (Exempt if f.taxExempt, otherwise
+            // VA-STATE) -- use what that call already told us.
+            state.customer.taxCode = taxCodeFromCreate || null;
+            render();
+          } else {
+            // Existing/matched company -- read its real current tax code
+            // live, same as checkout's own picker does.
+            render();
+            loadCompanyTaxCode(companyId);
+          }
         }
 
         if (!isNewCompany) {
@@ -1301,6 +1436,7 @@
     }
 
     var companyName = f.companyQuery.trim() || (firstName + ' ' + lastName).trim();
+    var taxExempt = !!f.taxExempt;
     apiPost('api/customers.php?action=create-company', {
       name: companyName,
       phone: phone,
@@ -1308,7 +1444,8 @@
       address_line2: addressLine2,
       city: city,
       state: addrState,
-      zip: zip
+      zip: zip,
+      tax_exempt: taxExempt
     }).then(function (r) {
       if (!r.data || !r.data.ok || !r.data.company || !r.data.company.id) {
         f.submitting = false;
@@ -1316,7 +1453,7 @@
         render();
         return;
       }
-      createContactUnder(r.data.company.id, r.data.company.name || companyName, true);
+      createContactUnder(r.data.company.id, r.data.company.name || companyName, true, r.data.tax_code || null);
     }).catch(function () {
       f.submitting = false;
       f.error = 'Could not create the company -- check your connection.';
@@ -1578,6 +1715,7 @@
     if (state.customer.invoicingWarning) {
       html += '<div class="error-banner customer-warning">' + escapeHtml(state.customer.invoicingWarning) + '</div>';
     }
+    html += customerTaxStatusHtml();
     return html;
   }
 
@@ -1644,6 +1782,13 @@
         '<div><label>State</label><input type="text" data-action="signup-field" data-field="state" value="' + escapeHtml(f.state) + '"></div>' +
         '<div><label>Zip</label><input type="text" data-action="signup-field" data-field="zip" value="' + escapeHtml(f.zip) + '"></div>' +
       '</div>';
+      // Tax Exempt -- only meaningful (and only shown) when this submit
+      // will create a brand-new ConnectWise company, since that's the only
+      // path where this screen sets a Tax Code at all. Per Michael:
+      // "VA-STATE would be default... with a Tax Exempt option selectable
+      // for customers that can prove tax exemption at the register."
+      html += '<label class="checkbox-label"><input type="checkbox" data-action="signup-tax-exempt-toggle" ' + (f.taxExempt ? 'checked' : '') + '> ' +
+        'Tax Exempt (customer can provide exemption proof)</label>';
     }
     html += '<div class="customer-form-actions">' +
       '<button type="button" class="customer-save-btn" data-action="signup-submit" ' + (f.submitting ? 'disabled' : '') + '>' +
@@ -1955,14 +2100,43 @@
     return html;
   }
 
+  // Checkout's tax line is a PREVIEW only -- the real amount is always
+  // computed server-side at submit time from the customer's live
+  // ConnectWise Tax Code (api/checkout.php), so this mirrors that same
+  // taxable-subtotal-times-rate math using whatever tax code the register
+  // has already loaded for the resolved customer (customer.taxCode). When
+  // no customer is resolved yet, or that customer's tax code hasn't loaded/
+  // isn't locally synced, there's no rate to preview with -- shown as
+  // "Calculated at checkout" rather than guessing $0.
+  function checkoutTaxPreview() {
+    var c = state.customer;
+    var resolved = !!(c.companyId && c.contactId);
+    var rateKnown = resolved && c.taxCode && typeof c.taxCode.rate === 'number';
+    var amount = rateKnown ? round2(cartTaxableSubtotal() * c.taxCode.rate) : 0;
+    return { resolved: resolved, rateKnown: rateKnown, amount: amount, taxCode: c.taxCode };
+  }
+
   function checkoutModalHtml() {
     if (!state.checkoutOpen) return '';
     var f = state.checkoutForm;
     var subtotal = cartSubtotal();
-    var taxAmount = parseFloat(f.tax_amount) || 0;
-    var total = subtotal + taxAmount;
+    var preview = checkoutTaxPreview();
+    var total = subtotal + preview.amount;
     var customerResolved = !!(state.customer.companyId && state.customer.contactId);
     var canComplete = customerResolved && !state.checkoutSubmitting;
+
+    var taxLabel = 'Tax';
+    var taxValue;
+    if (state.customer.taxCodeLoading) {
+      taxValue = '…';
+    } else if (preview.rateKnown) {
+      taxLabel = 'Tax (' + escapeHtml(preview.taxCode.identifier || preview.taxCode.name) + ' ' + (preview.taxCode.rate * 100).toFixed(1) + '%)';
+      taxValue = fmtMoney(preview.amount);
+    } else if (preview.resolved) {
+      taxValue = 'Calculated at checkout';
+    } else {
+      taxValue = '—';
+    }
 
     return (
       '<div class="modal-backdrop" data-action="close-checkout-backdrop">' +
@@ -1972,10 +2146,10 @@
           '<div class="checkout-summary">' +
             '<div class="checkout-summary-row"><span>Subtotal</span><span>' + fmtMoney(subtotal) + '</span></div>' +
             '<div class="checkout-summary-row">' +
-              '<span>Tax</span>' +
-              '<input type="text" inputmode="decimal" class="tax-input" data-action="tax-input" value="' + escapeHtml(f.tax_amount) + '">' +
+              '<span>' + taxLabel + '</span>' +
+              '<span class="tax-preview-value">' + taxValue + '</span>' +
             '</div>' +
-            '<div class="checkout-summary-row total"><span>Total Due</span><span>' + fmtMoney(total) + '</span></div>' +
+            '<div class="checkout-summary-row total"><span>Total Due</span><span>' + fmtMoney(total) + (preview.resolved && !preview.rateKnown ? ' + tax' : '') + '</span></div>' +
           '</div>' +
           '<label>Customer</label>' +
           customerSectionHtml() +
@@ -2000,6 +2174,37 @@
     );
   }
 
+  // Shows the resolved customer's current ConnectWise Tax Code (added
+  // 2026-09-16) plus the "Mark Tax Exempt" action, when there's a
+  // company to show it for. Shared by customerSectionHtml() (inside
+  // checkout) and customerSummaryCardHtml() (New Customer Sign Up /
+  // Existing Customer Look Up).
+  function customerTaxStatusHtml() {
+    var c = state.customer;
+    if (!c.companyId) return '';
+    var html = '<div class="customer-tax-status">';
+    if (c.taxCodeLoading) {
+      html += '<span class="tax-status-loading">Checking tax status…</span>';
+    } else if (c.taxCodeError) {
+      html += '<span class="tax-status-error">' + escapeHtml(c.taxCodeError) + '</span>';
+    } else if (c.taxCode) {
+      var isExempt = c.taxCode.identifier === 'Exem';
+      html += '<span class="tax-status-badge' + (isExempt ? ' exempt' : '') + '">' +
+        escapeHtml(c.taxCode.name || c.taxCode.identifier || 'Tax code') +
+        (typeof c.taxCode.rate === 'number' ? ' — ' + (c.taxCode.rate * 100).toFixed(1) + '%' : ' — rate not synced') +
+      '</span>';
+      if (!isExempt) {
+        html += '<button type="button" class="tax-exempt-btn" data-action="mark-tax-exempt" ' + (c.markExemptSubmitting ? 'disabled' : '') + '>' +
+          (c.markExemptSubmitting ? 'Marking…' : 'Mark Tax Exempt') +
+        '</button>';
+      }
+    } else {
+      html += '<span class="tax-status-none">No ConnectWise Tax Code on file for this company.</span>';
+    }
+    html += '</div>';
+    return html;
+  }
+
   // Customer (Company/Contact) picker -- see the "---- Customer ----"
   // functions above for the flow this renders. Lives inside the checkout
   // modal, above Payment Method, since checkout can't complete without it.
@@ -2020,6 +2225,7 @@
       if (state.customer.invoicingWarning) {
         html += '<div class="error-banner customer-warning">' + escapeHtml(state.customer.invoicingWarning) + '</div>';
       }
+      html += customerTaxStatusHtml();
       html += '</div>';
       return html;
     }
@@ -2114,6 +2320,8 @@
           '<div><label>State</label><input type="text" data-action="customer-new-company-field" data-field="state" value="' + escapeHtml(f.state) + '"></div>' +
           '<div><label>Zip</label><input type="text" data-action="customer-new-company-field" data-field="zip" value="' + escapeHtml(f.zip) + '"></div>' +
         '</div>' +
+        '<label class="checkbox-label"><input type="checkbox" data-action="customer-new-company-tax-exempt-toggle" ' + (f.tax_exempt ? 'checked' : '') + '> ' +
+          'Tax Exempt (customer can provide exemption proof)</label>' +
         '<div class="customer-form-actions">' +
           '<button type="button" class="customer-back-btn" data-action="customer-back-to-search">Cancel</button>' +
           '<button type="button" class="customer-save-btn" data-action="customer-new-company-submit" ' + (submitting ? 'disabled' : '') + '>' +
@@ -2184,13 +2392,14 @@
             '<div class="receipt-items">' + itemsHtml + '</div>' +
             '<div class="receipt-totals">' +
               '<div class="receipt-line"><span>Subtotal</span><span>' + fmtMoney(r.subtotal) + '</span></div>' +
-              '<div class="receipt-line"><span>Tax</span><span>' + fmtMoney(r.tax_amount) + '</span></div>' +
+              '<div class="receipt-line"><span>Tax' + (r.tax_code_identifier ? ' (' + escapeHtml(r.tax_code_identifier) + (typeof r.tax_rate === 'number' ? ' ' + (r.tax_rate * 100).toFixed(1) + '%' : '') + ')' : '') + '</span><span>' + fmtMoney(r.tax_amount) + '</span></div>' +
               '<div class="receipt-line total"><span>Total</span><span>' + fmtMoney(r.total) + '</span></div>' +
               '<div class="receipt-line"><span>Payment</span><span>' + escapeHtml(r.payment_method) + (r.payment_reference ? ' (' + escapeHtml(r.payment_reference) + ')' : '') + '</span></div>' +
             '</div>' +
             (r.note ? '<div class="receipt-note">' + escapeHtml(r.note) + '</div>' : '') +
             '<div class="receipt-footer">Thank you!</div>' +
           '</div>' +
+          (r.tax_warning ? '<div class="error-banner customer-warning no-print">' + escapeHtml(r.tax_warning) + '</div>' : '') +
           '<div class="modal-actions no-print">' +
             '<button type="button" class="modal-cancel" data-action="close-receipt">Close</button>' +
             '<button type="button" class="modal-confirm" data-action="print-receipt">Print Receipt</button>' +
@@ -2503,8 +2712,11 @@
       else if (action === 'signup-select-company') handler = function () { selectSignupCompany(Number(el.dataset.index)); };
       else if (action === 'signup-company-clear') handler = clearSignupCompanyMatch;
       else if (action === 'signup-submit') handler = submitNewCustomerSignup;
-      else if (action === 'close-receipt') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'cash', payment_reference: '', tax_amount: '0.00', note: '' }; resetCustomerState(); render(); };
-      else if (action === 'close-receipt-backdrop') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'cash', payment_reference: '', tax_amount: '0.00', note: '' }; resetCustomerState(); render(); };
+      else if (action === 'signup-tax-exempt-toggle') handler = function () { state.newCustomerSignup.taxExempt = !state.newCustomerSignup.taxExempt; render(); };
+      else if (action === 'mark-tax-exempt') handler = markCustomerTaxExempt;
+      else if (action === 'customer-new-company-tax-exempt-toggle') handler = function () { state.customerUi.newCompanyForm.tax_exempt = !state.customerUi.newCompanyForm.tax_exempt; render(); };
+      else if (action === 'close-receipt') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'cash', payment_reference: '', note: '' }; resetCustomerState(); render(); };
+      else if (action === 'close-receipt-backdrop') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'cash', payment_reference: '', note: '' }; resetCustomerState(); render(); };
       else if (action === 'print-receipt') handler = function () { window.print(); };
       else if (action === 'view-receipt') handler = function () { viewPastReceipt(el.dataset.id); };
       else if (action === 'returns-queue-filter') handler = function () { setReturnsQueueFilter(el.dataset.value); };
@@ -2556,13 +2768,6 @@
       el.addEventListener('input', function () { state.returnsQueueRmaInputs[el.dataset.id] = el.value; });
     });
 
-    var taxInput = root.querySelector('[data-action="tax-input"]');
-    if (taxInput) {
-      taxInput.addEventListener('input', function () {
-        state.checkoutForm.tax_amount = taxInput.value;
-        render();
-      });
-    }
     var paymentSelect = root.querySelector('[data-action="payment-method-select"]');
     if (paymentSelect) {
       paymentSelect.addEventListener('change', function () {
