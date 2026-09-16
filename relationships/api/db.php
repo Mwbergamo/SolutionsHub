@@ -595,6 +595,15 @@ function relationships_migrate(PDO $pdo): void
     ] as $seedRow) {
         $seedTerritoryReps->execute([':email' => $seedRow['email'], ':territory' => $seedRow['territory']]);
     }
+
+    // Meeting to-do task email notifications -- added 2026-09-16 per
+    // Michael ("the assigned rep needs to receive an email... when To-Do's
+    // are created from meetings"). Same outcome-logging pattern as
+    // cw_push_status/cw_push_error on this same table: the email attempt
+    // never blocks or reverts the local task save (see task-email.php),
+    // its outcome is just recorded here so a failure isn't silently lost.
+    relationships_add_column_if_missing($pdo, 'meeting_tasks', 'email_status', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'meeting_tasks', 'email_error', 'TEXT');
 }
 
 /**

@@ -58,6 +58,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/territory-access.php';
 require_once __DIR__ . '/connectwise-meeting-activity.php';
+require_once __DIR__ . '/task-email.php';
 
 $pdo = relationships_db();
 $user = relationships_require_login($pdo);
@@ -99,6 +100,7 @@ function relationships_meeting_task_row(array $r): array
         'completed_at' => $r['completed_at'],
         'completed_by_name' => $r['completed_by_name'],
         'cw_push' => ['status' => $r['cw_push_status'], 'error' => $r['cw_push_error']],
+        'email' => ['status' => $r['email_status'] ?? null, 'error' => $r['email_error'] ?? null],
     ];
 }
 
@@ -132,7 +134,7 @@ if ($action === 'list') {
 
     $taskStmt = $pdo->prepare(
         'SELECT id, meeting_id, description, assigned_to_name, created_by_name, created_at,
-                completed_at, completed_by_name, cw_push_status, cw_push_error
+                completed_at, completed_by_name, cw_push_status, cw_push_error, email_status, email_error
          FROM meeting_tasks WHERE customer_id = :id ORDER BY id ASC'
     );
     $taskStmt->execute([':id' => $customerId]);
@@ -298,7 +300,7 @@ if ($action === 'add_task') {
     }
 
     $meetingStmt = $pdo->prepare(
-        'SELECT m.id, m.subject, m.customer_id, c.connectwise_id, c.territory_name
+        'SELECT m.id, m.subject, m.customer_id, c.name AS customer_name, c.connectwise_id, c.territory_name
          FROM customer_meetings m JOIN customers c ON c.id = m.customer_id WHERE m.id = :id'
     );
     $meetingStmt->execute([':id' => $meetingId]);
@@ -360,8 +362,43 @@ if ($action === 'add_task') {
             ->execute([':status' => 'skipped', ':id' => $taskId]);
     }
 
+    // "We have a next step!" notification email (Michael, 2026-09-16) --
+    // independent of the ConnectWise push above: attempted regardless of
+    // whether the ConnectWise Activity succeeded, never blocks or reverts
+    // the already-committed local task save, and its outcome is logged
+    // the same way (email_status/email_error) rather than silently lost.
+    // See task-email.php's file header for the recipient-resolution
+    // rationale (the same roster->real-email map as the ConnectWise fix
+    // above, not a crc_users login lookup).
+    $taskEmail = relationships_todo_roster_cw_email($assignedToName);
+    if ($taskEmail !== null) {
+        try {
+            $nowEastern = new DateTimeImmutable('now', new DateTimeZone('America/New_York'));
+            relationships_send_task_email([
+                'to_email' => $taskEmail,
+                'created_by_name' => $user['name'],
+                'assigned_to_name' => $assignedToName,
+                'customer_name' => (string) $meeting['customer_name'],
+                'todo_text' => $description,
+                'created_at_display' => $nowEastern->format('M j, Y g:i A T'),
+            ]);
+            $pdo->prepare('UPDATE meeting_tasks SET email_status = :status, email_error = NULL WHERE id = :id')
+                ->execute([':status' => 'sent', ':id' => $taskId]);
+        } catch (Throwable $e) {
+            error_log('[meetings:add_task email] ' . $e->getMessage());
+            $pdo->prepare('UPDATE meeting_tasks SET email_status = :status, email_error = :err WHERE id = :id')
+                ->execute([':status' => 'failed', ':err' => substr($e->getMessage(), 0, 4000), ':id' => $taskId]);
+        }
+    } else {
+        // Shouldn't happen -- every roster name has a mapped email -- but
+        // degrade the same way as an unresolved ConnectWise assignee
+        // rather than assume this can never occur.
+        $pdo->prepare('UPDATE meeting_tasks SET email_status = :status, email_error = :err WHERE id = :id')
+            ->execute([':status' => 'skipped', ':err' => 'No ConnectWise/work email on file for "' . $assignedToName . '".', ':id' => $taskId]);
+    }
+
     $taskStmt = $pdo->prepare(
-        'SELECT id, description, assigned_to_name, created_by_name, created_at, completed_at, completed_by_name, cw_push_status, cw_push_error
+        'SELECT id, description, assigned_to_name, created_by_name, created_at, completed_at, completed_by_name, cw_push_status, cw_push_error, email_status, email_error
          FROM meeting_tasks WHERE id = :id'
     );
     $taskStmt->execute([':id' => $taskId]);
@@ -394,7 +431,7 @@ if ($action === 'set_task_done') {
     }
 
     $taskStmt = $pdo->prepare(
-        'SELECT id, description, assigned_to_name, created_by_name, created_at, completed_at, completed_by_name, cw_push_status, cw_push_error
+        'SELECT id, description, assigned_to_name, created_by_name, created_at, completed_at, completed_by_name, cw_push_status, cw_push_error, email_status, email_error
          FROM meeting_tasks WHERE id = :id'
     );
     $taskStmt->execute([':id' => $taskId]);

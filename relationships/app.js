@@ -2924,12 +2924,19 @@
     var cwWarn = t.cw_push && t.cw_push.status === 'error'
       ? ' <span class="meeting-task-cw-warn" title="' + escapeHtml(t.cw_push.error || '') + '">⚠</span>'
       : '';
+    // "We have a next step!" notification email (added 2026-09-16) --
+    // same inline-warning treatment as the ConnectWise push above, so a
+    // failed send to the assigned rep isn't silently lost on the CRC's
+    // screen either.
+    var emailWarn = t.email && t.email.status === 'failed'
+      ? ' <span class="meeting-task-email-warn" title="' + escapeHtml('Didn’t email ' + (t.assigned_to_name || '') + (t.email.error ? ': ' + t.email.error : '')) + '">✉⚠</span>'
+      : '';
 
     return '<label class="checklist-step ' + (isDone ? 'done' : '') + '" data-task-row="' + t.id + '">' +
       '<input type="checkbox" ' + (isDone ? 'checked' : '') + (toggling ? ' disabled' : '') +
         ' data-action="task-toggle-done" data-task="' + t.id + '" data-completed="' + (isDone ? '1' : '0') + '">' +
       '<div class="checklist-step-text">' +
-        '<div class="checklist-step-label">' + escapeHtml(t.description) + cwWarn + '</div>' +
+        '<div class="checklist-step-label">' + escapeHtml(t.description) + cwWarn + emailWarn + '</div>' +
         '<div class="checklist-step-meta">' + metaLine + '</div>' +
       '</div>' +
     '</label>';

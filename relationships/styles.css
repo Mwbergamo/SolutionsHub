@@ -1719,6 +1719,7 @@ a { color: inherit; }
 }
 
 .meeting-task-cw-warn { color: #f87171; }
+.meeting-task-email-warn { color: #f87171; font-size: 0.85em; }
 
 .meeting-task-list { margin-top: 14px; display: flex; flex-direction: column; gap: 2px; }
 
