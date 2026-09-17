@@ -158,6 +158,29 @@
     });
   }
 
+  // Surfaces as much of an SDK error object as possible -- Alternative
+  // Payments' error shape isn't documented, and a bare .message (e.g.
+  // "token is invalid") isn't enough to diagnose WHY. Also logs to the
+  // console so Michael can pull more detail via devtools if needed.
+  function describeSdkError(err) {
+    console.error('[altpay]', err);
+    try {
+      if (!err) return 'unknown error';
+      var parts = [];
+      if (err.message) parts.push(err.message);
+      var extra = {};
+      for (var k in err) {
+        if (Object.prototype.hasOwnProperty.call(err, k) && k !== 'message' && k !== 'stack') extra[k] = err[k];
+      }
+      if (Object.keys(extra).length) {
+        try { parts.push(JSON.stringify(extra)); } catch (e2) { /* ignore */ }
+      }
+      return parts.length ? parts.join(' -- ') : (typeof err === 'string' ? err : 'unknown error');
+    } catch (e) {
+      return 'unknown error';
+    }
+  }
+
   function mountAltpayComponent(AlternativeClient, initData) {
     AlternativeClient.create({
       accessToken: initData.checkout_token,
@@ -169,7 +192,16 @@
           address_line2: state.form.address_line2, city: state.form.city, state: state.form.state, zip: state.form.zip,
           invoice_id: altpayInvoiceId // reuse the same throwaway invoice, don't create another one
         }).then(function (r) {
-          return r.data && r.data.ok ? r.data.checkout_token : null;
+          if (!r.data || !r.data.ok) {
+            console.error('[altpay] token refresh failed', r.data);
+            cardFormError = 'Your card session expired and could not refresh (' + ((r.data && r.data.error) || 'unknown error') + '). Please try again.';
+            render();
+            return null;
+          }
+          return r.data.checkout_token;
+        }).catch(function (err) {
+          console.error('[altpay] token refresh request failed', err);
+          return null;
         });
       }
     }).then(function (client) {
@@ -189,14 +221,19 @@
           // Nothing to do -- the component stays mounted so they can try again.
         },
         onError: function (err) {
-          cardFormError = 'Could not add your card (' + (err && err.message ? err.message : 'unknown error') + '). Please try again, or choose ACH instead.';
+          // [env=...] included so we can tell, from the customer-visible
+          // message alone, whether a config value (not a bug) is the
+          // culprit -- e.g. an environment string Alternative Payments
+          // doesn't recognize. Not sensitive: it's whichever of
+          // 'staging'/'production' altpay-config.php says on the server.
+          cardFormError = 'Could not add your card (' + describeSdkError(err) + ') [env=' + initData.environment + ']. Please try again, or choose ACH instead.';
           render();
         }
       });
       altpayComponent.mount();
     }).catch(function (err) {
       cardFormLoading = false;
-      cardFormError = 'Could not load the secure card form (' + (err && err.message ? err.message : 'unknown error') + '). Please refresh the page, or choose ACH instead.';
+      cardFormError = 'Could not load the secure card form (' + describeSdkError(err) + ') [env=' + initData.environment + ']. Please refresh the page, or choose ACH instead.';
       render();
     });
   }
