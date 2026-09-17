@@ -292,6 +292,56 @@ $report['openapi_spec_probe'] = probe_safe(function () {
     return probe_raw_get($root . '/v4_6_release/apis/3.0/apidocs.json');
 });
 
+// 9. Added after round 2: Michael named "ZZ Agreement Test Company" as a
+//    safe place to run the eventual LIVE create-test against (a real
+//    throwaway Agreement, not a real customer's billing record) -- see
+//    register-agreement-billing-probe-findings.md. This step is still
+//    read-only: it just looks up that company's real id, its site(s), and
+//    any contacts, so the create-test call (a separate step, once this
+//    and the Approved-status lookup above are both confirmed) has real
+//    ids to reference instead of guessing.
+$report['test_company_lookup'] = probe_safe(function () {
+    $company = register_cw_request(
+        '/company/companies',
+        ['conditions' => 'name like "%' . register_cw_condition_escape('ZZ Agreement Test Company') . '%"', 'pageSize' => '5', 'page' => '1'],
+        'GET',
+        null,
+        20,
+        8
+    );
+    $result = ['company_matches' => $company];
+
+    $companyId = null;
+    if (!empty($company[0]['id'])) {
+        $companyId = (int) $company[0]['id'];
+    }
+
+    if ($companyId !== null) {
+        $result['sites'] = register_cw_request(
+            '/company/companies/' . $companyId . '/sites',
+            ['pageSize' => '10', 'page' => '1'],
+            'GET',
+            null,
+            20,
+            8
+        );
+        $result['contacts'] = register_cw_request(
+            '/company/contacts',
+            ['conditions' => 'company/id=' . $companyId, 'pageSize' => '10', 'page' => '1'],
+            'GET',
+            null,
+            20,
+            8
+        );
+    } else {
+        $result['sites'] = [];
+        $result['contacts'] = [];
+        $result['note'] = 'No company matched "ZZ Agreement Test Company" -- check the exact name in ConnectWise.';
+    }
+
+    return $result;
+});
+
 register_respond(200, [
     'ok' => true,
     'note' => 'Read-only diagnostic. No ConnectWise records were created, changed, or deleted by this request.',
