@@ -99,6 +99,25 @@
  * (3328, 3329) -- this version picks the higher id as canonical and
  * reports the other as a known leftover (`duplicate_agreement_ids_found`)
  * rather than deleting anything.
+ *
+ * Round 4's run (worked!) still created a THIRD agreement (3330, now
+ * KNOWN_GOOD_AGREEMENT_ID) rather than reusing 3329 -- the search-based
+ * lookup came back completely empty even though 3329 existed. Round 5
+ * (this version):
+ *   1. Adds a direct GET-by-id fallback (KNOWN_GOOD_AGREEMENT_ID) for when
+ *      the search comes back empty, instead of creating yet another
+ *      duplicate -- working theory is ConnectWise's conditions/search
+ *      index on this instance is eventually consistent and lags behind a
+ *      just-written record, separate from the already-known compound-
+ *      condition issue.
+ *   2. Switches the Addition reuse lookup to an unconditioned fetch of
+ *      the agreement's whole (small) additions list + client-side filter,
+ *      for the same reason.
+ *   3. Replaces the `fields=id,type,date` invoice-type sample (came back
+ *      HTTP 200 with zero rows despite ~123,761 real invoices -- "type"
+ *      is most likely not a valid field name for this endpoint's `fields`
+ *      param) with a full-default-shape sample, the same technique
+ *      already proven to work in the very first read-only probing round.
  */
 
 declare(strict_types=1);
@@ -141,6 +160,19 @@ const TEST_COMPANY_ID = 7918;   // "Bergamo Test Account"
 const TEST_SITE_ID = 10383;     // "Main"
 const TEST_CONTACT_ID = 16692;  // "Michael Bergamo"
 const AGREEMENT_TYPE_ID = 65;   // "IT Services Agreement"
+
+// Round 5 finding: `conditions=company/id=...` against /finance/agreements
+// came back completely empty in rounds 3 AND 4, even moments after 3328/
+// 3329 were confirmed to exist via a direct GET by id -- this looks like
+// ConnectWise's conditions/search index on this instance is eventually
+// consistent (lags behind a just-written record), separate from this
+// project's already-known "compound conditions aren't reliable" issue.
+// Rather than keep creating a new duplicate Agreement every round while
+// that index catches up, this constant names the last one confirmed good
+// (correct date, Active, has its test Addition) so a direct GET-by-id
+// fallback can reuse it even when the search comes back empty. Update
+// this if a later round creates a new canonical one.
+const KNOWN_GOOD_AGREEMENT_ID = 3330;
 
 // One real Protection Plan catalog identifier (from the Computer upsell
 // builder's confirmed PROTECTION_PLAN_ITEMS_DEF -- see
@@ -214,11 +246,11 @@ $agreementId = null;
 $agreementReused = false;
 $duplicateAgreementIds = [];
 if ($report['agreement_lookup']['ok'] && !empty($report['agreement_lookup']['data'])) {
-    // If round 3's compound-condition bug already created more than one
-    // real IT Services Agreement on this test company, deterministically
-    // pick the most recently created one (highest id) as canonical and
-    // just report the rest as known leftovers -- no deletes are ever
-    // attempted, per this file's own safety rules.
+    // If prior rounds' bugs already created more than one real IT Services
+    // Agreement on this test company, deterministically pick the most
+    // recently created one (highest id) as canonical and just report the
+    // rest as known leftovers -- no deletes are ever attempted, per this
+    // file's own safety rules.
     $matches = $report['agreement_lookup']['data'];
     usort($matches, function ($a, $b) {
         return ((int) ($b['id'] ?? 0)) <=> ((int) ($a['id'] ?? 0));
@@ -230,6 +262,26 @@ if ($report['agreement_lookup']['ok'] && !empty($report['agreement_lookup']['dat
     }
 }
 $report['duplicate_agreement_ids_found'] = $duplicateAgreementIds;
+
+// Round 5 fix: the search above has come back empty two rounds running
+// even though matching agreements exist (see KNOWN_GOOD_AGREEMENT_ID's
+// comment) -- before falling through to creating yet another duplicate,
+// try a direct GET by id on the last confirmed-good one. A direct fetch
+// by primary key isn't subject to whatever indexing lag affects the
+// conditions-based search.
+if ($agreementId === null) {
+    $report['agreement_direct_fallback'] = step_safe(function () {
+        return register_cw_request('/finance/agreements/' . KNOWN_GOOD_AGREEMENT_ID, [], 'GET', null, 20, 8);
+    });
+    if (
+        $report['agreement_direct_fallback']['ok']
+        && (int) ($report['agreement_direct_fallback']['data']['company']['id'] ?? 0) === TEST_COMPANY_ID
+        && (int) ($report['agreement_direct_fallback']['data']['type']['id'] ?? 0) === AGREEMENT_TYPE_ID
+    ) {
+        $agreementId = KNOWN_GOOD_AGREEMENT_ID;
+        $agreementReused = true;
+    }
+}
 
 // 2. Create the Agreement, only if step 1 didn't find one to reuse.
 if ($agreementId === null) {
@@ -330,19 +382,28 @@ if ($agreementId !== null) {
 }
 
 // 5. Reuse an existing Addition for this product on the agreement if one's
-//    already there, instead of creating a duplicate.
+//    already there, instead of creating a duplicate. Round 5 fix: fetch
+//    the agreement's whole (small, bounded) additions list unconditioned
+//    and filter client-side, rather than trusting a `conditions=` search
+//    -- the same eventual-consistency risk found for the agreement/
+//    invoice lookups above could apply here too, and an agreement's own
+//    additions list is small enough that skipping server-side filtering
+//    entirely is cheap and safe.
 $additionId = null;
 $additionReused = false;
 if ($agreementId !== null && $testProductId !== null) {
     $report['addition_lookup'] = step_safe(function () use ($agreementId, $testProductId) {
-        return register_cw_request(
+        $rows = register_cw_request(
             '/finance/agreements/' . $agreementId . '/additions',
-            ['conditions' => 'product/id=' . $testProductId, 'pageSize' => '5', 'page' => '1'],
+            ['pageSize' => '50', 'page' => '1'],
             'GET',
             null,
             20,
             8
         );
+        return array_values(array_filter($rows, function ($row) use ($testProductId) {
+            return (int) ($row['product']['id'] ?? 0) === $testProductId;
+        }));
     });
     if ($report['addition_lookup']['ok'] && !empty($report['addition_lookup']['data'][0]['id'])) {
         $additionId = (int) $report['addition_lookup']['data'][0]['id'];
@@ -440,46 +501,38 @@ if ($agreementId !== null) {
 }
 
 // 9. Round 2 found invoice-create needs `type` and `company`. Round 3's
-//    guessed reference-list endpoint (`/finance/invoices/types`) came
-//    back HTTP 404 -- doesn't exist on this instance, same as
-//    /finance/agreements/statuses. Round 4 fix: fall back to sampling
-//    real invoices' own `type` field (explicitly requested via `fields`,
-//    since it wasn't part of any earlier sample) instead of a reference
-//    list, same "sample real records" technique already used for invoice
-//    status elsewhere in this project.
+//    guessed reference-list endpoint (`/finance/invoices/types`) came back
+//    HTTP 404. Round 4's fallback -- requesting `fields=id,type,date`
+//    explicitly -- came back HTTP 200 but with a completely EMPTY row
+//    list, despite this instance having ~123,761 invoices: a strong sign
+//    "type" isn't actually a valid field name to request via `fields` for
+//    this endpoint (ConnectWise appears to silently return zero rows
+//    rather than error on an invalid requested field name here, rather
+//    than 400ing the way an invalid `conditions` field usually does).
+//    Round 5 fix: go back to the technique already proven to work in the
+//    very first read-only probing round -- fetch a few real invoices with
+//    NO `fields` restriction at all (full default shape) and read
+//    whatever field actually represents "type" straight off the raw
+//    response, instead of guessing a field name to request.
 $invoiceTypeId = null;
 if ($agreementId !== null && $invoiceId === null) {
-    $report['invoice_type_sample'] = step_safe(function () {
-        $rows = register_cw_request(
+    $report['invoice_full_sample'] = step_safe(function () {
+        return register_cw_request(
             '/finance/invoices',
-            ['fields' => 'id,type,date', 'pageSize' => '20', 'page' => '1', 'orderBy' => 'id desc'],
+            ['pageSize' => '3', 'page' => '1'],
             'GET',
             null,
-            20,
+            25,
             8
         );
-        $distinct = [];
-        foreach ($rows as $row) {
+    });
+    if ($report['invoice_full_sample']['ok']) {
+        foreach ($report['invoice_full_sample']['data'] as $row) {
             $type = $row['type'] ?? null;
             if (is_array($type) && isset($type['id'])) {
-                $distinct[(int) $type['id']] = $type;
+                $invoiceTypeId = (int) $type['id'];
+                break;
             }
-        }
-        return array_values($distinct);
-    });
-    if ($report['invoice_type_sample']['ok']) {
-        $types = $report['invoice_type_sample']['data'];
-        $preferredNames = ['Agreement', 'Standard'];
-        foreach ($preferredNames as $preferredName) {
-            foreach ($types as $t) {
-                if (($t['name'] ?? null) === $preferredName) {
-                    $invoiceTypeId = (int) $t['id'];
-                    break 2;
-                }
-            }
-        }
-        if ($invoiceTypeId === null && !empty($types[0]['id'])) {
-            $invoiceTypeId = (int) $types[0]['id'];
         }
     }
     $report['invoice_type_id_chosen'] = $invoiceTypeId;
