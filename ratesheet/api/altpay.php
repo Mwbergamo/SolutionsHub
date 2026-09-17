@@ -184,19 +184,36 @@ function ratesheet_altpay_access_token(): string
 }
 
 /**
- * POST /v1/checkout-auth/init -- a short-lived token that authorizes the
+ * POST /checkout-auth/init -- a short-lived token that authorizes the
  * browser (via Alternative Payments' own Web SDK) to act as the given
  * customer for exactly long enough to add a payment method. This is what
  * replaces the old (broken) hand-rolled card_provider_token approach --
- * see this file's header. Note the /v1 prefix: unlike every other
- * endpoint in this file, this one is documented with it.
+ * see this file's header.
+ *
+ * PATH: Alternative Payments' own docs show this with a /v1 prefix
+ * ("/v1/checkout-auth/init"), but a live request to that exact path 404'd
+ * (2026-09-17) -- the same "docs' /v1 prefix doesn't match the live API"
+ * pattern already hit and confirmed for card-form/credentials, /customers,
+ * and /payment-methods/*. So this tries the documented /v1 path first and,
+ * on a 404 specifically, falls back to the same path without /v1 -- same
+ * empirical approach, without needing another guess-deploy-test round trip
+ * if this guess is also wrong. Once confirmed, simplify to whichever one
+ * actually works.
  */
 function ratesheet_altpay_checkout_auth_token(string $customerId): array
 {
     $token = ratesheet_altpay_access_token();
-    $result = ratesheet_altpay_request('/v1/checkout-auth/init', $token, 'POST', [
-        'customer_id' => $customerId,
-    ]);
+    $body = ['customer_id' => $customerId];
+
+    try {
+        $result = ratesheet_altpay_request('/v1/checkout-auth/init', $token, 'POST', $body);
+    } catch (RatesheetAltpayError $e) {
+        if (!str_contains($e->getMessage(), 'HTTP 404')) {
+            throw $e;
+        }
+        $result = ratesheet_altpay_request('/checkout-auth/init', $token, 'POST', $body);
+    }
+
     if (empty($result['token'])) {
         throw new RatesheetAltpayError('Alternative Payments checkout-auth response did not include a token.');
     }
