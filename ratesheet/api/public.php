@@ -112,7 +112,14 @@ if ($action === 'card-form-credentials') {
         $creds = ratesheet_altpay_card_form_credentials();
     } catch (Throwable $e) {
         error_log('[ratesheet/public] card-form-credentials failed: ' . $e->getMessage());
-        ratesheet_respond(502, ['ok' => false, 'error' => 'Could not load the card form right now -- please try again in a moment, or choose ACH instead.']);
+        // TEMPORARY DEBUG (2026-09-17): surfacing the real exception message
+        // to the page instead of a generic one, so we can see exactly what
+        // Alternative Payments is rejecting while wiring this up for the
+        // first time. This is safe to show -- it only ever contains
+        // Alternative Payments' own HTTP response/cURL error text, never
+        // our client_id/client_secret. Revert to the generic message once
+        // this is confirmed working end-to-end.
+        ratesheet_respond(502, ['ok' => false, 'error' => 'DEBUG: ' . $e->getMessage()]);
     }
     ratesheet_respond(200, ['ok' => true, 'app_id' => $creds['app_id'], 'team_id' => $creds['team_id']]);
 }
