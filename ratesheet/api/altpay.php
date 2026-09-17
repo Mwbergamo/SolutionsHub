@@ -187,7 +187,7 @@ function ratesheet_altpay_access_token(): string
 function ratesheet_altpay_card_form_credentials(): array
 {
     $token = ratesheet_altpay_access_token();
-    $result = ratesheet_altpay_request('/v1/card-form/credentials', $token, 'GET');
+    $result = ratesheet_altpay_request('/card-form/credentials', $token, 'GET');
     if (empty($result['app_id']) || empty($result['team_id'])) {
         throw new RatesheetAltpayError('Alternative Payments card-form credentials response was missing app_id/team_id.');
     }
@@ -203,7 +203,7 @@ function ratesheet_altpay_card_form_credentials(): array
 function ratesheet_altpay_create_customer(array $customer): string
 {
     $token = ratesheet_altpay_access_token();
-    $result = ratesheet_altpay_request('/v1/customers', $token, 'POST', $customer);
+    $result = ratesheet_altpay_request('/customers', $token, 'POST', $customer);
     if (empty($result['id'])) {
         throw new RatesheetAltpayError('Alternative Payments customer creation did not return an id.');
     }
@@ -227,7 +227,7 @@ function ratesheet_altpay_create_card_payment_method(string $customerId, string 
     ], $address !== [] ? ['address' => $address] : []);
 
     $result = ratesheet_altpay_request(
-        '/v1/customers/' . rawurlencode($customerId) . '/payment-methods/card',
+        '/customers/' . rawurlencode($customerId) . '/payment-methods/card',
         $token,
         'POST',
         $body
@@ -257,7 +257,7 @@ function ratesheet_altpay_create_bank_payment_method(string $customerId, array $
     $body = array_merge(['account_data_type' => 'us', 'type' => 'depository'], $accountData);
 
     $result = ratesheet_altpay_request(
-        '/v1/customers/' . rawurlencode($customerId) . '/payment-methods/bank',
+        '/customers/' . rawurlencode($customerId) . '/payment-methods/bank',
         $token,
         'POST',
         $body
