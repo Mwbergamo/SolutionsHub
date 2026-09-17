@@ -118,6 +118,21 @@
  *      is most likely not a valid field name for this endpoint's `fields`
  *      param) with a full-default-shape sample, the same technique
  *      already proven to work in the very first read-only probing round.
+ *
+ * Round 5's run still failed invoice_create with "The type field is
+ * required" -- its own sample step assumed a real invoice's `type` field
+ * would be an OBJECT (`is_array($type) && isset($type['id'])`), which
+ * never matched anything, so $invoiceTypeId stayed null and the create
+ * payload never actually included `type`. Sample invoice data (from the
+ * same full-default-shape technique, both in the original read-only probe
+ * and reconfirmed here) proves the real shape: ConnectWise's invoice
+ * `type` field is a plain STRING -- e.g. `"type":"Agreement"` on every
+ * sample invoice actually linked to an Agreement via applyToId, and
+ * `"type":"Standard"` on ordinary ones. Round 6 (this version) fixes both
+ * the sample-extraction logic and the create payload to treat `type` as a
+ * string, and prefers a sampled invoice whose own `applyToType` is
+ * `"Agreement"` (matching what this script is about to create) over just
+ * taking the first of the 3 samples.
  */
 
 declare(strict_types=1);
@@ -514,12 +529,25 @@ if ($agreementId !== null) {
 //    NO `fields` restriction at all (full default shape) and read
 //    whatever field actually represents "type" straight off the raw
 //    response, instead of guessing a field name to request.
-$invoiceTypeId = null;
+//
+//    Round 6 fix: round 5's extraction assumed `type` would be an OBJECT
+//    (`is_array($type) && isset($type['id'])`), which real invoice data
+//    disproves -- ConnectWise's invoice `type` is a plain STRING (e.g.
+//    "Agreement", "Standard"). That wrong assumption meant $invoiceTypeId
+//    always stayed null and invoice_create below never sent `type` at
+//    all, which is the actual cause of every prior round's "The type
+//    field is required" failure. Now reads `type` as a string, and widens
+//    the sample to invoices where `applyToType` is already "Agreement"
+//    (the same relationship this script's own invoice will have) so the
+//    value picked is the most directly comparable one, falling back to
+//    any real invoice's `type` string if no Agreement-linked one is found
+//    in the small sample.
+$invoiceTypeString = null;
 if ($agreementId !== null && $invoiceId === null) {
     $report['invoice_full_sample'] = step_safe(function () {
         return register_cw_request(
             '/finance/invoices',
-            ['pageSize' => '3', 'page' => '1'],
+            ['pageSize' => '10', 'page' => '1'],
             'GET',
             null,
             25,
@@ -527,15 +555,25 @@ if ($agreementId !== null && $invoiceId === null) {
         );
     });
     if ($report['invoice_full_sample']['ok']) {
+        $fallbackType = null;
         foreach ($report['invoice_full_sample']['data'] as $row) {
             $type = $row['type'] ?? null;
-            if (is_array($type) && isset($type['id'])) {
-                $invoiceTypeId = (int) $type['id'];
+            if (!is_string($type) || $type === '') {
+                continue;
+            }
+            if ($fallbackType === null) {
+                $fallbackType = $type;
+            }
+            if (($row['applyToType'] ?? null) === 'Agreement') {
+                $invoiceTypeString = $type;
                 break;
             }
         }
+        if ($invoiceTypeString === null) {
+            $invoiceTypeString = $fallbackType;
+        }
     }
-    $report['invoice_type_id_chosen'] = $invoiceTypeId;
+    $report['invoice_type_string_chosen'] = $invoiceTypeString;
 }
 
 // 10. Create the Invoice, only if step 8 didn't find one to reuse. Payload
@@ -544,15 +582,18 @@ if ($agreementId !== null && $invoiceId === null) {
 //     hopefully "Billing Status") to on a freshly created invoice, not to
 //     guess and force a value. Nothing here closes or approves anything.
 if ($agreementId !== null && $invoiceId === null) {
-    $report['invoice_create'] = step_safe(function () use ($agreementId, $invoiceTypeId) {
+    $report['invoice_create'] = step_safe(function () use ($agreementId, $invoiceTypeString) {
         $payload = [
             'applyToType' => 'Agreement',
             'applyToId' => $agreementId,
             'company' => ['id' => TEST_COMPANY_ID],
         ];
-        if ($invoiceTypeId !== null) {
-            $payload['type'] = ['id' => $invoiceTypeId];
-        }
+        // Round 6 fix: `type` is a plain string on this instance (e.g.
+        // "Agreement"), not an object -- see invoice_full_sample above.
+        // Fall back to the literal string "Agreement" if sampling somehow
+        // found nothing, since that's what every real Agreement-linked
+        // invoice sampled so far actually uses.
+        $payload['type'] = $invoiceTypeString !== null ? $invoiceTypeString : 'Agreement';
         return register_cw_request('/finance/invoices', [], 'POST', $payload, 25, 8);
     });
     if ($report['invoice_create']['ok'] && !empty($report['invoice_create']['data']['id'])) {
