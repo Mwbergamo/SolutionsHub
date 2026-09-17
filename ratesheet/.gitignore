@@ -11,6 +11,11 @@
 # fill in real values there.
 api/connectwise-config.php
 
+# Alternative Payments API credentials -- never commit. Copy
+# altpay-config.sample.php to altpay-config.php in api/ and fill in real
+# values there (client_id/client_secret from the Partner Dashboard).
+api/altpay-config.php
+
 # Runtime SQLite database (+ WAL/SHM) -- created on first request by
 # api/db.php. Never commit: live rep accounts and customer signup data,
 # not source, and a `git pull` deploy must never overwrite or wipe it.

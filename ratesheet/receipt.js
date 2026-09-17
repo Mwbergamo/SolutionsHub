@@ -72,6 +72,7 @@
       '    <div><span class="k">Address:</span> <span class="v">' + e(fullAddress) + '</span></div>' +
       '    <div><span class="k">Rate:</span> <span class="v">$' + r.hourly_rate.toFixed(2) + '/hr — ' + e(locationLabel) + '</span></div>' +
       '    <div><span class="k">Payment Method:</span> <span class="v">' + e(paymentLabel) + '</span></div>' +
+      '    <div><span class="k">Payment On File:</span> <span class="v">' + (r.altpay_status === 'vaulted' ? e(r.altpay_payment_method_summary) : '<span style="color:#A6362B;">Needs manual follow-up</span>') + '</span></div>' +
       '    <div><span class="k">Emailed Invoices:</span> <span class="v">' + (r.invoices_emailed ? 'Yes' : 'No') + '</span></div>' +
       '    <div><span class="k">Sent By:</span> <span class="v">' + e(r.rep_name) + '</span></div>' +
       (r.cw_company_id ? '    <div><span class="k">ConnectWise:</span> <span class="v">Company #' + r.cw_company_id + ' / Contact #' + r.cw_contact_id + '</span></div>' : '') +

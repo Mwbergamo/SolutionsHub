@@ -14,10 +14,19 @@
  *   -> { ok: true, location, account_kind, hourly_rate, status }
  *      404 if the token doesn't match any request.
  *
+ * GET  /ratesheet/api/public.php?action=card-form-credentials&t=<token>
+ *   -> { ok: true, app_id, team_id } -- Evervault credentials (non-secret,
+ *      publishable-key equivalent) signup.js uses to mount the card Inputs
+ *      form. Gated behind the same token as everything else here, though
+ *      these values aren't sensitive on their own.
+ *
  * POST /ratesheet/api/public.php?action=submit&t=<token>
  *   { first_name, last_name, email, address_line1, address_line2?, city,
  *     state, zip, business_name? (required iff account_kind=Commercial),
- *     payment_method: 'card'|'ach', want_copy_of_signup: bool,
+ *     payment_method: 'card'|'ach',
+ *     -- card: card_evervault_number, card_evervault_expiry, card_evervault_cvc
+ *     -- ach:  bank_routing_number, bank_account_number, bank_account_type ('checking'|'savings')
+ *     want_copy_of_signup: bool,
  *     invoices_emailed: bool, agreed_to_terms: true, signature_data_url }
  *   -> { ok: true } once the Company + Contact are created in ConnectWise
  *      (per Michael, 2026-09-17 AskUserQuestion: "Just create the Company
@@ -30,7 +39,7 @@
  *      lost; the customer sees a plain "something went wrong, we'll
  *      finish this for you" message (built by signup.js), not a raw error.
  *
- * PAYMENT DATA -- READ THIS BEFORE CHANGING ANYTHUING BELOW: Michael's
+ * PAYMENT DATA -- READ THIS BEFORE CHANGING ANYTHING BELOW: Michael's
  * original spec asked for raw credit-card number/expiry/CVV and bank
  * account/routing numbers to be collected here and emailed in cleartext
  * to hello@codebluetechnology.com "for now." That was declined during
@@ -38,20 +47,38 @@
  * a CVV persisted/transmitted at all are both flat PCI-DSS violations and
  * a real breach/liability risk to CodeBlue and its customers -- this is
  * a hard line, not a style preference, and holds regardless of business
- * justification. Per Michael's own follow-up answer, this app instead
- * only collects a payment METHOD choice (card vs. ACH) and reserves a
- * clearly-marked spot for the real Alternative Payments.io integration
- * later ("hold space in the app... I will focus on that when the core
- * app has been started") -- see $paymentMethod below and
- * ratesheet_internal_notice_html()'s "Payment" section. Do not add card
- * number, expiry, CVV, bank account, or routing number fields to this
- * endpoint or to signup.js without revisiting that decision explicitly.
+ * justification. Per Michael's own follow-up answer, this app first
+ * shipped with a payment METHOD choice only (card vs. ACH, no numbers),
+ * with a clearly-marked spot reserved for the real integration.
+ *
+ * UPDATED 2026-09-17 (follow-up #2): that integration is now wired in --
+ * Alternative Payments (altpay.php). The PCI posture is unchanged, just
+ * enforced differently per method:
+ *   - Card: the browser mounts Evervault's hosted Inputs form (see
+ *     signup.js) which encrypts the card number/expiry/cvc client-side.
+ *     Only those three ENCRYPTED strings ever reach this endpoint -- this
+ *     server never sees a plaintext card number, expiry, or CVV, and
+ *     nothing card-related is written to our database or logged.
+ *   - ACH: Alternative Payments' bank payment-method API takes the
+ *     routing/account number directly (no client-side tokenization step
+ *     is documented for bank accounts). So a raw routing/account number
+ *     DOES pass through this endpoint for an ACH signup -- but it lives
+ *     only in a local PHP variable long enough to relay it to Alternative
+ *     Payments (see ratesheet_altpay_create_bank_payment_method()) and is
+ *     then discarded: never written to rate_sheet_requests, never
+ *     error_log()'d. Only Alternative Payments' own payment_method id and
+ *     a redacted summary ("Bank account ending 6789") are saved.
+ * Vaulting is fail-open like the ConnectWise create below: a vaulting
+ * failure never blocks the signup or loses the customer's other data --
+ * it's flagged (altpay_status/altpay_fail_reason) for staff to collect
+ * payment manually, same spirit as a ConnectWise failure.
  */
 
 declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/connectwise.php';
+require_once __DIR__ . '/altpay.php';
 
 ratesheet_install_error_handlers();
 
@@ -80,6 +107,16 @@ if ($action === 'context') {
     ]);
 }
 
+if ($action === 'card-form-credentials') {
+    try {
+        $creds = ratesheet_altpay_card_form_credentials();
+    } catch (Throwable $e) {
+        error_log('[ratesheet/public] card-form-credentials failed: ' . $e->getMessage());
+        ratesheet_respond(502, ['ok' => false, 'error' => 'Could not load the card form right now -- please try again in a moment, or choose ACH instead.']);
+    }
+    ratesheet_respond(200, ['ok' => true, 'app_id' => $creds['app_id'], 'team_id' => $creds['team_id']]);
+}
+
 if ($action === 'submit') {
     if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
         ratesheet_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
@@ -99,6 +136,19 @@ if ($action === 'submit') {
     $zip = trim((string) ($input['zip'] ?? ''));
     $businessName = trim((string) ($input['business_name'] ?? ''));
     $paymentMethod = trim((string) ($input['payment_method'] ?? ''));
+
+    // Card: three Evervault-ENCRYPTED strings (never a plaintext number/
+    // expiry/CVV -- see this file's header). ACH: raw routing/account
+    // numbers, held only in these local variables and relayed straight
+    // through to Alternative Payments below -- never written to $input's
+    // origin (the request body) back out, never persisted, never logged.
+    $cardEvervaultNumber = trim((string) ($input['card_evervault_number'] ?? ''));
+    $cardEvervaultExpiry = trim((string) ($input['card_evervault_expiry'] ?? ''));
+    $cardEvervaultCvc = trim((string) ($input['card_evervault_cvc'] ?? ''));
+    $bankRoutingNumber = trim((string) ($input['bank_routing_number'] ?? ''));
+    $bankAccountNumber = trim((string) ($input['bank_account_number'] ?? ''));
+    $bankAccountType = trim((string) ($input['bank_account_type'] ?? ''));
+
     $wantCopy = !empty($input['want_copy_of_signup']);
     $invoicesEmailed = !empty($input['invoices_emailed']);
     $agreed = !empty($input['agreed_to_terms']);
@@ -121,7 +171,17 @@ if ($action === 'submit') {
     if ($state === '') $errors[] = 'State is required.';
     if ($zip === '') $errors[] = 'ZIP code is required.';
     if ($row['account_kind'] === 'Commercial' && $businessName === '') $errors[] = 'Business name is required for a Commercial account.';
-    if (!in_array($paymentMethod, ['card', 'ach'], true)) $errors[] = 'Please choose a payment method.';
+    if (!in_array($paymentMethod, ['card', 'ach'], true)) {
+        $errors[] = 'Please choose a payment method.';
+    } elseif ($paymentMethod === 'card') {
+        if ($cardEvervaultNumber === '' || $cardEvervaultExpiry === '' || $cardEvervaultCvc === '') {
+            $errors[] = 'Please complete the card form before submitting.';
+        }
+    } else { // ach
+        if (!preg_match('/^\d{9}$/', $bankRoutingNumber)) $errors[] = 'A valid 9-digit routing number is required.';
+        if ($bankAccountNumber === '' || !preg_match('/^\d{4,17}$/', $bankAccountNumber)) $errors[] = 'A valid bank account number is required.';
+        if (!in_array($bankAccountType, ['checking', 'savings'], true)) $errors[] = 'Please choose checking or savings.';
+    }
     if (!$agreed) $errors[] = 'You must check the box acknowledging the terms and conditions.';
     if (!str_starts_with($signatureDataUrl, 'data:image/')) $errors[] = 'A signature is required.';
 
@@ -133,7 +193,17 @@ if ($action === 'submit') {
     // (per Michael) -- the company in ConnectWise is the person's own name.
     $companyName = $row['account_kind'] === 'Commercial' ? $businessName : trim($firstName . ' ' . $lastName);
 
-    $saveSubmission = function (string $status, ?string $failReason, ?int $cwCompanyId, ?int $cwContactId) use ($pdo, $row, $firstName, $lastName, $businessName, $email, $addr1, $addr2, $city, $state, $zip, $paymentMethod, $wantCopy, $invoicesEmailed, $agreed, $signatureDataUrl, $ipAddress): void {
+    $saveSubmission = function (
+        string $status,
+        ?string $failReason,
+        ?int $cwCompanyId,
+        ?int $cwContactId,
+        ?string $altpayCustomerId = null,
+        ?string $altpayPaymentMethodId = null,
+        ?string $altpaySummary = null,
+        ?string $altpayStatus = null,
+        ?string $altpayFailReason = null
+    ) use ($pdo, $row, $firstName, $lastName, $businessName, $email, $addr1, $addr2, $city, $state, $zip, $paymentMethod, $wantCopy, $invoicesEmailed, $agreed, $signatureDataUrl, $ipAddress): void {
         $stmt = $pdo->prepare(
             'UPDATE rate_sheet_requests SET
                 status = :status, fail_reason = :fail_reason,
@@ -144,6 +214,9 @@ if ($action === 'submit') {
                 invoices_emailed = :invoices_emailed, agreed_to_terms = :agreed,
                 signature_data = :signature, signed_at = :signed_at, ip_address = :ip_address,
                 cw_company_id = :cw_company_id, cw_contact_id = :cw_contact_id,
+                altpay_customer_id = :altpay_customer_id, altpay_payment_method_id = :altpay_payment_method_id,
+                altpay_payment_method_summary = :altpay_summary, altpay_status = :altpay_status,
+                altpay_fail_reason = :altpay_fail_reason,
                 submitted_at = COALESCE(submitted_at, :submitted_at)
              WHERE id = :id'
         );
@@ -169,6 +242,11 @@ if ($action === 'submit') {
             ':ip_address' => $ipAddress !== '' ? $ipAddress : null,
             ':cw_company_id' => $cwCompanyId,
             ':cw_contact_id' => $cwContactId,
+            ':altpay_customer_id' => $altpayCustomerId,
+            ':altpay_payment_method_id' => $altpayPaymentMethodId,
+            ':altpay_summary' => $altpaySummary,
+            ':altpay_status' => $altpayStatus,
+            ':altpay_fail_reason' => $altpayFailReason,
             ':submitted_at' => $now,
             ':id' => $row['id'],
         ]);
@@ -194,7 +272,73 @@ if ($action === 'submit') {
         ratesheet_respond(502, ['ok' => false, 'error' => 'We could not finish creating your account automatically, but your information was saved -- a CodeBlue Technology team member will finish setting up your account shortly.']);
     }
 
-    $saveSubmission('submitted', null, $companyId, $contactId);
+    // Vault the payment method with Alternative Payments -- fail-open,
+    // same philosophy as the ConnectWise Team-row/Territory lookups
+    // above: a vaulting problem never undoes the signup or the
+    // ConnectWise account that already exists, it's just flagged so
+    // staff know to collect payment manually. See altpay.php's header
+    // for why the exact card_provider_token shape is UNVERIFIED pending
+    // a real sandbox test (project doc: rate-sheet-signup.md).
+    $altpayCustomerId = null;
+    $altpayPaymentMethodId = null;
+    $altpaySummary = null;
+    $altpayStatus = 'failed';
+    $altpayFailReason = null;
+    try {
+        $altpayCustomerId = ratesheet_altpay_create_customer([
+            'name' => $companyName,
+            'email' => $email,
+            'external_id' => 'ratesheet-' . $row['id'],
+            'street_address' => $addr1 . ($addr2 !== '' ? ' ' . $addr2 : ''),
+            'city' => $city,
+            'state' => $state,
+            'postal_code' => $zip,
+            'country' => 'US',
+        ]);
+
+        if ($paymentMethod === 'card') {
+            // Evervault returns three separately-encrypted fields, not one
+            // string -- Alternative Payments' docs only document a single
+            // "card_provider_token" field with no worked example of its
+            // shape, so this bundles all three into one JSON string as the
+            // token. UNVERIFIED -- confirm against the sandbox and adjust
+            // if Alternative Payments expects something else.
+            $cardToken = json_encode([
+                'number' => $cardEvervaultNumber,
+                'expiry' => $cardEvervaultExpiry,
+                'cvc' => $cardEvervaultCvc,
+            ]);
+            $vaulted = ratesheet_altpay_create_card_payment_method($altpayCustomerId, (string) $cardToken, [
+                'street_address' => $addr1, 'city' => $city, 'state' => $state, 'postal_code' => $zip, 'country' => 'US',
+            ]);
+        } else {
+            $vaulted = ratesheet_altpay_create_bank_payment_method($altpayCustomerId, [
+                'routing_number' => $bankRoutingNumber,
+                'account_number' => $bankAccountNumber,
+                'subtype' => $bankAccountType,
+                'receiver_name' => trim($firstName . ' ' . $lastName),
+            ]);
+        }
+        $altpayPaymentMethodId = $vaulted['id'];
+        $altpaySummary = $vaulted['summary'];
+        $altpayStatus = 'vaulted';
+    } catch (Throwable $e) {
+        // Deliberately NOT logging $e->getMessage() for a bank-account
+        // vaulting failure -- Alternative Payments' error response could
+        // conceivably echo back the submitted routing/account number in a
+        // validation message, and that must never land in a server log.
+        // Card failures are lower-risk (Evervault ciphertext, not a raw
+        // PAN) so the message is logged for debugging.
+        if ($paymentMethod === 'card') {
+            error_log('[ratesheet/public] Alternative Payments card vaulting failed for request ' . $row['id'] . ': ' . $e->getMessage());
+            $altpayFailReason = $e->getMessage();
+        } else {
+            error_log('[ratesheet/public] Alternative Payments bank vaulting failed for request ' . $row['id'] . ' (' . get_class($e) . ') -- see Alternative Payments dashboard for details.');
+            $altpayFailReason = 'Bank account vaulting failed -- see Alternative Payments dashboard for this customer.';
+        }
+    }
+
+    $saveSubmission('submitted', null, $companyId, $contactId, $altpayCustomerId, $altpayPaymentMethodId, $altpaySummary, $altpayStatus, $altpayFailReason);
 
     // Both emails are best-effort: a failure here never undoes the
     // ConnectWise create or fails the customer's submission -- they've
@@ -215,6 +359,7 @@ if ($action === 'submit') {
             'payment_method' => $paymentMethod, 'want_copy' => $wantCopy, 'invoices_emailed' => $invoicesEmailed,
             'rep_name' => $row['rep_name'], 'rep_email' => $row['rep_email'],
             'cw_company_id' => $companyId, 'cw_contact_id' => $contactId,
+            'altpay_summary' => $altpaySummary, 'altpay_status' => $altpayStatus,
         ];
 
         try {
@@ -379,12 +524,10 @@ function ratesheet_cw_create_contact(int $companyId, string $firstName, string $
 
 /**
  * Internal notice to hello@codebluetechnology.com -- per Michael: "send
- * the text data to hello@codebluetechnology.com... so we can add their
- * payment info manually for now." Deliberately contains ONLY the payment
- * METHOD the customer chose, never a card/account number -- see this
- * file's header. Staff use this to manually collect real payment details
- * from the customer and enter them wherever CBT currently manages billing,
- * until Alternative Payments.io is wired in.
+ * the text data to hello@codebluetechnology.com." Never contains a card
+ * or bank account/routing number -- see this file's header. Shows
+ * whether the payment method was successfully vaulted with Alternative
+ * Payments (and a redacted summary if so) or needs manual follow-up.
  */
 function ratesheet_internal_notice_html(array $s): string
 {
@@ -395,6 +538,9 @@ function ratesheet_internal_notice_html(array $s): string
 
     $fullAddress = trim($s['addr1'] . ($s['addr2'] !== '' ? ', ' . $s['addr2'] : '') . ', ' . $s['city'] . ', ' . $s['state'] . ' ' . $s['zip']);
     $paymentLabel = $s['payment_method'] === 'ach' ? 'ACH (bank transfer) — 3% discount applies' : 'Credit Card';
+    $paymentOnFile = $s['altpay_status'] === 'vaulted'
+        ? $e($s['altpay_summary']) . ' <span style="color:#1E8A4C;">(saved to Alternative Payments)</span>'
+        : '<span style="color:#A6362B;">Not saved automatically -- please collect and enter this manually.</span>';
 
     $rows = $row('Name', $e($s['first_name'] . ' ' . $s['last_name']))
         . ($s['business_name'] !== '' ? $row('Business Name', $e($s['business_name'])) : '')
@@ -403,6 +549,7 @@ function ratesheet_internal_notice_html(array $s): string
         . $row('Location', $e($s['location']) . ' ($' . number_format($s['hourly_rate'], 2) . '/hr)')
         . $row('Account Type', $e($s['account_kind']))
         . $row('Payment Method Chosen', $e($paymentLabel))
+        . $row('Payment On File', $paymentOnFile)
         . $row('Wants Emailed Invoices', $s['invoices_emailed'] ? 'Yes' : 'No')
         . $row('Sent By', $e($s['rep_name']) . ' (' . $e($s['rep_email']) . ')')
         . $row('ConnectWise Company / Contact', '#' . (int) $s['cw_company_id'] . ' / #' . (int) $s['cw_contact_id']);
@@ -412,7 +559,6 @@ function ratesheet_internal_notice_html(array $s): string
         '<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:640px;max-width:640px;background:#FFFFFF;border-radius:8px;border:1px solid #E2E5EA;">' .
         '<tr><td style="padding:20px 24px;border-bottom:3px solid #182857;"><div style="font-size:18px;font-weight:800;color:#182857;">New Rate Sheet Sign Up</div></td></tr>' .
         '<tr><td style="padding:16px 24px;"><table role="presentation" cellpadding="0" cellspacing="0">' . $rows . '</table></td></tr>' .
-        '<tr><td style="padding:0 24px 20px 24px;"><div style="font-size:12px;color:#8A93A3;font-style:italic;">No card, bank account, or routing numbers were collected on this form (payment details are handled outside this system for now) -- follow up with the customer directly to collect and record their actual payment method.</div></td></tr>' .
         '</table></td></tr></table></body></html>';
 }
 

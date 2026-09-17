@@ -5,13 +5,23 @@
  * per Michael). Loaded by signup.html with a ?t=<token> query param,
  * talks only to api/public.php (no auth/session involved at all).
  *
- * PAYMENT DATA: this form collects a payment METHOD choice only (Card vs.
- * ACH) — never a card number, expiry, CVV, or bank account/routing
- * number. See api/public.php's header for why (PCI-DSS / breach-liability
- * refusal made during planning, and Michael's own follow-up answer: hold
- * a clearly-marked spot for the real Alternative Payments.io integration
- * later rather than collect raw payment data now). Do not add those
- * fields here without revisiting that decision explicitly.
+ * PAYMENT DATA (updated 2026-09-17, follow-up #2 -- Alternative Payments
+ * is now wired in, see api/public.php's and api/altpay.php's headers for
+ * the full picture):
+ *   - Card: mounts Evervault's hosted Inputs card form (js.evervault.com/v2,
+ *     loaded in signup.html) via ensureCardFormMounted() below. The card
+ *     number/expiry/CVV are typed into Evervault's own iframe and
+ *     encrypted client-side -- this page's own JS never sees plaintext
+ *     card data, only the three ENCRYPTED strings Evervault exposes on
+ *     `cardForm.values.card.*`, read at submit time.
+ *   - ACH: routing number / account number / account type are plain
+ *     fields on this page (Alternative Payments' bank vaulting API has no
+ *     documented client-side tokenization step) -- submitted straight to
+ *     api/public.php, which relays them to Alternative Payments and
+ *     discards them (never stored in our database).
+ *
+ * Do not regress this back to a "choice only" form without revisiting
+ * that decision explicitly.
  *
  * LEGAL TEXT: RATESHEET_LEGAL_TEXT and CHECKBOX_TEXT below are both
  * Michael's real, verbatim wording (chat, 2026-09-17). Keep
@@ -52,6 +62,9 @@
       address_line1: '', address_line2: '', city: '', state: '', zip: '',
       business_name: '',
       payment_method: '',
+      bank_routing_number: '',
+      bank_account_number: '',
+      bank_account_type: '',
       want_copy_of_signup: false,
       invoices_emailed: false,
       agreed_to_terms: false
@@ -59,6 +72,60 @@
   };
 
   var sigCanvas = null, sigCtx = null, sigHasStroke = false, sigDrawing = false;
+
+  // ---- Evervault card form (see this file's PAYMENT DATA header note) --
+
+  var cardFormCreds = null;   // { app_id, team_id } -- fetched once, cached
+  var evervaultCard = null;   // most recently mounted card component instance
+  var cardFormError = null;
+  var cardFormValid = false;
+  var cardFormLoading = false;
+
+  // render() rebuilds #app-root's innerHTML from scratch on every call
+  // (see render() below), which destroys any previously-mounted Evervault
+  // iframe along with the rest of the DOM. So this checks the CURRENT
+  // mount element's emptiness (not just a "did we already mount once" JS
+  // flag) and remounts fresh whenever the container came back empty --
+  // e.g. after a validation-error render while Card was selected.
+  function ensureCardFormMounted() {
+    var mount = document.getElementById('card-form-mount');
+    if (!mount || mount.children.length > 0) return; // not on screen, or already has a live form in it
+
+    function mountNow(creds) {
+      try {
+        var client = new window.Evervault(creds.team_id, creds.app_id);
+        evervaultCard = client.ui.card({ theme: client.ui.themes.clean() });
+        evervaultCard.mount('#card-form-mount');
+        evervaultCard.on('change', function (data) {
+          cardFormValid = !!(data && data.card && data.card.isValid);
+        });
+      } catch (err) {
+        cardFormError = 'Could not load the secure card form. Please refresh the page, or choose ACH instead.';
+        render();
+      }
+    }
+
+    if (cardFormCreds) {
+      mountNow(cardFormCreds);
+      return;
+    }
+    cardFormLoading = true;
+    apiGet('api/public.php?action=card-form-credentials&t=' + encodeURIComponent(token)).then(function (r) {
+      cardFormLoading = false;
+      if (r.data && r.data.ok) {
+        cardFormCreds = { app_id: r.data.app_id, team_id: r.data.team_id };
+        cardFormError = null;
+        mountNow(cardFormCreds);
+      } else {
+        cardFormError = (r.data && r.data.error) || 'Could not load the card form. Please try again, or choose ACH instead.';
+        render();
+      }
+    }).catch(function () {
+      cardFormLoading = false;
+      cardFormError = 'Could not load the card form — check your connection and try again, or choose ACH instead.';
+      render();
+    });
+  }
 
   function e(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -170,6 +237,13 @@
     if (!f.zip.trim()) return 'ZIP code is required.';
     if (state.context.account_kind === 'Commercial' && !f.business_name.trim()) return 'Business name is required for a Commercial account.';
     if (!f.payment_method) return 'Please choose a payment method.';
+    if (f.payment_method === 'card') {
+      if (!evervaultCard || !cardFormValid) return 'Please complete the card form before submitting.';
+    } else if (f.payment_method === 'ach') {
+      if (!/^\d{9}$/.test(f.bank_routing_number.trim())) return 'A valid 9-digit routing number is required.';
+      if (!/^\d{4,17}$/.test(f.bank_account_number.trim())) return 'A valid bank account number is required.';
+      if (f.bank_account_type !== 'checking' && f.bank_account_type !== 'savings') return 'Please choose checking or savings.';
+    }
     if (!f.agreed_to_terms) return 'Please check the box acknowledging the terms and conditions.';
     if (!sigHasStroke) return 'Please sign in the signature box before submitting.';
     return null;
@@ -187,6 +261,14 @@
     render();
 
     var body = Object.assign({}, state.form, { signature_data_url: sigCanvas.toDataURL('image/png') });
+    if (state.form.payment_method === 'card' && evervaultCard) {
+      // Evervault-ENCRYPTED strings only -- see this file's PAYMENT DATA
+      // header note. Never the plaintext card.values.card fields as-is
+      // logged/inspected; they're already ciphertext by this point.
+      body.card_evervault_number = evervaultCard.values.card.number;
+      body.card_evervault_expiry = evervaultCard.values.card.expiry;
+      body.card_evervault_cvc = evervaultCard.values.card.cvc;
+    }
     apiPost('api/public.php?action=submit&t=' + encodeURIComponent(token), body).then(function (r) {
       state.submitting = false;
       if (r.data && r.data.ok) {
@@ -269,7 +351,23 @@
       '      <label class="method-option"><input type="radio" name="payment_method" value="ach" ' + (f.payment_method === 'ach' ? 'checked' : '') + ' data-radio="payment_method" />' +
       '        <span>ACH (Bank Transfer)<span class="method-note">Save 3% on transactions</span></span></label>' +
       '    </div>' +
-      '    <div class="payment-note">CodeBlue Technology will follow up separately to securely collect your payment details and save them to your account.</div>' +
+      (f.payment_method === 'card' ? (
+        '    <div id="card-form-mount" class="card-form-mount"></div>' +
+        (cardFormLoading ? '    <div class="card-form-loading">Loading secure card form…</div>' : '') +
+        (cardFormError ? '    <div class="card-form-error">' + e(cardFormError) + '</div>' : '') +
+        '    <div class="payment-note">Your card details are encrypted in your browser and sent directly to our payment processor — CodeBlue Technology never sees or stores your card number.</div>'
+      ) : f.payment_method === 'ach' ? (
+        '    <div class="bank-fields">' +
+        '      <div class="field-label">Routing Number</div><input type="text" inputmode="numeric" maxlength="9" placeholder="9 digits" data-field="bank_routing_number" value="' + e(f.bank_routing_number) + '" />' +
+        '      <div class="field-label">Account Number</div><input type="text" inputmode="numeric" data-field="bank_account_number" value="' + e(f.bank_account_number) + '" />' +
+        '      <div class="field-label">Account Type</div>' +
+        '      <div class="account-type-row">' +
+        '        <label><input type="radio" name="bank_account_type" value="checking" ' + (f.bank_account_type === 'checking' ? 'checked' : '') + ' data-radio="bank_account_type" /> Checking</label>' +
+        '        <label><input type="radio" name="bank_account_type" value="savings" ' + (f.bank_account_type === 'savings' ? 'checked' : '') + ' data-radio="bank_account_type" /> Savings</label>' +
+        '      </div>' +
+        '    </div>' +
+        '    <div class="payment-note">Your bank details are sent securely and stored only with our payment processor — CodeBlue Technology does not keep your account or routing number.</div>'
+      ) : '') +
       '  </div>' +
 
       '  <div class="card">' +
@@ -302,6 +400,7 @@
       '</div>';
 
     setupSignaturePad();
+    if (f.payment_method === 'card') ensureCardFormMounted();
   }
 
   root.addEventListener('input', function (ev) {
@@ -313,7 +412,14 @@
   root.addEventListener('change', function (ev) {
     var el = ev.target;
     if (el.hasAttribute('data-radio')) {
-      state.form[el.getAttribute('data-radio')] = el.value;
+      var field = el.getAttribute('data-radio');
+      state.form[field] = el.value;
+      // payment_method swaps between the card form and the ACH fields, so
+      // (unlike every other field on this page) it needs a full re-render.
+      if (field === 'payment_method') {
+        cardFormError = null;
+        render();
+      }
     } else if (el.hasAttribute('data-yesno')) {
       state.form[el.getAttribute('data-yesno')] = true;
     } else if (el.hasAttribute('data-yesno-no')) {

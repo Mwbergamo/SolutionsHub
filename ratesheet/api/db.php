@@ -146,6 +146,22 @@ function ratesheet_migrate(PDO $pdo): void
     // TABLE above, since that only runs on a brand-new database -- this
     // app is already live with real rows.
     ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'ip_address', 'TEXT');
+
+    // Added 2026-09-17 (follow-up #2, per Michael): real payment
+    // collection via Alternative Payments (altpay.php), replacing the
+    // "payment_method choice only" placeholder above. The actual card/
+    // bank numbers are never stored here -- only Alternative Payments'
+    // own customer id + payment method id, plus a redacted display
+    // string ("Visa ending 4242") for the dashboard/receipt. See
+    // altpay.php's header for the vaulting flow and public.php's
+    // ?action=submit for how a vaulting failure is handled (fail-open,
+    // same as the existing ConnectWise-failure pattern -- the signup
+    // still completes and is flagged for staff to finish manually).
+    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_customer_id', 'TEXT');
+    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_payment_method_id', 'TEXT');
+    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_payment_method_summary', 'TEXT');
+    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_status', 'TEXT'); // 'vaulted' | 'failed' | NULL
+    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_fail_reason', 'TEXT');
 }
 
 /** Same ALTER-TABLE-if-needed helper as register/relationships use for live schema changes. */

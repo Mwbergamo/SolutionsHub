@@ -66,6 +66,8 @@ function ratesheet_request_row(array $r, bool $includeCustomerFields): array
         $out['business_name'] = $r['business_name'];
         $out['customer_email'] = $r['customer_email'];
         $out['payment_method'] = $r['payment_method'];
+        $out['altpay_status'] = $r['altpay_status'];
+        $out['altpay_payment_method_summary'] = $r['altpay_payment_method_summary'];
         $out['cw_company_id'] = $r['cw_company_id'] !== null ? (int) $r['cw_company_id'] : null;
         $out['cw_contact_id'] = $r['cw_contact_id'] !== null ? (int) $r['cw_contact_id'] : null;
     }
@@ -135,6 +137,9 @@ if ($action === 'detail') {
         'account_kind' => $r['account_kind'],
         'hourly_rate' => (float) $r['hourly_rate'],
         'payment_method' => $r['payment_method'],
+        'altpay_status' => $r['altpay_status'],
+        'altpay_payment_method_summary' => $r['altpay_payment_method_summary'],
+        'altpay_fail_reason' => $r['altpay_fail_reason'],
         'invoices_emailed' => $r['invoices_emailed'] === null ? null : (bool) $r['invoices_emailed'],
         'want_copy_of_signup' => $r['want_copy_of_signup'] === null ? null : (bool) $r['want_copy_of_signup'],
         'agreed_to_terms' => (bool) $r['agreed_to_terms'],

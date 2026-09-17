@@ -149,6 +149,16 @@
       '<span style="width:9px;height:9px;border-radius:999px;background:' + color + ';display:inline-block;"></span>' + label + '</span>';
   }
 
+  // altpay_status is only meaningful once a customer has actually
+  // submitted (pending rows have no payment method attempt yet).
+  function paymentOnFileCell(r) {
+    if (r.status === 'pending') return '—';
+    if (r.altpay_status === 'vaulted' && r.altpay_payment_method_summary) {
+      return '<span style="color:#1E8A4C;">' + e(r.altpay_payment_method_summary) + '</span>';
+    }
+    return '<span style="color:#e5534b;">Needs follow-up</span>';
+  }
+
   function topbarHtml() {
     return '' +
       '<div class="topbar">' +
@@ -227,6 +237,7 @@
         '<td>' + fmtDateTime(r.sent_at) + '</td>' +
         '<td>' + e(r.account_kind) + '</td>' +
         '<td>' + e(r.location) + '</td>' +
+        '<td>' + paymentOnFileCell(r) + '</td>' +
         '<td>' + (r.invoices_emailed === null ? '—' : (r.invoices_emailed ? 'Yes' : 'No')) + '</td>' +
         '</tr>';
     }).join('');
@@ -234,7 +245,7 @@
     return '' +
       '<div class="card">' +
       '  <table class="data-table">' +
-      '    <thead><tr><th></th><th>Prospect Email</th><th>Sent By</th><th>Time Sent</th><th>Type</th><th>Location</th><th>Invoices Emailed</th></tr></thead>' +
+      '    <thead><tr><th></th><th>Prospect Email</th><th>Sent By</th><th>Time Sent</th><th>Type</th><th>Location</th><th>Payment On File</th><th>Invoices Emailed</th></tr></thead>' +
       '    <tbody>' + body + '</tbody>' +
       '  </table>' +
       '  <div class="table-hint">Click a submitted or failed row to view the signed terms record.</div>' +
