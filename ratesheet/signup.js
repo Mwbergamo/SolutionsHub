@@ -96,6 +96,11 @@
         var client = new window.Evervault(creds.team_id, creds.app_id);
         evervaultCard = client.ui.card({ theme: client.ui.themes.clean() });
         evervaultCard.mount('#card-form-mount');
+        // Best-effort visual affordance only -- NOT used to gate submission
+        // (see cardFormComplete() below). Evervault's exact 'change' event
+        // payload shape isn't confirmed from their docs, so submission
+        // validity is checked directly against the real encrypted values
+        // instead of trusting this flag.
         evervaultCard.on('change', function (data) {
           cardFormValid = !!(data && data.card && data.card.isValid);
         });
@@ -125,6 +130,57 @@
       cardFormError = 'Could not load the card form — check your connection and try again, or choose ACH instead.';
       render();
     });
+  }
+
+  // Whether the Evervault card component actually has real encrypted
+  // values ready to submit. Checking the fields directly (rather than
+  // trusting cardFormValid, whose 'change'-event shape isn't confirmed)
+  // is the authoritative check -- Alternative Payments' own vaulting call
+  // is the real validation for correctness; this is just "did they
+  // finish typing something."
+  function cardFormComplete() {
+    if (!evervaultCard) return false;
+    try {
+      var c = evervaultCard.values.card;
+      return !!(c && c.number && c.expiry && c.cvc);
+    } catch (err) {
+      return false;
+    }
+  }
+
+  // Updates the Submit button's label/disabled state directly, without a
+  // full render() -- see showFormError()'s comment for why.
+  function setSubmitButtonState() {
+    var btn = root.querySelector('[data-action="submit"]');
+    if (!btn) return;
+    btn.disabled = state.submitting;
+    btn.textContent = state.submitting ? 'Submitting…' : 'Submit';
+  }
+
+  // Shows/clears the submit error banner via direct DOM manipulation
+  // instead of a full render(). This matters specifically because
+  // render() rebuilds #app-root's innerHTML from scratch, which would
+  // destroy the mounted Evervault card iframe (wiping whatever the
+  // customer already typed) and reset the signature pad canvas on every
+  // validation error -- both very real, previously-hit bugs. Full
+  // render() is still used for the few transitions that legitimately
+  // need to swap the whole form (initial load, payment method toggle,
+  // final "Thank You" screen).
+  function showFormError(msg) {
+    state.submitError = msg;
+    var wrap = root.querySelector('.wrap');
+    if (!wrap) { render(); return; }
+    var banner = wrap.querySelector('.js-submit-error');
+    if (msg) {
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.className = 'error-banner js-submit-error';
+        wrap.insertBefore(banner, wrap.querySelector('.card'));
+      }
+      banner.textContent = msg;
+    } else if (banner) {
+      banner.remove();
+    }
   }
 
   function e(s) {
@@ -238,7 +294,7 @@
     if (state.context.account_kind === 'Commercial' && !f.business_name.trim()) return 'Business name is required for a Commercial account.';
     if (!f.payment_method) return 'Please choose a payment method.';
     if (f.payment_method === 'card') {
-      if (!evervaultCard || !cardFormValid) return 'Please complete the card form before submitting.';
+      if (!cardFormComplete()) return 'Please complete the card form before submitting.';
     } else if (f.payment_method === 'ach') {
       if (!/^\d{9}$/.test(f.bank_routing_number.trim())) return 'A valid 9-digit routing number is required.';
       if (!/^\d{4,17}$/.test(f.bank_account_number.trim())) return 'A valid bank account number is required.';
@@ -252,13 +308,12 @@
   function submit() {
     var err = validate();
     if (err) {
-      state.submitError = err;
-      render();
+      showFormError(err);
       return;
     }
     state.submitting = true;
-    state.submitError = null;
-    render();
+    showFormError(null);
+    setSubmitButtonState();
 
     var body = Object.assign({}, state.form, { signature_data_url: sigCanvas.toDataURL('image/png') });
     if (state.form.payment_method === 'card' && evervaultCard) {
@@ -273,14 +328,15 @@
       state.submitting = false;
       if (r.data && r.data.ok) {
         state.submitted = true;
+        render(); // done with the form -- safe (and expected) to fully swap to the "Thank You" screen
       } else {
-        state.submitError = (r.data && r.data.error) || 'Something went wrong submitting your sign up. Please try again, or contact CodeBlue Technology.';
+        showFormError((r.data && r.data.error) || 'Something went wrong submitting your sign up. Please try again, or contact CodeBlue Technology.');
+        setSubmitButtonState();
       }
-      render();
     }).catch(function () {
       state.submitting = false;
-      state.submitError = 'Could not reach CodeBlue Technology — check your connection and try again.';
-      render();
+      showFormError('Could not reach CodeBlue Technology — check your connection and try again.');
+      setSubmitButtonState();
     });
   }
 
@@ -316,7 +372,7 @@
       '<div class="wrap">' +
       '  <div class="letterhead"><div class="name">CodeBlue Technology</div><div class="sub">Customer Rate Sheet Sign Up</div></div>' +
 
-      (state.submitError ? '<div class="error-banner">' + e(state.submitError) + '</div>' : '') +
+      (state.submitError ? '<div class="error-banner js-submit-error">' + e(state.submitError) + '</div>' : '') +
 
       '  <div class="card">' +
       '    <div class="rate-highlight">$' + c.hourly_rate.toFixed(2) + ' <span>per hour — ' + e(locationLabel) + ' (' + e(c.account_kind) + ')</span></div>' +
@@ -418,6 +474,7 @@
       // (unlike every other field on this page) it needs a full re-render.
       if (field === 'payment_method') {
         cardFormError = null;
+        state.submitError = null;
         render();
       }
     } else if (el.hasAttribute('data-yesno')) {
