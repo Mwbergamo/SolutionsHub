@@ -140,6 +140,8 @@ if ($action === 'detail') {
         'altpay_status' => $r['altpay_status'],
         'altpay_payment_method_summary' => $r['altpay_payment_method_summary'],
         'altpay_fail_reason' => $r['altpay_fail_reason'],
+        'altpay_customer_id' => $r['altpay_customer_id'],
+        'altpay_payment_method_id' => $r['altpay_payment_method_id'],
         'invoices_emailed' => $r['invoices_emailed'] === null ? null : (bool) $r['invoices_emailed'],
         'want_copy_of_signup' => $r['want_copy_of_signup'] === null ? null : (bool) $r['want_copy_of_signup'],
         'agreed_to_terms' => (bool) $r['agreed_to_terms'],
