@@ -79,6 +79,7 @@
       '  </div>' +
 
       (r.status === 'failed' && r.fail_reason ? '  <div class="section-title">Note</div><div style="font-size:11.5px;color:#A6362B;">Account creation in ConnectWise failed at submission time — a CodeBlue Technology team member needs to finish this manually. (' + e(r.fail_reason) + ')</div>' : '') +
+      (r.altpay_status !== 'vaulted' && r.altpay_fail_reason ? '  <div class="section-title">Payment Vaulting Note</div><div style="font-size:11.5px;color:#A6362B;">' + e(r.altpay_fail_reason) + '</div>' : '') +
 
       '  <div class="section-title">Terms &amp; Conditions Presented At Signing</div>' +
       '  <div class="legal-block">' + e(r.legal_text) + '</div>' +
