@@ -758,7 +758,21 @@
     });
   }
 
-  function toggleTaskDone(taskId, completed) {
+  // formstackTab (added 2026-09-17, per Michael -- "every To-Do... completed
+  // [should] create an entry in" CBT's Outgrow/Formstack activity-tracking
+  // form) is a blank tab the caller already opened SYNCHRONOUSLY inside the
+  // click handler, before this async call started -- browsers only allow
+  // window.open() without a popup-blocker prompt when it happens directly
+  // inside a user gesture, and by the time this function's apiPost().then()
+  // callback runs, that gesture has long since ended. So the click handler
+  // opens the blank tab up front and hands it in here; this function either
+  // redirects it to the pre-filled form (completed=true, task really is now
+  // done) or closes it (completed=false, or the save failed) once it knows
+  // which. The form itself still needs a human to review and click Submit
+  // (it has a reCAPTCHA, and CBT has no Formstack API access -- see
+  // meetings.php's relationships_formstack_todo_url() for why this can't be
+  // a silent backend submission).
+  function toggleTaskDone(taskId, completed, formstackTab) {
     state.taskTogglingId = taskId;
     render();
     apiPost('api/meetings.php?action=set_task_done', { task_id: taskId, completed: completed }).then(function (r) {
@@ -767,10 +781,20 @@
         (state.meetings || []).forEach(function (m) {
           m.tasks = m.tasks.map(function (t) { return t.id === r.data.task.id ? r.data.task : t; });
         });
+        if (formstackTab) {
+          if (r.data.formstack_url) {
+            formstackTab.location.href = r.data.formstack_url;
+          } else {
+            formstackTab.close();
+          }
+        }
+      } else if (formstackTab) {
+        formstackTab.close();
       }
       render();
     }).catch(function () {
       state.taskTogglingId = null;
+      if (formstackTab) formstackTab.close();
       render();
     });
   }
@@ -3614,7 +3638,14 @@
       saveTask(parseInt(el.getAttribute('data-meeting'), 10));
     } else if (action === 'task-toggle-done') {
       var wasDone = el.getAttribute('data-completed') === '1';
-      toggleTaskDone(parseInt(el.getAttribute('data-task'), 10), !wasDone);
+      var completing = !wasDone;
+      // Reserve a blank tab HERE, synchronously inside the click gesture --
+      // see toggleTaskDone()'s formstackTab docblock for why this can't
+      // happen after the async save resolves. Only on completion, never on
+      // an un-check (matches Michael's choice: one Formstack entry per
+      // to-do, filed at completion).
+      var formstackTab = completing ? window.open('', '_blank') : null;
+      toggleTaskDone(parseInt(el.getAttribute('data-task'), 10), completing, formstackTab);
     } else if (action === 'open-customer-task') {
       openCustomerAtTask(
         parseInt(el.getAttribute('data-customer'), 10),

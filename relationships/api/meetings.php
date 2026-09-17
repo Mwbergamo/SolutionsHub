@@ -52,7 +52,22 @@
  *   SAME Activity to Closed (2026-09-17 -- see this file's header). Never
  *   creates a second Activity, and an unset (completed=false) never
  *   re-opens the Activity.
- *   -> { ok: true, task: {...} }
+ *   -> { ok: true, task: {...}, formstack_url: "https://..."|null }
+ *   formstack_url (added 2026-09-17, per Michael -- "every To-Do created
+ *   and completed [should] create an entry in" CBT's Outgrow/Formstack
+ *   activity-tracking form) is set ONLY when completed=true (per Michael's
+ *   choice -- one form entry per to-do, filed at completion, not at
+ *   creation too) -- see relationships_formstack_todo_url() below for why
+ *   this is a pre-filled URL rather than a real backend submission: the
+ *   form has a reCAPTCHA, and CBT has no Formstack API access, so app.js
+ *   opens this URL in a new tab for the rep to review and click Submit
+ *   themselves rather than silently posting on their behalf.
+ *   Null when completed=false (un-checking a to-do never re-files it).
+ *   Also currently null on the empty edge case where a customer has more
+ *   than one synced ConnectWise contact -- see the same function -- but
+ *   the URL still opens with the other fields filled in that case, just
+ *   not Client/Prospect Contact.
+ *
  *
  * GET  /relationships/api/meetings.php?action=global
  *   The master to-do dashboard's data source (Relationships front page,
@@ -173,6 +188,73 @@ function relationships_cross_customer_task_row(array $r): array
         'completed_at' => $r['completed_at'],
         'completed_by_name' => $r['completed_by_name'],
     ];
+}
+
+/**
+ * Builds a pre-filled link to CBT's Outgrow/Formstack call-activity form
+ * (added 2026-09-17, per Michael) for a just-completed to-do. NOT a real
+ * backend submission -- the form carries an invisible reCAPTCHA (confirmed
+ * by inspecting the live form: a hidden g-recaptcha-response field plus a
+ * google.com/recaptcha iframe), and CBT has no Formstack API access, so
+ * there is no way to file this from the server without either defeating
+ * that reCAPTCHA (not something this app will do) or a real API key. Per
+ * Michael's explicit choice, the rep instead gets this URL opened in a new
+ * tab, already filled in from what this app already knows, and clicks
+ * Submit themselves -- same "assist, don't impersonate" posture as every
+ * other place this app touches an outside system on a rep's behalf.
+ *
+ * Field IDs below (field190744403 etc.) were read directly off the live
+ * form on 2026-09-17 -- Formstack has no semantic field-name API, only
+ * these per-field numeric ids, confirmed stable for prefill via a test
+ * query-string load of the form (every field populated correctly).
+ * Confirmed fixed answers, per Michael's mapping in his request:
+ *   - Client/Prospect Type -- always "Current Customer" (the form's own
+ *     option text; Michael said "Current Client", closest real option).
+ *   - Proactive Call -- always "0".
+ *   - Call Type -- always "Pre Quote or Proposal F/U" (the form's own
+ *     option text; Michael said "Pre Quote Proposal F/U").
+ *   - Pivot to Sales or Next Conversation -- always "1".
+ * Every other field on the form (Success of the Week, DYK, rDYK, % of
+ * Business, Internal/External Referral Request, Hand-Written Note, the
+ * four Sales Growth Amount fields) is left blank -- none of them are
+ * required, and Michael's mapping didn't mention them.
+ *
+ * $contactName is null when this customer has zero or MORE THAN ONE
+ * synced ConnectWise contact (per Michael's explicit choice, via
+ * AskUserQuestion, over guessing which one) -- Client/Prospect Contact is
+ * then left blank on the pre-filled form rather than guessed.
+ */
+function relationships_formstack_todo_url(array $user, string $customerName, ?string $contactName, string $taskDescription): string
+{
+    $fields = [
+        'field190744403' => (string) $user['email'],
+        'field190744404' => (string) $user['name'],
+        'field190744405' => 'Current Customer',
+        'field190744406' => $customerName,
+        'field190744407' => $contactName ?? '',
+        'field190744408' => $taskDescription,
+        'field190744411' => '0',
+        'field190744412' => 'Pre Quote or Proposal F/U',
+        'field190744415' => '1',
+    ];
+    return 'https://outgrow.formstack.com/forms/oa_brittany_toler_code_blue?' . http_build_query($fields);
+}
+
+/**
+ * The customer's synced ConnectWise contact name, ONLY when there's
+ * exactly one on file (see relationships_formstack_todo_url()'s docblock
+ * for why more/fewer than one resolves to null instead of guessing).
+ */
+function relationships_single_contact_name(PDO $pdo, int $customerId): ?string
+{
+    $stmt = $pdo->prepare('SELECT first_name, last_name FROM contacts WHERE customer_id = :cid');
+    $stmt->execute([':cid' => $customerId]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    if (count($rows) !== 1) {
+        return null;
+    }
+    $name = trim($rows[0]['first_name'] . ' ' . $rows[0]['last_name']);
+    return $name !== '' ? $name : null;
 }
 
 if ($action === 'list') {
@@ -532,7 +614,8 @@ if ($action === 'set_task_done') {
     $completed = !empty($data['completed']);
 
     $taskStmt = $pdo->prepare(
-        'SELECT t.id, t.cw_activity_id, t.cw_push_status, c.territory_name
+        'SELECT t.id, t.customer_id, t.description, t.cw_activity_id, t.cw_push_status,
+                c.name AS customer_name, c.territory_name
          FROM meeting_tasks t JOIN customers c ON c.id = t.customer_id
          WHERE t.id = :id'
     );
@@ -574,13 +657,27 @@ if ($action === 'set_task_done') {
             ->execute([':id' => $taskId]);
     }
 
+    // Outgrow/Formstack call-activity form link (added 2026-09-17, per
+    // Michael) -- only on the completion path, never on an un-check, and
+    // built from data already in hand above (no extra ConnectWise round-
+    // trip; the contact lookup is a local synced-contacts table read).
+    $formstackUrl = null;
+    if ($completed) {
+        $contactName = relationships_single_contact_name($pdo, (int) $taskRow['customer_id']);
+        $formstackUrl = relationships_formstack_todo_url($user, (string) $taskRow['customer_name'], $contactName, (string) $taskRow['description']);
+    }
+
     $taskStmt = $pdo->prepare(
         'SELECT id, description, assigned_to_name, created_by_name, created_at, due_date, completed_at, completed_by_name,
                 cw_push_status, cw_push_error, cw_close_status, cw_close_error, email_status, email_error
          FROM meeting_tasks WHERE id = :id'
     );
     $taskStmt->execute([':id' => $taskId]);
-    relationships_respond(200, ['ok' => true, 'task' => relationships_meeting_task_row($taskStmt->fetch(PDO::FETCH_ASSOC))]);
+    relationships_respond(200, [
+        'ok' => true,
+        'task' => relationships_meeting_task_row($taskStmt->fetch(PDO::FETCH_ASSOC)),
+        'formstack_url' => $formstackUrl,
+    ]);
 }
 
 relationships_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
