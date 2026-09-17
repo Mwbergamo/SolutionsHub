@@ -86,6 +86,7 @@
   var altpaySdkClient = null;      // AlternativeClient instance, once created
   var altpayComponent = null;      // mounted addPaymentMethod component instance
   var altpayCustomerId = null;     // set once card-checkout-init succeeds
+  var altpayInvoiceId = null;      // throwaway invoice card-checkout-init creates -- see api/altpay.php's header for why one exists at all; archived on successful Submit
   var altpayPaymentMethodId = null;       // set once addPaymentMethod's onSuccess fires
   var altpayPaymentMethodSummary = null;  // e.g. "Visa ending 4242"
   var cardFormError = null;
@@ -130,7 +131,8 @@
       address_line2: state.form.address_line2,
       city: state.form.city,
       state: state.form.state,
-      zip: state.form.zip
+      zip: state.form.zip,
+      invoice_id: altpayInvoiceId // reuse across "use a different card" -- see api/altpay.php's header
     }).then(function (r) {
       if (!r.data || !r.data.ok) {
         cardFormLoading = false;
@@ -139,6 +141,7 @@
         return;
       }
       altpayCustomerId = r.data.customer_id;
+      altpayInvoiceId = r.data.invoice_id;
       window.__altpaySdkReady.then(function (sdk) {
         cardFormLoading = false;
         if (!sdk.ok) {
@@ -163,7 +166,8 @@
         return apiPost('api/public.php?action=card-checkout-init&t=' + encodeURIComponent(token), {
           first_name: state.form.first_name, last_name: state.form.last_name, email: state.form.email,
           business_name: state.form.business_name, address_line1: state.form.address_line1,
-          address_line2: state.form.address_line2, city: state.form.city, state: state.form.state, zip: state.form.zip
+          address_line2: state.form.address_line2, city: state.form.city, state: state.form.state, zip: state.form.zip,
+          invoice_id: altpayInvoiceId // reuse the same throwaway invoice, don't create another one
         }).then(function (r) {
           return r.data && r.data.ok ? r.data.checkout_token : null;
         });
@@ -425,6 +429,12 @@
       state.submitting = false;
       if (r.data && r.data.ok) {
         state.submitted = true;
+        if (altpayInvoiceId) {
+          // Best-effort, fire-and-forget cleanup of the throwaway invoice
+          // (see api/altpay.php's header) -- never blocks the "Thank You"
+          // screen the customer is about to see either way.
+          apiPost('api/public.php?action=card-archive-invoice&t=' + encodeURIComponent(token), { invoice_id: altpayInvoiceId }).catch(function () {});
+        }
         render(); // done with the form -- safe (and expected) to fully swap to the "Thank You" screen
       } else {
         showFormError((r.data && r.data.error) || 'Something went wrong submitting your sign up. Please try again, or contact CodeBlue Technology.');

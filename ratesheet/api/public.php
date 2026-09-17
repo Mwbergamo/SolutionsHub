@@ -16,14 +16,22 @@
  *
  * POST /ratesheet/api/public.php?action=card-checkout-init&t=<token>
  *   { first_name, last_name, email, business_name?, address_line1,
- *     address_line2?, city, state, zip }
- *   -> { ok: true, customer_id, checkout_token, expires_at, environment }
+ *     address_line2?, city, state, zip, invoice_id? }
+ *   -> { ok: true, customer_id, invoice_id, checkout_token, expires_at, environment }
  *      Creates (or reuses, if this row already has one) an Alternative
- *      Payments customer for this signup, then mints a short-lived
- *      checkout-auth token scoped to it. signup.js uses these to
+ *      Payments customer for this signup, creates a minimal throwaway
+ *      invoice (or reuses invoice_id if passed in -- a token-refresh call
+ *      shouldn't create a second one), then mints a short-lived
+ *      checkout-auth token scoped to both. signup.js uses these to
  *      initialize Alternative Payments' own Web SDK client-side and mount
  *      its `addPaymentMethod` component -- see altpay.php's header for why
- *      this replaced an earlier hand-rolled approach that didn't work.
+ *      this replaced an earlier hand-rolled approach that didn't work,
+ *      and why a throwaway invoice is involved at all.
+ *
+ * POST /ratesheet/api/public.php?action=card-archive-invoice&t=<token>
+ *   { invoice_id }
+ *   -> { ok: true } always. Best-effort cleanup of the throwaway invoice
+ *      above, called once a card is actually vaulted.
  *
  * POST /ratesheet/api/public.php?action=submit&t=<token>
  *   { first_name, last_name, email, address_line1, address_line2?, city,
@@ -178,6 +186,11 @@ if ($action === 'card-checkout-init') {
     $city = trim((string) ($input['city'] ?? ''));
     $state = trim((string) ($input['state'] ?? ''));
     $zip = trim((string) ($input['zip'] ?? ''));
+    // If signup.js already has an invoice from an earlier call on this
+    // same page load (e.g. this is a checkout-auth token refresh, not the
+    // first mount), it's passed back so we reuse it instead of creating a
+    // second throwaway invoice per card attempt.
+    $invoiceId = trim((string) ($input['invoice_id'] ?? ''));
 
     if ($firstName === '' || $lastName === '' || $email === '' || $addr1 === '' || $city === '' || $state === '' || $zip === '') {
         ratesheet_respond(400, ['ok' => false, 'error' => 'Please fill in your name, email, and address before adding a card.']);
@@ -188,7 +201,10 @@ if ($action === 'card-checkout-init') {
 
     try {
         $customerId = ratesheet_altpay_ensure_customer_for_row($pdo, $row, $companyName, $email, $addr1, $addr2, $city, $state, $zip);
-        $checkoutAuth = ratesheet_altpay_checkout_auth_token($customerId);
+        if ($invoiceId === '') {
+            $invoiceId = ratesheet_altpay_create_placeholder_invoice($customerId);
+        }
+        $checkoutAuth = ratesheet_altpay_checkout_auth_token($customerId, $invoiceId);
     } catch (Throwable $e) {
         error_log('[ratesheet/public] card-checkout-init failed for request ' . $row['id'] . ': ' . $e->getMessage());
         // TEMPORARY DEBUG (2026-09-17, follow-up #3): same reasoning as the
@@ -203,10 +219,30 @@ if ($action === 'card-checkout-init') {
     ratesheet_respond(200, [
         'ok' => true,
         'customer_id' => $customerId,
+        'invoice_id' => $invoiceId,
         'checkout_token' => $checkoutAuth['token'],
         'expires_at' => $checkoutAuth['expires_at'],
         'environment' => $config['environment'] ?? 'staging',
     ]);
+}
+
+/**
+ * Best-effort cleanup of the throwaway invoice card-checkout-init created
+ * (see altpay.php's header for why one exists at all) -- called by
+ * signup.js once addPaymentMethod's onSuccess actually fires. Always
+ * responds ok:true; archiving is housekeeping, never something a signup
+ * should fail over. No customer/business data is echoed back.
+ */
+if ($action === 'card-archive-invoice') {
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        ratesheet_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
+    }
+    $input = ratesheet_read_json_body();
+    $invoiceId = trim((string) ($input['invoice_id'] ?? ''));
+    if ($invoiceId !== '') {
+        ratesheet_altpay_archive_invoice($invoiceId);
+    }
+    ratesheet_respond(200, ['ok' => true]);
 }
 
 if ($action === 'submit') {
