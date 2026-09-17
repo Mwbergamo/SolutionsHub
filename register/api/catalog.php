@@ -92,6 +92,14 @@
  * scanning a part's box label is almost always scanning one of those two,
  * not a separate UPC.
  *
+ * GET  /register/api/catalog.php?action=lookup&identifier=9999
+ *   -> { ok: true, item: { id, identifier, description, price, on_hand,
+ *          track_inventory, inactive_flag, ... } | null }
+ *   Exact-identifier lookup for one specific item, WITHOUT the inactive_
+ *   flag=0 filter 'list' applies -- see its docblock comment above the
+ *   'lookup' action for why (added 2026-09-17, System Prep flat-fee
+ *   button).
+ *
  * GET  /register/api/catalog.php?action=sync-status
  * POST /register/api/catalog.php?action=sync-start
  * POST /register/api/catalog.php?action=sync-step
@@ -265,6 +273,47 @@ if ($action === 'list') {
     }
 
     register_respond(200, ['ok' => true, 'items' => $filtered]);
+}
+
+if ($action === 'lookup') {
+    // Exact-identifier lookup for one specific catalog item, regardless of
+    // active/inactive status (added 2026-09-17 for the computer builder's
+    // System Prep flat-fee button). Deliberately does NOT filter
+    // inactive_flag=0 the way 'list' (including its identifiers= exact-
+    // match path) does above -- that filter is correct for anything meant
+    // to be browsed/sold as a normal product, but System Prep needs to
+    // resolve to its real ConnectWise-synced catalog record (for COGS/
+    // reporting linkage, per Michael's explicit choice -- see
+    // register-computer-upsell-builder.md) even if ConnectWise has it
+    // marked inactive there. checkout.php's own catalog lookup already has
+    // no inactive_flag filter, so this doesn't introduce any new ability
+    // to actually charge for an inactive item -- it only lets the UI find
+    // one that checkout.php could already resolve by id.
+    $identifier = trim((string) ($_GET['identifier'] ?? ''));
+    if ($identifier === '') {
+        register_respond(400, ['ok' => false, 'error' => 'identifier is required.']);
+    }
+    $lookupStmt = $pdo->prepare(
+        'SELECT id, cw_catalog_id, identifier, description, customer_description,
+                category_name, subcategory_name, price, on_hand, taxable_flag,
+                track_inventory, inactive_flag
+         FROM catalog_items
+         WHERE identifier COLLATE NOCASE = :identifier
+         LIMIT 1'
+    );
+    $lookupStmt->execute([':identifier' => $identifier]);
+    $lookupItem = $lookupStmt->fetch(PDO::FETCH_ASSOC);
+    if ($lookupItem === false) {
+        register_respond(200, ['ok' => true, 'item' => null]);
+    }
+    $lookupItem['id'] = (int) $lookupItem['id'];
+    $lookupItem['cw_catalog_id'] = (int) $lookupItem['cw_catalog_id'];
+    $lookupItem['price'] = (float) $lookupItem['price'];
+    $lookupItem['on_hand'] = (float) $lookupItem['on_hand'];
+    $lookupItem['taxable_flag'] = (int) $lookupItem['taxable_flag'];
+    $lookupItem['track_inventory'] = (int) $lookupItem['track_inventory'];
+    $lookupItem['inactive_flag'] = (int) $lookupItem['inactive_flag'];
+    register_respond(200, ['ok' => true, 'item' => $lookupItem]);
 }
 
 if ($action === 'type-menu') {

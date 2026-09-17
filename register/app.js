@@ -141,6 +141,9 @@
     // entries if an identifier isn't in the synced catalog).
     protectionPlanItems: null,
     protectionPlanLoading: false,
+    systemPrepItem: null,
+    systemPrepChecked: false,
+    systemPrepLoading: false,
 
     checkoutOpen: false,
     checkoutSubmitting: false,
@@ -839,8 +842,7 @@
   function loadProtectionPlanItems() {
     if (state.protectionPlanItems !== null || state.protectionPlanLoading) return;
     state.protectionPlanLoading = true;
-    var idents = PROTECTION_PLAN_ITEMS_DEF.map(function (d) { return d.identifier; })
-      .concat([SYSTEM_PREP_ITEM_DEF.identifier]).join(',');
+    var idents = PROTECTION_PLAN_ITEMS_DEF.map(function (d) { return d.identifier; }).join(',');
     apiGet('api/catalog.php?action=list&identifiers=' + encodeURIComponent(idents)).then(function (r) {
       state.protectionPlanLoading = false;
       state.protectionPlanItems = (r.data && r.data.ok) ? r.data.items : [];
@@ -848,6 +850,29 @@
     }).catch(function () {
       state.protectionPlanLoading = false;
       state.protectionPlanItems = [];
+      render();
+    });
+  }
+
+  // System Prep (added 2026-09-17) is looked up separately from the
+  // Protection Plan batch above, via catalog.php's action=lookup -- which,
+  // unlike action=list's identifiers= filter, does NOT exclude
+  // inactive_flag=1 rows. System Prep needs to resolve to its real catalog
+  // record even if ConnectWise has it marked inactive there (it's a
+  // one-time labor charge, not something meant to be generally browsed/
+  // sold like the other Protection Plan items).
+  function loadSystemPrepItem() {
+    if (state.systemPrepChecked || state.systemPrepLoading) return;
+    state.systemPrepLoading = true;
+    apiGet('api/catalog.php?action=lookup&identifier=' + encodeURIComponent(SYSTEM_PREP_ITEM_DEF.identifier)).then(function (r) {
+      state.systemPrepLoading = false;
+      state.systemPrepChecked = true;
+      state.systemPrepItem = (r.data && r.data.ok) ? r.data.item : null;
+      render();
+    }).catch(function () {
+      state.systemPrepLoading = false;
+      state.systemPrepChecked = true;
+      state.systemPrepItem = null;
       render();
     });
   }
@@ -867,6 +892,7 @@
       extraSearchLoading: false
     };
     loadProtectionPlanItems();
+    loadSystemPrepItem();
     render();
   }
 
@@ -972,20 +998,14 @@
       var pItem = protectionSource.filter(function (i) { return i.id === Number(idStr); })[0];
       if (pItem) addItemToCartDirect(pItem, 1);
     });
-    if (b.systemPrepSelected) {
-      var spSource = state.protectionPlanItems || [];
-      var spItem = spSource.filter(function (i) {
-        return i.identifier && i.identifier.toUpperCase() === SYSTEM_PREP_ITEM_DEF.identifier.toUpperCase();
-      })[0];
-      if (spItem) {
-        addItemToCartDirect(spItem, 1);
-        // Display the flat $180 in the cart regardless of whatever price is
-        // currently synced from ConnectWise for this item -- checkout.php
-        // enforces the same fixed price server-side (never trusts this),
-        // this is purely so the register's own preview matches the receipt.
-        var spLine = state.cart.filter(function (c) { return c.catalog_item_id === spItem.id; })[0];
-        if (spLine) spLine.unit_price = SYSTEM_PREP_ITEM_DEF.flatPrice;
-      }
+    if (b.systemPrepSelected && state.systemPrepItem) {
+      addItemToCartDirect(state.systemPrepItem, 1);
+      // Display the flat $180 in the cart regardless of whatever price is
+      // currently synced from ConnectWise for this item -- checkout.php
+      // enforces the same fixed price server-side (never trusts this),
+      // this is purely so the register's own preview matches the receipt.
+      var spLine = state.cart.filter(function (c) { return c.catalog_item_id === state.systemPrepItem.id; })[0];
+      if (spLine) spLine.unit_price = SYSTEM_PREP_ITEM_DEF.flatPrice;
     }
     b.extras.forEach(function (e) { addItemToCartDirect(e.item, e.quantity); });
     state.computerBuilder = null;
@@ -2502,20 +2522,15 @@
     }
 
     var systemPrepHtml;
-    if (state.protectionPlanLoading) {
+    if (state.systemPrepLoading) {
       systemPrepHtml = '<div class="cb-protection-loading">Loading…</div>';
+    } else if (!state.systemPrepItem) {
+      systemPrepHtml = '<div class="cb-protection-unavailable-note">System Prep not in catalog (' +
+        escapeHtml(SYSTEM_PREP_ITEM_DEF.identifier) + ')</div>';
     } else {
-      var spByIdentifier = {};
-      (state.protectionPlanItems || []).forEach(function (i) { spByIdentifier[i.identifier.toUpperCase()] = i; });
-      var spFound = spByIdentifier[SYSTEM_PREP_ITEM_DEF.identifier.toUpperCase()];
-      if (!spFound) {
-        systemPrepHtml = '<div class="cb-protection-unavailable-note">System Prep not in catalog (' +
-          escapeHtml(SYSTEM_PREP_ITEM_DEF.identifier) + ')</div>';
-      } else {
-        systemPrepHtml = '<button type="button" class="cb-system-prep-btn' + (b.systemPrepSelected ? ' selected' : '') + '" data-action="cb-system-prep-toggle">' +
-          escapeHtml(SYSTEM_PREP_ITEM_DEF.fallbackLabel) + ' — ' + fmtMoney(SYSTEM_PREP_ITEM_DEF.flatPrice) + ' flat' +
-        '</button>';
-      }
+      systemPrepHtml = '<button type="button" class="cb-system-prep-btn' + (b.systemPrepSelected ? ' selected' : '') + '" data-action="cb-system-prep-toggle">' +
+        escapeHtml(SYSTEM_PREP_ITEM_DEF.fallbackLabel) + ' — ' + fmtMoney(SYSTEM_PREP_ITEM_DEF.flatPrice) + ' flat' +
+      '</button>';
     }
 
     var extrasRows = b.extras.map(function (e) {
