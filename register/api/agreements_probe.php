@@ -242,7 +242,48 @@ if ($sampleAgreementId !== null) {
     ];
 }
 
-// 7. Best-effort OpenAPI/Swagger document probe -- see docblock. Tries the
+// 7. Added after round 1: Michael wants the invoice set to "Approved"
+//    rather than fully closed (closing appeared to post a real GL/
+//    accounting batch on every closed sample in round 1 -- see
+//    register-agreement-billing-probe-findings.md). Round 1 only ever
+//    observed "Closed" (id 3) and "Closed - Emailed" (id 6) on real
+//    invoices, never "Approved" -- these two steps find its real
+//    {id, name} shape before any write code assumes one.
+$report['invoice_statuses_endpoint'] = probe_safe(function () {
+    // A dedicated reference-list endpoint, if this instance has one --
+    // separate resource from /finance/agreements/statuses (which 404'd
+    // in round 1), so worth trying on its own rather than assuming the
+    // same 404.
+    return register_cw_request('/finance/invoices/statuses', ['pageSize' => '100'], 'GET', null, 20, 8);
+});
+
+$report['invoice_status_catalog_sample'] = probe_safe(function () {
+    // No dedicated reference endpoint may exist, so fall back to scanning
+    // a broader sample of real invoices (id/status/date only, to keep the
+    // payload small) and returning the distinct status values actually
+    // seen -- including, hopefully, "Approved".
+    $rows = register_cw_request(
+        '/finance/invoices',
+        ['fields' => 'id,status,date', 'pageSize' => '100', 'page' => '1'],
+        'GET',
+        null,
+        25,
+        8
+    );
+    $distinct = [];
+    foreach ($rows as $row) {
+        $status = $row['status'] ?? null;
+        if (is_array($status) && isset($status['id'])) {
+            $distinct[(int) $status['id']] = $status;
+        }
+    }
+    return [
+        'invoices_scanned' => count($rows),
+        'distinct_statuses_found' => array_values($distinct),
+    ];
+});
+
+// 8. Best-effort OpenAPI/Swagger document probe -- see docblock. Tries the
 //    instance root's most likely documented location; capped download,
 //    allowed to fail without affecting anything above.
 $report['openapi_spec_probe'] = probe_safe(function () {
