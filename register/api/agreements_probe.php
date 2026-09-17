@@ -85,6 +85,18 @@
  *                                 dump alone can't reveal. Download is
  *                                 capped and this step is allowed to fail
  *                                 without affecting the rest of the report.
+ *
+ * Round 2 (after Michael's "change the status to approved for now" answer)
+ * added: invoice_statuses_endpoint, invoice_status_catalog_sample.
+ * Round 3 (after Michael named "ZZ Agreement Test Company") added:
+ * test_company_lookup.
+ * Round 4 (this round -- neither of round 2/3's new steps found what they
+ * were looking for) adds: invoice_status_direct_query (queries for
+ * status/name="Approved" directly instead of scanning), invoice_status_
+ * recent_scan (same scan as round 2 but ordered by id desc, in case
+ * "Approved" invoices exist but are newer than anything the unsorted scan
+ * reached), and test_company_broad_search (searches for just "ZZ" instead
+ * of the exact phrase, since the exact phrase matched nothing).
  */
 
 declare(strict_types=1);
@@ -340,6 +352,75 @@ $report['test_company_lookup'] = probe_safe(function () {
     }
 
     return $result;
+});
+
+// 10. Added after round 2's result: invoice_status_catalog_sample only
+//     found "Closed" and "Closed - Emailed" among the first 100 invoices
+//     (default/unsorted order -- apparently old, already-closed records,
+//     ids in the 77-2963 range dated 2009-2010). Rather than hoping a
+//     bigger unsorted scan eventually reaches an "Approved" one, query for
+//     it directly by name -- a single-field condition, consistent with
+//     this app's "no compound and/or conditions" rule. If ConnectWise
+//     really has no invoice sitting in "Approved" status right now, this
+//     comes back empty, which is itself the answer (it would mean every
+//     invoice on this instance is either closed or still fully open/never
+//     approved -- worth knowing either way).
+$report['invoice_status_direct_query'] = probe_safe(function () {
+    return register_cw_request(
+        '/finance/invoices',
+        ['conditions' => 'status/name="Approved"', 'fields' => 'id,status,date,applyToType,applyToId', 'pageSize' => '10', 'page' => '1'],
+        'GET',
+        null,
+        20,
+        8
+    );
+});
+
+// 11. Same goal as #10, different angle: reorder the general scan to look
+//     at the MOST RECENT invoices instead of relying on default/unsorted
+//     order, in case "Approved" invoices exist but are simply newer than
+//     anything round 2's unsorted scan happened to reach. orderBy is a
+//     documented ConnectWise list-endpoint parameter (separate from
+//     conditions), so this is a genuinely different query, not a repeat.
+$report['invoice_status_recent_scan'] = probe_safe(function () {
+    $rows = register_cw_request(
+        '/finance/invoices',
+        ['fields' => 'id,status,date', 'pageSize' => '100', 'page' => '1', 'orderBy' => 'id desc'],
+        'GET',
+        null,
+        25,
+        8
+    );
+    $distinct = [];
+    foreach ($rows as $row) {
+        $status = $row['status'] ?? null;
+        if (is_array($status) && isset($status['id'])) {
+            $distinct[(int) $status['id']] = $status;
+        }
+    }
+    return [
+        'invoices_scanned' => count($rows),
+        'newest_id_seen' => $rows[0]['id'] ?? null,
+        'oldest_id_seen' => $rows[count($rows) - 1]['id'] ?? null,
+        'distinct_statuses_found' => array_values($distinct),
+    ];
+});
+
+// 12. test_company_lookup (step 9) found zero matches for the exact phrase
+//     "ZZ Agreement Test Company". Rather than guess at the real spelling,
+//     search broadly for just "ZZ" -- CBT's own naming convention for
+//     throwaway/test records elsewhere in this project has used a "ZZ"
+//     prefix, so this should surface the real company (whatever its exact
+//     full name is) if one like it exists at all.
+$report['test_company_broad_search'] = probe_safe(function () {
+    return register_cw_request(
+        '/company/companies',
+        ['conditions' => 'name like "%' . register_cw_condition_escape('ZZ') . '%"', 'fields' => 'id,identifier,name,status', 'pageSize' => '20', 'page' => '1'],
+        'GET',
+        null,
+        20,
+        8
+    );
 });
 
 register_respond(200, [
