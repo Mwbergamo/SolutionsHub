@@ -65,10 +65,20 @@
  * Round 1 successfully created a real Agreement (id 3328) and Addition (id
  * 11004) against Bergamo Test Account, but the invoice-create attempt
  * (applyToType/applyToId only) came back HTTP 400: ConnectWise also
- * requires `type` and `company` on that payload. Round 2 (this version)
- * adds a best-effort invoice-type lookup and retries invoice creation with
- * both fields included -- the idempotency guards above mean the already-
- * created Agreement/Addition are reused, not duplicated, on this next run.
+ * requires `type` and `company` on that payload. Round 2 added a
+ * best-effort invoice-type lookup and retries invoice creation with both
+ * fields included.
+ *
+ * Round 3 (this version) fixes a real bug Michael caught: `$today` was
+ * computed in UTC, not CBT's own Eastern timezone, so the round-1/2
+ * agreement/addition came back dated for the NEXT calendar day whenever
+ * the script ran after 8pm Eastern. Per Michael: "Both need to start at
+ * the moment of sale or CWM won't be able to generate an invoice." This
+ * round both fixes the date computation going forward AND corrects the
+ * already-created Agreement 3328 / Addition 11004 in place via a
+ * full-record PUT if their stored dates don't match today's correct local
+ * date (the idempotency guards above mean they're reused, not duplicated,
+ * either way).
  */
 
 declare(strict_types=1);
@@ -124,7 +134,32 @@ const TEST_PRODUCT_IDENTIFIER = 'SENT-ONE-CTRL';
 // flow will set billingCycle based on what's selected at the register.
 const TEST_BILLING_CYCLE_ID = 2; // "Monthly"
 
-$today = (new DateTimeImmutable('today', new DateTimeZone('UTC')))->format('Y-m-d') . 'T00:00:00Z';
+// Round 3 fix: this MUST be computed in CBT's own local timezone (Eastern
+// -- Richmond, VA), not UTC. Round 1/2 used UTC's "today", which is why
+// the agreement/addition Michael reviewed came back dated for the next
+// calendar day: any register sale made after 8pm Eastern (7pm during EST)
+// has already rolled over to tomorrow in UTC, even though it's still
+// today for the customer and for CBT's own books. Per Michael: "Both need
+// to start at the moment of sale or CWM won't be able to generate an
+// invoice." The real checkout-flow write code must make this same fix --
+// flagged in the findings doc so it isn't reintroduced there.
+$today = (new DateTimeImmutable('today', new DateTimeZone('America/New_York')))->format('Y-m-d') . 'T00:00:00Z';
+
+/**
+ * Full-record PUT (fetch already done by caller, changes already merged
+ * in) -- the only confirmed-working ConnectWise update mechanism in this
+ * codebase. PATCH is confirmed broken for the Company entity elsewhere in
+ * this project (see register-app.md's Company PATCH quirk); this project
+ * has never updated an Agreement or Addition before, so PUT is used here
+ * on that same precedent rather than guessing PATCH behaves differently.
+ * Strips `_info` (read-only HATEOAS metadata ConnectWise includes on GET
+ * but doesn't need back) before sending.
+ */
+function register_cw_put_full(string $path, array $record): array
+{
+    unset($record['_info']);
+    return register_cw_request($path, [], 'PUT', $record, 25, 8);
+}
 
 $report = [];
 
@@ -188,6 +223,34 @@ if ($agreementId !== null) {
     $report['agreement_readback'] = step_safe(function () use ($agreementId) {
         return register_cw_request('/finance/agreements/' . $agreementId, [], 'GET', null, 20, 8);
     });
+}
+
+// 3b. Round 3 fix: if the stored startDate doesn't match today's correct
+//     local (Eastern) date -- e.g. a round-1/2 agreement created with the
+//     old UTC-based date bug -- correct it via a full-record PUT rather
+//     than leaving a wrongly-dated test agreement in place. billStartDate
+//     is corrected the same way since it was observed matching startDate
+//     on create and isn't recalculated automatically by ConnectWise on a
+//     plain PUT.
+if ($agreementId !== null && !empty($report['agreement_readback']['ok'])) {
+    $agreementRecord = $report['agreement_readback']['data'];
+    $storedDate = substr((string) ($agreementRecord['startDate'] ?? ''), 0, 10);
+    $correctDate = substr($today, 0, 10);
+    if ($storedDate !== '' && $storedDate !== $correctDate) {
+        $report['agreement_date_fix'] = step_safe(function () use ($agreementId, $agreementRecord, $today) {
+            $updated = $agreementRecord;
+            $updated['startDate'] = $today;
+            $updated['billStartDate'] = $today;
+            return register_cw_put_full('/finance/agreements/' . $agreementId, $updated);
+        });
+        if ($report['agreement_date_fix']['ok']) {
+            $report['agreement_readback'] = step_safe(function () use ($agreementId) {
+                return register_cw_request('/finance/agreements/' . $agreementId, [], 'GET', null, 20, 8);
+            });
+        }
+    } else {
+        $report['agreement_date_fix'] = ['ok' => true, 'data' => 'Skipped -- stored startDate (' . $storedDate . ') already matches today\'s correct local date.'];
+    }
 }
 
 // 4. Look up the real catalog product id for the test Addition.
@@ -266,6 +329,29 @@ if ($additionId !== null && $agreementId !== null) {
     $report['addition_readback'] = step_safe(function () use ($agreementId, $additionId) {
         return register_cw_request('/finance/agreements/' . $agreementId . '/additions/' . $additionId, [], 'GET', null, 20, 8);
     });
+}
+
+// 7b. Round 3 fix: same date correction as 3b, for the Addition's
+//     effectiveDate (its own "start date" field -- see
+//     register-agreement-billing-probe-findings.md).
+if ($additionId !== null && $agreementId !== null && !empty($report['addition_readback']['ok'])) {
+    $additionRecord = $report['addition_readback']['data'];
+    $storedDate = substr((string) ($additionRecord['effectiveDate'] ?? ''), 0, 10);
+    $correctDate = substr($today, 0, 10);
+    if ($storedDate !== '' && $storedDate !== $correctDate) {
+        $report['addition_date_fix'] = step_safe(function () use ($agreementId, $additionId, $additionRecord, $today) {
+            $updated = $additionRecord;
+            $updated['effectiveDate'] = $today;
+            return register_cw_put_full('/finance/agreements/' . $agreementId . '/additions/' . $additionId, $updated);
+        });
+        if ($report['addition_date_fix']['ok']) {
+            $report['addition_readback'] = step_safe(function () use ($agreementId, $additionId) {
+                return register_cw_request('/finance/agreements/' . $agreementId . '/additions/' . $additionId, [], 'GET', null, 20, 8);
+            });
+        }
+    } else {
+        $report['addition_date_fix'] = ['ok' => true, 'data' => 'Skipped -- stored effectiveDate (' . $storedDate . ') already matches today\'s correct local date.'];
+    }
 }
 
 // 8. Reuse an existing invoice linked to this agreement if one's already
