@@ -152,6 +152,23 @@ function register_migrate(PDO $pdo): void
     register_add_column_if_missing($pdo, 'sales', 'tax_code_id', 'INTEGER');
     register_add_column_if_missing($pdo, 'sales', 'tax_code_identifier', 'TEXT');
     register_add_column_if_missing($pdo, 'sales', 'tax_rate', 'REAL');
+    // Added 2026-09-17 for task #91 -- Protection Plan items become
+    // recurring ConnectWise Agreement Additions (see
+    // register-agreement-billing-probe-findings.md in the project for the
+    // full field-shape/gotcha discovery process behind agreement_sync.php).
+    // cw_agreement_id/cw_billing_cycle snapshot which ConnectWise "IT
+    // Services Agreement" (if any) this sale's Protection Plan items were
+    // added to, and which cycle (Monthly/Annual) was chosen at checkout --
+    // both null for a sale with no Protection Plan items. agreement_warning
+    // is set (and NEVER blocks/rolls back the sale -- it has already been
+    // paid for by the time this step runs) if the ConnectWise sync failed
+    // after the sale itself was already recorded; same "fail open with a
+    // warning" pattern as tax_warning above, but persisted on the row
+    // (rather than only shown once on the receipt) since this needs an
+    // actual human follow-up in ConnectWise, not just a heads-up.
+    register_add_column_if_missing($pdo, 'sales', 'cw_agreement_id', 'INTEGER');
+    register_add_column_if_missing($pdo, 'sales', 'cw_billing_cycle', 'TEXT');
+    register_add_column_if_missing($pdo, 'sales', 'agreement_warning', 'TEXT');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales(created_at)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_sales_user ON sales(user_id)');
 
@@ -185,6 +202,14 @@ function register_migrate(PDO $pdo): void
     // before this column existed default to 0 (not retroactively knowable),
     // which only affects historical metrics for dates before this shipped.
     register_add_column_if_missing($pdo, 'sale_items', 'is_protection_plan', 'INTEGER NOT NULL DEFAULT 0');
+    // Added 2026-09-17, same feature as sales.cw_agreement_id above -- the
+    // specific ConnectWise Agreement Addition id created (or reused, though
+    // in practice a given item is only ever added once per sale) for this
+    // line item, when it's a Protection Plan item that synced successfully.
+    // Null for every non-Protection-Plan item, and for a Protection Plan
+    // item sold before this column existed or whose sync failed (see
+    // sales.agreement_warning).
+    register_add_column_if_missing($pdo, 'sale_items', 'cw_addition_id', 'INTEGER');
 
     // Queue of ConnectWise Procurement Catalog items to (re)sync -- added
     // 2026-09-12 after a real "Sync failed — check your connection" error

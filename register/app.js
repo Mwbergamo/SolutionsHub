@@ -138,7 +138,7 @@
     // checkout from the customer's live ConnectWise Tax Code (see
     // api/checkout.php), never entered manually. checkoutModalHtml() shows
     // a computed preview instead (see customer.taxCode).
-    checkoutForm: { payment_method: 'card', payment_reference: '', note: '' },
+    checkoutForm: { payment_method: 'card', payment_reference: '', note: '', billing_cycle: 'monthly' },
 
     // Customer (Company/Contact) resolution -- added 2026-09-14, replacing
     // the old free-text customer_name field. Per Michael: live ConnectWise
@@ -969,6 +969,35 @@
     return state.cart.reduce(function (sum, c) { return sum + (c.taxable_flag ? c.unit_price * c.quantity : 0); }, 0);
   }
 
+  // Task #91 (added 2026-09-17) -- true when the cart has at least one
+  // Protection Plan (Agreement-class, track_inventory=0) item, i.e. the
+  // checkout modal needs to show the Monthly/Annual billing-cycle picker
+  // at all. Mirrors api/checkout.php's own is_protection_plan flag.
+  function cartHasProtectionPlanItems() {
+    return state.cart.some(function (c) { return !c.track_inventory; });
+  }
+
+  // Per Michael's explicit pricing decision: choosing "Annual" charges a
+  // Protection Plan line item's full year upfront at the register (12x
+  // catalog price x quantity) instead of the plain catalog price;
+  // "Monthly" (and every non-Protection-Plan item, regardless of cycle)
+  // charges the plain catalog price. Mirrors api/checkout.php's own
+  // server-side $cycleMultiplier -- the server never trusts this client
+  // total, it's a preview only, but kept in sync deliberately so the
+  // preview matches what's actually charged.
+  function checkoutLineTotal(c) {
+    var annual = state.checkoutForm.billing_cycle === 'annual' && !c.track_inventory;
+    return c.unit_price * c.quantity * (annual ? 12 : 1);
+  }
+
+  function checkoutSubtotal() {
+    return state.cart.reduce(function (sum, c) { return sum + checkoutLineTotal(c); }, 0);
+  }
+
+  function checkoutTaxableSubtotal() {
+    return state.cart.reduce(function (sum, c) { return sum + (c.taxable_flag ? checkoutLineTotal(c) : 0); }, 0);
+  }
+
   function round2(n) {
     return Math.round((Number(n) || 0) * 100) / 100;
   }
@@ -976,7 +1005,7 @@
   function resetSale() {
     state.cart = [];
     state.receipt = null;
-    state.checkoutForm = { payment_method: 'card', payment_reference: '', note: '' };
+    state.checkoutForm = { payment_method: 'card', payment_reference: '', note: '', billing_cycle: 'monthly' };
     state.checkoutError = null;
     resetCustomerState();
     render();
@@ -1398,6 +1427,7 @@
     // charged.
     apiPost('api/checkout.php?action=create', {
       items: state.cart.map(function (c) { return { catalog_item_id: c.catalog_item_id, quantity: c.quantity }; }),
+      billing_cycle: form.billing_cycle,
       payment_method: form.payment_method,
       payment_reference: form.payment_reference,
       cw_company_id: state.customer.companyId,
@@ -2322,14 +2352,15 @@
     var c = state.customer;
     var resolved = !!(c.companyId && c.contactId);
     var rateKnown = resolved && c.taxCode && typeof c.taxCode.rate === 'number';
-    var amount = rateKnown ? round2(cartTaxableSubtotal() * c.taxCode.rate) : 0;
+    var amount = rateKnown ? round2(checkoutTaxableSubtotal() * c.taxCode.rate) : 0;
     return { resolved: resolved, rateKnown: rateKnown, amount: amount, taxCode: c.taxCode };
   }
 
   function checkoutModalHtml() {
     if (!state.checkoutOpen) return '';
     var f = state.checkoutForm;
-    var subtotal = cartSubtotal();
+    var hasProtectionPlanInCart = cartHasProtectionPlanItems();
+    var subtotal = checkoutSubtotal();
     var preview = checkoutTaxPreview();
     var total = subtotal + preview.amount;
     var customerResolved = !!(state.customer.companyId && state.customer.contactId);
@@ -2348,11 +2379,31 @@
       taxValue = '—';
     }
 
+    // Task #91 -- only shown when this sale actually has a Protection
+    // Plan item; a ConnectWise Agreement has one billing cycle for
+    // everything on it, so this is one choice for the whole sale, not
+    // per line item. Changing it updates the totals below live.
+    var billingCycleHtml = '';
+    if (hasProtectionPlanInCart) {
+      billingCycleHtml =
+        '<label>Protection Plan Billing</label>' +
+        '<select data-action="billing-cycle-select">' +
+          '<option value="monthly"' + (f.billing_cycle === 'annual' ? '' : ' selected') + '>Monthly — charge today\'s price now</option>' +
+          '<option value="annual"' + (f.billing_cycle === 'annual' ? ' selected' : '') + '>Annual — charge a full year now</option>' +
+        '</select>' +
+        '<div class="checkout-billing-note">' +
+          (f.billing_cycle === 'annual'
+            ? 'Protection Plan item(s) charged 12\u00d7 today; billed annually going forward.'
+            : 'Protection Plan item(s) charged at today\'s price; billed monthly going forward.') +
+        '</div>';
+    }
+
     return (
       '<div class="modal-backdrop" data-action="close-checkout-backdrop">' +
         '<div class="modal checkout-modal" data-stop-propagation="1">' +
           '<div class="modal-title">Complete Sale</div>' +
           (state.checkoutError ? '<div class="error-banner">' + escapeHtml(state.checkoutError) + '</div>' : '') +
+          billingCycleHtml +
           '<div class="checkout-summary">' +
             '<div class="checkout-summary-row"><span>Subtotal</span><span>' + fmtMoney(subtotal) + '</span></div>' +
             '<div class="checkout-summary-row">' +
@@ -2708,6 +2759,7 @@
               '<div class="receipt-meta">Sale #' + r.id + ' — ' + fmtTimestamp(r.created_at) + '</div>' +
               '<div class="receipt-meta">Rung up by ' + escapeHtml(r.cashier_name) + '</div>' +
               (customerLineHtml(r) ? '<div class="receipt-meta">Customer: ' + customerLineHtml(r) + '</div>' : '') +
+              (r.cw_agreement_id ? '<div class="receipt-meta">IT Services Agreement #' + r.cw_agreement_id + (r.cw_billing_cycle ? ' (' + r.cw_billing_cycle.charAt(0).toUpperCase() + r.cw_billing_cycle.slice(1) + ')' : '') + '</div>' : '') +
             '</div>' +
             '<div class="receipt-items">' + itemsHtml + '</div>' +
             '<div class="receipt-totals">' +
@@ -2720,6 +2772,7 @@
             '<div class="receipt-footer">Thank you!</div>' +
           '</div>' +
           (r.tax_warning ? '<div class="error-banner customer-warning no-print">' + escapeHtml(r.tax_warning) + '</div>' : '') +
+          (r.agreement_warning ? '<div class="error-banner customer-warning no-print">' + escapeHtml(r.agreement_warning) + '</div>' : '') +
           '<div class="modal-actions no-print">' +
             '<button type="button" class="modal-cancel" data-action="close-receipt">Close</button>' +
             '<button type="button" class="modal-confirm" data-action="print-receipt">Print Receipt</button>' +
@@ -3052,8 +3105,8 @@
       else if (action === 'signup-tax-exempt-toggle') handler = function () { state.newCustomerSignup.taxExempt = !state.newCustomerSignup.taxExempt; render(); };
       else if (action === 'mark-tax-exempt') handler = markCustomerTaxExempt;
       else if (action === 'customer-new-company-tax-exempt-toggle') handler = function () { state.customerUi.newCompanyForm.tax_exempt = !state.customerUi.newCompanyForm.tax_exempt; render(); };
-      else if (action === 'close-receipt') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'card', payment_reference: '', note: '' }; resetCustomerState(); render(); };
-      else if (action === 'close-receipt-backdrop') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'card', payment_reference: '', note: '' }; resetCustomerState(); render(); };
+      else if (action === 'close-receipt') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'card', payment_reference: '', note: '', billing_cycle: 'monthly' }; resetCustomerState(); render(); };
+      else if (action === 'close-receipt-backdrop') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'card', payment_reference: '', note: '', billing_cycle: 'monthly' }; resetCustomerState(); render(); };
       else if (action === 'print-receipt') handler = function () { window.print(); };
       else if (action === 'view-receipt') handler = function () { viewPastReceipt(el.dataset.id); };
       else if (action === 'returns-queue-filter') handler = function () { setReturnsQueueFilter(el.dataset.value); };
@@ -3119,6 +3172,15 @@
     if (paymentSelect) {
       paymentSelect.addEventListener('change', function () {
         state.checkoutForm.payment_method = paymentSelect.value;
+      });
+    }
+    // Task #91 -- re-renders (unlike payment-method-select above) because
+    // this choice changes the displayed Subtotal/Tax/Total right above it.
+    var billingCycleSelect = root.querySelector('[data-action="billing-cycle-select"]');
+    if (billingCycleSelect) {
+      billingCycleSelect.addEventListener('change', function () {
+        state.checkoutForm.billing_cycle = billingCycleSelect.value;
+        render();
       });
     }
     var paymentRefInput = root.querySelector('[data-action="payment-reference-input"]');

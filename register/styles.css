@@ -266,6 +266,11 @@ a { color: inherit; }
 }
 
 .checkout-summary { background: oklch(0.94 0.006 255); border-radius: 12px; padding: 14px 16px; margin-bottom: 6px; }
+
+/* Task #91 (added 2026-09-17) -- the checkout modal's Monthly/Annual
+   Protection Plan billing-cycle note, same treatment as the computer
+   builder's .cb-protection-unavailable-note. */
+.checkout-billing-note { font-size: 11px; color: oklch(0.55 0.02 255); margin: -4px 0 10px; }
 .checkout-summary-row { display: flex; align-items: center; justify-content: space-between; font-size: 14px; padding: 5px 0; }
 .checkout-summary-row.total { font-weight: 700; font-size: 16px; border-top: 1px solid oklch(0.85 0.006 255); margin-top: 6px; padding-top: 10px; }
 

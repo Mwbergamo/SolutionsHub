@@ -23,12 +23,15 @@
  *     payment_reference: "...",      // optional, e.g. last 4 / check #
  *     cw_company_id, cw_company_name,  // REQUIRED -- see below
  *     cw_contact_id, cw_contact_name,  // REQUIRED -- see below
+ *     billing_cycle: "monthly"|"annual", // optional, default "monthly" -- see below
  *     note: "..." }                  // optional
  *   -> { ok: true, sale: { id, created_at, subtotal, tax_amount, tax_rate,
  *          tax_code_id, tax_code_identifier, total, payment_method,
  *          payment_reference, cw_company_id, cw_company_name, cw_contact_id,
- *          cw_contact_name, customer_name, cashier_name,
- *          items: [ { identifier, description, unit_price, quantity, line_total } ] } }
+ *          cw_contact_name, customer_name, cashier_name, cw_agreement_id,
+ *          cw_billing_cycle, agreement_warning,
+ *          items: [ { identifier, description, unit_price, quantity,
+ *            line_total, is_protection_plan, cw_addition_id } ] } }
  *
  * Sales tax (added 2026-09-16) is computed server-side, never trusted from
  * the client: only catalog_items.taxable_flag=1 line items count toward the
@@ -50,6 +53,40 @@
  * checkout can complete. The old free-text customer_name column still
  * exists (for pre-2026-09-14 sale history) but is no longer written.
  *
+ * Protection Plan items (task #91, added 2026-09-17 -- see
+ * agreement_sync.php and register-agreement-billing-probe-findings.md in
+ * the attached Claude Project for the full field-shape discovery process):
+ * any line item that is Agreement-class (catalog_items.track_inventory=0,
+ * `is_protection_plan` below -- the same flag the Metrics screen's
+ * "Protection Plan Sales" count already uses) gets added as a real
+ * ConnectWise Agreement Addition once this sale completes, on the
+ * customer's "IT Services Agreement" (created if they don't already have
+ * one, reused if they do -- see agreement_sync.php). `billing_cycle`
+ * ('monthly' or 'annual', chosen by the cashier once per sale -- a
+ * ConnectWise Agreement has only one billing cycle for everything on it,
+ * never per-item) ONLY affects a brand-new Agreement's cycle; it has no
+ * effect when reusing an existing one, which keeps whatever cycle it was
+ * originally created with. Per Michael's explicit pricing decision: when
+ * `billing_cycle` is "annual", each Protection Plan line item's
+ * `line_total` charged today is 12x its catalog price x quantity (a full
+ * year collected upfront at the register); "monthly" charges the plain
+ * catalog price, same as any other item, with future months billed
+ * through the Agreement itself. This multiplier is computed server-side,
+ * same "never trust the client's math" rule as tax -- see the
+ * `$cycleMultiplier` line below. This ConnectWise sync step NEVER blocks
+ * or rolls back the sale (money has already changed hands by the time it
+ * runs) -- any failure is recorded as `agreement_warning` on the sale row
+ * and in the response, for manual follow-up in ConnectWise, exactly like
+ * `tax_warning` already works for a failed tax lookup.
+ *
+ * OUT OF SCOPE, per Michael (2026-09-17): this does NOT create or close an
+ * invoice. Live testing proved ConnectWise's REST API explicitly refuses
+ * to create Agreement invoices at all ("Cannot create agreement invoices
+ * through the Invoicing API") -- see the findings doc. Per Michael, CBT's
+ * own existing process handles this downstream: a human runs Agreement
+ * Invoicing, and card/ACH payments are batched and run at the end of each
+ * day, applied to invoices once they exist.
+ *
  * GET /register/api/checkout.php?action=receipt&id=123
  *   -> same `sale` shape as above, for reprinting/re-viewing a past sale.
  *
@@ -64,6 +101,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/connectwise.php';
 require_once __DIR__ . '/tax-core.php';
+require_once __DIR__ . '/agreement_sync.php';
 
 register_install_error_handlers();
 
@@ -124,6 +162,17 @@ if ($action === 'create') {
     $cwContactId = isset($data['cw_contact_id']) ? (int) $data['cw_contact_id'] : 0;
     $cwContactName = trim((string) ($data['cw_contact_name'] ?? ''));
 
+    // Task #91 -- one Monthly/Annual choice for the whole sale (a
+    // ConnectWise Agreement has a single billing cycle, never per-item --
+    // see this file's docblock). Any unrecognized/missing value quietly
+    // defaults to monthly rather than failing the sale over a bad value;
+    // it's meaningless anyway unless this sale actually has a Protection
+    // Plan item in it.
+    $billingCycle = strtolower(trim((string) ($data['billing_cycle'] ?? 'monthly')));
+    if (!in_array($billingCycle, ['monthly', 'annual'], true)) {
+        $billingCycle = 'monthly';
+    }
+
     $validMethods = ['card', 'check', 'other'];
     if (!in_array($paymentMethod, $validMethods, true)) {
         register_respond(400, ['ok' => false, 'error' => 'Choose a payment method (card, check, or other).']);
@@ -140,10 +189,15 @@ if ($action === 'create') {
     // catalog_item_id + quantity. Also re-checks on_hand here (not just in
     // the UI) so two registers ringing up the same last unit at once can't
     // both succeed.
-    $lookup = $pdo->prepare('SELECT id, identifier, description, price, on_hand, track_inventory, taxable_flag FROM catalog_items WHERE id = :id');
+    $lookup = $pdo->prepare('SELECT id, cw_catalog_id, identifier, description, price, on_hand, track_inventory, taxable_flag FROM catalog_items WHERE id = :id');
     $lineItems = [];
     $subtotal = 0.0;
     $taxableSubtotal = 0.0;
+    // Task #91 -- every Protection Plan (Agreement-class) line item in
+    // this sale, collected as we go so the ConnectWise Agreement/Addition
+    // sync (after the sale is committed, below) has exactly what it needs
+    // without a second pass over the catalog.
+    $protectionPlanLines = [];
 
     foreach ($rawItems as $raw) {
         $catalogItemId = (int) ($raw['catalog_item_id'] ?? 0);
@@ -169,8 +223,17 @@ if ($action === 'create') {
             ]);
         }
 
+        $isProtectionPlan = !$trackInventory;
+        // Task #91: an "annual" sale charges a Protection Plan item's full
+        // year upfront at the register (12x catalog price x quantity)
+        // instead of the plain catalog price a "monthly" sale charges --
+        // Michael's explicit pricing decision. Every other item (including
+        // a "monthly" Protection Plan item) is unaffected by billing_cycle.
+        // Computed server-side, never trusted from the client, same as the
+        // rest of this pricing block.
+        $cycleMultiplier = ($isProtectionPlan && $billingCycle === 'annual') ? 12 : 1;
         $unitPrice = (float) $row['price'];
-        $lineTotal = round($unitPrice * $quantity, 2);
+        $lineTotal = round($unitPrice * $quantity * $cycleMultiplier, 2);
         $subtotal += $lineTotal;
         $taxable = (int) ($row['taxable_flag'] ?? 0) === 1;
         if ($taxable) {
@@ -189,8 +252,17 @@ if ($action === 'create') {
             // so the Metrics screen's "Protection Plan Sales" count never
             // depends on catalog_items still classifying this item the same
             // way later. See db.php's sale_items migration comment.
-            'is_protection_plan' => !$trackInventory,
+            'is_protection_plan' => $isProtectionPlan,
         ];
+
+        if ($isProtectionPlan) {
+            $protectionPlanLines[] = [
+                'catalog_item_id' => $catalogItemId,
+                'cw_catalog_id' => (int) $row['cw_catalog_id'],
+                'quantity' => $quantity,
+                'identifier' => $row['identifier'],
+            ];
+        }
     }
 
     $subtotal = round($subtotal, 2);
@@ -225,11 +297,18 @@ if ($action === 'create') {
     $taxAmount = round($taxableSubtotal * $taxRate, 2);
     $total = round($subtotal + $taxAmount, 2);
 
+    // Task #91: cw_billing_cycle is recorded on every sale that has at
+    // least one Protection Plan item, whether or not the ConnectWise sync
+    // below succeeds -- it reflects what the cashier chose and what the
+    // customer was actually charged, independent of that sync's outcome.
+    // Null when there's nothing for it to describe.
+    $saleBillingCycle = $protectionPlanLines !== [] ? $billingCycle : null;
+
     $pdo->beginTransaction();
     try {
         $insertSale = $pdo->prepare(
-            'INSERT INTO sales (user_id, subtotal, tax_amount, tax_code_id, tax_code_identifier, tax_rate, total, payment_method, payment_reference, cw_company_id, cw_company_name, cw_contact_id, cw_contact_name, note)
-             VALUES (:user_id, :subtotal, :tax_amount, :tax_code_id, :tax_code_identifier, :tax_rate, :total, :payment_method, :payment_reference, :cw_company_id, :cw_company_name, :cw_contact_id, :cw_contact_name, :note)'
+            'INSERT INTO sales (user_id, subtotal, tax_amount, tax_code_id, tax_code_identifier, tax_rate, total, payment_method, payment_reference, cw_company_id, cw_company_name, cw_contact_id, cw_contact_name, cw_billing_cycle, note)
+             VALUES (:user_id, :subtotal, :tax_amount, :tax_code_id, :tax_code_identifier, :tax_rate, :total, :payment_method, :payment_reference, :cw_company_id, :cw_company_name, :cw_contact_id, :cw_contact_name, :cw_billing_cycle, :note)'
         );
         $insertSale->execute([
             ':user_id' => $user['id'],
@@ -245,6 +324,7 @@ if ($action === 'create') {
             ':cw_company_name' => $cwCompanyName,
             ':cw_contact_id' => $cwContactId,
             ':cw_contact_name' => $cwContactName,
+            ':cw_billing_cycle' => $saleBillingCycle,
             ':note' => $note,
         ]);
         $saleId = (int) $pdo->lastInsertId();
@@ -277,9 +357,49 @@ if ($action === 'create') {
         register_respond(500, ['ok' => false, 'error' => 'Could not save this sale — nothing was charged or recorded. Try again.']);
     }
 
+    // Task #91: the ConnectWise Agreement/Addition sync happens here, AFTER
+    // the sale is already committed -- deliberately outside the DB
+    // transaction above and never able to undo it. The customer has
+    // already been charged by this point, so a ConnectWise failure here
+    // (network error, a real validation error, anything) must only ever
+    // produce a warning for a human to follow up on, never fail or roll
+    // back a sale that already happened. See agreement_sync.php's own
+    // docblock for the full reasoning and the confirmed field shapes this
+    // is built from.
+    $agreementWarning = null;
+    if ($protectionPlanLines !== []) {
+        $agreementResult = register_sync_protection_plan_agreement($cwCompanyId, $cwContactId, $billingCycle, $protectionPlanLines);
+        if (!$agreementResult['ok']) {
+            $agreementWarning = 'Could not sync this sale\'s Protection Plan item(s) to ConnectWise'
+                . ($agreementResult['agreement_id'] !== null ? ' (Agreement #' . $agreementResult['agreement_id'] . ')' : '')
+                . ' -- ' . $agreementResult['error'] . '. Add the item(s) to the customer\'s IT Services Agreement manually in ConnectWise.';
+        }
+
+        $updateSale = $pdo->prepare('UPDATE sales SET cw_agreement_id = :aid, agreement_warning = :warn WHERE id = :id');
+        $updateSale->execute([
+            ':aid' => $agreementResult['agreement_id'],
+            ':warn' => $agreementWarning,
+            ':id' => $saleId,
+        ]);
+
+        if ($agreementResult['addition_ids'] !== []) {
+            $updateAddition = $pdo->prepare('UPDATE sale_items SET cw_addition_id = :addition_id WHERE sale_id = :sale_id AND catalog_item_id = :catalog_item_id');
+            foreach ($agreementResult['addition_ids'] as $catalogItemId => $additionId) {
+                $updateAddition->execute([
+                    ':addition_id' => $additionId,
+                    ':sale_id' => $saleId,
+                    ':catalog_item_id' => $catalogItemId,
+                ]);
+            }
+        }
+    }
+
     $response = ['ok' => true, 'sale' => register_load_receipt($pdo, $saleId)];
     if ($taxWarning !== null) {
         $response['tax_warning'] = $taxWarning;
+    }
+    if ($agreementWarning !== null) {
+        $response['agreement_warning'] = $agreementWarning;
     }
     register_respond(200, $response);
 }
@@ -292,7 +412,8 @@ function register_load_receipt(PDO $pdo, int $saleId): ?array
         'SELECT s.id, s.created_at, s.subtotal, s.tax_amount, s.tax_code_id, s.tax_code_identifier,
                 s.tax_rate, s.total, s.payment_method,
                 s.payment_reference, s.customer_name, s.cw_company_id, s.cw_company_name,
-                s.cw_contact_id, s.cw_contact_name, s.note, u.name AS cashier_name
+                s.cw_contact_id, s.cw_contact_name, s.cw_agreement_id, s.cw_billing_cycle,
+                s.agreement_warning, s.note, u.name AS cashier_name
          FROM sales s
          JOIN register_users u ON u.id = s.user_id
          WHERE s.id = :id'
@@ -310,9 +431,10 @@ function register_load_receipt(PDO $pdo, int $saleId): ?array
     $sale['total'] = (float) $sale['total'];
     $sale['cw_company_id'] = $sale['cw_company_id'] !== null ? (int) $sale['cw_company_id'] : null;
     $sale['cw_contact_id'] = $sale['cw_contact_id'] !== null ? (int) $sale['cw_contact_id'] : null;
+    $sale['cw_agreement_id'] = $sale['cw_agreement_id'] !== null ? (int) $sale['cw_agreement_id'] : null;
 
     $itemsStmt = $pdo->prepare(
-        'SELECT id AS sale_item_id, identifier, description, unit_price, quantity, line_total, is_protection_plan
+        'SELECT id AS sale_item_id, identifier, description, unit_price, quantity, line_total, is_protection_plan, cw_addition_id
          FROM sale_items WHERE sale_id = :id ORDER BY id'
     );
     $itemsStmt->execute([':id' => $saleId]);
@@ -323,6 +445,7 @@ function register_load_receipt(PDO $pdo, int $saleId): ?array
         $item['quantity'] = (float) $item['quantity'];
         $item['line_total'] = (float) $item['line_total'];
         $item['is_protection_plan'] = (int) $item['is_protection_plan'] === 1;
+        $item['cw_addition_id'] = $item['cw_addition_id'] !== null ? (int) $item['cw_addition_id'] : null;
     }
     unset($item);
     $sale['items'] = $items;
