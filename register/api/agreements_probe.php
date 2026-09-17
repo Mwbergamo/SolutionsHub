@@ -423,6 +423,49 @@ $report['test_company_broad_search'] = probe_safe(function () {
     );
 });
 
+// 13. Added after round 4's result: Michael clarified that "Approved" is
+//     not the invoice.status field we've been probing (id 3/6/9/10/14) --
+//     it's a separate "Billing Status" field on the invoice, changeable
+//     from "New" to "Approved" at create time. Not seen in any invoice
+//     sample so far (all of round 1-4's samples were old, pre-2011
+//     records), so this is either a genuinely separate REST field this
+//     app hasn't requested yet, or a custom field (UDF) CBT added to the
+//     Invoice screen -- this app already has one confirmed precedent for
+//     a CBT-added UDF (the "Vendor" custom field on Agreement Additions,
+//     id 52, found in sample_agreement_additions above). Fetches the
+//     newest few invoices with customFields explicitly requested to see
+//     if a "Billing Status" UDF shows up on a real, recent record.
+$report['invoice_customfields_recent'] = probe_safe(function () {
+    return register_cw_request(
+        '/finance/invoices',
+        ['fields' => 'id,invoiceNumber,date,status,customFields', 'pageSize' => '5', 'page' => '1', 'orderBy' => 'id desc'],
+        'GET',
+        null,
+        20,
+        8
+    );
+});
+
+// 14. Same goal as #13, different angle: query ConnectWise's own UDF
+//     (user-defined field) catalog directly for anything captioned
+//     "Billing Status", rather than hoping it shows up populated on a
+//     handful of sampled invoices (a UDF with no value set often doesn't
+//     appear as a key at all). This is the same kind of system reference
+//     list as /finance/agreements/types above, just for
+//     /system/userDefinedFields -- single-field condition, allowed to
+//     fail without affecting anything else if the endpoint or field name
+//     is wrong.
+$report['invoice_billing_status_udf_lookup'] = probe_safe(function () {
+    return register_cw_request(
+        '/system/userDefinedFields',
+        ['conditions' => 'caption like "%' . register_cw_condition_escape('Billing Status') . '%"', 'pageSize' => '20', 'page' => '1'],
+        'GET',
+        null,
+        20,
+        8
+    );
+});
+
 register_respond(200, [
     'ok' => true,
     'note' => 'Read-only diagnostic. No ConnectWise records were created, changed, or deleted by this request.',
