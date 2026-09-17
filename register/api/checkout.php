@@ -87,6 +87,18 @@
  * Invoicing, and card/ACH payments are batched and run at the end of each
  * day, applied to invoices once they exist.
  *
+ * Flat-fee items (added 2026-09-17, see REGISTER_FLAT_FEE_OVERRIDES below):
+ * some catalog identifiers (e.g. '9999', "System Prep") are non-inventoried
+ * ConnectWise service items -- same as a real recurring Protection Plan
+ * item as far as `track_inventory` is concerned -- but are actually a
+ * one-time labor charge, not a recurring managed service. Per Michael's
+ * explicit choice, these stay linked to their real ConnectWise catalog
+ * record (for COGS/reporting) but always charge a fixed price here
+ * (ignoring whatever's currently synced in catalog_items.price) and are
+ * NEVER treated as Agreement-class/Protection Plan -- they're excluded from
+ * `is_protection_plan`, the annual/monthly cycle multiplier, and the
+ * Agreement/Addition sync (agreement_sync.php) entirely.
+ *
  * GET /register/api/checkout.php?action=receipt&id=123
  *   -> same `sale` shape as above, for reprinting/re-viewing a past sale.
  *
@@ -104,6 +116,25 @@ require_once __DIR__ . '/tax-core.php';
 require_once __DIR__ . '/agreement_sync.php';
 
 register_install_error_handlers();
+
+/**
+ * Catalog identifiers that always charge a fixed price here, regardless of
+ * whatever ConnectWise's synced catalog_items.price currently says, and are
+ * NEVER treated as Agreement-class/Protection Plan even if ConnectWise has
+ * them flagged track_inventory=0 (a non-inventoried service item).
+ *
+ * Added 2026-09-17 for "System Prep" (catalog identifier '9999'): a one-time
+ * $180 prep-labor charge, not a recurring managed service. Michael's
+ * explicit choice was to keep it linked to its real ConnectWise catalog
+ * record (for COGS/reporting) but exclude it from the Agreement/Addition
+ * automation task #91 built for genuine recurring Protection Plan items,
+ * and to always charge $180 here rather than whatever price happens to be
+ * synced from ConnectWise for that item. Matched case-insensitively against
+ * catalog_items.identifier below.
+ */
+const REGISTER_FLAT_FEE_OVERRIDES = [
+    '9999' => 180.00,
+];
 
 $pdo = register_db();
 $user = register_require_login($pdo);
@@ -223,16 +254,28 @@ if ($action === 'create') {
             ]);
         }
 
-        $isProtectionPlan = !$trackInventory;
+        // Flat-fee override (added 2026-09-17, see REGISTER_FLAT_FEE_OVERRIDES
+        // above) -- a fixed price ignoring catalog_items.price, and never
+        // Agreement-class no matter what track_inventory says.
+        $flatFeePrice = null;
+        foreach (REGISTER_FLAT_FEE_OVERRIDES as $flatIdentifier => $flatPrice) {
+            if (strcasecmp(trim((string) $row['identifier']), (string) $flatIdentifier) === 0) {
+                $flatFeePrice = (float) $flatPrice;
+                break;
+            }
+        }
+        $isFlatFee = $flatFeePrice !== null;
+
+        $isProtectionPlan = !$trackInventory && !$isFlatFee;
         // Task #91: an "annual" sale charges a Protection Plan item's full
         // year upfront at the register (12x catalog price x quantity)
         // instead of the plain catalog price a "monthly" sale charges --
         // Michael's explicit pricing decision. Every other item (including
-        // a "monthly" Protection Plan item) is unaffected by billing_cycle.
-        // Computed server-side, never trusted from the client, same as the
-        // rest of this pricing block.
+        // a "monthly" Protection Plan item, and any flat-fee item) is
+        // unaffected by billing_cycle. Computed server-side, never trusted
+        // from the client, same as the rest of this pricing block.
         $cycleMultiplier = ($isProtectionPlan && $billingCycle === 'annual') ? 12 : 1;
-        $unitPrice = (float) $row['price'];
+        $unitPrice = $isFlatFee ? $flatFeePrice : (float) $row['price'];
         $lineTotal = round($unitPrice * $quantity * $cycleMultiplier, 2);
         $subtotal += $lineTotal;
         $taxable = (int) ($row['taxable_flag'] ?? 0) === 1;

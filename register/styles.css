@@ -393,6 +393,20 @@ a { color: inherit; }
 .cb-protection-unavailable-note { font-size: 11px; color: oklch(0.55 0.02 255); }
 .cb-protection-loading { font-size: 12.5px; color: oklch(0.5 0.02 255); margin-top: 8px; }
 
+/* System Prep flat-fee toggle button (added 2026-09-17) -- a single
+   on/off button rather than a checkbox row, mirroring how the Solutions
+   Creator portal renders a one-choice "chip" option for the same item.
+   Unlike .cb-protection-item, this never shows a live catalog price: the
+   $180 is a fixed flat fee (see SYSTEM_PREP_ITEM_DEF / checkout.php's
+   REGISTER_FLAT_FEE_OVERRIDES), so the label states it plainly. */
+.cb-system-prep-wrap { margin-top: 8px; }
+.cb-system-prep-btn {
+  border: 1px solid oklch(0.8 0.006 255); border-radius: 999px; padding: 9px 16px;
+  font-size: 13px; font-weight: 700; cursor: pointer; font-family: 'IBM Plex Sans', sans-serif;
+  background: oklch(0.96 0.006 255); color: oklch(0.3 0.02 255);
+}
+.cb-system-prep-btn.selected { background: #2f8fef; border-color: #2f8fef; color: white; }
+
 .cb-extra-search-wrap { position: relative; margin-top: 8px; }
 .cb-extra-search-wrap input {
   width: 100%; font-size: 13.5px; padding: 10px 12px; border: 1px solid oklch(0.85 0.006 255);

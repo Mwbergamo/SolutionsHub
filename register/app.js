@@ -40,12 +40,23 @@
   // synced catalog (inactive, renamed, or not yet synced) -- real items
   // always show their live catalog name/description/price instead.
   var PROTECTION_PLAN_ITEMS_DEF = [
-    { identifier: 'CBT-CBYERBSEC-PRO', fallbackLabel: 'Cyber Security Pro' },
-    { identifier: '9999', fallbackLabel: 'System Prep' },
+    { identifier: 'CBT-CYBERSEC-PRO', fallbackLabel: 'Cyber Security Pro' },
     { identifier: 'Automate-Agent', fallbackLabel: 'Remote Control Support' },
     { identifier: 'Automate-Patch', fallbackLabel: 'CodeBlue Patch Management' },
     { identifier: 'SENT-ONE-CTRL', fallbackLabel: 'Managed Anti-Virus Protection' }
   ];
+
+  // System Prep (added 2026-09-17): a one-time $180 prep-labor charge, not
+  // a recurring managed service -- deliberately kept OUT of
+  // PROTECTION_PLAN_ITEMS_DEF so it's never swept into the Agreement/
+  // Addition flow (task #91). Rendered as its own flat-fee toggle button in
+  // the computer builder, mirroring the Solutions Creator's single-choice
+  // "chip" treatment for this same item. Still resolves to a real catalog
+  // item (identifier '9999', for ConnectWise-side COGS/reporting linkage)
+  // but always charges $180 -- checkout.php enforces the same fixed price
+  // and Agreement-exclusion server-side (see REGISTER_FLAT_FEE_OVERRIDES),
+  // so this flatPrice is a display value only, never trusted on its own.
+  var SYSTEM_PREP_ITEM_DEF = { identifier: '9999', fallbackLabel: 'System Prep', flatPrice: 180 };
 
   var root = document.getElementById('app-root');
 
@@ -828,7 +839,8 @@
   function loadProtectionPlanItems() {
     if (state.protectionPlanItems !== null || state.protectionPlanLoading) return;
     state.protectionPlanLoading = true;
-    var idents = PROTECTION_PLAN_ITEMS_DEF.map(function (d) { return d.identifier; }).join(',');
+    var idents = PROTECTION_PLAN_ITEMS_DEF.map(function (d) { return d.identifier; })
+      .concat([SYSTEM_PREP_ITEM_DEF.identifier]).join(',');
     apiGet('api/catalog.php?action=list&identifiers=' + encodeURIComponent(idents)).then(function (r) {
       state.protectionPlanLoading = false;
       state.protectionPlanItems = (r.data && r.data.ok) ? r.data.items : [];
@@ -848,6 +860,7 @@
       item: item,
       quantity: 1,
       selectedProtectionIds: {},
+      systemPrepSelected: false,
       extras: [],
       extraSearch: '',
       extraSearchResults: [],
@@ -874,6 +887,12 @@
     catalogItemId = Number(catalogItemId);
     var sel = state.computerBuilder.selectedProtectionIds;
     if (sel[catalogItemId]) { delete sel[catalogItemId]; } else { sel[catalogItemId] = true; }
+    render();
+  }
+
+  function toggleBuilderSystemPrep() {
+    if (!state.computerBuilder) return;
+    state.computerBuilder.systemPrepSelected = !state.computerBuilder.systemPrepSelected;
     render();
   }
 
@@ -953,6 +972,21 @@
       var pItem = protectionSource.filter(function (i) { return i.id === Number(idStr); })[0];
       if (pItem) addItemToCartDirect(pItem, 1);
     });
+    if (b.systemPrepSelected) {
+      var spSource = state.protectionPlanItems || [];
+      var spItem = spSource.filter(function (i) {
+        return i.identifier && i.identifier.toUpperCase() === SYSTEM_PREP_ITEM_DEF.identifier.toUpperCase();
+      })[0];
+      if (spItem) {
+        addItemToCartDirect(spItem, 1);
+        // Display the flat $180 in the cart regardless of whatever price is
+        // currently synced from ConnectWise for this item -- checkout.php
+        // enforces the same fixed price server-side (never trusts this),
+        // this is purely so the register's own preview matches the receipt.
+        var spLine = state.cart.filter(function (c) { return c.catalog_item_id === spItem.id; })[0];
+        if (spLine) spLine.unit_price = SYSTEM_PREP_ITEM_DEF.flatPrice;
+      }
+    }
     b.extras.forEach(function (e) { addItemToCartDirect(e.item, e.quantity); });
     state.computerBuilder = null;
     render();
@@ -2467,6 +2501,23 @@
       }).join('');
     }
 
+    var systemPrepHtml;
+    if (state.protectionPlanLoading) {
+      systemPrepHtml = '<div class="cb-protection-loading">Loading…</div>';
+    } else {
+      var spByIdentifier = {};
+      (state.protectionPlanItems || []).forEach(function (i) { spByIdentifier[i.identifier.toUpperCase()] = i; });
+      var spFound = spByIdentifier[SYSTEM_PREP_ITEM_DEF.identifier.toUpperCase()];
+      if (!spFound) {
+        systemPrepHtml = '<div class="cb-protection-unavailable-note">System Prep not in catalog (' +
+          escapeHtml(SYSTEM_PREP_ITEM_DEF.identifier) + ')</div>';
+      } else {
+        systemPrepHtml = '<button type="button" class="cb-system-prep-btn' + (b.systemPrepSelected ? ' selected' : '') + '" data-action="cb-system-prep-toggle">' +
+          escapeHtml(SYSTEM_PREP_ITEM_DEF.fallbackLabel) + ' — ' + fmtMoney(SYSTEM_PREP_ITEM_DEF.flatPrice) + ' flat' +
+        '</button>';
+      }
+    }
+
     var extrasRows = b.extras.map(function (e) {
       return '<div class="cb-extra-item">' +
         '<div class="cb-extra-main">' +
@@ -2505,6 +2556,7 @@
         var pItem = (state.protectionPlanItems || []).filter(function (i) { return i.id === Number(idStr); })[0];
         return sum + (pItem ? pItem.price : 0);
       }, 0) +
+      (b.systemPrepSelected ? SYSTEM_PREP_ITEM_DEF.flatPrice : 0) +
       b.extras.reduce(function (sum, e) { return sum + e.item.price * e.quantity; }, 0);
 
     return (
@@ -2526,6 +2578,9 @@
 
           '<div class="cb-section-label">Protection Plan Upsells</div>' +
           '<div class="cb-protection-list">' + protectionRows + '</div>' +
+
+          '<div class="cb-section-label">System Prep</div>' +
+          '<div class="cb-system-prep-wrap">' + systemPrepHtml + '</div>' +
 
           '<div class="cb-section-label">Other Parts &amp; Services</div>' +
           '<div class="cb-extra-search-wrap">' +
@@ -3042,6 +3097,7 @@
       else if (action === 'cb-qty-inc') handler = function () { setBuilderQuantity(state.computerBuilder.quantity + 1); };
       else if (action === 'cb-qty-dec') handler = function () { setBuilderQuantity(state.computerBuilder.quantity - 1); };
       else if (action === 'cb-protection-toggle') handler = function () { toggleBuilderProtection(el.dataset.id); };
+      else if (action === 'cb-system-prep-toggle') handler = toggleBuilderSystemPrep;
       else if (action === 'cb-extra-add') handler = function () { addBuilderExtra(el.dataset.id); };
       else if (action === 'cb-extra-remove') handler = function () { setBuilderExtraQty(el.dataset.id, 0); };
       else if (action === 'cb-extra-qty-inc') handler = function () {
