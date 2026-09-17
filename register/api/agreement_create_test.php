@@ -61,6 +61,14 @@
  * `fields` param sent on the read-backs, so whatever ConnectWise actually
  * populated -- including, hopefully, whatever field "Billing Status"
  * really is -- shows up in full).
+ *
+ * Round 1 successfully created a real Agreement (id 3328) and Addition (id
+ * 11004) against Bergamo Test Account, but the invoice-create attempt
+ * (applyToType/applyToId only) came back HTTP 400: ConnectWise also
+ * requires `type` and `company` on that payload. Round 2 (this version)
+ * adds a best-effort invoice-type lookup and retries invoice creation with
+ * both fields included -- the idempotency guards above mean the already-
+ * created Agreement/Addition are reused, not duplicated, on this next run.
  */
 
 declare(strict_types=1);
@@ -281,24 +289,57 @@ if ($agreementId !== null) {
     }
 }
 
-// 9. Create the Invoice, only if step 8 didn't find one to reuse. Sent with
-//    the minimal payload on purpose -- the whole point of this step is to
-//    observe what ConnectWise actually defaults `status` (and hopefully
-//    "Billing Status") to on a freshly created invoice, not to guess and
-//    force a value. Nothing here closes or approves anything.
+// 9. Round 2: the first attempt (applyToType/applyToId only) came back
+//    HTTP 400 -- ConnectWise requires `type` and `company` on the invoice
+//    create payload too. Look up this instance's real invoice types before
+//    retrying, same "probe before guessing" discipline as everywhere else.
+$invoiceTypeId = null;
 if ($agreementId !== null && $invoiceId === null) {
-    $report['invoice_create'] = step_safe(function () use ($agreementId) {
-        return register_cw_request(
-            '/finance/invoices',
-            [],
-            'POST',
-            [
-                'applyToType' => 'Agreement',
-                'applyToId' => $agreementId,
-            ],
-            25,
-            8
-        );
+    $report['invoice_type_lookup'] = step_safe(function () {
+        return register_cw_request('/finance/invoices/types', ['pageSize' => '50', 'page' => '1'], 'GET', null, 20, 8);
+    });
+    if ($report['invoice_type_lookup']['ok']) {
+        $types = $report['invoice_type_lookup']['data'];
+        $preferredNames = ['Agreement', 'Standard'];
+        foreach ($preferredNames as $preferredName) {
+            foreach ($types as $t) {
+                if (($t['name'] ?? null) === $preferredName && empty($t['inactiveFlag'])) {
+                    $invoiceTypeId = (int) $t['id'];
+                    break 2;
+                }
+            }
+        }
+        if ($invoiceTypeId === null) {
+            foreach ($types as $t) {
+                if (empty($t['inactiveFlag'])) {
+                    $invoiceTypeId = (int) $t['id'];
+                    break;
+                }
+            }
+        }
+        if ($invoiceTypeId === null && !empty($types[0]['id'])) {
+            $invoiceTypeId = (int) $types[0]['id'];
+        }
+    }
+    $report['invoice_type_id_chosen'] = $invoiceTypeId;
+}
+
+// 10. Create the Invoice, only if step 8 didn't find one to reuse. Payload
+//     is otherwise still minimal on purpose -- the whole point of this
+//     step is to observe what ConnectWise actually defaults `status` (and
+//     hopefully "Billing Status") to on a freshly created invoice, not to
+//     guess and force a value. Nothing here closes or approves anything.
+if ($agreementId !== null && $invoiceId === null) {
+    $report['invoice_create'] = step_safe(function () use ($agreementId, $invoiceTypeId) {
+        $payload = [
+            'applyToType' => 'Agreement',
+            'applyToId' => $agreementId,
+            'company' => ['id' => TEST_COMPANY_ID],
+        ];
+        if ($invoiceTypeId !== null) {
+            $payload['type'] = ['id' => $invoiceTypeId];
+        }
+        return register_cw_request('/finance/invoices', [], 'POST', $payload, 25, 8);
     });
     if ($report['invoice_create']['ok'] && !empty($report['invoice_create']['data']['id'])) {
         $invoiceId = (int) $report['invoice_create']['data']['id'];
