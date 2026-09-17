@@ -11,17 +11,27 @@
  * signup time. Same self-contained-sub-app copy pattern as
  * connectwise.php (see that file's header).
  *
- * Flow (see public.php's ?action=submit for where this is called):
+ * Flow (see public.php's ?action=card-checkout-init and ?action=submit):
  *   1. altpay_get_access_token()       -- OAuth client_credentials grant
  *   2. altpay_create_customer()        -- POST /customers (one per rate
  *                                          sheet signup; external_id ties
  *                                          it back to our own row)
- *   3a. Card: the browser never sends us a raw card number. It mounts
- *       Evervault's Inputs card form (see signup.js), which encrypts the
- *       card fields client-side. Those encrypted values are relayed
- *       through to Alternative Payments via altpay_create_card_payment_method().
- *   3b. Bank (ACH): Alternative Payments' payment-methods/bank endpoint
- *       takes the routing/account number directly -- there's no
+ *   3a. Card: CORRECTED 2026-09-17 (follow-up #3, after a live 500 from
+ *       POST /customers/{id}/payment-methods/card). Alternative Payments'
+ *       own docs are explicit that there is NO supported way to build a
+ *       "card_provider_token" ourselves and POST it directly -- the only
+ *       supported path is their own Web SDK's `addPaymentMethod`
+ *       component (loaded client-side in signup.js/signup.html), which
+ *       mounts Evervault's card form AND calls the payment-methods/card
+ *       endpoint internally. This file's role for card is now just
+ *       handing the browser a checkout-auth token scoped to the
+ *       already-created customer (altpay_checkout_auth_token()) --
+ *       public.php never calls a card-vaulting endpoint itself anymore.
+ *       (The earlier ratesheet_altpay_card_form_credentials() /
+ *       ratesheet_altpay_create_card_payment_method() functions that
+ *       hand-rolled this are gone -- they were the bug.)
+ *   3b. Bank (ACH): unchanged. Alternative Payments' payment-methods/bank
+ *       endpoint takes the routing/account number directly -- there's no
  *       client-side tokenization step documented for bank accounts the
  *       way there is for cards. So the raw routing/account number DOES
  *       pass through our own public.php for a bank signup (over HTTPS,
@@ -31,18 +41,14 @@
  *       discarded. Only Alternative Payments' own payment_method id and
  *       a redacted display string ("Bank ending 6789") are saved.
  *
- * *** IMPORTANT -- UNVERIFIED AGAINST A REAL SANDBOX ***
- * Alternative Payments' own docs (as fetched 2026-09-17) do not show a
- * complete worked example of the exact shape of "card_provider_token"
- * for POST /customers/{id}/payment-methods/card, nor whether
- * GET /card-form/credentials needs a scoped token beyond the standard
- * client_credentials grant. What's implemented below is my best
- * reading of their docs (Evervault Inputs -> encrypted card.values.card.*
- * -> relayed as the card_provider_token payload) but has NOT been
- * exercised against a live request yet. Before this goes live: place
- * real staging credentials in altpay-config.php and test each function
- * here against the sandbox (a quick curl/php script is enough) --
- * don't trust this file blindly just because it lints clean.
+ * *** STILL PARTIALLY UNVERIFIED ***
+ * Alternative Payments' docs confirm POST /v1/checkout-auth/init accepts
+ * customer_id (their examples always paired it with an invoice_id, for
+ * their invoice-checkout flow -- we don't have an invoice at signup time,
+ * so this omits invoice_id and relies on their addPaymentMethod component's
+ * documented "vault-only mode, no invoice ID required"). Not yet exercised
+ * against a live request. If checkout-auth/init 400s without invoice_id,
+ * that's the next thing to check against the sandbox.
  */
 
 declare(strict_types=1);
@@ -178,20 +184,26 @@ function ratesheet_altpay_access_token(): string
 }
 
 /**
- * GET /card-form/credentials -- Evervault app_id/team_id used to mount
- * the card Inputs form client-side (see signup.js). These are not
- * secret (same trust level as a "publishable key"): they only let a
- * browser render a tokenization iframe, not act as our API credentials.
- * Safe to hand back to the public signup page via public.php.
+ * POST /v1/checkout-auth/init -- a short-lived token that authorizes the
+ * browser (via Alternative Payments' own Web SDK) to act as the given
+ * customer for exactly long enough to add a payment method. This is what
+ * replaces the old (broken) hand-rolled card_provider_token approach --
+ * see this file's header. Note the /v1 prefix: unlike every other
+ * endpoint in this file, this one is documented with it.
  */
-function ratesheet_altpay_card_form_credentials(): array
+function ratesheet_altpay_checkout_auth_token(string $customerId): array
 {
     $token = ratesheet_altpay_access_token();
-    $result = ratesheet_altpay_request('/card-form/credentials', $token, 'GET');
-    if (empty($result['app_id']) || empty($result['team_id'])) {
-        throw new RatesheetAltpayError('Alternative Payments card-form credentials response was missing app_id/team_id.');
+    $result = ratesheet_altpay_request('/v1/checkout-auth/init', $token, 'POST', [
+        'customer_id' => $customerId,
+    ]);
+    if (empty($result['token'])) {
+        throw new RatesheetAltpayError('Alternative Payments checkout-auth response did not include a token.');
     }
-    return ['app_id' => (string) $result['app_id'], 'team_id' => (string) $result['team_id']];
+    return [
+        'token' => (string) $result['token'],
+        'expires_at' => $result['expires_at'] ?? null,
+    ];
 }
 
 /**
@@ -208,39 +220,6 @@ function ratesheet_altpay_create_customer(array $customer): string
         throw new RatesheetAltpayError('Alternative Payments customer creation did not return an id.');
     }
     return (string) $result['id'];
-}
-
-/**
- * POST /customers/{id}/payment-methods/card. $cardProviderToken is
- * whatever signup.js's relay of Evervault's encrypted card.values.card
- * fields produces (see this file's header -- UNVERIFIED exact shape).
- * Returns ['id' => ..., 'summary' => 'Visa ending 4242'] -- summary is
- * built from whatever brand/last-4 fields the response includes, falling
- * back to a generic label if Alternative Payments doesn't echo those back.
- */
-function ratesheet_altpay_create_card_payment_method(string $customerId, string $cardProviderToken, array $address = []): array
-{
-    $token = ratesheet_altpay_access_token();
-    $body = array_merge([
-        'card_provider_token' => $cardProviderToken,
-        'provider' => 'evervault',
-    ], $address !== [] ? ['address' => $address] : []);
-
-    $result = ratesheet_altpay_request(
-        '/customers/' . rawurlencode($customerId) . '/payment-methods/card',
-        $token,
-        'POST',
-        $body
-    );
-    if (empty($result['id'])) {
-        throw new RatesheetAltpayError('Alternative Payments card payment-method creation did not return an id.');
-    }
-
-    $brand = isset($result['brand']) ? ucfirst((string) $result['brand']) : 'Card';
-    $last4 = isset($result['last4']) ? (string) $result['last4'] : (isset($result['last_4']) ? (string) $result['last_4'] : null);
-    $summary = $last4 !== null ? "$brand ending $last4" : 'Card on file';
-
-    return ['id' => (string) $result['id'], 'summary' => $summary];
 }
 
 /**

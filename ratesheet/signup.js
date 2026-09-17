@@ -5,15 +5,22 @@
  * per Michael). Loaded by signup.html with a ?t=<token> query param,
  * talks only to api/public.php (no auth/session involved at all).
  *
- * PAYMENT DATA (updated 2026-09-17, follow-up #2 -- Alternative Payments
- * is now wired in, see api/public.php's and api/altpay.php's headers for
- * the full picture):
- *   - Card: mounts Evervault's hosted Inputs card form (js.evervault.com/v2,
- *     loaded in signup.html) via ensureCardFormMounted() below. The card
- *     number/expiry/CVV are typed into Evervault's own iframe and
- *     encrypted client-side -- this page's own JS never sees plaintext
- *     card data, only the three ENCRYPTED strings Evervault exposes on
- *     `cardForm.values.card.*`, read at submit time.
+ * PAYMENT DATA (updated 2026-09-17, follow-up #3 -- see api/public.php's
+ * and api/altpay.php's headers for the full picture):
+ *   - Card: CORRECTED from an earlier (broken) hand-rolled Evervault
+ *     mount. This now uses Alternative Payments' own Web SDK
+ *     (@getalternative/partner-sdk, loaded via jsDelivr ESM in
+ *     signup.html as window.__altpaySdkReady) and its `addPaymentMethod`
+ *     component, via ensureCardFormMounted() below. That component
+ *     mounts Alternative Payments' own hosted card form INSIDE
+ *     #card-form-mount and, on success, hands back a finished payment
+ *     method id + summary ("Visa ending 4242") -- this page's own JS
+ *     never sees card data in any form, encrypted or otherwise. The
+ *     card is vaulted with Alternative Payments (against a customer
+ *     record created via api/public.php?action=card-checkout-init) the
+ *     moment addPaymentMethod succeeds -- BEFORE the customer ever
+ *     clicks this page's own Submit button, which just records the
+ *     resulting ids alongside the rest of the signup.
  *   - ACH: routing number / account number / account type are plain
  *     fields on this page (Alternative Payments' bank vaulting API has no
  *     documented client-side tokenization step) -- submitted straight to
@@ -73,79 +80,170 @@
 
   var sigCanvas = null, sigCtx = null, sigHasStroke = false, sigDrawing = false;
 
-  // ---- Evervault card form (see this file's PAYMENT DATA header note) --
+  // ---- Alternative Payments card form (see this file's PAYMENT DATA
+  // header note) ----------------------------------------------------------
 
-  var cardFormCreds = null;   // { app_id, team_id } -- fetched once, cached
-  var evervaultCard = null;   // most recently mounted card component instance
+  var altpaySdkClient = null;      // AlternativeClient instance, once created
+  var altpayComponent = null;      // mounted addPaymentMethod component instance
+  var altpayCustomerId = null;     // set once card-checkout-init succeeds
+  var altpayPaymentMethodId = null;       // set once addPaymentMethod's onSuccess fires
+  var altpayPaymentMethodSummary = null;  // e.g. "Visa ending 4242"
   var cardFormError = null;
-  var cardFormValid = false;
   var cardFormLoading = false;
+  // Guards against re-entrancy: ensureCardFormMounted() is called again
+  // from render()'s own bottom every time render() runs (see render()
+  // below), including the render() this function triggers itself to show
+  // "Loading…" -- without this flag that would fire a second concurrent
+  // card-checkout-init request. Reset only by retryCardForm()/changeCard().
+  var cardFormStarted = false;
 
   // render() rebuilds #app-root's innerHTML from scratch on every call
-  // (see render() below), which destroys any previously-mounted Evervault
-  // iframe along with the rest of the DOM. So this checks the CURRENT
-  // mount element's emptiness (not just a "did we already mount once" JS
-  // flag) and remounts fresh whenever the container came back empty --
-  // e.g. after a validation-error render while Card was selected.
+  // (see render() below), which would destroy a live mounted SDK
+  // component along with the rest of the DOM -- so this only proceeds
+  // past the guard when #card-form-mount is genuinely empty (nothing to
+  // lose yet), the same rule the old Evervault version followed.
   function ensureCardFormMounted() {
     var mount = document.getElementById('card-form-mount');
-    if (!mount || mount.children.length > 0) return; // not on screen, or already has a live form in it
+    if (!mount) return;
 
-    function mountNow(creds) {
-      try {
-        var client = new window.Evervault(creds.team_id, creds.app_id);
-        evervaultCard = client.ui.card({ theme: client.ui.themes.clean() });
-        evervaultCard.mount('#card-form-mount');
-        // Best-effort visual affordance only -- NOT used to gate submission
-        // (see cardFormComplete() below). Evervault's exact 'change' event
-        // payload shape isn't confirmed from their docs, so submission
-        // validity is checked directly against the real encrypted values
-        // instead of trusting this flag.
-        evervaultCard.on('change', function (data) {
-          cardFormValid = !!(data && data.card && data.card.isValid);
-        });
-      } catch (err) {
-        cardFormError = 'Could not load the secure card form. Please refresh the page, or choose ACH instead.';
-        render();
-      }
-    }
-
-    if (cardFormCreds) {
-      mountNow(cardFormCreds);
+    if (altpayPaymentMethodId) {
+      // Already vaulted this session (e.g. after a validation-error
+      // render while Card stayed selected) -- show a static confirmation
+      // instead of re-mounting the SDK component. showCardVaulted() is
+      // also called directly from onSuccess below without a full render.
+      if (!mount.querySelector('.js-card-vaulted')) showCardVaulted();
       return;
     }
+    if (cardFormStarted || mount.children.length > 0) return; // already starting, or already has a live component mounted
+    cardFormStarted = true;
+
     cardFormLoading = true;
-    apiGet('api/public.php?action=card-form-credentials&t=' + encodeURIComponent(token)).then(function (r) {
-      cardFormLoading = false;
-      if (r.data && r.data.ok) {
-        cardFormCreds = { app_id: r.data.app_id, team_id: r.data.team_id };
-        cardFormError = null;
-        mountNow(cardFormCreds);
-      } else {
-        cardFormError = (r.data && r.data.error) || 'Could not load the card form. Please try again, or choose ACH instead.';
+    cardFormError = null;
+    render();
+
+    apiPost('api/public.php?action=card-checkout-init&t=' + encodeURIComponent(token), {
+      first_name: state.form.first_name,
+      last_name: state.form.last_name,
+      email: state.form.email,
+      business_name: state.form.business_name,
+      address_line1: state.form.address_line1,
+      address_line2: state.form.address_line2,
+      city: state.form.city,
+      state: state.form.state,
+      zip: state.form.zip
+    }).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        cardFormLoading = false;
+        cardFormError = (r.data && r.data.error) || 'Could not start the card form. Please try again, or choose ACH instead.';
         render();
+        return;
       }
+      altpayCustomerId = r.data.customer_id;
+      window.__altpaySdkReady.then(function (sdk) {
+        cardFormLoading = false;
+        if (!sdk.ok) {
+          cardFormError = 'Could not load the secure card form (' + (sdk.error && sdk.error.message ? sdk.error.message : 'SDK failed to load') + '). Please refresh the page, or choose ACH instead.';
+          render();
+          return;
+        }
+        mountAltpayComponent(sdk.AlternativeClient, r.data);
+      });
     }).catch(function () {
       cardFormLoading = false;
-      cardFormError = 'Could not load the card form — check your connection and try again, or choose ACH instead.';
+      cardFormError = 'Could not start the card form — check your connection and try again, or choose ACH instead.';
       render();
     });
   }
 
-  // Whether the Evervault card component actually has real encrypted
-  // values ready to submit. Checking the fields directly (rather than
-  // trusting cardFormValid, whose 'change'-event shape isn't confirmed)
-  // is the authoritative check -- Alternative Payments' own vaulting call
-  // is the real validation for correctness; this is just "did they
-  // finish typing something."
-  function cardFormComplete() {
-    if (!evervaultCard) return false;
-    try {
-      var c = evervaultCard.values.card;
-      return !!(c && c.number && c.expiry && c.cvc);
-    } catch (err) {
-      return false;
+  function mountAltpayComponent(AlternativeClient, initData) {
+    AlternativeClient.create({
+      accessToken: initData.checkout_token,
+      environment: initData.environment,
+      onAccessTokenExpired: function () {
+        return apiPost('api/public.php?action=card-checkout-init&t=' + encodeURIComponent(token), {
+          first_name: state.form.first_name, last_name: state.form.last_name, email: state.form.email,
+          business_name: state.form.business_name, address_line1: state.form.address_line1,
+          address_line2: state.form.address_line2, city: state.form.city, state: state.form.state, zip: state.form.zip
+        }).then(function (r) {
+          return r.data && r.data.ok ? r.data.checkout_token : null;
+        });
+      }
+    }).then(function (client) {
+      altpaySdkClient = client;
+      altpayComponent = client.components.addPaymentMethod({
+        containerId: 'card-form-mount',
+        customerId: initData.customer_id,
+        defaultType: 'CARD',
+        currency: 'usd',
+        onSuccess: function (paymentMethod) {
+          altpayPaymentMethodId = paymentMethod && paymentMethod.id;
+          altpayPaymentMethodSummary = summarizePaymentMethod(paymentMethod);
+          cardFormError = null;
+          showCardVaulted();
+        },
+        onCancel: function () {
+          // Nothing to do -- the component stays mounted so they can try again.
+        },
+        onError: function (err) {
+          cardFormError = 'Could not add your card (' + (err && err.message ? err.message : 'unknown error') + '). Please try again, or choose ACH instead.';
+          render();
+        }
+      });
+      altpayComponent.mount();
+    }).catch(function (err) {
+      cardFormLoading = false;
+      cardFormError = 'Could not load the secure card form (' + (err && err.message ? err.message : 'unknown error') + '). Please refresh the page, or choose ACH instead.';
+      render();
+    });
+  }
+
+  // The exact shape of the PaymentMethod object addPaymentMethod's
+  // onSuccess hands back isn't confirmed from Alternative Payments' docs
+  // -- this tries the field names their REST API uses elsewhere
+  // (card.brand/card.last4, falling back to top-level brand/last4) and
+  // degrades to a generic label rather than showing "undefined".
+  function summarizePaymentMethod(pm) {
+    if (!pm) return 'Card on file';
+    var card = pm.card || pm;
+    var brand = card.brand ? String(card.brand).charAt(0).toUpperCase() + String(card.brand).slice(1) : 'Card';
+    var last4 = card.last4 || card.last_4 || null;
+    return last4 ? (brand + ' ending ' + last4) : 'Card on file';
+  }
+
+  // Replaces #card-form-mount's contents with a static "card on file"
+  // confirmation via direct DOM update (not a full render() -- see
+  // showFormError()'s comment for why that matters while a live SDK
+  // component might otherwise be mounted elsewhere on the page).
+  function showCardVaulted() {
+    var mount = document.getElementById('card-form-mount');
+    if (!mount) return;
+    mount.innerHTML =
+      '<div class="js-card-vaulted" style="display:flex;align-items:center;justify-content:space-between;gap:12px;background:#E4F7EC;border:1px solid #BFE6CE;border-radius:8px;padding:12px 14px;font-size:13px;color:#1E8A4C;">' +
+      '<span>✓ Card on file: ' + e(altpayPaymentMethodSummary || 'Card on file') + '</span>' +
+      '<button type="button" class="clear-sig-btn" data-action="change-card" style="color:#2f6fe0;">Use a different card</button>' +
+      '</div>';
+  }
+
+  // "Use a different card" -- resets state and remounts a fresh
+  // addPaymentMethod component so they can add another one.
+  function changeCard() {
+    altpayPaymentMethodId = null;
+    altpayPaymentMethodSummary = null;
+    if (altpayComponent && altpayComponent.unmount) {
+      try { altpayComponent.unmount(); } catch (err) { /* ignore */ }
     }
+    altpayComponent = null;
+    cardFormStarted = false;
+    var mount = document.getElementById('card-form-mount');
+    if (mount) mount.innerHTML = '';
+    ensureCardFormMounted();
+  }
+
+  // "Try again" after a card-checkout-init/SDK-load error.
+  function retryCardForm() {
+    cardFormStarted = false;
+    cardFormError = null;
+    ensureCardFormMounted();
   }
 
   // Updates the Submit button's label/disabled state directly, without a
@@ -160,8 +258,7 @@
   // Shows/clears the submit error banner via direct DOM manipulation
   // instead of a full render(). This matters specifically because
   // render() rebuilds #app-root's innerHTML from scratch, which would
-  // destroy the mounted Evervault card iframe (wiping whatever the
-  // customer already typed) and reset the signature pad canvas on every
+  // destroy a mounted card form / reset the signature pad canvas on every
   // validation error -- both very real, previously-hit bugs. Full
   // render() is still used for the few transitions that legitimately
   // need to swap the whole form (initial load, payment method toggle,
@@ -294,7 +391,7 @@
     if (state.context.account_kind === 'Commercial' && !f.business_name.trim()) return 'Business name is required for a Commercial account.';
     if (!f.payment_method) return 'Please choose a payment method.';
     if (f.payment_method === 'card') {
-      if (!cardFormComplete()) return 'Please complete the card form before submitting.';
+      if (!altpayPaymentMethodId) return 'Please add a card before submitting.';
     } else if (f.payment_method === 'ach') {
       if (!/^\d{9}$/.test(f.bank_routing_number.trim())) return 'A valid 9-digit routing number is required.';
       if (!/^\d{4,17}$/.test(f.bank_account_number.trim())) return 'A valid bank account number is required.';
@@ -316,13 +413,13 @@
     setSubmitButtonState();
 
     var body = Object.assign({}, state.form, { signature_data_url: sigCanvas.toDataURL('image/png') });
-    if (state.form.payment_method === 'card' && evervaultCard) {
-      // Evervault-ENCRYPTED strings only -- see this file's PAYMENT DATA
-      // header note. Never the plaintext card.values.card fields as-is
-      // logged/inspected; they're already ciphertext by this point.
-      body.card_evervault_number = evervaultCard.values.card.number;
-      body.card_evervault_expiry = evervaultCard.values.card.expiry;
-      body.card_evervault_cvc = evervaultCard.values.card.cvc;
+    if (state.form.payment_method === 'card') {
+      // Already-vaulted ids/summary only -- see this file's PAYMENT DATA
+      // header note. No card data of any kind passes through this page's
+      // own JS or server.
+      body.altpay_customer_id = altpayCustomerId;
+      body.altpay_payment_method_id = altpayPaymentMethodId;
+      body.altpay_payment_method_summary = altpayPaymentMethodSummary;
     }
     apiPost('api/public.php?action=submit&t=' + encodeURIComponent(token), body).then(function (r) {
       state.submitting = false;
@@ -410,7 +507,7 @@
       (f.payment_method === 'card' ? (
         '    <div id="card-form-mount" class="card-form-mount"></div>' +
         (cardFormLoading ? '    <div class="card-form-loading">Loading secure card form…</div>' : '') +
-        (cardFormError ? '    <div class="card-form-error">' + e(cardFormError) + '</div>' : '') +
+        (cardFormError ? '    <div class="card-form-error">' + e(cardFormError) + ' <button type="button" class="clear-sig-btn" data-action="retry-card" style="color:#2f6fe0;">Try again</button></div>' : '') +
         '    <div class="payment-note">Your card details are encrypted in your browser and sent directly to our payment processor — CodeBlue Technology never sees or stores your card number.</div>'
       ) : f.payment_method === 'ach' ? (
         '    <div class="bank-fields">' +
@@ -475,6 +572,15 @@
       if (field === 'payment_method') {
         cardFormError = null;
         state.submitError = null;
+        // render() below always rebuilds #card-form-mount as a brand-new,
+        // empty DOM node (full innerHTML rebuild) -- but cardFormStarted is
+        // plain JS state that would otherwise survive the swap and wrongly
+        // block ensureCardFormMounted() from ever mounting into it again
+        // after switching away from Card and back. Only matters when they
+        // haven't finished adding a card yet -- if they already have
+        // (altpayPaymentMethodId set), the guard shows the vaulted
+        // confirmation first regardless, so resetting this is always safe.
+        if (el.value === 'card') cardFormStarted = false;
         render();
       }
     } else if (el.hasAttribute('data-yesno')) {
@@ -491,6 +597,10 @@
     var action = el.getAttribute('data-action');
     if (action === 'clear-sig') {
       clearSignature();
+    } else if (action === 'change-card') {
+      changeCard();
+    } else if (action === 'retry-card') {
+      retryCardForm();
     } else if (action === 'submit') {
       submit();
     }

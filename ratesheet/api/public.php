@@ -14,17 +14,25 @@
  *   -> { ok: true, location, account_kind, hourly_rate, status }
  *      404 if the token doesn't match any request.
  *
- * GET  /ratesheet/api/public.php?action=card-form-credentials&t=<token>
- *   -> { ok: true, app_id, team_id } -- Evervault credentials (non-secret,
- *      publishable-key equivalent) signup.js uses to mount the card Inputs
- *      form. Gated behind the same token as everything else here, though
- *      these values aren't sensitive on their own.
+ * POST /ratesheet/api/public.php?action=card-checkout-init&t=<token>
+ *   { first_name, last_name, email, business_name?, address_line1,
+ *     address_line2?, city, state, zip }
+ *   -> { ok: true, customer_id, checkout_token, expires_at, environment }
+ *      Creates (or reuses, if this row already has one) an Alternative
+ *      Payments customer for this signup, then mints a short-lived
+ *      checkout-auth token scoped to it. signup.js uses these to
+ *      initialize Alternative Payments' own Web SDK client-side and mount
+ *      its `addPaymentMethod` component -- see altpay.php's header for why
+ *      this replaced an earlier hand-rolled approach that didn't work.
  *
  * POST /ratesheet/api/public.php?action=submit&t=<token>
  *   { first_name, last_name, email, address_line1, address_line2?, city,
  *     state, zip, business_name? (required iff account_kind=Commercial),
  *     payment_method: 'card'|'ach',
- *     -- card: card_evervault_number, card_evervault_expiry, card_evervault_cvc
+ *     -- card: altpay_customer_id, altpay_payment_method_id,
+ *              altpay_payment_method_summary (all already produced by the
+ *              Web SDK's addPaymentMethod component before Submit is ever
+ *              clicked -- see action=card-checkout-init above)
  *     -- ach:  bank_routing_number, bank_account_number, bank_account_type ('checking'|'savings')
  *     want_copy_of_signup: bool,
  *     invoices_emailed: bool, agreed_to_terms: true, signature_data_url }
@@ -54,11 +62,14 @@
  * UPDATED 2026-09-17 (follow-up #2): that integration is now wired in --
  * Alternative Payments (altpay.php). The PCI posture is unchanged, just
  * enforced differently per method:
- *   - Card: the browser mounts Evervault's hosted Inputs form (see
- *     signup.js) which encrypts the card number/expiry/cvc client-side.
- *     Only those three ENCRYPTED strings ever reach this endpoint -- this
- *     server never sees a plaintext card number, expiry, or CVV, and
- *     nothing card-related is written to our database or logged.
+ *   - Card: CORRECTED (follow-up #3) -- the browser now uses Alternative
+ *     Payments' own Web SDK (addPaymentMethod component) to collect and
+ *     vault the card entirely client-side, via their Evervault-backed
+ *     hosted form. This endpoint never sees any card data at all, not
+ *     even encrypted -- it only ever sees the resulting payment_method id
+ *     and a display summary ("Visa ending 4242") that the SDK hands back
+ *     to signup.js on success. See altpay.php's header for why an earlier
+ *     "relay the Evervault ciphertext ourselves" approach didn't work.
  *   - ACH: Alternative Payments' bank payment-method API takes the
  *     routing/account number directly (no client-side tokenization step
  *     is documented for bank accounts). So a raw routing/account number
@@ -107,21 +118,95 @@ if ($action === 'context') {
     ]);
 }
 
-if ($action === 'card-form-credentials') {
+/**
+ * Ensures an Alternative Payments customer exists for this rate sheet
+ * row, reusing $row['altpay_customer_id'] if it's already been created
+ * (by an earlier card-checkout-init call, or -- in principle -- an
+ * earlier submit attempt) rather than creating a duplicate customer
+ * record every time. Persists a newly-created id back onto the row
+ * immediately, so it survives even if the customer never finishes
+ * checkout (useful for staff follow-up, and avoids re-creating it on a
+ * page reload).
+ */
+function ratesheet_altpay_ensure_customer_for_row(
+    PDO $pdo,
+    array $row,
+    string $companyName,
+    string $email,
+    string $addr1,
+    string $addr2,
+    string $city,
+    string $state,
+    string $zip
+): string {
+    if (!empty($row['altpay_customer_id'])) {
+        return (string) $row['altpay_customer_id'];
+    }
+
+    $customerId = ratesheet_altpay_create_customer([
+        'name' => $companyName,
+        'email' => $email,
+        'external_id' => 'ratesheet-' . $row['id'],
+        'street_address' => $addr1 . ($addr2 !== '' ? ' ' . $addr2 : ''),
+        'city' => $city,
+        'state' => $state,
+        'postal_code' => $zip,
+        'country' => 'US',
+    ]);
+
+    $stmt = $pdo->prepare('UPDATE rate_sheet_requests SET altpay_customer_id = :cid WHERE id = :id');
+    $stmt->execute([':cid' => $customerId, ':id' => $row['id']]);
+
+    return $customerId;
+}
+
+if ($action === 'card-checkout-init') {
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        ratesheet_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
+    }
+    if ($row['status'] === 'submitted') {
+        ratesheet_respond(409, ['ok' => false, 'error' => 'This rate sheet has already been submitted.']);
+    }
+
+    $input = ratesheet_read_json_body();
+    $firstName = trim((string) ($input['first_name'] ?? ''));
+    $lastName = trim((string) ($input['last_name'] ?? ''));
+    $email = trim((string) ($input['email'] ?? ''));
+    $businessName = trim((string) ($input['business_name'] ?? ''));
+    $addr1 = trim((string) ($input['address_line1'] ?? ''));
+    $addr2 = trim((string) ($input['address_line2'] ?? ''));
+    $city = trim((string) ($input['city'] ?? ''));
+    $state = trim((string) ($input['state'] ?? ''));
+    $zip = trim((string) ($input['zip'] ?? ''));
+
+    if ($firstName === '' || $lastName === '' || $email === '' || $addr1 === '' || $city === '' || $state === '' || $zip === '') {
+        ratesheet_respond(400, ['ok' => false, 'error' => 'Please fill in your name, email, and address before adding a card.']);
+    }
+
+    // Same Commercial/Residential company-name rule as the final submit.
+    $companyName = $row['account_kind'] === 'Commercial' ? $businessName : trim($firstName . ' ' . $lastName);
+
     try {
-        $creds = ratesheet_altpay_card_form_credentials();
+        $customerId = ratesheet_altpay_ensure_customer_for_row($pdo, $row, $companyName, $email, $addr1, $addr2, $city, $state, $zip);
+        $checkoutAuth = ratesheet_altpay_checkout_auth_token($customerId);
     } catch (Throwable $e) {
-        error_log('[ratesheet/public] card-form-credentials failed: ' . $e->getMessage());
-        // TEMPORARY DEBUG (2026-09-17): surfacing the real exception message
-        // to the page instead of a generic one, so we can see exactly what
-        // Alternative Payments is rejecting while wiring this up for the
-        // first time. This is safe to show -- it only ever contains
-        // Alternative Payments' own HTTP response/cURL error text, never
-        // our client_id/client_secret. Revert to the generic message once
-        // this is confirmed working end-to-end.
+        error_log('[ratesheet/public] card-checkout-init failed for request ' . $row['id'] . ': ' . $e->getMessage());
+        // TEMPORARY DEBUG (2026-09-17, follow-up #3): same reasoning as the
+        // debug prefix this replaced -- surfacing Alternative Payments' own
+        // error text (never our client_id/client_secret) while we confirm
+        // this corrected flow against the sandbox. Revert to a generic
+        // message once confirmed working end-to-end.
         ratesheet_respond(502, ['ok' => false, 'error' => 'DEBUG: ' . $e->getMessage()]);
     }
-    ratesheet_respond(200, ['ok' => true, 'app_id' => $creds['app_id'], 'team_id' => $creds['team_id']]);
+
+    $config = ratesheet_altpay_config();
+    ratesheet_respond(200, [
+        'ok' => true,
+        'customer_id' => $customerId,
+        'checkout_token' => $checkoutAuth['token'],
+        'expires_at' => $checkoutAuth['expires_at'],
+        'environment' => $config['environment'] ?? 'staging',
+    ]);
 }
 
 if ($action === 'submit') {
@@ -144,14 +229,17 @@ if ($action === 'submit') {
     $businessName = trim((string) ($input['business_name'] ?? ''));
     $paymentMethod = trim((string) ($input['payment_method'] ?? ''));
 
-    // Card: three Evervault-ENCRYPTED strings (never a plaintext number/
-    // expiry/CVV -- see this file's header). ACH: raw routing/account
-    // numbers, held only in these local variables and relayed straight
-    // through to Alternative Payments below -- never written to $input's
-    // origin (the request body) back out, never persisted, never logged.
-    $cardEvervaultNumber = trim((string) ($input['card_evervault_number'] ?? ''));
-    $cardEvervaultExpiry = trim((string) ($input['card_evervault_expiry'] ?? ''));
-    $cardEvervaultCvc = trim((string) ($input['card_evervault_cvc'] ?? ''));
+    // Card: by the time Submit is clicked, the card has already been
+    // vaulted client-side via Alternative Payments' Web SDK (see
+    // action=card-checkout-init above and signup.js) -- these are just
+    // the resulting ids/summary, never card data itself. ACH: raw
+    // routing/account numbers, held only in these local variables and
+    // relayed straight through to Alternative Payments below -- never
+    // written to $input's origin (the request body) back out, never
+    // persisted, never logged.
+    $altpayCustomerIdInput = trim((string) ($input['altpay_customer_id'] ?? ''));
+    $altpayPaymentMethodIdInput = trim((string) ($input['altpay_payment_method_id'] ?? ''));
+    $altpayPaymentMethodSummaryInput = trim((string) ($input['altpay_payment_method_summary'] ?? ''));
     $bankRoutingNumber = trim((string) ($input['bank_routing_number'] ?? ''));
     $bankAccountNumber = trim((string) ($input['bank_account_number'] ?? ''));
     $bankAccountType = trim((string) ($input['bank_account_type'] ?? ''));
@@ -181,8 +269,8 @@ if ($action === 'submit') {
     if (!in_array($paymentMethod, ['card', 'ach'], true)) {
         $errors[] = 'Please choose a payment method.';
     } elseif ($paymentMethod === 'card') {
-        if ($cardEvervaultNumber === '' || $cardEvervaultExpiry === '' || $cardEvervaultCvc === '') {
-            $errors[] = 'Please complete the card form before submitting.';
+        if ($altpayPaymentMethodIdInput === '' || $altpayCustomerIdInput === '') {
+            $errors[] = 'Please add a card before submitting.';
         }
     } else { // ach
         if (!preg_match('/^\d{9}$/', $bankRoutingNumber)) $errors[] = 'A valid 9-digit routing number is required.';
@@ -279,67 +367,46 @@ if ($action === 'submit') {
         ratesheet_respond(502, ['ok' => false, 'error' => 'We could not finish creating your account automatically, but your information was saved -- a CodeBlue Technology team member will finish setting up your account shortly.']);
     }
 
-    // Vault the payment method with Alternative Payments -- fail-open,
-    // same philosophy as the ConnectWise Team-row/Territory lookups
-    // above: a vaulting problem never undoes the signup or the
-    // ConnectWise account that already exists, it's just flagged so
-    // staff know to collect payment manually. See altpay.php's header
-    // for why the exact card_provider_token shape is UNVERIFIED pending
-    // a real sandbox test (project doc: rate-sheet-signup.md).
+    // Record/vault the payment method with Alternative Payments --
+    // fail-open, same philosophy as the ConnectWise Team-row/Territory
+    // lookups above: a vaulting problem never undoes the signup or the
+    // ConnectWise account that already exists, it's just flagged so staff
+    // know to collect payment manually.
     $altpayCustomerId = null;
     $altpayPaymentMethodId = null;
     $altpaySummary = null;
     $altpayStatus = 'failed';
     $altpayFailReason = null;
-    try {
-        $altpayCustomerId = ratesheet_altpay_create_customer([
-            'name' => $companyName,
-            'email' => $email,
-            'external_id' => 'ratesheet-' . $row['id'],
-            'street_address' => $addr1 . ($addr2 !== '' ? ' ' . $addr2 : ''),
-            'city' => $city,
-            'state' => $state,
-            'postal_code' => $zip,
-            'country' => 'US',
-        ]);
 
-        if ($paymentMethod === 'card') {
-            // Evervault returns three separately-encrypted fields, not one
-            // string -- Alternative Payments' docs only document a single
-            // "card_provider_token" field with no worked example of its
-            // shape, so this bundles all three into one JSON string as the
-            // token. UNVERIFIED -- confirm against the sandbox and adjust
-            // if Alternative Payments expects something else.
-            $cardToken = json_encode([
-                'number' => $cardEvervaultNumber,
-                'expiry' => $cardEvervaultExpiry,
-                'cvc' => $cardEvervaultCvc,
-            ]);
-            $vaulted = ratesheet_altpay_create_card_payment_method($altpayCustomerId, (string) $cardToken, [
-                'street_address' => $addr1, 'city' => $city, 'state' => $state, 'postal_code' => $zip, 'country' => 'US',
-            ]);
-        } else {
+    if ($paymentMethod === 'card') {
+        // Nothing to call here -- the card was already vaulted client-side
+        // via Alternative Payments' Web SDK before Submit was even
+        // clickable (see action=card-checkout-init and signup.js). We just
+        // trust the row's own stored customer id over whatever the client
+        // resent (it can only be identical or stale, never newer), and
+        // fall back to the client-provided value only if the row somehow
+        // doesn't have one yet.
+        $altpayCustomerId = !empty($row['altpay_customer_id']) ? (string) $row['altpay_customer_id'] : $altpayCustomerIdInput;
+        $altpayPaymentMethodId = $altpayPaymentMethodIdInput;
+        $altpaySummary = $altpayPaymentMethodSummaryInput !== '' ? $altpayPaymentMethodSummaryInput : 'Card on file';
+        $altpayStatus = 'vaulted';
+    } else {
+        try {
+            $altpayCustomerId = ratesheet_altpay_ensure_customer_for_row($pdo, $row, $companyName, $email, $addr1, $addr2, $city, $state, $zip);
             $vaulted = ratesheet_altpay_create_bank_payment_method($altpayCustomerId, [
                 'routing_number' => $bankRoutingNumber,
                 'account_number' => $bankAccountNumber,
                 'subtype' => $bankAccountType,
                 'receiver_name' => trim($firstName . ' ' . $lastName),
             ]);
-        }
-        $altpayPaymentMethodId = $vaulted['id'];
-        $altpaySummary = $vaulted['summary'];
-        $altpayStatus = 'vaulted';
-    } catch (Throwable $e) {
-        // Deliberately NOT logging $e->getMessage() for a bank-account
-        // vaulting failure -- Alternative Payments' error response could
-        // conceivably echo back the submitted routing/account number in a
-        // validation message, and that must never land in a server log.
-        // Card failures are lower-risk (Evervault ciphertext, not a raw
-        // PAN) so the message is logged for debugging.
-        if ($paymentMethod === 'card') {
-            error_log('[ratesheet/public] Alternative Payments card vaulting failed for request ' . $row['id'] . ': ' . $e->getMessage());
-            $altpayFailReason = $e->getMessage();
-        } else {
+            $altpayPaymentMethodId = $vaulted['id'];
+            $altpaySummary = $vaulted['summary'];
+            $altpayStatus = 'vaulted';
+        } catch (Throwable $e) {
+            // Deliberately NOT logging $e->getMessage() here -- Alternative
+            // Payments' error response could conceivably echo back the
+            // submitted routing/account number in a validation message, and
+            // that must never land in a server log.
             error_log('[ratesheet/public] Alternative Payments bank vaulting failed for request ' . $row['id'] . ' (' . get_class($e) . ') -- see Alternative Payments dashboard for details.');
             $altpayFailReason = 'Bank account vaulting failed -- see Alternative Payments dashboard for this customer.';
         }

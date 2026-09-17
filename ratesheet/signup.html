@@ -6,7 +6,34 @@
 <title>Rate Sheet Sign Up — CodeBlue Technology</title>
 <meta name="description" content="CodeBlue Technology rate sheet sign up.">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://js.evervault.com/v2"></script>
+<script type="module">
+  /**
+   * Alternative Payments' Web SDK (@getalternative/partner-sdk) is an
+   * npm-only package (no documented CDN/UMD build) -- added 2026-09-17
+   * (follow-up #3) after the earlier hand-rolled Evervault mount turned
+   * out not to be a supported integration path (see api/altpay.php's
+   * header). Loaded here via jsDelivr's "+esm" endpoint, which bundles
+   * an npm package (including its own dependencies, e.g. React -- this
+   * SDK renders its own UI) into a single browser-ready ES module, since
+   * this site has no build step / bundler of its own.
+   *
+   * window.__altpaySdkReady is a promise signup.js awaits before mounting
+   * the card form -- resolves to { ok: true, AlternativeClient } or
+   * { ok: false, error } so signup.js can show a real error instead of
+   * failing silently if the CDN or the package ever misbehaves.
+   */
+  window.__altpaySdkReady = (async function () {
+    try {
+      var mod = await import('https://cdn.jsdelivr.net/npm/@getalternative/partner-sdk@0.1.7/+esm');
+      if (!mod || !mod.AlternativeClient) {
+        return { ok: false, error: new Error('Alternative Payments SDK module loaded but did not export AlternativeClient.') };
+      }
+      return { ok: true, AlternativeClient: mod.AlternativeClient };
+    } catch (err) {
+      return { ok: false, error: err };
+    }
+  })();
+</script>
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; min-height: 100%; background: #F4F5F7; font-family: 'IBM Plex Sans', sans-serif; color: #1B2030; }
@@ -57,6 +84,6 @@
 <div id="app-root">
   <div class="wrap"><div class="card" style="text-align:center;color:#5A6472;">Loading…</div></div>
 </div>
-<script src="signup.js?v=3"></script>
+<script src="signup.js?v=4"></script>
 </body>
 </html>
