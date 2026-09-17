@@ -499,8 +499,11 @@ function relationships_migrate(PDO $pdo): void
     // assignable today, not block the meeting note. customer_id is
     // denormalized off the parent meeting (not just meeting_id) so the
     // global to-do dashboard and per-customer queries don't need a JOIN.
-    // completed_at/by is a plain local mark -- no second ConnectWise push on
-    // completion, per Michael's answer (CW only fires once, at creation).
+    // completed_at/by drives the strikethrough locally. 2026-09-17 UPDATE:
+    // completing a task NOW also closes its ConnectWise Activity for real
+    // (cw_close_status/cw_close_error below, migration further down) --
+    // superseding the original "CW only fires once, at creation" design;
+    // the Activity is created OPEN at add_task and closed here instead.
     $pdo->exec(<<<'SQL'
         CREATE TABLE IF NOT EXISTS meeting_tasks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -613,6 +616,16 @@ function relationships_migrate(PDO $pdo): void
     // in the new per-coordinator to-do view instead. "YYYY-MM-DD", same
     // convention as OutGrow Last Touch and the meeting date field.
     relationships_add_column_if_missing($pdo, 'meeting_tasks', 'due_date', 'TEXT');
+
+    // To-do Activity lifecycle split -- added 2026-09-17 per Michael: the
+    // ConnectWise Activity is now created OPEN at task creation and only
+    // closed (a separate PATCH, relationships_cw_close_activity()) when
+    // the to-do is actually marked done, instead of being created
+    // already-Closed regardless of real completion status. These record
+    // that second, separate attempt's outcome the same way
+    // cw_push_status/cw_push_error already record the create attempt.
+    relationships_add_column_if_missing($pdo, 'meeting_tasks', 'cw_close_status', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'meeting_tasks', 'cw_close_error', 'TEXT');
 }
 
 /**

@@ -106,6 +106,26 @@ function relationships_cw_activity_status_id(PDO $pdo): ?int
 }
 
 /**
+ * "Open" ActivityStatus id -- same lookup-and-cache pattern as "Closed"
+ * above. Added 2026-09-17 for Meeting To-Do tasks: per Michael, a task's
+ * Activity should be created OPEN (not already Closed like every other
+ * Activity this integration creates) and only closed later, when the
+ * to-do is actually marked done -- see relationships_cw_close_activity()
+ * below and meetings.php's set_task_done.
+ */
+function relationships_cw_activity_open_status_id(PDO $pdo): ?int
+{
+    return relationships_cw_activity_cached_lookup(
+        $pdo,
+        'cw_activity_status_id:Open',
+        static function (): ?int {
+            $rows = relationships_cw_list('/sales/activities/statuses', "name='Open'", ['id', 'name'], 10);
+            return isset($rows[0]['id']) ? (int) $rows[0]['id'] : null;
+        }
+    );
+}
+
+/**
  * Shared cache-then-fetch helper for the two lookups above. Reads/writes
  * cw_sync_meta (the same small key/value table connectwise-sync-core.php
  * already uses for sync bookkeeping) rather than a new table, since this is
@@ -203,11 +223,17 @@ function relationships_checklist_first_contact_id(PDO $pdo, int $customerId): ?s
  */
 function relationships_cw_create_activity(PDO $pdo, array $ctx): array
 {
+    // Added 2026-09-17 for Meeting To-Do tasks (see relationships_cw_activity_open_status_id()
+    // above): $ctx['status'] === 'open' creates the Activity Open instead
+    // of Closed. Every existing caller (checklist completions, logged
+    // meetings, and the meeting-log/notes Activity) omits this and keeps
+    // the original always-Closed behavior unchanged.
+    $wantsOpen = ($ctx['status'] ?? 'closed') === 'open';
     $typeId = relationships_cw_activity_type_id($pdo);
-    $statusId = relationships_cw_activity_status_id($pdo);
+    $statusId = $wantsOpen ? relationships_cw_activity_open_status_id($pdo) : relationships_cw_activity_status_id($pdo);
     if ($typeId === null || $statusId === null) {
         throw new RelationshipsConnectWiseError(
-            'Could not resolve the ConnectWise "NextStep Action" ActivityType or "Closed" ActivityStatus id ' .
+            'Could not resolve the ConnectWise "NextStep Action" ActivityType or "' . ($wantsOpen ? 'Open' : 'Closed') . '" ActivityStatus id ' .
             '(a lookup by name returned no match) -- Activity not created.'
         );
     }
@@ -238,8 +264,12 @@ function relationships_cw_create_activity(PDO $pdo, array $ctx): array
     // only the serialized format changes -- captured in Eastern first (so
     // DST is handled by PHP's tzdata rather than a hardcoded offset), then
     // converted to UTC for the wire format ConnectWise actually accepts.
-    $now = new DateTimeImmutable('now', new DateTimeZone('America/New_York'));
-    $dateIso = $now->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s\Z');
+    // Added 2026-09-17: a caller can supply its own Eastern moment (e.g. a
+    // scheduled to-do's due date, at midnight Eastern -- "date only" per
+    // Michael, since ConnectWise's API has no true date-only field, only
+    // this same UTC-second-precision instant format) instead of "now".
+    $activityMoment = $ctx['date'] ?? new DateTimeImmutable('now', new DateTimeZone('America/New_York'));
+    $dateIso = $activityMoment->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s\Z');
 
     $corePayload = [
         'name' => $summary,
@@ -303,7 +333,11 @@ function relationships_cw_create_activity(PDO $pdo, array $ctx): array
     // drops both rather than guessing again at which one was wrong.
     $fullPayload = $corePayload + [
         'where' => 'In-house',
-        'scheduleStatus' => 'Firm',
+        // Added 2026-09-17: 'Tentative' for a to-do scheduled in the
+        // future (see connectwise-meeting-activity.php's
+        // relationships_cw_create_task_activity()); every other caller
+        // keeps the original 'Firm' default.
+        'scheduleStatus' => $ctx['schedule_status'] ?? 'Firm',
     ];
 
     try {
@@ -328,6 +362,34 @@ function relationships_cw_create_activity(PDO $pdo, array $ctx): array
         );
     }
     return ['id' => (string) $created['id'], 'variant' => 'core'];
+}
+
+/**
+ * PATCHes an existing ConnectWise Activity's status to "Closed". Added
+ * 2026-09-17 for Meeting To-Do tasks: the Activity is created OPEN at task
+ * creation (relationships_cw_create_task_activity(), 'status' => 'open')
+ * and this closes that SAME Activity when the to-do is marked done
+ * (meetings.php's set_task_done), rather than a new Activity ever being
+ * created already-closed the way every other Activity in this integration
+ * still is. ConnectWise Manage's REST API updates an existing record via
+ * PATCH with a JSON-Patch body ({op, path, value}) -- UNLIKE the POST-create
+ * path above (which has real, live-confirmed field names throughout), this
+ * exact shape has NOT yet been exercised against a real ConnectWise
+ * Activity, so treat it as best-guess (consistent with this integration's
+ * house style of documenting confidence level) until Michael confirms a
+ * real close worked in ConnectWise Manage's UI.
+ */
+function relationships_cw_close_activity(PDO $pdo, string $activityId): void
+{
+    $statusId = relationships_cw_activity_status_id($pdo); // "Closed"
+    if ($statusId === null) {
+        throw new RelationshipsConnectWiseError(
+            'Could not resolve the ConnectWise "Closed" ActivityStatus id (a lookup by name returned no match) -- Activity not closed.'
+        );
+    }
+    relationships_cw_request('/sales/activities/' . rawurlencode($activityId), [], 'PATCH', [
+        ['op' => 'replace', 'path' => '/status/id', 'value' => $statusId],
+    ]);
 }
 
 /**

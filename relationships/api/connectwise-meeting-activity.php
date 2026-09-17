@@ -67,14 +67,29 @@ function relationships_cw_create_meeting_activity(PDO $pdo, array $ctx): array
 /**
  * Builds and POSTs the ConnectWise Activity for a newly-added meeting
  * to-do task -- fires at TASK CREATION (confirmed via AskUserQuestion
- * 2026-09-15), not at completion, unlike the checklist pattern this
- * otherwise mirrors.
+ * 2026-09-15).
+ *
+ * 2026-09-17 UPDATE, per Michael: unlike every other Activity this
+ * integration creates, a task's Activity is now created OPEN, not Closed
+ * -- it gets closed separately, for real, when the to-do is actually
+ * marked done (meetings.php's set_task_done calls
+ * relationships_cw_close_activity() on this same Activity id). Previously
+ * it was created already-Closed at this same creation moment, regardless
+ * of whether the to-do was actually done yet.
+ *
+ * Also per Michael: a to-do with a due_date gets that same date set on the
+ * Activity's schedule (date-only, i.e. midnight Eastern that day) instead
+ * of "now" -- and if that date is still in the future, scheduleStatus is
+ * 'Tentative' rather than the usual 'Firm', since it's a projected date,
+ * not a certain one.
  *
  * $ctx keys: customer_id (int), cw_company_id (string), description
  * (string), meeting_subject (string, for context in the Notes field),
  * assigned_to_name (string), assigned_to_email (string|null -- null when
  * that roster member has no Relationships login yet), created_by_name
- * (string), created_at_display (string, human-readable Eastern timestamp).
+ * (string), created_at_display (string, human-readable Eastern timestamp),
+ * due_date (string|null, "YYYY-MM-DD" -- the to-do's scheduled date, same
+ * as meeting_tasks.due_date).
  *
  * Returns ['id' => string, 'variant' => 'full'|'core'] on success. Throws
  * RelationshipsConnectWiseError if neither attempt succeeds.
@@ -86,7 +101,7 @@ function relationships_cw_create_task_activity(PDO $pdo, array $ctx): array
         'From meeting: ' . $ctx['meeting_subject'] . "\n" .
         'Added by ' . $ctx['created_by_name'] . ' - ' . $ctx['created_at_display'];
 
-    return relationships_cw_create_activity($pdo, [
+    $activityCtx = [
         'customer_id' => $ctx['customer_id'],
         'cw_company_id' => $ctx['cw_company_id'],
         'summary' => (string) $ctx['description'],
@@ -96,5 +111,24 @@ function relationships_cw_create_task_activity(PDO $pdo, array $ctx): array
         // task. null (no login yet for that roster member) just means a
         // memberless Activity, same as any other failed member lookup.
         'assign_to_email' => $ctx['assigned_to_email'],
-    ]);
+        'status' => 'open',
+    ];
+
+    $dueDate = $ctx['due_date'] ?? null;
+    if ($dueDate !== null && $dueDate !== '') {
+        $eastern = new DateTimeZone('America/New_York');
+        // '!' resets every field this format doesn't specify to the Unix
+        // epoch defaults (00:00:00) -- i.e. midnight Eastern on that date,
+        // the "date only" this file's docblock above describes.
+        $activityDate = DateTimeImmutable::createFromFormat('!Y-m-d', $dueDate, $eastern);
+        if ($activityDate !== false) {
+            $activityCtx['date'] = $activityDate;
+            $today = new DateTimeImmutable('today', $eastern);
+            if ($activityDate > $today) {
+                $activityCtx['schedule_status'] = 'Tentative';
+            }
+        }
+    }
+
+    return relationships_cw_create_activity($pdo, $activityCtx);
 }

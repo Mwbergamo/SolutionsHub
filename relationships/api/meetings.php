@@ -10,6 +10,14 @@
  * app's global to-do dashboard reads (per-rep open-task counts + the full
  * task list, for the Relationships front page's new right-hand panel).
  *
+ * 2026-09-17 UPDATE, per Michael: a to-do's ConnectWise Activity now has a
+ * real two-phase lifecycle instead of being created already-Closed --
+ * OPEN at add_task, and only CLOSED when set_task_done actually marks it
+ * done (relationships_cw_close_activity(), connectwise-activity-create.php).
+ * A scheduled to-do's Activity is also dated to its due_date (not "now"),
+ * marked Tentative if that date is still in the future -- see
+ * connectwise-meeting-activity.php's relationships_cw_create_task_activity().
+ *
  * Same "save locally first, unconditionally; then try ConnectWise; record
  * the outcome; never let a ConnectWise failure block or revert the local
  * save" posture as every other write in this integration (see
@@ -39,9 +47,11 @@
  *
  * POST /relationships/api/meetings.php?action=set_task_done
  *   { task_id, completed: true|false }
- *   Local-only -- no second ConnectWise push on completion (confirmed via
- *   AskUserQuestion 2026-09-15: the task's Activity fires once, at
- *   creation).
+ *   Saves the local completion unconditionally; when completed=true AND
+ *   the task has a real pushed ConnectWise Activity, also PATCHes that
+ *   SAME Activity to Closed (2026-09-17 -- see this file's header). Never
+ *   creates a second Activity, and an unset (completed=false) never
+ *   re-opens the Activity.
  *   -> { ok: true, task: {...} }
  *
  * GET  /relationships/api/meetings.php?action=global
@@ -120,6 +130,10 @@ function relationships_meeting_task_row(array $r): array
         'completed_at' => $r['completed_at'],
         'completed_by_name' => $r['completed_by_name'],
         'cw_push' => ['status' => $r['cw_push_status'], 'error' => $r['cw_push_error']],
+        // Added 2026-09-17 -- the separate close-on-done attempt (see
+        // set_task_done below and relationships_cw_close_activity()),
+        // same shape/convention as cw_push above.
+        'cw_close' => ['status' => $r['cw_close_status'] ?? null, 'error' => $r['cw_close_error'] ?? null],
         'email' => ['status' => $r['email_status'] ?? null, 'error' => $r['email_error'] ?? null],
     ];
 }
@@ -177,7 +191,8 @@ if ($action === 'list') {
 
     $taskStmt = $pdo->prepare(
         'SELECT id, meeting_id, description, assigned_to_name, created_by_name, created_at, due_date,
-                completed_at, completed_by_name, cw_push_status, cw_push_error, email_status, email_error
+                completed_at, completed_by_name, cw_push_status, cw_push_error, cw_close_status, cw_close_error,
+                email_status, email_error
          FROM meeting_tasks WHERE customer_id = :id ORDER BY id ASC'
     );
     $taskStmt->execute([':id' => $customerId]);
@@ -455,6 +470,7 @@ if ($action === 'add_task') {
                 'assigned_to_email' => relationships_todo_roster_cw_email($assignedToName),
                 'created_by_name' => $user['name'],
                 'created_at_display' => $nowEastern->format('M j, Y g:i A T'),
+                'due_date' => $dueDate,
             ]);
             $pdo->prepare('UPDATE meeting_tasks SET cw_activity_id = :aid, cw_push_status = :status, cw_push_error = NULL WHERE id = :id')
                 ->execute([':aid' => $result['id'], ':status' => 'pushed', ':id' => $taskId]);
@@ -516,7 +532,7 @@ if ($action === 'set_task_done') {
     $completed = !empty($data['completed']);
 
     $taskStmt = $pdo->prepare(
-        'SELECT t.id, c.territory_name
+        'SELECT t.id, t.cw_activity_id, t.cw_push_status, c.territory_name
          FROM meeting_tasks t JOIN customers c ON c.id = t.customer_id
          WHERE t.id = :id'
     );
@@ -530,13 +546,37 @@ if ($action === 'set_task_done') {
     if ($completed) {
         $pdo->prepare("UPDATE meeting_tasks SET completed_at = datetime('now'), completed_by_user_id = :uid, completed_by_name = :uname WHERE id = :id")
             ->execute([':uid' => $user['id'], ':uname' => $user['name'], ':id' => $taskId]);
+
+        // Close the SAME ConnectWise Activity created at add_task time
+        // (added 2026-09-17, per Michael -- see
+        // relationships_cw_close_activity() and this file's set_task_done
+        // docblock above), rather than the old behavior of the Activity
+        // already being Closed the moment it was created regardless of
+        // whether the to-do was actually done. Only attempted when that
+        // Activity really exists (cw_push_status === 'pushed' -- a
+        // 'skipped'/'error' create left nothing to close). Never blocks or
+        // reverts the local completion above -- same "save locally, log
+        // the ConnectWise failure" standing instruction as every other
+        // write in this integration.
+        $cwActivityId = $taskRow['cw_activity_id'];
+        if ($cwActivityId !== null && $cwActivityId !== '' && $taskRow['cw_push_status'] === 'pushed') {
+            try {
+                relationships_cw_close_activity($pdo, (string) $cwActivityId);
+                $pdo->prepare('UPDATE meeting_tasks SET cw_close_status = :status, cw_close_error = NULL WHERE id = :id')
+                    ->execute([':status' => 'closed', ':id' => $taskId]);
+            } catch (Throwable $e) {
+                $pdo->prepare('UPDATE meeting_tasks SET cw_close_status = :status, cw_close_error = :err WHERE id = :id')
+                    ->execute([':status' => 'error', ':err' => substr($e->getMessage(), 0, 4000), ':id' => $taskId]);
+            }
+        }
     } else {
         $pdo->prepare('UPDATE meeting_tasks SET completed_at = NULL, completed_by_user_id = NULL, completed_by_name = NULL WHERE id = :id')
             ->execute([':id' => $taskId]);
     }
 
     $taskStmt = $pdo->prepare(
-        'SELECT id, description, assigned_to_name, created_by_name, created_at, due_date, completed_at, completed_by_name, cw_push_status, cw_push_error, email_status, email_error
+        'SELECT id, description, assigned_to_name, created_by_name, created_at, due_date, completed_at, completed_by_name,
+                cw_push_status, cw_push_error, cw_close_status, cw_close_error, email_status, email_error
          FROM meeting_tasks WHERE id = :id'
     );
     $taskStmt->execute([':id' => $taskId]);

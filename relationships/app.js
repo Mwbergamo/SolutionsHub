@@ -2996,12 +2996,18 @@
     var emailWarn = t.email && t.email.status === 'failed'
       ? ' <span class="meeting-task-email-warn" title="' + escapeHtml('Didn’t email ' + (t.assigned_to_name || '') + (t.email.error ? ': ' + t.email.error : '')) + '">✉⚠</span>'
       : '';
+    // Close-on-done attempt (added 2026-09-17) -- same inline-warning
+    // treatment as the create-time cwWarn above, so a failed close isn't
+    // silently lost on the CRC's screen either.
+    var cwCloseWarn = t.cw_close && t.cw_close.status === 'error'
+      ? ' <span class="meeting-task-cw-warn" title="' + escapeHtml('Didn’t close in ConnectWise: ' + (t.cw_close.error || '')) + '">⚠</span>'
+      : '';
 
     return '<label class="checklist-step ' + (isDone ? 'done' : '') + '" data-task-row="' + t.id + '">' +
       '<input type="checkbox" ' + (isDone ? 'checked' : '') + (toggling ? ' disabled' : '') +
         ' data-action="task-toggle-done" data-task="' + t.id + '" data-completed="' + (isDone ? '1' : '0') + '">' +
       '<div class="checklist-step-text">' +
-        '<div class="checklist-step-label">' + escapeHtml(t.description) + cwWarn + emailWarn + '</div>' +
+        '<div class="checklist-step-label">' + escapeHtml(t.description) + cwWarn + emailWarn + cwCloseWarn + '</div>' +
         '<div class="checklist-step-meta">' + metaLine + '</div>' +
       '</div>' +
     '</label>';
