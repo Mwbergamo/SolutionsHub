@@ -466,6 +466,55 @@ $report['invoice_billing_status_udf_lookup'] = probe_safe(function () {
     );
 });
 
+// 15. Michael named the real safe test company for the eventual live
+//     create-test: "Bergamo Test Account" (replaces the earlier "ZZ
+//     Agreement Test Company" guess, which round 4 confirmed doesn't
+//     exist). Same read-only lookup pattern as step 9/test_company_lookup
+//     above -- real id, site(s), and contacts, so the create-test call
+//     (still a separate step, once this and the Billing Status field are
+//     both confirmed) has real ids to reference instead of guessing.
+$report['bergamo_test_account_lookup'] = probe_safe(function () {
+    $company = register_cw_request(
+        '/company/companies',
+        ['conditions' => 'name like "%' . register_cw_condition_escape('Bergamo Test Account') . '%"', 'pageSize' => '5', 'page' => '1'],
+        'GET',
+        null,
+        20,
+        8
+    );
+    $result = ['company_matches' => $company];
+
+    $companyId = null;
+    if (!empty($company[0]['id'])) {
+        $companyId = (int) $company[0]['id'];
+    }
+
+    if ($companyId !== null) {
+        $result['sites'] = register_cw_request(
+            '/company/companies/' . $companyId . '/sites',
+            ['pageSize' => '10', 'page' => '1'],
+            'GET',
+            null,
+            20,
+            8
+        );
+        $result['contacts'] = register_cw_request(
+            '/company/contacts',
+            ['conditions' => 'company/id=' . $companyId, 'pageSize' => '10', 'page' => '1'],
+            'GET',
+            null,
+            20,
+            8
+        );
+    } else {
+        $result['sites'] = [];
+        $result['contacts'] = [];
+        $result['note'] = 'No company matched "Bergamo Test Account" -- check the exact name in ConnectWise.';
+    }
+
+    return $result;
+});
+
 register_respond(200, [
     'ok' => true,
     'note' => 'Read-only diagnostic. No ConnectWise records were created, changed, or deleted by this request.',
