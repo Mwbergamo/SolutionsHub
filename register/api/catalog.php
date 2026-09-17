@@ -54,18 +54,30 @@
  *   1. 'list_agreement' -- one page (200 items) of productClass='Agreement'
  *      per call, queued straight to phase='sync' (matches Michael's live
  *      ConnectWise count exactly -- no stock check needed).
- *   2. 'list_inventory' -- one page of productClass='Inventory' per call.
+ *   2. 'list_service' -- added 2026-09-17, per Michael ("we have many
+ *      Service Class Items (One-Time Fee items) that we should be able to
+ *      add"). One page of productClass='Service' per call, queued straight
+ *      to phase='sync' -- same "no stock check needed" reasoning as
+ *      Agreement items (a Service item has no physical inventory either).
+ *      Previously Service-class items were never listed AT ALL, so none of
+ *      them ever reached catalog_items no matter how the sync ran -- this
+ *      stage is what actually fixes that, not just a filter/lookup change.
+ *   3. 'list_inventory' -- one page of productClass='Inventory' per call.
  *      Each item is queued to phase='filter' UNLESS it's already in
  *      catalog_no_stock_cache within REGISTER_NO_STOCK_RECHECK_DAYS, in
  *      which case it's skipped entirely -- this is what keeps every sync
  *      after the first one fast.
- *   3. 'filter' -- one cheap /inventory-only check per Inventory candidate
- *      from stage 2, in bounded batches. Confirmed-zero results are cached
+ *   4. 'filter' -- one cheap /inventory-only check per Inventory candidate
+ *      from stage 3, in bounded batches. Confirmed-zero results are cached
  *      in catalog_no_stock_cache; nonzero results are promoted to
  *      phase='sync' with the summed total cached on the row.
- *   4. 'sync' -- one full-detail fetch per row now in phase='sync' (all
- *      Agreement items from stage 1, plus whatever stage 3 promoted),
- *      upserted into catalog_items using the cached on-hand total.
+ *   5. 'sync' -- one full-detail fetch per row now in phase='sync' (all
+ *      Agreement items from stage 1, all Service items from stage 2, plus
+ *      whatever stage 4 promoted), upserted into catalog_items using the
+ *      cached on-hand total. This step already reads productClass
+ *      generically off each item's own ConnectWise record (never hardcoded
+ *      by which stage queued it), so no changes were needed here for
+ *      Service items to store correctly -- see product_class below.
  *
  * register_sync_meta tracks which stage/page a run is on (namespaced
  * 'catalog_sync_*' keys) so sync-step can resume the right stage on each
@@ -94,22 +106,21 @@
  *
  * GET  /register/api/catalog.php?action=lookup&identifier=9999
  *   -> { ok: true, item: { id, identifier, description, price, on_hand,
- *          track_inventory, inactive_flag, ... } | null }
+ *          track_inventory, product_class, inactive_flag, ... } | null }
  *   Exact-identifier lookup for one specific item, WITHOUT the inactive_
  *   flag=0 filter 'list' applies -- see its docblock comment above the
- *   'lookup' action for why (added 2026-09-17, System Prep flat-fee
- *   button).
+ *   'lookup' action for why (added 2026-09-17, System Prep button).
  *
  * GET  /register/api/catalog.php?action=sync-status
  * POST /register/api/catalog.php?action=sync-start
  * POST /register/api/catalog.php?action=sync-step
  *   { batch_size?: int (default 10, max 25) -- ignored during the listing
  *     stages, which always process exactly one page per call }
- *   -> { ok: true, phase?: 'list_agreement' | 'list_inventory' | 'filter' | 'sync',
+ *   -> { ok: true, phase?: 'list_agreement' | 'list_service' | 'list_inventory' | 'filter' | 'sync',
  *          processed_this_batch?, list_stage, listing_totals: { agreement_listed,
- *          inventory_listed, filter_queued, skipped_cached }, filter_totals:
- *          { pending, error }, sync_totals: { pending, done, error }, done,
- *          errors?: [...], started_at?, elapsed_ms }
+ *          service_listed, inventory_listed, filter_queued, skipped_cached },
+ *          filter_totals: { pending, error }, sync_totals: { pending, done, error },
+ *          done, errors?: [...], started_at?, elapsed_ms }
  *
  * Every action requires a signed-in retail staff account
  * (register_require_login()).
@@ -296,7 +307,7 @@ if ($action === 'lookup') {
     $lookupStmt = $pdo->prepare(
         'SELECT id, cw_catalog_id, identifier, description, customer_description,
                 category_name, subcategory_name, price, on_hand, taxable_flag,
-                track_inventory, inactive_flag
+                track_inventory, product_class, inactive_flag
          FROM catalog_items
          WHERE identifier COLLATE NOCASE = :identifier
          LIMIT 1'
@@ -521,7 +532,7 @@ function register_catalog_sync_meta_add(PDO $pdo, string $key, int $amount): voi
 function register_catalog_sync_start(PDO $pdo): array
 {
     $pdo->exec('DELETE FROM cw_catalog_sync_queue');
-    foreach (['list_stage', 'agreement_page', 'inventory_page', 'total_agreement_listed', 'total_inventory_listed', 'total_filter_queued', 'total_skipped_cached'] as $key) {
+    foreach (['list_stage', 'agreement_page', 'service_page', 'inventory_page', 'total_agreement_listed', 'total_service_listed', 'total_inventory_listed', 'total_filter_queued', 'total_skipped_cached'] as $key) {
         $pdo->prepare('DELETE FROM register_sync_meta WHERE key = :k')->execute([':k' => 'catalog_sync_' . $key]);
     }
     register_catalog_sync_meta_set($pdo, 'list_stage', 'agreement');
@@ -565,13 +576,43 @@ function register_catalog_sync_list_step(PDO $pdo, string $stage): array
         register_catalog_sync_meta_add($pdo, 'total_agreement_listed', count($rows));
 
         if (count($rows) < REGISTER_CATALOG_LIST_PAGE_SIZE) {
-            register_catalog_sync_meta_set($pdo, 'list_stage', 'inventory');
-            register_catalog_sync_meta_set($pdo, 'inventory_page', '1');
+            register_catalog_sync_meta_set($pdo, 'list_stage', 'service');
+            register_catalog_sync_meta_set($pdo, 'service_page', '1');
         } else {
             register_catalog_sync_meta_set($pdo, 'agreement_page', (string) ($page + 1));
         }
 
         return array_merge(['phase' => 'list_agreement', 'processed_this_batch' => count($rows)], register_catalog_sync_totals($pdo));
+    }
+
+    if ($stage === 'service') {
+        // Added 2026-09-17: Service-class items (one-time-fee products such as
+        // System Prep, catalog id 9999) were NEVER listed by this sync before --
+        // only 'Agreement' and 'Inventory' productClass values were ever queried.
+        // Mirrors the 'agreement' branch exactly: no stock check needed (a
+        // Service item has no physical inventory to track, same as Agreement),
+        // so every listed row is queued straight to phase='sync'.
+        $page = (int) register_catalog_sync_meta_get($pdo, 'service_page', '1');
+        $rows = register_cw_list_page('/procurement/catalog', "productClass='Service' and inactiveFlag=false", ['id', 'identifier'], $page, REGISTER_CATALOG_LIST_PAGE_SIZE);
+
+        $insert = $pdo->prepare("INSERT INTO cw_catalog_sync_queue (cw_catalog_id, identifier, phase, status) VALUES (:id, :identifier, 'sync', 'pending')");
+        foreach ($rows as $item) {
+            $cwId = (int) ($item['id'] ?? 0);
+            if ($cwId === 0) {
+                continue;
+            }
+            $insert->execute([':id' => $cwId, ':identifier' => (string) ($item['identifier'] ?? '')]);
+        }
+        register_catalog_sync_meta_add($pdo, 'total_service_listed', count($rows));
+
+        if (count($rows) < REGISTER_CATALOG_LIST_PAGE_SIZE) {
+            register_catalog_sync_meta_set($pdo, 'list_stage', 'inventory');
+            register_catalog_sync_meta_set($pdo, 'inventory_page', '1');
+        } else {
+            register_catalog_sync_meta_set($pdo, 'service_page', (string) ($page + 1));
+        }
+
+        return array_merge(['phase' => 'list_service', 'processed_this_batch' => count($rows)], register_catalog_sync_totals($pdo));
     }
 
     // $stage === 'inventory'
@@ -634,7 +675,7 @@ function register_catalog_sync_list_step(PDO $pdo, string $stage): array
 function register_catalog_sync_step(PDO $pdo, int $batchSize = 20): array
 {
     $listStage = register_catalog_sync_meta_get($pdo, 'list_stage', 'items');
-    if ($listStage === 'agreement' || $listStage === 'inventory') {
+    if ($listStage === 'agreement' || $listStage === 'service' || $listStage === 'inventory') {
         return register_catalog_sync_list_step($pdo, $listStage);
     }
 
@@ -812,6 +853,7 @@ function register_catalog_sync_totals(PDO $pdo): array
         'list_stage' => $listStage,
         'listing_totals' => [
             'agreement_listed' => (int) register_catalog_sync_meta_get($pdo, 'total_agreement_listed', '0'),
+            'service_listed' => (int) register_catalog_sync_meta_get($pdo, 'total_service_listed', '0'),
             'inventory_listed' => (int) register_catalog_sync_meta_get($pdo, 'total_inventory_listed', '0'),
             'filter_queued' => (int) register_catalog_sync_meta_get($pdo, 'total_filter_queued', '0'),
             'skipped_cached' => (int) register_catalog_sync_meta_get($pdo, 'total_skipped_cached', '0'),

@@ -87,17 +87,21 @@
  * Invoicing, and card/ACH payments are batched and run at the end of each
  * day, applied to invoices once they exist.
  *
- * Flat-fee items (added 2026-09-17, see REGISTER_FLAT_FEE_OVERRIDES below):
- * some catalog identifiers (e.g. '9999', "System Prep") are non-inventoried
- * ConnectWise service items -- same as a real recurring Protection Plan
- * item as far as `track_inventory` is concerned -- but are actually a
- * one-time labor charge, not a recurring managed service. Per Michael's
- * explicit choice, these stay linked to their real ConnectWise catalog
- * record (for COGS/reporting) but always charge a fixed price here
- * (ignoring whatever's currently synced in catalog_items.price) and are
- * NEVER treated as Agreement-class/Protection Plan -- they're excluded from
+ * Service Class items (revised 2026-09-17, superseding this file's earlier
+ * REGISTER_FLAT_FEE_OVERRIDES hardcoded-price approach): ConnectWise's real
+ * `productClass` field has three values -- 'Inventory' (physical stock),
+ * 'Agreement' (recurring managed services), and 'Service' (one-time-fee
+ * items, e.g. '9999' "System Prep"). All three now sync into catalog_items
+ * (see catalog.php's 'list_service' sync stage), each tagged with its real
+ * `product_class`. Classification here is now a direct
+ * `product_class === 'Agreement'` check instead of the old `!track_inventory`
+ * proxy, which wrongly treated every non-inventoried item (both Agreement
+ * AND Service class) as a Protection Plan. Per Michael ("we have many
+ * Service Class Items... that we should be able to add"), Service items are
+ * priced from the real synced catalog_items.price like any other item --
+ * no more per-identifier fixed-price override -- and are excluded from
  * `is_protection_plan`, the annual/monthly cycle multiplier, and the
- * Agreement/Addition sync (agreement_sync.php) entirely.
+ * Agreement/Addition sync (agreement_sync.php), same as before.
  *
  * GET /register/api/checkout.php?action=receipt&id=123
  *   -> same `sale` shape as above, for reprinting/re-viewing a past sale.
@@ -116,25 +120,6 @@ require_once __DIR__ . '/tax-core.php';
 require_once __DIR__ . '/agreement_sync.php';
 
 register_install_error_handlers();
-
-/**
- * Catalog identifiers that always charge a fixed price here, regardless of
- * whatever ConnectWise's synced catalog_items.price currently says, and are
- * NEVER treated as Agreement-class/Protection Plan even if ConnectWise has
- * them flagged track_inventory=0 (a non-inventoried service item).
- *
- * Added 2026-09-17 for "System Prep" (catalog identifier '9999'): a one-time
- * $180 prep-labor charge, not a recurring managed service. Michael's
- * explicit choice was to keep it linked to its real ConnectWise catalog
- * record (for COGS/reporting) but exclude it from the Agreement/Addition
- * automation task #91 built for genuine recurring Protection Plan items,
- * and to always charge $180 here rather than whatever price happens to be
- * synced from ConnectWise for that item. Matched case-insensitively against
- * catalog_items.identifier below.
- */
-const REGISTER_FLAT_FEE_OVERRIDES = [
-    '9999' => 180.00,
-];
 
 $pdo = register_db();
 $user = register_require_login($pdo);
@@ -220,7 +205,7 @@ if ($action === 'create') {
     // catalog_item_id + quantity. Also re-checks on_hand here (not just in
     // the UI) so two registers ringing up the same last unit at once can't
     // both succeed.
-    $lookup = $pdo->prepare('SELECT id, cw_catalog_id, identifier, description, price, on_hand, track_inventory, taxable_flag FROM catalog_items WHERE id = :id');
+    $lookup = $pdo->prepare('SELECT id, cw_catalog_id, identifier, description, price, on_hand, track_inventory, taxable_flag, product_class FROM catalog_items WHERE id = :id');
     $lineItems = [];
     $subtotal = 0.0;
     $taxableSubtotal = 0.0;
@@ -254,28 +239,25 @@ if ($action === 'create') {
             ]);
         }
 
-        // Flat-fee override (added 2026-09-17, see REGISTER_FLAT_FEE_OVERRIDES
-        // above) -- a fixed price ignoring catalog_items.price, and never
-        // Agreement-class no matter what track_inventory says.
-        $flatFeePrice = null;
-        foreach (REGISTER_FLAT_FEE_OVERRIDES as $flatIdentifier => $flatPrice) {
-            if (strcasecmp(trim((string) $row['identifier']), (string) $flatIdentifier) === 0) {
-                $flatFeePrice = (float) $flatPrice;
-                break;
-            }
-        }
-        $isFlatFee = $flatFeePrice !== null;
-
-        $isProtectionPlan = !$trackInventory && !$isFlatFee;
+        // Classification (revised 2026-09-17): the real ConnectWise
+        // productClass, synced into catalog_items.product_class, is what
+        // actually determines "is this a recurring Protection Plan item" --
+        // NOT the `!track_inventory` proxy this used to use, which wrongly
+        // caught Service-class (one-time-fee) items too, since neither
+        // Agreement nor Service items track physical stock. See this file's
+        // header docblock ("Service Class items").
+        $isProtectionPlan = ($row['product_class'] ?? null) === 'Agreement';
         // Task #91: an "annual" sale charges a Protection Plan item's full
         // year upfront at the register (12x catalog price x quantity)
         // instead of the plain catalog price a "monthly" sale charges --
         // Michael's explicit pricing decision. Every other item (including
-        // a "monthly" Protection Plan item, and any flat-fee item) is
+        // a "monthly" Protection Plan item, and any Service-class item) is
         // unaffected by billing_cycle. Computed server-side, never trusted
         // from the client, same as the rest of this pricing block.
         $cycleMultiplier = ($isProtectionPlan && $billingCycle === 'annual') ? 12 : 1;
-        $unitPrice = $isFlatFee ? $flatFeePrice : (float) $row['price'];
+        // Always the real synced catalog price -- no per-identifier
+        // fixed-price override any more (see header docblock).
+        $unitPrice = (float) $row['price'];
         $lineTotal = round($unitPrice * $quantity * $cycleMultiplier, 2);
         $subtotal += $lineTotal;
         $taxable = (int) ($row['taxable_flag'] ?? 0) === 1;

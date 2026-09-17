@@ -46,17 +46,19 @@
     { identifier: 'SENT-ONE-CTRL', fallbackLabel: 'Managed Anti-Virus Protection' }
   ];
 
-  // System Prep (added 2026-09-17): a one-time $180 prep-labor charge, not
-  // a recurring managed service -- deliberately kept OUT of
+  // System Prep (revised 2026-09-17): a one-time Service-class labor
+  // charge, not a recurring managed service -- deliberately kept OUT of
   // PROTECTION_PLAN_ITEMS_DEF so it's never swept into the Agreement/
-  // Addition flow (task #91). Rendered as its own flat-fee toggle button in
-  // the computer builder, mirroring the Solutions Creator's single-choice
-  // "chip" treatment for this same item. Still resolves to a real catalog
-  // item (identifier '9999', for ConnectWise-side COGS/reporting linkage)
-  // but always charges $180 -- checkout.php enforces the same fixed price
-  // and Agreement-exclusion server-side (see REGISTER_FLAT_FEE_OVERRIDES),
-  // so this flatPrice is a display value only, never trusted on its own.
-  var SYSTEM_PREP_ITEM_DEF = { identifier: '9999', fallbackLabel: 'System Prep', flatPrice: 180 };
+  // Addition flow (task #91). Rendered as its own toggle button in the
+  // computer builder, mirroring the Solutions Creator's single-choice
+  // "chip" treatment for this same item. Resolves to a real catalog item
+  // (identifier '9999') and now charges whatever price is actually synced
+  // from ConnectWise (state.systemPrepItem.price) -- no more hardcoded
+  // flat price; checkout.php independently re-derives the price and the
+  // Agreement-exclusion server-side from the real catalog_items row (see
+  // checkout.php's product_class-based classification), so this is a
+  // display value only, never trusted on its own.
+  var SYSTEM_PREP_ITEM_DEF = { identifier: '9999', fallbackLabel: 'System Prep' };
 
   var root = document.getElementById('app-root');
 
@@ -438,7 +440,7 @@
     }, 200);
   }
 
-  // Catalog sync is a four-stage queue-based start()/step() pair, revised
+  // Catalog sync is a five-stage queue-based start()/step() pair, revised
   // 2026-09-13 after a two-phase version STILL failed to start ("Could not
   // start the sync…" turned out to mean sync-start itself was timing out --
   // even the cheap id/identifier-only catalog list calls take ~73
@@ -446,13 +448,15 @@
   // doing that synchronously in one request hit the same execution-time
   // limit the original 2026-09-12 fix was meant to rule out everywhere).
   // Every stage now does at most one ConnectWise round-trip per sync-step
-  // call: 'list_agreement' and 'list_inventory' page through ConnectWise's
-  // catalog one page at a time (sync-start itself makes zero ConnectWise
-  // calls); 'filter' does one cheap /inventory-only check per Inventory
-  // candidate to find which ~603 actually have stock (confirmed-zero
-  // results are cached server-side, so this shrinks to almost nothing on
-  // later syncs); 'sync' is the original full-detail fetch. No single HTTP
-  // request risks timing out no matter how large the catalog grows.
+  // call: 'list_agreement', 'list_service' (added 2026-09-17 -- Service-
+  // class one-time-fee items, e.g. System Prep, were never listed at all
+  // before this), and 'list_inventory' page through ConnectWise's catalog
+  // one page at a time (sync-start itself makes zero ConnectWise calls);
+  // 'filter' does one cheap /inventory-only check per Inventory candidate
+  // to find which ~603 actually have stock (confirmed-zero results are
+  // cached server-side, so this shrinks to almost nothing on later syncs);
+  // 'sync' is the original full-detail fetch. No single HTTP request risks
+  // timing out no matter how large the catalog grows.
   function runSync() {
     state.syncing = true;
     state.syncMessage = 'Starting sync…';
@@ -509,6 +513,8 @@
       var d = r.data;
       if (d.phase === 'list_agreement') {
         state.syncMessage = 'Finding recurring-protection products: ' + d.listing_totals.agreement_listed + ' found…';
+      } else if (d.phase === 'list_service') {
+        state.syncMessage = 'Finding one-time-fee service products: ' + d.listing_totals.service_listed + ' found…';
       } else if (d.phase === 'list_inventory') {
         state.syncMessage = 'Scanning catalog: ' + d.listing_totals.inventory_listed + ' items seen, ' +
           d.listing_totals.filter_queued + ' need a stock check…';
@@ -801,7 +807,13 @@
         // Copied from the synced catalog item (added 2026-09-16) -- only
         // taxable_flag=1 line items count toward the checkout tax preview
         // below, matching api/checkout.php's own server-side computation.
-        taxable_flag: item.taxable_flag !== 0
+        taxable_flag: item.taxable_flag !== 0,
+        // Added 2026-09-17: the real ConnectWise productClass, so cart-side
+        // Protection Plan detection (cartHasProtectionPlanItems(),
+        // checkoutLineTotal()) can check product_class === 'Agreement'
+        // directly instead of the old !track_inventory proxy, which wrongly
+        // also matched Service-class (one-time-fee) items.
+        product_class: item.product_class
       });
     }
     state.error = null;
@@ -999,13 +1011,11 @@
       if (pItem) addItemToCartDirect(pItem, 1);
     });
     if (b.systemPrepSelected && state.systemPrepItem) {
+      // Revised 2026-09-17: no more flat-price override -- addItemToCartDirect
+      // already prices this from the real synced catalog item, same as every
+      // other line, and checkout.php independently re-derives the price
+      // server-side from catalog_items, so there's nothing to force here.
       addItemToCartDirect(state.systemPrepItem, 1);
-      // Display the flat $180 in the cart regardless of whatever price is
-      // currently synced from ConnectWise for this item -- checkout.php
-      // enforces the same fixed price server-side (never trusts this),
-      // this is purely so the register's own preview matches the receipt.
-      var spLine = state.cart.filter(function (c) { return c.catalog_item_id === state.systemPrepItem.id; })[0];
-      if (spLine) spLine.unit_price = SYSTEM_PREP_ITEM_DEF.flatPrice;
     }
     b.extras.forEach(function (e) { addItemToCartDirect(e.item, e.quantity); });
     state.computerBuilder = null;
@@ -1024,11 +1034,15 @@
   }
 
   // Task #91 (added 2026-09-17) -- true when the cart has at least one
-  // Protection Plan (Agreement-class, track_inventory=0) item, i.e. the
-  // checkout modal needs to show the Monthly/Annual billing-cycle picker
-  // at all. Mirrors api/checkout.php's own is_protection_plan flag.
+  // Protection Plan (Agreement-class) item, i.e. the checkout modal needs
+  // to show the Monthly/Annual billing-cycle picker at all. Mirrors
+  // api/checkout.php's own is_protection_plan flag. Revised 2026-09-17 to
+  // check product_class directly instead of !track_inventory, which wrongly
+  // also matched Service-class (one-time-fee) items -- neither Agreement
+  // nor Service items track physical stock, so that proxy could no longer
+  // tell them apart once Service-class items started syncing.
   function cartHasProtectionPlanItems() {
-    return state.cart.some(function (c) { return !c.track_inventory; });
+    return state.cart.some(function (c) { return c.product_class === 'Agreement'; });
   }
 
   // Per Michael's explicit pricing decision: choosing "Annual" charges a
@@ -1040,7 +1054,7 @@
   // total, it's a preview only, but kept in sync deliberately so the
   // preview matches what's actually charged.
   function checkoutLineTotal(c) {
-    var annual = state.checkoutForm.billing_cycle === 'annual' && !c.track_inventory;
+    var annual = state.checkoutForm.billing_cycle === 'annual' && c.product_class === 'Agreement';
     return c.unit_price * c.quantity * (annual ? 12 : 1);
   }
 
@@ -2529,7 +2543,7 @@
         escapeHtml(SYSTEM_PREP_ITEM_DEF.identifier) + ')</div>';
     } else {
       systemPrepHtml = '<button type="button" class="cb-system-prep-btn' + (b.systemPrepSelected ? ' selected' : '') + '" data-action="cb-system-prep-toggle">' +
-        escapeHtml(SYSTEM_PREP_ITEM_DEF.fallbackLabel) + ' — ' + fmtMoney(SYSTEM_PREP_ITEM_DEF.flatPrice) + ' flat' +
+        escapeHtml(state.systemPrepItem.description || SYSTEM_PREP_ITEM_DEF.fallbackLabel) + ' — ' + fmtMoney(state.systemPrepItem.price) +
       '</button>';
     }
 
@@ -2571,7 +2585,7 @@
         var pItem = (state.protectionPlanItems || []).filter(function (i) { return i.id === Number(idStr); })[0];
         return sum + (pItem ? pItem.price : 0);
       }, 0) +
-      (b.systemPrepSelected ? SYSTEM_PREP_ITEM_DEF.flatPrice : 0) +
+      (b.systemPrepSelected && state.systemPrepItem ? state.systemPrepItem.price : 0) +
       b.extras.reduce(function (sum, e) { return sum + e.item.price * e.quantity; }, 0);
 
     return (
