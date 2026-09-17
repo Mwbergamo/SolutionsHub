@@ -69,16 +69,36 @@
  * best-effort invoice-type lookup and retries invoice creation with both
  * fields included.
  *
- * Round 3 (this version) fixes a real bug Michael caught: `$today` was
- * computed in UTC, not CBT's own Eastern timezone, so the round-1/2
- * agreement/addition came back dated for the NEXT calendar day whenever
- * the script ran after 8pm Eastern. Per Michael: "Both need to start at
- * the moment of sale or CWM won't be able to generate an invoice." This
- * round both fixes the date computation going forward AND corrects the
- * already-created Agreement 3328 / Addition 11004 in place via a
- * full-record PUT if their stored dates don't match today's correct local
- * date (the idempotency guards above mean they're reused, not duplicated,
- * either way).
+ * Round 3 fixed a real bug Michael caught: `$today` was computed in UTC,
+ * not CBT's own Eastern timezone, so the round-1/2 agreement/addition came
+ * back dated for the NEXT calendar day whenever the script ran after 8pm
+ * Eastern. Per Michael: "Both need to start at the moment of sale or CWM
+ * won't be able to generate an invoice."
+ *
+ * Round 4 (this version) fixes two problems round 3's own run surfaced:
+ *   1. The agreement-lookup (and invoice-lookup) reuse checks used a
+ *      COMPOUND "and" condition, which silently came back empty even
+ *      though a matching real Agreement (3328) existed -- compound
+ *      conditions were never confirmed to work on this ConnectWise
+ *      instance (see connectwise.php's register_cw_condition_escape()
+ *      docblock). That false-empty result is why round 3 created a
+ *      DUPLICATE agreement (3329) instead of reusing 3328. Fixed by
+ *      switching both lookups to a single-field condition with
+ *      client-side filtering.
+ *   2. `billStartDate` was left for ConnectWise to auto-default on create
+ *      and drifted one day ahead of the (now-corrected) `startDate` --
+ *      which then made the Addition create fail with "effectiveDate
+ *      cannot be less than the agreement billing start date." Fixed by
+ *      sending `billStartDate` explicitly on create, and by extending the
+ *      date-fix step to also correct it on an existing agreement.
+ *   3. The guessed `/finance/invoices/types` reference-list endpoint came
+ *      back HTTP 404 (doesn't exist on this instance, like
+ *      /finance/agreements/statuses). Fixed by sampling real invoices'
+ *      own `type` field instead.
+ * Two real Agreements now exist on Bergamo Test Account from these rounds
+ * (3328, 3329) -- this version picks the higher id as canonical and
+ * reports the other as a known leftover (`duplicate_agreement_ids_found`)
+ * rather than deleting anything.
  */
 
 declare(strict_types=1);
@@ -165,24 +185,51 @@ $report = [];
 
 // 1. Reuse an existing IT Services Agreement on the test company if one
 //    already exists (e.g. from a prior run of this script), instead of
-//    creating a duplicate.
+//    creating a duplicate. Round 4 fix: this used to send a COMPOUND
+//    "company/id=X and type/id=Y" condition, which silently came back
+//    empty in round 3 even though a matching agreement (3328) really
+//    existed -- compound and/or conditions were never confirmed to work
+//    on this ConnectWise instance (see register_cw_condition_escape()'s
+//    own docblock in connectwise.php), and round 3 is now direct proof
+//    they don't. That false-empty result caused round 3 to create a
+//    duplicate agreement (3329) instead of reusing 3328. Fixed here by
+//    using a single-field condition and filtering client-side in PHP --
+//    the same technique this project already uses elsewhere for this
+//    exact reason.
 $report['agreement_lookup'] = step_safe(function () {
-    return register_cw_request(
+    $rows = register_cw_request(
         '/finance/agreements',
-        ['conditions' => 'company/id=' . TEST_COMPANY_ID . ' and type/id=' . AGREEMENT_TYPE_ID, 'pageSize' => '5', 'page' => '1'],
+        ['conditions' => 'company/id=' . TEST_COMPANY_ID, 'pageSize' => '50', 'page' => '1'],
         'GET',
         null,
         20,
         8
     );
+    return array_values(array_filter($rows, function ($row) {
+        return (int) ($row['type']['id'] ?? 0) === AGREEMENT_TYPE_ID;
+    }));
 });
 
 $agreementId = null;
 $agreementReused = false;
-if ($report['agreement_lookup']['ok'] && !empty($report['agreement_lookup']['data'][0]['id'])) {
-    $agreementId = (int) $report['agreement_lookup']['data'][0]['id'];
+$duplicateAgreementIds = [];
+if ($report['agreement_lookup']['ok'] && !empty($report['agreement_lookup']['data'])) {
+    // If round 3's compound-condition bug already created more than one
+    // real IT Services Agreement on this test company, deterministically
+    // pick the most recently created one (highest id) as canonical and
+    // just report the rest as known leftovers -- no deletes are ever
+    // attempted, per this file's own safety rules.
+    $matches = $report['agreement_lookup']['data'];
+    usort($matches, function ($a, $b) {
+        return ((int) ($b['id'] ?? 0)) <=> ((int) ($a['id'] ?? 0));
+    });
+    $agreementId = (int) $matches[0]['id'];
     $agreementReused = true;
+    foreach (array_slice($matches, 1) as $extra) {
+        $duplicateAgreementIds[] = $extra['id'] ?? null;
+    }
 }
+$report['duplicate_agreement_ids_found'] = $duplicateAgreementIds;
 
 // 2. Create the Agreement, only if step 1 didn't find one to reuse.
 if ($agreementId === null) {
@@ -198,6 +245,15 @@ if ($agreementId === null) {
                 'contact' => ['id' => TEST_CONTACT_ID],
                 'site' => ['id' => TEST_SITE_ID],
                 'startDate' => $today,
+                // Round 4 fix: send billStartDate explicitly too. Round 3
+                // omitted it and ConnectWise server-defaulted it using its
+                // OWN "today" (apparently not Eastern-corrected the way
+                // this script's $today now is), landing one day ahead of
+                // startDate -- which then made the Addition create fail
+                // with "effectiveDate cannot be less than the agreement
+                // billing start date." Sending the same corrected $today
+                // for both fields keeps them aligned from the start.
+                'billStartDate' => $today,
                 'noEndingDateFlag' => true,
                 'billingCycle' => ['id' => TEST_BILLING_CYCLE_ID],
                 'billingTerms' => ['id' => 3], // "Due Upon Receipt"
@@ -225,18 +281,20 @@ if ($agreementId !== null) {
     });
 }
 
-// 3b. Round 3 fix: if the stored startDate doesn't match today's correct
-//     local (Eastern) date -- e.g. a round-1/2 agreement created with the
-//     old UTC-based date bug -- correct it via a full-record PUT rather
-//     than leaving a wrongly-dated test agreement in place. billStartDate
-//     is corrected the same way since it was observed matching startDate
-//     on create and isn't recalculated automatically by ConnectWise on a
-//     plain PUT.
+// 3b. Round 3/4 fix: if the stored startDate OR billStartDate doesn't
+//     match today's correct local (Eastern) date, correct both via a
+//     full-record PUT rather than leaving a wrongly-dated test agreement
+//     in place. Round 4 added the billStartDate half of this check after
+//     finding it can drift from startDate on its own (see the create
+//     payload comment above) -- and a stale billStartDate is exactly what
+//     blocked the Addition create in round 3 ("effectiveDate cannot be
+//     less than the agreement billing start date").
 if ($agreementId !== null && !empty($report['agreement_readback']['ok'])) {
     $agreementRecord = $report['agreement_readback']['data'];
-    $storedDate = substr((string) ($agreementRecord['startDate'] ?? ''), 0, 10);
     $correctDate = substr($today, 0, 10);
-    if ($storedDate !== '' && $storedDate !== $correctDate) {
+    $storedStart = substr((string) ($agreementRecord['startDate'] ?? ''), 0, 10);
+    $storedBillStart = substr((string) ($agreementRecord['billStartDate'] ?? ''), 0, 10);
+    if ($storedStart !== $correctDate || $storedBillStart !== $correctDate) {
         $report['agreement_date_fix'] = step_safe(function () use ($agreementId, $agreementRecord, $today) {
             $updated = $agreementRecord;
             $updated['startDate'] = $today;
@@ -249,7 +307,7 @@ if ($agreementId !== null && !empty($report['agreement_readback']['ok'])) {
             });
         }
     } else {
-        $report['agreement_date_fix'] = ['ok' => true, 'data' => 'Skipped -- stored startDate (' . $storedDate . ') already matches today\'s correct local date.'];
+        $report['agreement_date_fix'] = ['ok' => true, 'data' => 'Skipped -- stored startDate and billStartDate (' . $storedStart . ') already match today\'s correct local date.'];
     }
 }
 
@@ -355,19 +413,25 @@ if ($additionId !== null && $agreementId !== null && !empty($report['addition_re
 }
 
 // 8. Reuse an existing invoice linked to this agreement if one's already
-//    there, instead of creating a duplicate.
+//    there, instead of creating a duplicate. Round 4 fix: same compound-
+//    condition problem as step 1 above -- use a single-field condition
+//    and filter applyToType client-side rather than trusting a compound
+//    "and" condition on this instance.
 $invoiceId = null;
 $invoiceReused = false;
 if ($agreementId !== null) {
     $report['invoice_lookup'] = step_safe(function () use ($agreementId) {
-        return register_cw_request(
+        $rows = register_cw_request(
             '/finance/invoices',
-            ['conditions' => 'applyToId=' . $agreementId . ' and applyToType="Agreement"', 'pageSize' => '5', 'page' => '1'],
+            ['conditions' => 'applyToId=' . $agreementId, 'pageSize' => '10', 'page' => '1'],
             'GET',
             null,
             20,
             8
         );
+        return array_values(array_filter($rows, function ($row) {
+            return ($row['applyToType'] ?? null) === 'Agreement';
+        }));
     });
     if ($report['invoice_lookup']['ok'] && !empty($report['invoice_lookup']['data'][0]['id'])) {
         $invoiceId = (int) $report['invoice_lookup']['data'][0]['id'];
@@ -375,31 +439,42 @@ if ($agreementId !== null) {
     }
 }
 
-// 9. Round 2: the first attempt (applyToType/applyToId only) came back
-//    HTTP 400 -- ConnectWise requires `type` and `company` on the invoice
-//    create payload too. Look up this instance's real invoice types before
-//    retrying, same "probe before guessing" discipline as everywhere else.
+// 9. Round 2 found invoice-create needs `type` and `company`. Round 3's
+//    guessed reference-list endpoint (`/finance/invoices/types`) came
+//    back HTTP 404 -- doesn't exist on this instance, same as
+//    /finance/agreements/statuses. Round 4 fix: fall back to sampling
+//    real invoices' own `type` field (explicitly requested via `fields`,
+//    since it wasn't part of any earlier sample) instead of a reference
+//    list, same "sample real records" technique already used for invoice
+//    status elsewhere in this project.
 $invoiceTypeId = null;
 if ($agreementId !== null && $invoiceId === null) {
-    $report['invoice_type_lookup'] = step_safe(function () {
-        return register_cw_request('/finance/invoices/types', ['pageSize' => '50', 'page' => '1'], 'GET', null, 20, 8);
+    $report['invoice_type_sample'] = step_safe(function () {
+        $rows = register_cw_request(
+            '/finance/invoices',
+            ['fields' => 'id,type,date', 'pageSize' => '20', 'page' => '1', 'orderBy' => 'id desc'],
+            'GET',
+            null,
+            20,
+            8
+        );
+        $distinct = [];
+        foreach ($rows as $row) {
+            $type = $row['type'] ?? null;
+            if (is_array($type) && isset($type['id'])) {
+                $distinct[(int) $type['id']] = $type;
+            }
+        }
+        return array_values($distinct);
     });
-    if ($report['invoice_type_lookup']['ok']) {
-        $types = $report['invoice_type_lookup']['data'];
+    if ($report['invoice_type_sample']['ok']) {
+        $types = $report['invoice_type_sample']['data'];
         $preferredNames = ['Agreement', 'Standard'];
         foreach ($preferredNames as $preferredName) {
             foreach ($types as $t) {
-                if (($t['name'] ?? null) === $preferredName && empty($t['inactiveFlag'])) {
+                if (($t['name'] ?? null) === $preferredName) {
                     $invoiceTypeId = (int) $t['id'];
                     break 2;
-                }
-            }
-        }
-        if ($invoiceTypeId === null) {
-            foreach ($types as $t) {
-                if (empty($t['inactiveFlag'])) {
-                    $invoiceTypeId = (int) $t['id'];
-                    break;
                 }
             }
         }
