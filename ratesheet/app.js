@@ -216,7 +216,11 @@
       return '<div class="empty-state">No rate sheets sent yet.</div>';
     }
     var body = rows.map(function (r) {
-      return '<tr>' +
+      // Only a submitted or failed row has anything to show on the
+      // printable "accepted terms" record -- a still-pending row has no
+      // signature/timestamp/IP yet, so it's not clickable.
+      var clickable = r.status !== 'pending';
+      return '<tr' + (clickable ? ' class="row-clickable" data-action="view-detail" data-id="' + r.id + '"' : '') + '>' +
         '<td>' + statusDot(r.status) + '</td>' +
         '<td>' + e(r.prospect_email) + '</td>' +
         '<td>' + e(r.rep_name) + '</td>' +
@@ -233,6 +237,7 @@
       '    <thead><tr><th></th><th>Prospect Email</th><th>Sent By</th><th>Time Sent</th><th>Type</th><th>Location</th><th>Invoices Emailed</th></tr></thead>' +
       '    <tbody>' + body + '</tbody>' +
       '  </table>' +
+      '  <div class="table-hint">Click a submitted or failed row to view the signed terms record.</div>' +
       '</div>';
   }
 
@@ -264,6 +269,8 @@
       apiPost('api/auth.php?action=logout', {}).then(function () { window.location.href = 'login.html'; });
     } else if (action === 'send-submit') {
       submitSendForm();
+    } else if (action === 'view-detail') {
+      window.open('receipt.html?id=' + encodeURIComponent(el.getAttribute('data-id')), '_blank');
     }
   });
 

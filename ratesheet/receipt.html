@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accepted Terms Record — CodeBlue Technology</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #E9EBEF; font-family: 'IBM Plex Sans', sans-serif; color: #1B2030; }
+  .toolbar { position: sticky; top: 0; background: #182857; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; z-index: 10; }
+  .toolbar .title { color: white; font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 15px; }
+  .print-btn { background: #2f8fef; border: none; color: white; font-size: 13px; font-weight: 700; padding: 8px 16px; border-radius: 999px; cursor: pointer; }
+  .print-btn:hover { background: #1f7fe0; }
+
+  /* One 8.5x11" printable sheet. */
+  .sheet {
+    width: 8.5in; min-height: 11in; margin: 24px auto; background: white;
+    padding: 0.6in 0.65in; box-shadow: 0 2px 12px rgba(0,0,0,.15);
+  }
+  .letterhead { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 3px solid #182857; padding-bottom: 10px; margin-bottom: 16px; }
+  .letterhead .name { font-family: 'Space Grotesk', sans-serif; font-size: 19px; font-weight: 700; color: #182857; }
+  .letterhead .doc-title { font-size: 12px; color: #5A6472; text-align: right; }
+  .status-badge { display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 3px 9px; border-radius: 999px; }
+  .status-submitted { background: #E4F7EC; color: #1E8A4C; }
+  .status-failed { background: #FBE6E4; color: #A6362B; }
+
+  .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #5A6472; margin: 18px 0 6px; }
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; font-size: 12.5px; }
+  .info-grid div span.k { color: #5A6472; }
+  .info-grid div span.v { color: #1B2030; font-weight: 600; }
+
+  .legal-block { font-size: 10.5px; color: #33394A; line-height: 1.5; white-space: pre-wrap; border: 1px solid #E2E5EA; border-radius: 6px; padding: 12px; background: #FAFBFC; }
+  .checkbox-block { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; font-size: 11px; color: #33394A; line-height: 1.5; }
+  .checkbox-block .box { flex: 0 0 auto; width: 14px; height: 14px; border: 1.5px solid #182857; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #182857; margin-top: 1px; }
+
+  .sig-block { margin-top: 18px; border-top: 1px solid #E2E5EA; padding-top: 12px; display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
+  .sig-image { border-bottom: 1px solid #1B2030; padding-bottom: 4px; }
+  .sig-image img { display: block; max-width: 320px; max-height: 90px; }
+  .sig-meta { font-size: 10.5px; color: #5A6472; text-align: right; line-height: 1.6; }
+
+  .error-banner { margin: 24px auto; max-width: 640px; padding: 14px 18px; background: #FBE6E4; border: 1px solid #E5534B; color: #8a2a24; border-radius: 10px; font-size: 13.5px; }
+
+  @media print {
+    html, body { background: white; }
+    .toolbar { display: none; }
+    .sheet { box-shadow: none; margin: 0; width: auto; min-height: auto; padding: 0.4in 0.5in; }
+    @page { size: letter; margin: 0.4in; }
+  }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <div class="title">Accepted Terms Record</div>
+  <button class="print-btn" onclick="window.print()">Print</button>
+</div>
+<div id="app-root">
+  <div class="error-banner">Loading…</div>
+</div>
+<script src="receipt.js?v=1"></script>
+</body>
+</html>

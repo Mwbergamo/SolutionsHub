@@ -138,4 +138,22 @@ function ratesheet_migrate(PDO $pdo): void
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_rate_sheet_requests_rep_email ON rate_sheet_requests(rep_email COLLATE NOCASE)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_rate_sheet_requests_status ON rate_sheet_requests(status)');
+
+    // Added 2026-09-17 (follow-up, per Michael): the printable "accepted
+    // terms" record needs the submitting IP address alongside the
+    // signature/timestamp/checkbox it already had. ALTER TABLE via
+    // ratesheet_add_column_if_missing() rather than editing the CREATE
+    // TABLE above, since that only runs on a brand-new database -- this
+    // app is already live with real rows.
+    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'ip_address', 'TEXT');
+}
+
+/** Same ALTER-TABLE-if-needed helper as register/relationships use for live schema changes. */
+function ratesheet_add_column_if_missing(PDO $pdo, string $table, string $column, string $definition): void
+{
+    $stmt = $pdo->query("PRAGMA table_info($table)");
+    $existing = array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'name');
+    if (!in_array($column, $existing, true)) {
+        $pdo->exec("ALTER TABLE $table ADD COLUMN $column $definition");
+    }
 }

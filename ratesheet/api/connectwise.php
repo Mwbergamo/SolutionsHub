@@ -126,3 +126,16 @@ function ratesheet_cw_request(
     }
     return $decoded;
 }
+
+/**
+ * Escapes a string for safe interpolation into a single ConnectWise
+ * "field like "%...%"" condition value -- same helper/reasoning as
+ * register/api/connectwise.php's register_cw_condition_escape(), added
+ * here 2026-09-17 (follow-up) for public.php's territory-by-name lookup.
+ */
+function ratesheet_cw_condition_escape(string $value): string
+{
+    $value = str_replace('\\', '\\\\', $value);
+    $value = str_replace('"', '\\"', $value);
+    return $value;
+}

@@ -84,6 +84,73 @@ if ($action === 'list') {
 }
 
 /**
+ * The printable "accepted terms" record (added 2026-09-17, follow-up),
+ * per Michael: "the accepted terms document... that the customer signed
+ * that shows they read and accepted our terms doc, with their signature,
+ * timestamp, IP Address and approved checkbox to display when clicked on
+ * in the master list." Returns everything receipt.js needs to render
+ * that page -- the legal/checkbox text comes from the same
+ * ratesheet_legal_text()/ratesheet_checkbox_text() in _util.php used
+ * elsewhere, so the printed record can never drift from what the
+ * customer actually saw.
+ *
+ * GET /ratesheet/api/requests.php?action=detail&id=<id>
+ *   -> { ok: true, request: {...} } -- 404 if no such row, 403 if this
+ *      rep isn't allowed to see it (same admin/own-rows rule as ?action=list).
+ *   -> { ok: false, error: 'not yet submitted' } (409) if the customer
+ *      hasn't completed the signup yet -- nothing to show.
+ */
+if ($action === 'detail') {
+    $id = isset($_GET['id']) ? (int) $_GET['id'] : 0;
+    if ($id <= 0) {
+        ratesheet_respond(400, ['ok' => false, 'error' => 'Missing id.']);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM rate_sheet_requests WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    $r = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($r === false) {
+        ratesheet_respond(404, ['ok' => false, 'error' => 'Rate sheet not found.']);
+    }
+    if (!ratesheet_is_admin($user) && strtolower((string) $r['rep_email']) !== strtolower((string) $user['email'])) {
+        ratesheet_respond(403, ['ok' => false, 'error' => 'You do not have access to this rate sheet.']);
+    }
+    if ($r['status'] === 'pending') {
+        ratesheet_respond(409, ['ok' => false, 'error' => 'This customer has not submitted their signup yet -- there is nothing to show.']);
+    }
+
+    ratesheet_respond(200, ['ok' => true, 'request' => [
+        'id' => (int) $r['id'],
+        'status' => $r['status'],
+        'fail_reason' => $r['fail_reason'],
+        'first_name' => $r['first_name'],
+        'last_name' => $r['last_name'],
+        'business_name' => $r['business_name'],
+        'customer_email' => $r['customer_email'],
+        'address_line1' => $r['address_line1'],
+        'address_line2' => $r['address_line2'],
+        'city' => $r['city'],
+        'state' => $r['state'],
+        'zip' => $r['zip'],
+        'location' => $r['location'],
+        'account_kind' => $r['account_kind'],
+        'hourly_rate' => (float) $r['hourly_rate'],
+        'payment_method' => $r['payment_method'],
+        'invoices_emailed' => $r['invoices_emailed'] === null ? null : (bool) $r['invoices_emailed'],
+        'want_copy_of_signup' => $r['want_copy_of_signup'] === null ? null : (bool) $r['want_copy_of_signup'],
+        'agreed_to_terms' => (bool) $r['agreed_to_terms'],
+        'signature_data' => $r['signature_data'],
+        'signed_at' => $r['signed_at'],
+        'ip_address' => $r['ip_address'],
+        'rep_name' => $r['rep_name'],
+        'rep_email' => $r['rep_email'],
+        'cw_company_id' => $r['cw_company_id'] !== null ? (int) $r['cw_company_id'] : null,
+        'cw_contact_id' => $r['cw_contact_id'] !== null ? (int) $r['cw_contact_id'] : null,
+        'legal_text' => ratesheet_legal_text(),
+        'checkbox_text' => ratesheet_checkbox_text(),
+    ]]);
+}
+
+/**
  * Renders the prospect-facing "here's your rate sheet link" email.
  *
  * Copy (rate structure, service-type minimums, payment terms) is Michael's

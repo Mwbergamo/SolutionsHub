@@ -158,3 +158,76 @@ function ratesheet_hourly_rate(string $location): float
 {
     return $location === 'Richmond' ? 180.00 : 173.25;
 }
+
+/**
+ * ConnectWise Territory, per Sending Representative -- added 2026-09-17
+ * (follow-up), per Michael: "the customer should be created under their
+ * direct territory (Moe = Moe Okeilli's Account, Chester = Chester
+ * Sienko's Accounts, Trey = Trey Hayden's Accounts, Michael = House
+ * Accounts, all relationship coordinators = House Accounts."
+ *
+ * Only Moe, Chester, and Trey have their own named ConnectWise Territory;
+ * every other name in ratesheet_sender_roster() (Walter Drew, Claire
+ * Hayden, Casey Mayes, Michael Bergamo, Courtney Cruz, Kasie Van Fossen)
+ * falls under "all relationship coordinators = House Accounts" -- this
+ * function returns null for those, meaning House Accounts (territory id
+ * 45, same confirmed id register/api/customers.php already uses).
+ *
+ * Returns a SEARCH TERM, not a ConnectWise territory id -- this build
+ * environment has no way to look up the real Territory ids for "Moe
+ * Okeilli's Account" etc. (no live ConnectWise access from here, and the
+ * only confirmed id on file is 45/House Accounts), so
+ * ratesheet_cw_resolve_territory_id() in public.php resolves this to a
+ * real id with a live ConnectWise name search at signup time instead of
+ * a hardcoded id, falling back to House Accounts if no match is found.
+ * The full name (not just last name) is used as the search term so Trey
+ * Hayden's territory search can't accidentally match Claire Hayden's.
+ *
+ * Worth Michael double-checking the first live signup for each of these
+ * three lands in the right territory -- if he already knows the real
+ * ConnectWise territory ids, those can replace this live-search
+ * resolution with a straight hardcoded map, same as House Accounts' 45.
+ *
+ * @return string|null search term, or null for House Accounts
+ */
+function ratesheet_rep_territory_search_term(string $repName): ?string
+{
+    static $map = [
+        'Moe Okeilli' => 'Moe Okeilli',
+        'Chester Sienko' => 'Chester Sienko',
+        'Trey Hayden' => 'Trey Hayden',
+    ];
+    return $map[$repName] ?? null;
+}
+
+/** ConnectWise Territory id for "House Accounts" -- confirmed (register/api/customers.php). */
+const RATESHEET_HOUSE_ACCOUNTS_TERRITORY_ID = 45;
+
+/**
+ * The legal text shown under the signature block on the public signup
+ * page, verbatim per Michael (chat, 2026-09-17). Single source of truth
+ * -- signup.js keeps its own copy for the public (unauthenticated) form
+ * since it can't call an authenticated endpoint, but every other use
+ * (the customer's own emailed copy, and the rep-facing printable
+ * "accepted terms" record) reads it from here.
+ */
+function ratesheet_legal_text(): string
+{
+    return <<<'TEXT'
+I agree to pay CodeBlue Technology for services performed in the amounts specified within this rate agreement.
+
+Taxes, shipping, handling and other fees may apply. We reserve the right to cancel orders arising from pricing or other errors.
+
+Acceptance and Incorporation by Reference This Order together with the Master Services Agreement and Service Attachments and other terms and conditions identified on Exhibit A, all of which are incorporated herein by reference (collectively, the "Agreement") is between CodeBlue Technology (sometimes referred to as "we," "us," "our," "CBT," or "Provider"), and the customer identified on the Order (sometimes referred to as "you," "your," or "Client"). This Agreement is effective as of the date the Client accepts the Order (the "Effective Date").
+
+By signing or accepting this Order, Client acknowledges, represents, and warrants that it has read and agrees to the terms and conditions identified on Exhibit A to this Order which are incorporated as if fully set forth herein. The parties hereby agree that electronic signatures to this Order shall be relied upon and will bind them to the obligations stated herein. Each party hereby warrants and represents that it has the express authority to execute this Agreement(s). Provider may make changes to the Agreement at any time. If there are changes, Provider will revise the date at the top of the document. Provider may or may not provide Client with additional notice regarding such changes. Client should review the terms and conditions regularly. Unless otherwise noted, the amended terms and conditions will be effective immediately, and your continued use of the Services thereafter constitutes your acceptance of the changes.
+
+If you do not agree to the amended terms and conditions, you must stop using the Services immediately. Please note, you may incur a termination fee or other third-party fees, if applicable. You may access the current version of the terms and conditions at any time by visiting https://codebluetechnology.com/legal. The parties, acting through their authorized officers, hereby execute this Agreement.
+TEXT;
+}
+
+/** The checkbox-of-understanding text, verbatim per Michael (chat, 2026-09-17). */
+function ratesheet_checkbox_text(): string
+{
+    return 'By signing below or clicking, Client acknowledges, represents and warrants that it has read and agrees to the terms and conditions in the following documents, which are incorporated herein by reference and can be found on Exhibit A in the PDF Version of any subsequent proposal.';
+}

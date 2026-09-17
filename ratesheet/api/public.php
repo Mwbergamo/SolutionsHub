@@ -104,6 +104,14 @@ if ($action === 'submit') {
     $agreed = !empty($input['agreed_to_terms']);
     $signatureDataUrl = trim((string) ($input['signature_data_url'] ?? ''));
 
+    // Added 2026-09-17 (follow-up) for the printable "accepted terms"
+    // record -- X-Forwarded-For first in case Bluehost sits behind any
+    // proxy/CDN for this request, else the direct connecting address.
+    $ipAddress = trim((string) ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? ''));
+    if (str_contains($ipAddress, ',')) {
+        $ipAddress = trim(explode(',', $ipAddress)[0]); // X-Forwarded-For can be a chain; the first hop is the client.
+    }
+
     $errors = [];
     if ($firstName === '') $errors[] = 'First name is required.';
     if ($lastName === '') $errors[] = 'Last name is required.';
@@ -125,7 +133,7 @@ if ($action === 'submit') {
     // (per Michael) -- the company in ConnectWise is the person's own name.
     $companyName = $row['account_kind'] === 'Commercial' ? $businessName : trim($firstName . ' ' . $lastName);
 
-    $saveSubmission = function (string $status, ?string $failReason, ?int $cwCompanyId, ?int $cwContactId) use ($pdo, $row, $firstName, $lastName, $businessName, $email, $addr1, $addr2, $city, $state, $zip, $paymentMethod, $wantCopy, $invoicesEmailed, $agreed, $signatureDataUrl): void {
+    $saveSubmission = function (string $status, ?string $failReason, ?int $cwCompanyId, ?int $cwContactId) use ($pdo, $row, $firstName, $lastName, $businessName, $email, $addr1, $addr2, $city, $state, $zip, $paymentMethod, $wantCopy, $invoicesEmailed, $agreed, $signatureDataUrl, $ipAddress): void {
         $stmt = $pdo->prepare(
             'UPDATE rate_sheet_requests SET
                 status = :status, fail_reason = :fail_reason,
@@ -134,7 +142,7 @@ if ($action === 'submit') {
                 city = :city, state = :state, zip = :zip,
                 payment_method = :payment_method, want_copy_of_signup = :want_copy,
                 invoices_emailed = :invoices_emailed, agreed_to_terms = :agreed,
-                signature_data = :signature, signed_at = :signed_at,
+                signature_data = :signature, signed_at = :signed_at, ip_address = :ip_address,
                 cw_company_id = :cw_company_id, cw_contact_id = :cw_contact_id,
                 submitted_at = COALESCE(submitted_at, :submitted_at)
              WHERE id = :id'
@@ -158,6 +166,7 @@ if ($action === 'submit') {
             ':agreed' => $agreed ? 1 : 0,
             ':signature' => $signatureDataUrl,
             ':signed_at' => $now,
+            ':ip_address' => $ipAddress !== '' ? $ipAddress : null,
             ':cw_company_id' => $cwCompanyId,
             ':cw_contact_id' => $cwContactId,
             ':submitted_at' => $now,
@@ -165,8 +174,17 @@ if ($action === 'submit') {
         ]);
     };
 
+    // Territory, per Sending Representative -- see
+    // ratesheet_rep_territory_search_term()'s docblock in _util.php for
+    // the full mapping and why this is a live ConnectWise name search
+    // rather than a hardcoded id (only House Accounts' id is confirmed).
+    $territorySearchTerm = ratesheet_rep_territory_search_term($row['rep_name']);
+    $territoryId = $territorySearchTerm !== null
+        ? ratesheet_cw_resolve_territory_id($territorySearchTerm)
+        : RATESHEET_HOUSE_ACCOUNTS_TERRITORY_ID;
+
     try {
-        $company = ratesheet_cw_create_company($companyName, $addr1, $addr2, $city, $state, $zip);
+        $company = ratesheet_cw_create_company($companyName, $addr1, $addr2, $city, $state, $zip, $territoryId);
         $companyId = (int) $company['id'];
         $contact = ratesheet_cw_create_contact($companyId, $firstName, $lastName, $email);
         $contactId = (int) $contact['id'];
@@ -258,7 +276,34 @@ function ratesheet_cw_sanitize_account_id(string $name, int $maxLength = 41): st
     return mb_substr($concatenated, 0, $maxLength);
 }
 
-function ratesheet_cw_create_company(string $name, string $addressLine1, string $addressLine2, string $city, string $state, string $zip): array
+/**
+ * Resolves a ConnectWise Territory id by a live name search (conditions:
+ * name like "%$searchTerm%"), falling back to House Accounts if nothing
+ * matches or the lookup itself fails -- see
+ * ratesheet_rep_territory_search_term()'s docblock in _util.php for why
+ * this is a live search rather than a hardcoded id map: this build
+ * environment has no way to confirm the real ids for anything other than
+ * House Accounts (45, already proven in register/api/customers.php).
+ * Failing open to House Accounts (rather than blocking the whole signup)
+ * matches this app's existing philosophy for non-critical ConnectWise
+ * steps (see ratesheet_cw_create_company()'s Team-row try/catch below).
+ */
+function ratesheet_cw_resolve_territory_id(string $searchTerm): int
+{
+    try {
+        $condition = 'name like "%' . ratesheet_cw_condition_escape($searchTerm) . '%"';
+        $rows = ratesheet_cw_request('/company/territories', ['conditions' => $condition, 'fields' => 'id,name'], 'GET', null, 15, 6);
+        if (isset($rows[0]['id']) && is_int($rows[0]['id'])) {
+            return (int) $rows[0]['id'];
+        }
+        error_log('ratesheet_cw_resolve_territory_id: no ConnectWise territory matched "' . $searchTerm . '" -- falling back to House Accounts.');
+    } catch (Throwable $e) {
+        error_log('ratesheet_cw_resolve_territory_id: lookup failed for "' . $searchTerm . '": ' . $e->getMessage() . ' -- falling back to House Accounts.');
+    }
+    return RATESHEET_HOUSE_ACCOUNTS_TERRITORY_ID;
+}
+
+function ratesheet_cw_create_company(string $name, string $addressLine1, string $addressLine2, string $city, string $state, string $zip, int $territoryId): array
 {
     $today = gmdate('Y-m-d\T00:00:00\Z');
 
@@ -268,7 +313,7 @@ function ratesheet_cw_create_company(string $name, string $addressLine1, string 
         'country' => ['id' => 1], // United States, confirmed (register/api/customers.php)
         'status' => ['id' => 1], // Active, confirmed
         'site' => ['name' => 'Main'], // confirmed required
-        'territory' => ['id' => 45], // "House accounts", confirmed
+        'territory' => ['id' => $territoryId], // resolved per Sending Representative -- see caller
         'accountNumber' => ratesheet_cw_sanitize_account_id($name),
         'dateAcquired' => $today,
         'customFields' => [
@@ -378,9 +423,11 @@ function ratesheet_internal_notice_html(array $s): string
  * copy of their sign up form and if yes, send them a copy of all data
  * filled along with our terms and conditions."
  *
- * RATESHEET_LEGAL_SIGNATURE_TEXT below is Michael's verbatim legal text
- * (chat, 2026-09-17), kept identical to signup.js's matching constant --
- * update both together if this ever changes.
+ * Legal text comes from the shared ratesheet_legal_text() in _util.php
+ * (Michael's verbatim wording, chat 2026-09-17) -- the single source of
+ * truth also used by the rep-facing printable "accepted terms" record in
+ * requests.php. signup.js keeps its own copy since the public form can't
+ * call an authenticated endpoint; keep all three in sync if this changes.
  */
 function ratesheet_customer_copy_html(array $s): string
 {
@@ -401,24 +448,6 @@ function ratesheet_customer_copy_html(array $s): string
         '<strong>Payment Method:</strong> ' . $e($paymentLabel) . '<br>' .
         '<strong>Emailed Invoices:</strong> ' . ($s['invoices_emailed'] ? 'Yes' : 'No') .
         '</td></tr>' .
-        '<tr><td style="padding:8px 24px 24px 24px;font-size:11.5px;color:#5A6472;line-height:1.6;white-space:pre-wrap;">' . RATESHEET_LEGAL_SIGNATURE_TEXT . '</td></tr>' .
+        '<tr><td style="padding:8px 24px 24px 24px;font-size:11.5px;color:#5A6472;line-height:1.6;white-space:pre-wrap;">' . htmlspecialchars(ratesheet_legal_text(), ENT_QUOTES, 'UTF-8') . '</td></tr>' .
         '</table></td></tr></table></body></html>';
 }
-
-/**
- * Verbatim legal text Michael specified (chat, 2026-09-17) to show under
- * the digital signature block. Kept identical here and in signup.js's
- * matching RATESHEET_LEGAL_TEXT constant -- update both together if this
- * ever changes.
- */
-const RATESHEET_LEGAL_SIGNATURE_TEXT = <<<'TEXT'
-I agree to pay CodeBlue Technology for services performed in the amounts specified within this rate agreement.
-
-Taxes, shipping, handling and other fees may apply. We reserve the right to cancel orders arising from pricing or other errors.
-
-Acceptance and Incorporation by Reference This Order together with the Master Services Agreement and Service Attachments and other terms and conditions identified on Exhibit A, all of which are incorporated herein by reference (collectively, the "Agreement") is between CodeBlue Technology (sometimes referred to as "we," "us," "our," "CBT," or "Provider"), and the customer identified on the Order (sometimes referred to as "you," "your," or "Client"). This Agreement is effective as of the date the Client accepts the Order (the "Effective Date").
-
-By signing or accepting this Order, Client acknowledges, represents, and warrants that it has read and agrees to the terms and conditions identified on Exhibit A to this Order which are incorporated as if fully set forth herein. The parties hereby agree that electronic signatures to this Order shall be relied upon and will bind them to the obligations stated herein. Each party hereby warrants and represents that it has the express authority to execute this Agreement(s). Provider may make changes to the Agreement at any time. If there are changes, Provider will revise the date at the top of the document. Provider may or may not provide Client with additional notice regarding such changes. Client should review the terms and conditions regularly. Unless otherwise noted, the amended terms and conditions will be effective immediately, and your continued use of the Services thereafter constitutes your acceptance of the changes.
-
-If you do not agree to the amended terms and conditions, you must stop using the Services immediately. Please note, you may incur a termination fee or other third-party fees, if applicable. You may access the current version of the terms and conditions at any time by visiting https://codebluetechnology.com/legal. The parties, acting through their authorized officers, hereby execute this Agreement.
-TEXT;
