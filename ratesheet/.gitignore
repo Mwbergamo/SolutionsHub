@@ -1,0 +1,19 @@
+# ratesheet/.gitignore
+#
+# Root .gitignore couldn't be edited from this session (writes to it were
+# refused by the file bridge, unlike every other file touched this
+# session -- possibly a protected path). A per-folder .gitignore works
+# identically for git, so these entries live here instead. Same patterns
+# as the register/relationships equivalents in the root .gitignore.
+
+# ConnectWise API credentials -- never commit. Copy
+# connectwise-config.sample.php to connectwise-config.php in api/ and
+# fill in real values there.
+api/connectwise-config.php
+
+# Runtime SQLite database (+ WAL/SHM) -- created on first request by
+# api/db.php. Never commit: live rep accounts and customer signup data,
+# not source, and a `git pull` deploy must never overwrite or wipe it.
+data/*.sqlite
+data/*.sqlite-wal
+data/*.sqlite-shm

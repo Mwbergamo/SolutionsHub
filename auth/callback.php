@@ -22,6 +22,7 @@ require_once __DIR__ . '/microsoft-auth.php';
 require_once __DIR__ . '/local-user.php';
 require_once __DIR__ . '/../relationships/api/db.php';
 require_once __DIR__ . '/../register/api/db.php';
+require_once __DIR__ . '/../ratesheet/api/db.php';
 
 function auth_callback_fail(string $message): never
 {
@@ -70,6 +71,7 @@ if (!str_ends_with($profile['email'], '@' . $allowedDomain)) {
 
 $crcUserId = auth_upsert_local_user(relationships_db(), 'crc_users', $profile['email'], $profile['name']);
 $registerUserId = auth_upsert_local_user(register_db(), 'register_users', $profile['email'], $profile['name']);
+$ratesheetUserId = auth_upsert_local_user(ratesheet_db(), 'ratesheet_users', $profile['email'], $profile['name']);
 
 // Regenerate the session id before writing the new identity into it
 // (prevents session fixation -- a pre-auth session id, e.g. from a shared
@@ -80,6 +82,7 @@ $_SESSION['auth_email'] = $profile['email'];
 $_SESSION['auth_oid'] = $profile['oid'];
 $_SESSION['crc_user_id'] = $crcUserId;
 $_SESSION['register_user_id'] = $registerUserId;
+$_SESSION['ratesheet_user_id'] = $ratesheetUserId;
 
 $returnTo = auth_safe_return_to($_SESSION['auth_return_to'] ?? null);
 unset($_SESSION['auth_return_to']);

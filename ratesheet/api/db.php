@@ -1,0 +1,141 @@
+<?php
+/**
+ * ratesheet/api/db.php
+ *
+ * Opens (and, on first run, creates) the Customer Rate Sheet Sign Up app's
+ * SQLite database. Self-contained sub-app, same pattern as
+ * relationships/api/db.php and register/api/db.php -- its own accounts
+ * table (rep logins, via the shared Microsoft 365 SSO -- see
+ * auth/session.php) and its own table for every rate-sheet request a rep
+ * sends out plus what the customer eventually submits.
+ *
+ * Added 2026-09-17 per Michael's "Customer Rate Sheet Sign Up" request:
+ * a rep picks a prospect email + Sending Representative + Location
+ * (Warsaw/Richmond) + Kind of Account (Commercial/Residential) and sends
+ * a tokenized public link; the customer fills out name/email/address/
+ * payment METHOD/e-signature on that public link (no login -- see
+ * public.php); a successful submit creates the Company + Contact in
+ * ConnectWise (register/api/customers.php's proven
+ * register_cw_create_company()/register_cw_create_contact() pattern,
+ * mirrored here as ratesheet_cw_create_company()/
+ * ratesheet_cw_create_contact() in requests.php -- see that file's header
+ * for why this is a copy rather than a cross-app include).
+ *
+ * The database file lives in ratesheet/data/, which is:
+ *   - listed in .gitignore (runtime data, not source -- a `git pull`
+ *     deploy must never overwrite or wipe it)
+ *   - blocked from direct HTTP access by ratesheet/data/.htaccess (same
+ *     "Deny from all" treatment as register/data/ and relationships/data/)
+ *
+ * Every other ratesheet/api/*.php file starts with:
+ *   require __DIR__ . '/db.php';
+ *   $pdo = ratesheet_db();
+ */
+
+declare(strict_types=1);
+
+function ratesheet_db(): PDO
+{
+    static $pdo = null;
+    if ($pdo !== null) {
+        return $pdo;
+    }
+
+    $dataDir = __DIR__ . '/../data';
+    if (!is_dir($dataDir)) {
+        mkdir($dataDir, 0770, true);
+    }
+    $dbPath = $dataDir . '/ratesheet.sqlite';
+
+    $pdo = new PDO('sqlite:' . $dbPath);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->exec('PRAGMA foreign_keys = ON');
+    $pdo->exec('PRAGMA journal_mode = WAL');
+
+    ratesheet_migrate($pdo);
+
+    return $pdo;
+}
+
+function ratesheet_migrate(PDO $pdo): void
+{
+    // password_hash is a required-but-unused column, same reasoning as
+    // register_users/crc_users: auth/local-user.php's
+    // auth_upsert_local_user() writes a random placeholder into it on
+    // first sign-in (real auth is the shared Microsoft 365 session, not a
+    // local password) -- kept NOT NULL to match that shared helper's fixed
+    // INSERT column list rather than special-casing this table.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS ratesheet_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+
+    // One row per rate sheet a rep sends. Filled in gradually: created at
+    // send-time with just the rep/prospect/location/account fields and a
+    // random token; the customer-facing fields (name, address, payment
+    // method, signature, ...) are added by public.php's ?action=submit,
+    // and cw_company_id/cw_contact_id only once ConnectWise actually
+    // confirms the create. Nothing here is ever deleted -- a failed
+    // ConnectWise create leaves status='failed' with the customer's typed
+    // data still saved, so staff can finish the signup by hand rather
+    // than losing what the customer already filled in.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS rate_sheet_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT NOT NULL UNIQUE,
+
+            -- Who's actually logged in and clicked Send (may differ from
+            -- rep_name/rep_email below -- e.g. an admin sending on behalf
+            -- of a teammate). Nullable so a row is never lost if the
+            -- ratesheet_users row is later removed.
+            created_by_user_id INTEGER REFERENCES ratesheet_users(id),
+
+            prospect_email TEXT NOT NULL,
+            rep_name TEXT NOT NULL,
+            rep_email TEXT NOT NULL,
+            location TEXT NOT NULL,        -- 'Warsaw' | 'Richmond'
+            account_kind TEXT NOT NULL,    -- 'Commercial' | 'Residential'
+            hourly_rate REAL NOT NULL,     -- resolved at send-time from location
+
+            -- 'pending' (link sent, not yet submitted) | 'submitted'
+            -- (customer completed it, CW company+contact created) |
+            -- 'failed' (customer tried to submit but something failed --
+            -- see fail_reason; their typed data is still saved below).
+            status TEXT NOT NULL DEFAULT 'pending',
+            fail_reason TEXT,
+
+            -- Customer-submitted fields (NULL until submit is attempted).
+            first_name TEXT,
+            last_name TEXT,
+            business_name TEXT,
+            customer_email TEXT,
+            address_line1 TEXT,
+            address_line2 TEXT,
+            city TEXT,
+            state TEXT,
+            zip TEXT,
+            payment_method TEXT,          -- 'card' | 'ach' (method only -- see public.php's header)
+            want_copy_of_signup INTEGER,  -- 0/1
+            invoices_emailed INTEGER,     -- 0/1 -- the dashboard's "Invoices Emailed" column
+            agreed_to_terms INTEGER NOT NULL DEFAULT 0,
+            signature_data TEXT,          -- data: URL (PNG) from the signature pad
+            signed_at TEXT,
+
+            cw_company_id INTEGER,
+            cw_contact_id INTEGER,
+
+            internal_email_status TEXT,   -- hello@codebluetechnology.com notice: 'sent' | 'failed' | NULL
+            customer_copy_email_status TEXT, -- only attempted when want_copy_of_signup=1
+
+            sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+            submitted_at TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_rate_sheet_requests_rep_email ON rate_sheet_requests(rep_email COLLATE NOCASE)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_rate_sheet_requests_status ON rate_sheet_requests(status)');
+}

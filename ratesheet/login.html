@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign In — Rate Sheet Sign Up — CodeBlue Technology</title>
+<!--
+  Same as register/login.html and relationships/login.html: this app has
+  no login form of its own -- everyone signs in once via Microsoft 365 at
+  the SolutionsHub root, and this page's only job is to forward there
+  with the right return_to so app.js's login redirect lands back here.
+-->
+<meta http-equiv="refresh" content="0; url=/login.php?return_to=%2Fratesheet%2Findex.html">
+<style>
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:#0d1117; font-family:'IBM Plex Sans',sans-serif; color:#8b949e; font-size:14px; }
+</style>
+</head>
+<body>
+  <div>Redirecting to Microsoft sign-in…</div>
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var next = params.get('next') || 'index.html';
+      var returnTo = new URL(next, window.location.href).pathname;
+      window.location.replace('/login.php?return_to=' + encodeURIComponent(returnTo));
+    })();
+  </script>
+</body>
+</html>
