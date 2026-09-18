@@ -233,26 +233,26 @@ function ratesheet_cw_offending_field(string $errorMessage, array $payload): ?st
 /**
  * Releases Credit Hold on a Company once Step 2 payment actually vaults
  * (see public.php's ?action=step2-submit) -- added 2026-09-17 (follow-up
- * #4). Deliberately fail-open: by the time this is called, the customer's
+ * #4), CORRECTED same day per Michael: Credit Hold isn't a boolean field
+ * at all -- it's a Company STATUS (set at creation time via
+ * ratesheet_cw_create_company()'s ratesheet_cw_resolve_company_status_id()
+ * call in public.php). Releasing it is just putting the Company's
+ * `status` back to Active -- id 1, already confirmed elsewhere in this
+ * codebase (register/api/customers.php, and this app's own
+ * ratesheet_cw_create_company()), so no live name lookup is needed here
+ * the way setting "Credit Hold" itself required one.
+ *
+ * Deliberately fail-open: by the time this is called, the customer's
  * payment method is already vaulted and their signup already saved, so a
  * ConnectWise quirk here should never re-surface as a failure to the
  * customer -- it's logged instead, so staff can release the hold by hand
  * if this ever misfires.
- *
- * *** FIELD NAME UNCONFIRMED *** -- 'creditHold' is ConnectWise Manage's
- * documented boolean field for a Company's Credit Hold checkbox, but this
- * hasn't been exercised against this instance's live API from here (no
- * local ConnectWise credentials -- see connectwise-config.sample.php).
- * If it's wrong, ratesheet_cw_put_company_with_retry()'s offending-field
- * handling will strip it and the PUT will otherwise succeed -- but the
- * hold itself won't actually release. Watch the error_log below on the
- * first live Step 2 completion to confirm.
  */
 function ratesheet_cw_release_credit_hold(int $cwCompanyId): void
 {
     try {
-        ratesheet_cw_put_company_with_retry($cwCompanyId, ['creditHold' => false]);
+        ratesheet_cw_put_company_with_retry($cwCompanyId, ['status' => ['id' => 1]]); // Active, confirmed
     } catch (Throwable $e) {
-        error_log('[ratesheet/connectwise] could not release Credit Hold for company ' . $cwCompanyId . ': ' . $e->getMessage());
+        error_log('[ratesheet/connectwise] could not release Credit Hold (restore Active status) for company ' . $cwCompanyId . ': ' . $e->getMessage());
     }
 }

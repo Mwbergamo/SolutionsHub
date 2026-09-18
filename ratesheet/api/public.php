@@ -649,6 +649,36 @@ function ratesheet_cw_resolve_territory_id(string $searchTerm): int
     return RATESHEET_HOUSE_ACCOUNTS_TERRITORY_ID;
 }
 
+/**
+ * Resolves a ConnectWise Company STATUS id by a live name search against
+ * /company/statuses. Added/CORRECTED 2026-09-17 (follow-up #4, per
+ * Michael): "Credit Hold" is not a separate boolean field on Company at
+ * all -- it's one of the Company Status values (the same `status` field
+ * this app already sets to Active/id=1 at creation), set from the
+ * Company's Finance area in the ConnectWise UI. The earlier attempt to
+ * PUT a made-up 'creditHold' boolean broke company creation outright (no
+ * such field exists to reject gracefully). No safe universal fallback
+ * exists here the way House Accounts does for territories (see
+ * ratesheet_cw_resolve_territory_id() above) -- if this instance has no
+ * Company Status literally named "Credit Hold" configured, returns null
+ * and the caller (ratesheet_cw_create_company() below) just leaves the
+ * company at its default Active status, logged for staff to configure.
+ */
+function ratesheet_cw_resolve_company_status_id(string $name): ?int
+{
+    try {
+        $condition = 'name = "' . ratesheet_cw_condition_escape($name) . '"';
+        $rows = ratesheet_cw_request('/company/statuses', ['conditions' => $condition, 'fields' => 'id,name'], 'GET', null, 15, 6);
+        if (isset($rows[0]['id']) && is_int($rows[0]['id'])) {
+            return (int) $rows[0]['id'];
+        }
+        error_log('ratesheet_cw_resolve_company_status_id: no ConnectWise Company Status named "' . $name . '" found.');
+    } catch (Throwable $e) {
+        error_log('ratesheet_cw_resolve_company_status_id: lookup failed for "' . $name . '": ' . $e->getMessage());
+    }
+    return null;
+}
+
 function ratesheet_cw_create_company(string $name, string $addressLine1, string $addressLine2, string $city, string $state, string $zip, int $territoryId): array
 {
     $today = gmdate('Y-m-d\T00:00:00\Z');
@@ -678,22 +708,27 @@ function ratesheet_cw_create_company(string $name, string $addressLine1, string 
         throw new RatesheetConnectWiseError('ConnectWise did not return a new company id.');
     }
 
-    // Credit Hold ON, added 2026-09-17 (follow-up #4) -- deliberately a
+    // Credit Hold ON, added 2026-09-17 (follow-up #4), CORRECTED same day
+    // per Michael: this is not a boolean field -- it's the Company's
+    // STATUS (the same field already set to Active/id=1 above), changed
+    // to a status literally named "Credit Hold" from the Finance area of
+    // the Company record. "The company must be created in ConnectWise
+    // first. Once saved, within the Company Finance, the account status
+    // should be changed to Credit Hold." -- so this is deliberately a
     // SEPARATE best-effort PUT after creation, not part of the POST body
-    // above. FIXED same day: 'creditHold' in the initial POST body broke
-    // company creation outright for every signup (ConnectWise rejected
-    // the whole create over an unconfirmed field, with no self-healing
-    // retry on a plain POST) -- unlike ratesheet_cw_release_credit_hold()'s
-    // PUT-with-retry path, a bad field here has nowhere safe to land. This
-    // mirrors the team-row pattern right below: creating the account is
-    // the part that can't be redone, so it must succeed even if setting
-    // Credit Hold doesn't. Uses ratesheet_cw_put_company_with_retry()
-    // (connectwise.php) so a wrong field name degrades to "logged, hold
-    // just doesn't get set" rather than failing this call.
-    try {
-        ratesheet_cw_put_company_with_retry($companyId, ['creditHold' => true]);
-    } catch (Throwable $e) {
-        error_log('ratesheet_cw_create_company: failed to set Credit Hold for company ' . $companyId . ': ' . $e->getMessage());
+    // above: creating the account is the part that can't be redone (same
+    // reasoning as the team-row assignments right below), so it must
+    // succeed even if this instance turns out to have no "Credit Hold"
+    // status configured.
+    $creditHoldStatusId = ratesheet_cw_resolve_company_status_id('Credit Hold');
+    if ($creditHoldStatusId !== null) {
+        try {
+            ratesheet_cw_put_company_with_retry($companyId, ['status' => ['id' => $creditHoldStatusId]]);
+        } catch (Throwable $e) {
+            error_log('ratesheet_cw_create_company: failed to set Credit Hold status for company ' . $companyId . ': ' . $e->getMessage());
+        }
+    } else {
+        error_log('ratesheet_cw_create_company: no "Credit Hold" Company Status configured on this ConnectWise instance -- company ' . $companyId . ' left at its default Active status.');
     }
 
     foreach ([
