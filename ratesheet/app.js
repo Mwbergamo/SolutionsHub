@@ -142,20 +142,28 @@
 
   // ---- Render ----------------------------------------------------------
 
+  // 'awaiting_payment' added 2026-09-17 (follow-up #4, two-step signup):
+  // Step 1 done (ConnectWise Company/Contact created, Credit Hold ON),
+  // customer just hasn't finished Step 2 (payment) yet -- distinct from
+  // 'pending' (link sent, nothing done) so staff can tell them apart.
   function statusDot(status) {
-    var color = status === 'submitted' ? '#2ecc71' : status === 'failed' ? '#e5534b' : '#e8c547';
-    var label = status === 'submitted' ? 'Submitted' : status === 'failed' ? 'Failed' : 'Pending';
+    var color = status === 'submitted' ? '#2ecc71' : status === 'failed' ? '#e5534b' : status === 'awaiting_payment' ? '#e08a2e' : '#e8c547';
+    var label = status === 'submitted' ? 'Submitted' : status === 'failed' ? 'Failed' : status === 'awaiting_payment' ? 'Awaiting Payment' : 'Pending';
     return '<span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:' + color + ';">' +
       '<span style="width:9px;height:9px;border-radius:999px;background:' + color + ';display:inline-block;"></span>' + label + '</span>';
   }
 
   // altpay_status is only meaningful once a customer has actually
-  // submitted (pending rows have no payment method attempt yet).
+  // completed Step 2 (pending/awaiting_payment rows have no payment
+  // method attempt yet). Red "Needs follow-up" is reserved for a REAL
+  // recorded failure (altpay_fail_reason) -- a fresh awaiting_payment row
+  // is normal, in-progress, not a problem.
   function paymentOnFileCell(r) {
     if (r.status === 'pending') return '—';
     if (r.altpay_status === 'vaulted' && r.altpay_payment_method_summary) {
       return '<span style="color:#1E8A4C;">' + e(r.altpay_payment_method_summary) + '</span>';
     }
+    if (r.status === 'awaiting_payment') return '<span style="color:#8A93A3;">Awaiting payment</span>';
     return '<span style="color:#e5534b;">Needs follow-up</span>';
   }
 

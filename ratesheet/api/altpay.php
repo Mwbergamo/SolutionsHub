@@ -11,7 +11,8 @@
  * signup time. Same self-contained-sub-app copy pattern as
  * connectwise.php (see that file's header).
  *
- * Flow (see public.php's ?action=card-checkout-init and ?action=submit):
+ * Flow (see public.php's ?action=step1-submit, ?action=card-checkout-init,
+ * and ?action=step2-submit):
  *   1. altpay_get_access_token()       -- OAuth client_credentials grant
  *   2. altpay_create_customer()        -- POST /customers (one per rate
  *                                          sheet signup; external_id ties
@@ -197,10 +198,11 @@ function ratesheet_altpay_access_token(): string
  * gets a 400 "invalid invoice id", not success. Alternative Payments' Web
  * SDK turns out to be built around invoice-based checkout throughout --
  * there is no true vault-only auth path, despite the addPaymentMethod
- * component's own docs suggesting otherwise. Per Michael (2026-09-17):
- * create a minimal throwaway invoice just to get this token (see
- * ratesheet_altpay_create_placeholder_invoice() below), then archive it
- * once the card is actually vaulted (ratesheet_altpay_archive_invoice()).
+ * component's own docs suggesting otherwise. UPDATED (follow-up #4, per
+ * Michael): rather than a throwaway invoice created/archived per card
+ * attempt, Step 1 of the signup now creates one PERMANENT "account setup"
+ * invoice per signup (ratesheet_altpay_create_placeholder_invoice() below)
+ * that Step 2 checks out against and that is never archived.
  */
 function ratesheet_altpay_checkout_auth_token(string $customerId, string $invoiceId): array
 {
@@ -220,19 +222,20 @@ function ratesheet_altpay_checkout_auth_token(string $customerId, string $invoic
 }
 
 /**
- * A minimal, never-actually-billed invoice, created solely so
- * ratesheet_altpay_checkout_auth_token() has a real invoice_id to point
- * at (see that function's header for why this exists at all). Archived
- * via ratesheet_altpay_archive_invoice() once its only purpose -- getting
- * the customer through addPaymentMethod -- is served.
+ * A minimal, PERMANENT "account setup" invoice, created once per signup
+ * (Step 1 -- see public.php's ratesheet_altpay_ensure_invoice_for_row())
+ * solely so ratesheet_altpay_checkout_auth_token() has a real invoice_id
+ * to point at (see that function's header for why one is required at
+ * all). Unlike the original throwaway version, this is never archived --
+ * it stays on the account as the record Step 2 checks out against.
  *
- * *** UNVERIFIED AGAINST A LIVE REQUEST *** -- Alternative Payments' docs
- * show an invoice example with customer_id/currency/due_date/line_items,
- * but never state whether a near-zero amount is accepted, or confirm the
- * amount field's unit (this guesses cents, i.e. 100 = $1.00, since that's
- * the common convention and a literal 0 seemed likelier to be rejected as
- * "invalid amount" than a real 400 test would've told us). Watch for a
- * DEBUG error here the same way the checkout-auth path was diagnosed.
+ * Amount is 5 cents (Michael's call, 2026-09-17 follow-up #4) -- Alternative
+ * Payments' docs show an invoice example with
+ * customer_id/currency/due_date/line_items but never state whether a
+ * near-zero amount is accepted, or confirm the amount field's unit (this
+ * assumes cents, the common convention). Watch for a DEBUG error here the
+ * same way the checkout-auth path was diagnosed if the first live Step 1
+ * fails.
  */
 function ratesheet_altpay_create_placeholder_invoice(string $customerId): string
 {
@@ -242,33 +245,15 @@ function ratesheet_altpay_create_placeholder_invoice(string $customerId): string
         'currency' => 'USD',
         'due_date' => gmdate('Y-m-d'),
         'line_items' => [[
-            'description' => 'Payment method setup (not billed)',
-            'amount' => 100, // best guess: cents
+            'description' => 'Account setup',
+            'amount' => 5, // cents -- $0.05, per Michael (2026-09-17 follow-up #4)
             'quantity' => 1,
         ]],
     ]);
     if (empty($result['id'])) {
-        throw new RatesheetAltpayError('Alternative Payments placeholder invoice creation did not return an id.');
+        throw new RatesheetAltpayError('Alternative Payments account-setup invoice creation did not return an id.');
     }
     return (string) $result['id'];
-}
-
-/**
- * Best-effort cleanup for ratesheet_altpay_create_placeholder_invoice()'s
- * throwaway invoice -- called once the card has actually been vaulted (or
- * the customer abandons/changes their mind), so it doesn't linger as a
- * fake unpaid invoice in Alternative Payments' dashboard. Deliberately
- * swallows every failure: this is housekeeping, never something that
- * should block or fail a signup that otherwise succeeded.
- */
-function ratesheet_altpay_archive_invoice(string $invoiceId): void
-{
-    try {
-        $token = ratesheet_altpay_access_token();
-        ratesheet_altpay_request('/invoices/' . rawurlencode($invoiceId), $token, 'DELETE');
-    } catch (Throwable $e) {
-        error_log('[ratesheet/altpay] could not archive placeholder invoice ' . $invoiceId . ': ' . $e->getMessage());
-    }
 }
 
 /**

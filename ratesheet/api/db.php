@@ -77,12 +77,15 @@ function ratesheet_migrate(PDO $pdo): void
 
     // One row per rate sheet a rep sends. Filled in gradually: created at
     // send-time with just the rep/prospect/location/account fields and a
-    // random token; the customer-facing fields (name, address, payment
-    // method, signature, ...) are added by public.php's ?action=submit,
-    // and cw_company_id/cw_contact_id only once ConnectWise actually
-    // confirms the create. Nothing here is ever deleted -- a failed
-    // ConnectWise create leaves status='failed' with the customer's typed
-    // data still saved, so staff can finish the signup by hand rather
+    // random token; the customer-facing identity/address/terms/signature
+    // fields (plus cw_company_id/cw_contact_id/altpay_customer_id/
+    // altpay_invoice_id) are added by public.php's ?action=step1-submit,
+    // and payment_method/altpay_payment_method_id only once
+    // ?action=step2-submit actually vaults a payment method (see that
+    // file's header -- follow-up #4). Nothing here is ever deleted -- a
+    // failed Step 1 ConnectWise create leaves status='failed' with the
+    // customer's typed data still saved, so staff can finish the signup
+    // by hand rather
     // than losing what the customer already filled in.
     $pdo->exec(<<<'SQL'
         CREATE TABLE IF NOT EXISTS rate_sheet_requests (
@@ -102,10 +105,12 @@ function ratesheet_migrate(PDO $pdo): void
             account_kind TEXT NOT NULL,    -- 'Commercial' | 'Residential'
             hourly_rate REAL NOT NULL,     -- resolved at send-time from location
 
-            -- 'pending' (link sent, not yet submitted) | 'submitted'
-            -- (customer completed it, CW company+contact created) |
-            -- 'failed' (customer tried to submit but something failed --
-            -- see fail_reason; their typed data is still saved below).
+            -- 'pending' (link sent, not yet started) | 'awaiting_payment'
+            -- (Step 1 done -- CW company+contact created, Credit Hold ON,
+            -- waiting on Step 2 payment; added follow-up #4) | 'submitted'
+            -- (Step 2 done -- payment vaulted, Credit Hold released) |
+            -- 'failed' (Step 1's CW create itself failed -- see
+            -- fail_reason; their typed data is still saved below).
             status TEXT NOT NULL DEFAULT 'pending',
             fail_reason TEXT,
 
@@ -162,6 +167,19 @@ function ratesheet_migrate(PDO $pdo): void
     ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_payment_method_summary', 'TEXT');
     ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_status', 'TEXT'); // 'vaulted' | 'failed' | NULL
     ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_fail_reason', 'TEXT');
+
+    // Added 2026-09-17 (follow-up #4, per Michael): two-step signup --
+    // Step 1 (info/terms/signature) now creates the ConnectWise Company
+    // (with Credit Hold on) + Contact and a PERMANENT Alternative Payments
+    // setup invoice up front; Step 2 (payment only) checks out against
+    // that same invoice and releases Credit Hold once a payment method is
+    // actually vaulted. See public.php's ?action=step1-submit/
+    // ?action=step2-submit and connectwise.php's
+    // ratesheet_cw_release_credit_hold(). Unlike the old throwaway
+    // invoice (created and archived per card attempt, id only ever held
+    // in browser JS state), this invoice is never archived, so its id
+    // needs to persist on the row itself.
+    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_invoice_id', 'TEXT');
 }
 
 /** Same ALTER-TABLE-if-needed helper as register/relationships use for live schema changes. */

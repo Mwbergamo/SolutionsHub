@@ -5,6 +5,20 @@
  * per Michael). Loaded by signup.html with a ?t=<token> query param,
  * talks only to api/public.php (no auth/session involved at all).
  *
+ * TWO-STEP SIGNUP (updated 2026-09-17, follow-up #4 -- see api/public.php's
+ * header for the full contract): this form is now split into Step 1
+ * (identity/address/business name/"would you like copies"/terms/
+ * signature -- action=step1-submit) and Step 2 (payment only --
+ * action=step2-submit), driven by state.step and the row's own status
+ * from action=context ('pending'/'failed' -> Step 1, 'awaiting_payment'
+ * -> Step 2, resumed on reload; 'submitted' -> the existing Thank You
+ * screen, unchanged). Step 1 creates the ConnectWise Company (Credit Hold
+ * ON) + Contact and the Alternative Payments customer + a permanent
+ * setup invoice; Step 2 checks out against that invoice and only then
+ * releases Credit Hold. This replaced the old single-screen flow that
+ * collected everything (including payment) before creating anything in
+ * ConnectWise.
+ *
  * PAYMENT DATA (updated 2026-09-17, follow-up #3 -- see api/public.php's
  * and api/altpay.php's headers for the full picture):
  *   - Card: CORRECTED from an earlier (broken) hand-rolled Evervault
@@ -15,12 +29,11 @@
  *     mounts Alternative Payments' own hosted card form INSIDE
  *     #card-form-mount and, on success, hands back a finished payment
  *     method id + summary ("Visa ending 4242") -- this page's own JS
- *     never sees card data in any form, encrypted or otherwise. The
- *     card is vaulted with Alternative Payments (against a customer
- *     record created via api/public.php?action=card-checkout-init) the
- *     moment addPaymentMethod succeeds -- BEFORE the customer ever
- *     clicks this page's own Submit button, which just records the
- *     resulting ids alongside the rest of the signup.
+ *     never sees card data in any form, encrypted or otherwise. The card
+ *     is vaulted with Alternative Payments (against the customer/invoice
+ *     Step 1 already created) the moment addPaymentMethod succeeds --
+ *     BEFORE the customer ever clicks Step 2's own Submit button, which
+ *     just records the resulting ids alongside the rest of the signup.
  *   - ACH: routing number / account number / account type are plain
  *     fields on this page (Alternative Payments' bank vaulting API has no
  *     documented client-side tokenization step) -- submitted straight to
@@ -61,6 +74,7 @@
     loading: true,
     loadError: null,
     context: null, // { location, account_kind, hourly_rate, status }
+    step: 1, // 1 = info/terms/signature, 2 = payment -- see loadContext()
     submitting: false,
     submitError: null,
     submitted: false,
@@ -86,7 +100,7 @@
   var altpaySdkClient = null;      // AlternativeClient instance, once created
   var altpayComponent = null;      // mounted addPaymentMethod component instance
   var altpayCustomerId = null;     // set once card-checkout-init succeeds
-  var altpayInvoiceId = null;      // throwaway invoice card-checkout-init creates -- see api/altpay.php's header for why one exists at all; archived on successful Submit
+  var altpayInvoiceId = null;      // this signup's permanent setup invoice, from Step 1 -- see api/altpay.php's header
   var altpayPaymentMethodId = null;       // set once addPaymentMethod's onSuccess fires
   var altpayPaymentMethodSummary = null;  // e.g. "Visa ending 4242"
   var cardFormError = null;
@@ -122,18 +136,10 @@
     cardFormError = null;
     render();
 
-    apiPost('api/public.php?action=card-checkout-init&t=' + encodeURIComponent(token), {
-      first_name: state.form.first_name,
-      last_name: state.form.last_name,
-      email: state.form.email,
-      business_name: state.form.business_name,
-      address_line1: state.form.address_line1,
-      address_line2: state.form.address_line2,
-      city: state.form.city,
-      state: state.form.state,
-      zip: state.form.zip,
-      invoice_id: altpayInvoiceId // reuse across "use a different card" -- see api/altpay.php's header
-    }).then(function (r) {
+    // No body needed -- Step 1 (action=step1-submit) already created this
+    // row's Alternative Payments customer + permanent setup invoice; the
+    // server looks them up by token. See api/public.php's header.
+    apiPost('api/public.php?action=card-checkout-init&t=' + encodeURIComponent(token), {}).then(function (r) {
       if (!r.data || !r.data.ok) {
         cardFormLoading = false;
         cardFormError = (r.data && r.data.error) || 'Could not start the card form. Please try again, or choose ACH instead.';
@@ -186,12 +192,7 @@
       accessToken: initData.checkout_token,
       environment: initData.environment,
       onAccessTokenExpired: function () {
-        return apiPost('api/public.php?action=card-checkout-init&t=' + encodeURIComponent(token), {
-          first_name: state.form.first_name, last_name: state.form.last_name, email: state.form.email,
-          business_name: state.form.business_name, address_line1: state.form.address_line1,
-          address_line2: state.form.address_line2, city: state.form.city, state: state.form.state, zip: state.form.zip,
-          invoice_id: altpayInvoiceId // reuse the same throwaway invoice, don't create another one
-        }).then(function (r) {
+        return apiPost('api/public.php?action=card-checkout-init&t=' + encodeURIComponent(token), {}).then(function (r) {
           if (!r.data || !r.data.ok) {
             console.error('[altpay] token refresh failed', r.data);
             cardFormError = 'Your card session expired and could not refresh (' + ((r.data && r.data.error) || 'unknown error') + '). Please try again.';
@@ -287,13 +288,14 @@
     ensureCardFormMounted();
   }
 
-  // Updates the Submit button's label/disabled state directly, without a
-  // full render() -- see showFormError()'s comment for why.
+  // Updates the Submit/Continue button's label/disabled state directly,
+  // without a full render() -- see showFormError()'s comment for why.
   function setSubmitButtonState() {
     var btn = root.querySelector('[data-action="submit"]');
     if (!btn) return;
     btn.disabled = state.submitting;
-    btn.textContent = state.submitting ? 'Submitting…' : 'Submit';
+    var label = state.step === 1 ? 'Continue' : 'Submit';
+    btn.textContent = state.submitting ? (state.step === 1 ? 'Continuing…' : 'Submitting…') : label;
   }
 
   // Shows/clears the submit error banner via direct DOM manipulation
@@ -303,7 +305,7 @@
   // validation error -- both very real, previously-hit bugs. Full
   // render() is still used for the few transitions that legitimately
   // need to swap the whole form (initial load, payment method toggle,
-  // final "Thank You" screen).
+  // step 1 -> step 2, final "Thank You" screen).
   function showFormError(msg) {
     state.submitError = msg;
     var wrap = root.querySelector('.wrap');
@@ -352,6 +354,12 @@
       state.loading = false;
       if (r.data && r.data.ok) {
         state.context = r.data;
+        // Resume at the right step on a page reload -- 'awaiting_payment'
+        // means Step 1 already succeeded (ConnectWise Company/Contact +
+        // Alternative Payments customer/invoice exist, Credit Hold is on);
+        // 'pending'/'failed' both belong back at Step 1 ('failed' means
+        // Step 1's own ConnectWise create failed and is retryable).
+        state.step = r.data.status === 'awaiting_payment' ? 2 : 1;
       } else {
         state.loadError = (r.data && r.data.error) || 'This signup link is not valid.';
       }
@@ -418,9 +426,9 @@
     sigHasStroke = false;
   }
 
-  // ---- Submit ------------------------------------------------------------
+  // ---- Step 1: info / terms / signature ---------------------------------
 
-  function validate() {
+  function validateStep1() {
     var f = state.form;
     if (!f.first_name.trim()) return 'First name is required.';
     if (!f.last_name.trim()) return 'Last name is required.';
@@ -430,21 +438,13 @@
     if (!f.state.trim()) return 'State is required.';
     if (!f.zip.trim()) return 'ZIP code is required.';
     if (state.context.account_kind === 'Commercial' && !f.business_name.trim()) return 'Business name is required for a Commercial account.';
-    if (!f.payment_method) return 'Please choose a payment method.';
-    if (f.payment_method === 'card') {
-      if (!altpayPaymentMethodId) return 'Please add a card before submitting.';
-    } else if (f.payment_method === 'ach') {
-      if (!/^\d{9}$/.test(f.bank_routing_number.trim())) return 'A valid 9-digit routing number is required.';
-      if (!/^\d{4,17}$/.test(f.bank_account_number.trim())) return 'A valid bank account number is required.';
-      if (f.bank_account_type !== 'checking' && f.bank_account_type !== 'savings') return 'Please choose checking or savings.';
-    }
     if (!f.agreed_to_terms) return 'Please check the box acknowledging the terms and conditions.';
     if (!sigHasStroke) return 'Please sign in the signature box before submitting.';
     return null;
   }
 
-  function submit() {
-    var err = validate();
+  function submitStep1() {
+    var err = validateStep1();
     if (err) {
       showFormError(err);
       return;
@@ -453,28 +453,79 @@
     showFormError(null);
     setSubmitButtonState();
 
-    var body = Object.assign({}, state.form, { signature_data_url: sigCanvas.toDataURL('image/png') });
-    if (state.form.payment_method === 'card') {
+    var f = state.form;
+    var body = {
+      first_name: f.first_name, last_name: f.last_name, email: f.email,
+      business_name: f.business_name,
+      address_line1: f.address_line1, address_line2: f.address_line2,
+      city: f.city, state: f.state, zip: f.zip,
+      want_copy_of_signup: f.want_copy_of_signup, invoices_emailed: f.invoices_emailed,
+      agreed_to_terms: f.agreed_to_terms,
+      signature_data_url: sigCanvas.toDataURL('image/png')
+    };
+    apiPost('api/public.php?action=step1-submit&t=' + encodeURIComponent(token), body).then(function (r) {
+      state.submitting = false;
+      if (r.data && r.data.ok) {
+        state.step = 2;
+        showFormError(null);
+        render(); // moving to Step 2 -- safe to fully swap the form
+      } else {
+        showFormError((r.data && r.data.error) || 'Something went wrong submitting your sign up. Please try again, or contact CodeBlue Technology.');
+        setSubmitButtonState();
+      }
+    }).catch(function () {
+      state.submitting = false;
+      showFormError('Could not reach CodeBlue Technology — check your connection and try again.');
+      setSubmitButtonState();
+    });
+  }
+
+  // ---- Step 2: payment ---------------------------------------------------
+
+  function validateStep2() {
+    var f = state.form;
+    if (!f.payment_method) return 'Please choose a payment method.';
+    if (f.payment_method === 'card') {
+      if (!altpayPaymentMethodId) return 'Please add a card before submitting.';
+    } else if (f.payment_method === 'ach') {
+      if (!/^\d{9}$/.test(f.bank_routing_number.trim())) return 'A valid 9-digit routing number is required.';
+      if (!/^\d{4,17}$/.test(f.bank_account_number.trim())) return 'A valid bank account number is required.';
+      if (f.bank_account_type !== 'checking' && f.bank_account_type !== 'savings') return 'Please choose checking or savings.';
+    }
+    return null;
+  }
+
+  function submitStep2() {
+    var err = validateStep2();
+    if (err) {
+      showFormError(err);
+      return;
+    }
+    state.submitting = true;
+    showFormError(null);
+    setSubmitButtonState();
+
+    var f = state.form;
+    var body = { payment_method: f.payment_method };
+    if (f.payment_method === 'card') {
       // Already-vaulted ids/summary only -- see this file's PAYMENT DATA
       // header note. No card data of any kind passes through this page's
       // own JS or server.
       body.altpay_customer_id = altpayCustomerId;
       body.altpay_payment_method_id = altpayPaymentMethodId;
       body.altpay_payment_method_summary = altpayPaymentMethodSummary;
+    } else {
+      body.bank_routing_number = f.bank_routing_number;
+      body.bank_account_number = f.bank_account_number;
+      body.bank_account_type = f.bank_account_type;
     }
-    apiPost('api/public.php?action=submit&t=' + encodeURIComponent(token), body).then(function (r) {
+    apiPost('api/public.php?action=step2-submit&t=' + encodeURIComponent(token), body).then(function (r) {
       state.submitting = false;
       if (r.data && r.data.ok) {
         state.submitted = true;
-        if (altpayInvoiceId) {
-          // Best-effort, fire-and-forget cleanup of the throwaway invoice
-          // (see api/altpay.php's header) -- never blocks the "Thank You"
-          // screen the customer is about to see either way.
-          apiPost('api/public.php?action=card-archive-invoice&t=' + encodeURIComponent(token), { invoice_id: altpayInvoiceId }).catch(function () {});
-        }
-        render(); // done with the form -- safe (and expected) to fully swap to the "Thank You" screen
+        render(); // done -- safe (and expected) to fully swap to the "Thank You" screen
       } else {
-        showFormError((r.data && r.data.error) || 'Something went wrong submitting your sign up. Please try again, or contact CodeBlue Technology.');
+        showFormError((r.data && r.data.error) || 'Something went wrong submitting your payment. Please try again, or contact CodeBlue Technology.');
         setSubmitButtonState();
       }
     }).catch(function () {
@@ -511,96 +562,109 @@
     var f = state.form;
     var locationLabel = c.location === 'Richmond' ? 'Richmond' : 'Northern Neck (Warsaw)';
     var isCommercial = c.account_kind === 'Commercial';
+    var onStep1 = state.step === 1;
 
     root.innerHTML = '' +
       '<div class="wrap">' +
-      '  <div class="letterhead"><div class="name">CodeBlue Technology</div><div class="sub">Customer Rate Sheet Sign Up</div></div>' +
+      '  <div class="letterhead"><div class="name">CodeBlue Technology</div><div class="sub">Customer Rate Sheet Sign Up — Step ' + (onStep1 ? '1' : '2') + ' of 2</div></div>' +
 
       (state.submitError ? '<div class="error-banner js-submit-error">' + e(state.submitError) + '</div>' : '') +
 
       '  <div class="card">' +
       '    <div class="rate-highlight">$' + c.hourly_rate.toFixed(2) + ' <span>per hour — ' + e(locationLabel) + ' (' + e(c.account_kind) + ')</span></div>' +
-      '    <p style="font-size:13px;color:#5A6472;line-height:1.6;">Thank you for considering CodeBlue Technology for your business IT needs. Please review the rate information below and complete this form to get started.</p>' +
-      '    <p style="font-size:12.5px;color:#33394A;line-height:1.6;"><strong>Onsite Service:</strong> 1-hour minimum, 30-minute increments thereafter.<br>' +
-      '    <strong>Remote Service:</strong> 30-minute minimum, 30-minute increments thereafter.<br>' +
-      '    <strong>After-Hour Emergency Support:</strong> 2-hour minimum, 1.5x your hourly rate (before 8am and after 5pm).<br>' +
-      '    <strong>Holidays:</strong> 2-hour minimum, 2x your hourly rate.<br>' +
-      '    <strong>Travel:</strong> Billed for 1 direction only, for distances of 20 miles or more.<br>' +
-      '    <strong>Payment Terms:</strong> Per-hour work is invoiced upon completion. Recurring Services are charged to your ACH or Credit Card on file, on the date it’s due.</p>' +
+      (onStep1 ? (
+        '    <p style="font-size:13px;color:#5A6472;line-height:1.6;">Thank you for considering CodeBlue Technology for your business IT needs. Please review the rate information below and complete this form to get started.</p>' +
+        '    <p style="font-size:12.5px;color:#33394A;line-height:1.6;"><strong>Onsite Service:</strong> 1-hour minimum, 30-minute increments thereafter.<br>' +
+        '    <strong>Remote Service:</strong> 30-minute minimum, 30-minute increments thereafter.<br>' +
+        '    <strong>After-Hour Emergency Support:</strong> 2-hour minimum, 1.5x your hourly rate (before 8am and after 5pm).<br>' +
+        '    <strong>Holidays:</strong> 2-hour minimum, 2x your hourly rate.<br>' +
+        '    <strong>Travel:</strong> Billed for 1 direction only, for distances of 20 miles or more.<br>' +
+        '    <strong>Payment Terms:</strong> Per-hour work is invoiced upon completion. Recurring Services are charged to your ACH or Credit Card on file, on the date it’s due.</p>'
+      ) : (
+        '    <p style="font-size:13px;color:#5A6472;line-height:1.6;">Your information has been saved. Add a payment method below to finish setting up your account.</p>'
+      )) +
       '  </div>' +
 
-      '  <div class="card">' +
-      '    <div class="field-label">First Name</div><input type="text" data-field="first_name" value="' + e(f.first_name) + '" />' +
-      '    <div class="field-label">Last Name</div><input type="text" data-field="last_name" value="' + e(f.last_name) + '" />' +
-      '    <div class="field-label">Email Address</div><input type="email" data-field="email" value="' + e(f.email) + '" />' +
-      (isCommercial ? '    <div class="field-label">Business Name</div><input type="text" data-field="business_name" value="' + e(f.business_name) + '" />' : '') +
-      '    <div class="field-label">Address</div><input type="text" placeholder="Street address" data-field="address_line1" value="' + e(f.address_line1) + '" />' +
-      '    <input type="text" placeholder="Apt / Suite (optional)" data-field="address_line2" value="' + e(f.address_line2) + '" style="margin-top:8px;" />' +
-      '    <div class="row2" style="margin-top:8px;">' +
-      '      <div><input type="text" placeholder="City" data-field="city" value="' + e(f.city) + '" /></div>' +
-      '      <div style="max-width:90px;"><input type="text" placeholder="State" data-field="state" value="' + e(f.state) + '" /></div>' +
-      '      <div style="max-width:130px;"><input type="text" placeholder="ZIP" data-field="zip" value="' + e(f.zip) + '" /></div>' +
-      '    </div>' +
-      '  </div>' +
-
-      '  <div class="card">' +
-      '    <div class="field-label">Payment Method</div>' +
-      '    <div class="method-row">' +
-      '      <label class="method-option"><input type="radio" name="payment_method" value="card" ' + (f.payment_method === 'card' ? 'checked' : '') + ' data-radio="payment_method" />' +
-      '        <span>Credit Card<span class="method-note">Standard rate</span></span></label>' +
-      '      <label class="method-option"><input type="radio" name="payment_method" value="ach" ' + (f.payment_method === 'ach' ? 'checked' : '') + ' data-radio="payment_method" />' +
-      '        <span>ACH (Bank Transfer)<span class="method-note">Save 3% on transactions</span></span></label>' +
-      '    </div>' +
-      (f.payment_method === 'card' ? (
-        '    <div id="card-form-mount" class="card-form-mount"></div>' +
-        (cardFormLoading ? '    <div class="card-form-loading">Loading secure card form…</div>' : '') +
-        (cardFormError ? '    <div class="card-form-error">' + e(cardFormError) + ' <button type="button" class="clear-sig-btn" data-action="retry-card" style="color:#2f6fe0;">Try again</button></div>' : '') +
-        '    <div class="payment-note">Your card details are encrypted in your browser and sent directly to our payment processor — CodeBlue Technology never sees or stores your card number.</div>'
-      ) : f.payment_method === 'ach' ? (
-        '    <div class="bank-fields">' +
-        '      <div class="field-label">Routing Number</div><input type="text" inputmode="numeric" maxlength="9" placeholder="9 digits" data-field="bank_routing_number" value="' + e(f.bank_routing_number) + '" />' +
-        '      <div class="field-label">Account Number</div><input type="text" inputmode="numeric" data-field="bank_account_number" value="' + e(f.bank_account_number) + '" />' +
-        '      <div class="field-label">Account Type</div>' +
-        '      <div class="account-type-row">' +
-        '        <label><input type="radio" name="bank_account_type" value="checking" ' + (f.bank_account_type === 'checking' ? 'checked' : '') + ' data-radio="bank_account_type" /> Checking</label>' +
-        '        <label><input type="radio" name="bank_account_type" value="savings" ' + (f.bank_account_type === 'savings' ? 'checked' : '') + ' data-radio="bank_account_type" /> Savings</label>' +
-        '      </div>' +
+      (onStep1 ? (
+        '  <div class="card">' +
+        '    <div class="field-label">First Name</div><input type="text" data-field="first_name" value="' + e(f.first_name) + '" />' +
+        '    <div class="field-label">Last Name</div><input type="text" data-field="last_name" value="' + e(f.last_name) + '" />' +
+        '    <div class="field-label">Email Address</div><input type="email" data-field="email" value="' + e(f.email) + '" />' +
+        (isCommercial ? '    <div class="field-label">Business Name</div><input type="text" data-field="business_name" value="' + e(f.business_name) + '" />' : '') +
+        '    <div class="field-label">Address</div><input type="text" placeholder="Street address" data-field="address_line1" value="' + e(f.address_line1) + '" />' +
+        '    <input type="text" placeholder="Apt / Suite (optional)" data-field="address_line2" value="' + e(f.address_line2) + '" style="margin-top:8px;" />' +
+        '    <div class="row2" style="margin-top:8px;">' +
+        '      <div><input type="text" placeholder="City" data-field="city" value="' + e(f.city) + '" /></div>' +
+        '      <div style="max-width:90px;"><input type="text" placeholder="State" data-field="state" value="' + e(f.state) + '" /></div>' +
+        '      <div style="max-width:130px;"><input type="text" placeholder="ZIP" data-field="zip" value="' + e(f.zip) + '" /></div>' +
         '    </div>' +
-        '    <div class="payment-note">Your bank details are sent securely and stored only with our payment processor — CodeBlue Technology does not keep your account or routing number.</div>'
-      ) : '') +
-      '  </div>' +
+        '  </div>' +
 
-      '  <div class="card">' +
-      '    <div class="field-label">Would you like a copy of this sign up (and our terms &amp; conditions) emailed to you?</div>' +
-      '    <div class="radio-row">' +
-      '      <label class="radio-option"><input type="radio" name="want_copy" value="yes" ' + (f.want_copy_of_signup ? 'checked' : '') + ' data-yesno="want_copy_of_signup" /> Yes</label>' +
-      '      <label class="radio-option"><input type="radio" name="want_copy" value="no" ' + (!f.want_copy_of_signup ? 'checked' : '') + ' data-yesno-no="want_copy_of_signup" /> No</label>' +
-      '    </div>' +
-      '    <div class="field-label">Would you like invoice copies emailed to you?</div>' +
-      '    <div class="radio-row">' +
-      '      <label class="radio-option"><input type="radio" name="invoices_emailed" value="yes" ' + (f.invoices_emailed ? 'checked' : '') + ' data-yesno="invoices_emailed" /> Yes</label>' +
-      '      <label class="radio-option"><input type="radio" name="invoices_emailed" value="no" ' + (!f.invoices_emailed ? 'checked' : '') + ' data-yesno-no="invoices_emailed" /> No</label>' +
-      '    </div>' +
-      '  </div>' +
+        '  <div class="card">' +
+        '    <div class="field-label">Would you like a copy of this sign up (and our terms &amp; conditions) emailed to you?</div>' +
+        '    <div class="radio-row">' +
+        '      <label class="radio-option"><input type="radio" name="want_copy" value="yes" ' + (f.want_copy_of_signup ? 'checked' : '') + ' data-yesno="want_copy_of_signup" /> Yes</label>' +
+        '      <label class="radio-option"><input type="radio" name="want_copy" value="no" ' + (!f.want_copy_of_signup ? 'checked' : '') + ' data-yesno-no="want_copy_of_signup" /> No</label>' +
+        '    </div>' +
+        '    <div class="field-label">Would you like invoice copies emailed to you?</div>' +
+        '    <div class="radio-row">' +
+        '      <label class="radio-option"><input type="radio" name="invoices_emailed" value="yes" ' + (f.invoices_emailed ? 'checked' : '') + ' data-yesno="invoices_emailed" /> Yes</label>' +
+        '      <label class="radio-option"><input type="radio" name="invoices_emailed" value="no" ' + (!f.invoices_emailed ? 'checked' : '') + ' data-yesno-no="invoices_emailed" /> No</label>' +
+        '    </div>' +
+        '  </div>' +
 
-      '  <div class="card">' +
-      '    <div class="field-label">Terms &amp; Signature</div>' +
-      '    <div class="legal-block">' + e(RATESHEET_LEGAL_TEXT) + '</div>' +
-      '    <div class="checkbox-row">' +
-      '      <input type="checkbox" id="agree-check" ' + (f.agreed_to_terms ? 'checked' : '') + ' data-check="agreed_to_terms" />' +
-      '      <label for="agree-check">' + e(CHECKBOX_TEXT) + '</label>' +
-      '    </div>' +
-      '    <div class="field-label" style="margin-top:20px;">Sign Below</div>' +
-      '    <div class="sig-wrap"><canvas id="sig-pad"></canvas></div>' +
-      '    <div class="sig-actions"><button type="button" class="clear-sig-btn" data-action="clear-sig">Clear signature</button></div>' +
-      '  </div>' +
+        '  <div class="card">' +
+        '    <div class="field-label">Terms &amp; Signature</div>' +
+        '    <div class="legal-block">' + e(RATESHEET_LEGAL_TEXT) + '</div>' +
+        '    <div class="checkbox-row">' +
+        '      <input type="checkbox" id="agree-check" ' + (f.agreed_to_terms ? 'checked' : '') + ' data-check="agreed_to_terms" />' +
+        '      <label for="agree-check">' + e(CHECKBOX_TEXT) + '</label>' +
+        '    </div>' +
+        '    <div class="field-label" style="margin-top:20px;">Sign Below</div>' +
+        '    <div class="sig-wrap"><canvas id="sig-pad"></canvas></div>' +
+        '    <div class="sig-actions"><button type="button" class="clear-sig-btn" data-action="clear-sig">Clear signature</button></div>' +
+        '  </div>' +
 
-      '  <button class="submit-btn" data-action="submit" ' + (state.submitting ? 'disabled' : '') + '>' + (state.submitting ? 'Submitting…' : 'Submit') + '</button>' +
+        '  <button class="submit-btn" data-action="submit" ' + (state.submitting ? 'disabled' : '') + '>' + (state.submitting ? 'Continuing…' : 'Continue') + '</button>'
+      ) : (
+        '  <div class="card">' +
+        '    <div class="field-label">Payment Method</div>' +
+        '    <div class="method-row">' +
+        '      <label class="method-option"><input type="radio" name="payment_method" value="card" ' + (f.payment_method === 'card' ? 'checked' : '') + ' data-radio="payment_method" />' +
+        '        <span>Credit Card<span class="method-note">Standard rate</span></span></label>' +
+        '      <label class="method-option"><input type="radio" name="payment_method" value="ach" ' + (f.payment_method === 'ach' ? 'checked' : '') + ' data-radio="payment_method" />' +
+        '        <span>ACH (Bank Transfer)<span class="method-note">Save 3% on transactions</span></span></label>' +
+        '    </div>' +
+        (f.payment_method === 'card' ? (
+          '    <div id="card-form-mount" class="card-form-mount"></div>' +
+          (cardFormLoading ? '    <div class="card-form-loading">Loading secure card form…</div>' : '') +
+          (cardFormError ? '    <div class="card-form-error">' + e(cardFormError) + ' <button type="button" class="clear-sig-btn" data-action="retry-card" style="color:#2f6fe0;">Try again</button></div>' : '') +
+          '    <div class="payment-note">Your card details are encrypted in your browser and sent directly to our payment processor — CodeBlue Technology never sees or stores your card number.</div>'
+        ) : f.payment_method === 'ach' ? (
+          '    <div class="bank-fields">' +
+          '      <div class="field-label">Routing Number</div><input type="text" inputmode="numeric" maxlength="9" placeholder="9 digits" data-field="bank_routing_number" value="' + e(f.bank_routing_number) + '" />' +
+          '      <div class="field-label">Account Number</div><input type="text" inputmode="numeric" data-field="bank_account_number" value="' + e(f.bank_account_number) + '" />' +
+          '      <div class="field-label">Account Type</div>' +
+          '      <div class="account-type-row">' +
+          '        <label><input type="radio" name="bank_account_type" value="checking" ' + (f.bank_account_type === 'checking' ? 'checked' : '') + ' data-radio="bank_account_type" /> Checking</label>' +
+          '        <label><input type="radio" name="bank_account_type" value="savings" ' + (f.bank_account_type === 'savings' ? 'checked' : '') + ' data-radio="bank_account_type" /> Savings</label>' +
+          '      </div>' +
+          '    </div>' +
+          '    <div class="payment-note">Your bank details are sent securely and stored only with our payment processor — CodeBlue Technology does not keep your account or routing number.</div>'
+        ) : '') +
+        '  </div>' +
+
+        '  <button class="submit-btn" data-action="submit" ' + (state.submitting ? 'disabled' : '') + '>' + (state.submitting ? 'Submitting…' : 'Submit') + '</button>'
+      )) +
+
       '  <div class="footer-contact">CodeBlue Technology &nbsp;|&nbsp; (804) 521-7660 &nbsp;|&nbsp; Service@codebluetechnology.com</div>' +
       '</div>';
 
-    setupSignaturePad();
-    if (f.payment_method === 'card') ensureCardFormMounted();
+    if (onStep1) {
+      setupSignaturePad();
+    } else if (f.payment_method === 'card') {
+      ensureCardFormMounted();
+    }
   }
 
   root.addEventListener('input', function (ev) {
@@ -649,7 +713,11 @@
     } else if (action === 'retry-card') {
       retryCardForm();
     } else if (action === 'submit') {
-      submit();
+      if (state.step === 1) {
+        submitStep1();
+      } else {
+        submitStep2();
+      }
     }
   });
 

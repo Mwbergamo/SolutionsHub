@@ -12,48 +12,60 @@
  *
  * GET  /ratesheet/api/public.php?action=context&t=<token>
  *   -> { ok: true, location, account_kind, hourly_rate, status }
- *      404 if the token doesn't match any request.
+ *      404 if the token doesn't match any request. status drives which
+ *      step signup.js shows: 'pending' -> Step 1, 'awaiting_payment' ->
+ *      Step 2 (resumed on reload), 'submitted' -> Thank You / Already
+ *      Submitted, 'failed' -> Step 1's own generic failure message.
  *
- * POST /ratesheet/api/public.php?action=card-checkout-init&t=<token>
- *   { first_name, last_name, email, business_name?, address_line1,
- *     address_line2?, city, state, zip, invoice_id? }
- *   -> { ok: true, customer_id, invoice_id, checkout_token, expires_at, environment }
- *      Creates (or reuses, if this row already has one) an Alternative
- *      Payments customer for this signup, creates a minimal throwaway
- *      invoice (or reuses invoice_id if passed in -- a token-refresh call
- *      shouldn't create a second one), then mints a short-lived
- *      checkout-auth token scoped to both. signup.js uses these to
- *      initialize Alternative Payments' own Web SDK client-side and mount
- *      its `addPaymentMethod` component -- see altpay.php's header for why
- *      this replaced an earlier hand-rolled approach that didn't work,
- *      and why a throwaway invoice is involved at all.
+ * UPDATED 2026-09-17 (follow-up #4, per Michael): signup is now two steps
+ * against this same row's status column (no new table) --
  *
- * POST /ratesheet/api/public.php?action=card-archive-invoice&t=<token>
- *   { invoice_id }
- *   -> { ok: true } always. Best-effort cleanup of the throwaway invoice
- *      above, called once a card is actually vaulted.
- *
- * POST /ratesheet/api/public.php?action=submit&t=<token>
+ * POST /ratesheet/api/public.php?action=step1-submit&t=<token>
  *   { first_name, last_name, email, address_line1, address_line2?, city,
  *     state, zip, business_name? (required iff account_kind=Commercial),
- *     payment_method: 'card'|'ach',
+ *     want_copy_of_signup: bool, invoices_emailed: bool,
+ *     agreed_to_terms: true, signature_data_url }
+ *   -> { ok: true } once the Company (Credit Hold ON --
+ *      ratesheet_cw_create_company() below) + Contact are created in
+ *      ConnectWise, and an Alternative Payments customer + a PERMANENT
+ *      "account setup" invoice exist for this signup (see altpay.php's
+ *      ratesheet_altpay_create_placeholder_invoice() -- no longer a
+ *      throwaway, never archived). Sets status='awaiting_payment'.
+ *   -> { ok: false, error } on validation failure (400) or a ConnectWise
+ *      failure (502) -- same fail-open-but-save behavior as before: the
+ *      customer's typed data is saved (status='failed', fail_reason set)
+ *      so staff can finish by hand; the customer sees a generic
+ *      "something went wrong" message (signup.js), not a raw error.
+ *
+ * POST /ratesheet/api/public.php?action=card-checkout-init&t=<token>
+ *   {} (no body needed -- reuses this row's own saved identity/address
+ *   and its altpay_customer_id/altpay_invoice_id from Step 1)
+ *   -> { ok: true, customer_id, invoice_id, checkout_token, expires_at, environment }
+ *      Mints a short-lived checkout-auth token scoped to the customer +
+ *      invoice Step 1 already created (falls back to creating them only
+ *      for a pre-migration row that reached Step 2 without them).
+ *      signup.js uses these to initialize Alternative Payments' Web SDK
+ *      and mount its `addPaymentMethod` component. 409 if this row hasn't
+ *      completed Step 1 yet.
+ *
+ * POST /ratesheet/api/public.php?action=step2-submit&t=<token>
+ *   { payment_method: 'card'|'ach',
  *     -- card: altpay_customer_id, altpay_payment_method_id,
  *              altpay_payment_method_summary (all already produced by the
  *              Web SDK's addPaymentMethod component before Submit is ever
  *              clicked -- see action=card-checkout-init above)
- *     -- ach:  bank_routing_number, bank_account_number, bank_account_type ('checking'|'savings')
- *     want_copy_of_signup: bool,
- *     invoices_emailed: bool, agreed_to_terms: true, signature_data_url }
- *   -> { ok: true } once the Company + Contact are created in ConnectWise
- *      (per Michael, 2026-09-17 AskUserQuestion: "Just create the Company
- *      + Contact" -- no further ConnectWise automation; a human finishes
- *      service setup) and both notification emails are attempted.
- *   -> { ok: false, error } on validation failure (400) or a ConnectWise
- *      failure (502) -- a ConnectWise failure still SAVES everything the
- *      customer typed (status='failed', fail_reason set) so staff can
- *      finish the signup by hand rather than the customer's work being
- *      lost; the customer sees a plain "something went wrong, we'll
- *      finish this for you" message (built by signup.js), not a raw error.
+ *     -- ach:  bank_routing_number, bank_account_number, bank_account_type ('checking'|'savings') }
+ *   -> { ok: true } once a payment method is actually vaulted with
+ *      Alternative Payments -- sets status='submitted', releases Credit
+ *      Hold (ratesheet_cw_release_credit_hold(), connectwise.php -- itself
+ *      fail-open/logged, since the customer's payment is already saved by
+ *      that point), and sends the internal notice (+ customer copy if
+ *      requested) emails.
+ *   -> { ok: false, error } on validation failure (400) or a vaulting
+ *      failure (502) -- per Michael's explicit call (2026-09-17 follow-up
+ *      #4 AskUserQuestion): unlike Step 1, this does NOT fail open. Credit
+ *      Hold stays ON and status stays 'awaiting_payment' so the customer
+ *      can just retry -- that gate is the entire point of this redesign.
  *
  * PAYMENT DATA -- READ THIS BEFORE CHANGING ANYTHING BELOW: Michael's
  * original spec asked for raw credit-card number/expiry/CVV and bank
@@ -87,10 +99,10 @@
  *     then discarded: never written to rate_sheet_requests, never
  *     error_log()'d. Only Alternative Payments' own payment_method id and
  *     a redacted summary ("Bank account ending 6789") are saved.
- * Vaulting is fail-open like the ConnectWise create below: a vaulting
- * failure never blocks the signup or loses the customer's other data --
- * it's flagged (altpay_status/altpay_fail_reason) for staff to collect
- * payment manually, same spirit as a ConnectWise failure.
+ * UPDATED 2026-09-17 (follow-up #4): with the two-step signup, a vaulting
+ * failure in Step 2 is deliberately NOT fail-open anymore (Michael's
+ * explicit call) -- see this file's ?action=step2-submit docs above for
+ * why: it's the entire point of gating Credit Hold release on it.
  */
 
 declare(strict_types=1);
@@ -168,6 +180,36 @@ function ratesheet_altpay_ensure_customer_for_row(
     return $customerId;
 }
 
+/**
+ * Ensures a PERMANENT "account setup" Alternative Payments invoice exists
+ * for this row, reusing $row['altpay_invoice_id'] if Step 1 already
+ * created one -- mirrors ratesheet_altpay_ensure_customer_for_row()'s
+ * shape. Added 2026-09-17 (follow-up #4): unlike the old throwaway
+ * invoice (created and archived per card attempt), this is created once
+ * in Step 1 and never archived -- Step 2 checks out against it.
+ */
+function ratesheet_altpay_ensure_invoice_for_row(PDO $pdo, array $row, string $customerId): string
+{
+    if (!empty($row['altpay_invoice_id'])) {
+        return (string) $row['altpay_invoice_id'];
+    }
+
+    $invoiceId = ratesheet_altpay_create_placeholder_invoice($customerId);
+
+    $stmt = $pdo->prepare('UPDATE rate_sheet_requests SET altpay_invoice_id = :iid WHERE id = :id');
+    $stmt->execute([':iid' => $invoiceId, ':id' => $row['id']]);
+
+    return $invoiceId;
+}
+
+/**
+ * Mints a checkout-auth token for the Web SDK's addPaymentMethod
+ * component. UPDATED 2026-09-17 (follow-up #4): now purely a "reuse"
+ * action -- the customer + invoice were already created in Step 1
+ * (?action=step1-submit) and live on this row, so no identity/address
+ * body is needed here anymore. Only falls back to creating them itself
+ * for a pre-migration row that somehow reached Step 2 without them.
+ */
 if ($action === 'card-checkout-init') {
     if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
         ratesheet_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
@@ -175,35 +217,25 @@ if ($action === 'card-checkout-init') {
     if ($row['status'] === 'submitted') {
         ratesheet_respond(409, ['ok' => false, 'error' => 'This rate sheet has already been submitted.']);
     }
-
-    $input = ratesheet_read_json_body();
-    $firstName = trim((string) ($input['first_name'] ?? ''));
-    $lastName = trim((string) ($input['last_name'] ?? ''));
-    $email = trim((string) ($input['email'] ?? ''));
-    $businessName = trim((string) ($input['business_name'] ?? ''));
-    $addr1 = trim((string) ($input['address_line1'] ?? ''));
-    $addr2 = trim((string) ($input['address_line2'] ?? ''));
-    $city = trim((string) ($input['city'] ?? ''));
-    $state = trim((string) ($input['state'] ?? ''));
-    $zip = trim((string) ($input['zip'] ?? ''));
-    // If signup.js already has an invoice from an earlier call on this
-    // same page load (e.g. this is a checkout-auth token refresh, not the
-    // first mount), it's passed back so we reuse it instead of creating a
-    // second throwaway invoice per card attempt.
-    $invoiceId = trim((string) ($input['invoice_id'] ?? ''));
-
-    if ($firstName === '' || $lastName === '' || $email === '' || $addr1 === '' || $city === '' || $state === '' || $zip === '') {
-        ratesheet_respond(400, ['ok' => false, 'error' => 'Please fill in your name, email, and address before adding a card.']);
+    if ($row['status'] === 'pending') {
+        ratesheet_respond(409, ['ok' => false, 'error' => 'Please complete Step 1 first.']);
     }
 
-    // Same Commercial/Residential company-name rule as the final submit.
-    $companyName = $row['account_kind'] === 'Commercial' ? $businessName : trim($firstName . ' ' . $lastName);
+    // Same Commercial/Residential company-name rule as step1-submit --
+    // only reached if a pre-migration row needs its Alternative Payments
+    // customer created here for the first time (the normal case already
+    // has one from Step 1).
+    $companyName = $row['account_kind'] === 'Commercial'
+        ? (string) $row['business_name']
+        : trim((string) $row['first_name'] . ' ' . (string) $row['last_name']);
 
     try {
-        $customerId = ratesheet_altpay_ensure_customer_for_row($pdo, $row, $companyName, $email, $addr1, $addr2, $city, $state, $zip);
-        if ($invoiceId === '') {
-            $invoiceId = ratesheet_altpay_create_placeholder_invoice($customerId);
-        }
+        $customerId = ratesheet_altpay_ensure_customer_for_row(
+            $pdo, $row, $companyName, (string) $row['customer_email'],
+            (string) $row['address_line1'], (string) $row['address_line2'],
+            (string) $row['city'], (string) $row['state'], (string) $row['zip']
+        );
+        $invoiceId = ratesheet_altpay_ensure_invoice_for_row($pdo, $row, $customerId);
         $checkoutAuth = ratesheet_altpay_checkout_auth_token($customerId, $invoiceId);
     } catch (Throwable $e) {
         error_log('[ratesheet/public] card-checkout-init failed for request ' . $row['id'] . ': ' . $e->getMessage());
@@ -227,30 +259,23 @@ if ($action === 'card-checkout-init') {
 }
 
 /**
- * Best-effort cleanup of the throwaway invoice card-checkout-init created
- * (see altpay.php's header for why one exists at all) -- called by
- * signup.js once addPaymentMethod's onSuccess actually fires. Always
- * responds ok:true; archiving is housekeeping, never something a signup
- * should fail over. No customer/business data is echoed back.
+ * Step 1 -- identity, address, terms, signature. Creates the ConnectWise
+ * Company (Credit Hold ON) + Contact and the Alternative Payments
+ * customer + permanent setup invoice, then sets status='awaiting_payment'
+ * so Step 2 can check out against them. See this file's header for the
+ * full contract, and connectwise.php's ratesheet_cw_release_credit_hold()
+ * for where Credit Hold eventually comes back off.
  */
-if ($action === 'card-archive-invoice') {
+if ($action === 'step1-submit') {
     if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
         ratesheet_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
     }
-    $input = ratesheet_read_json_body();
-    $invoiceId = trim((string) ($input['invoice_id'] ?? ''));
-    if ($invoiceId !== '') {
-        ratesheet_altpay_archive_invoice($invoiceId);
-    }
-    ratesheet_respond(200, ['ok' => true]);
-}
-
-if ($action === 'submit') {
-    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-        ratesheet_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
-    }
-    if ($row['status'] === 'submitted') {
-        ratesheet_respond(409, ['ok' => false, 'error' => 'This rate sheet has already been submitted.']);
+    if ($row['status'] !== 'pending' && $row['status'] !== 'failed') {
+        // 'failed' is allowed through again -- same as before, a failed
+        // Step 1 (ConnectWise create itself) should be retryable rather
+        // than a dead end. 'awaiting_payment'/'submitted' mean Step 1
+        // already succeeded -- nothing to redo.
+        ratesheet_respond(409, ['ok' => false, 'error' => 'This step has already been completed.']);
     }
 
     $input = ratesheet_read_json_body(1048576); // signature PNG can be a few hundred KB
@@ -263,22 +288,6 @@ if ($action === 'submit') {
     $state = trim((string) ($input['state'] ?? ''));
     $zip = trim((string) ($input['zip'] ?? ''));
     $businessName = trim((string) ($input['business_name'] ?? ''));
-    $paymentMethod = trim((string) ($input['payment_method'] ?? ''));
-
-    // Card: by the time Submit is clicked, the card has already been
-    // vaulted client-side via Alternative Payments' Web SDK (see
-    // action=card-checkout-init above and signup.js) -- these are just
-    // the resulting ids/summary, never card data itself. ACH: raw
-    // routing/account numbers, held only in these local variables and
-    // relayed straight through to Alternative Payments below -- never
-    // written to $input's origin (the request body) back out, never
-    // persisted, never logged.
-    $altpayCustomerIdInput = trim((string) ($input['altpay_customer_id'] ?? ''));
-    $altpayPaymentMethodIdInput = trim((string) ($input['altpay_payment_method_id'] ?? ''));
-    $altpayPaymentMethodSummaryInput = trim((string) ($input['altpay_payment_method_summary'] ?? ''));
-    $bankRoutingNumber = trim((string) ($input['bank_routing_number'] ?? ''));
-    $bankAccountNumber = trim((string) ($input['bank_account_number'] ?? ''));
-    $bankAccountType = trim((string) ($input['bank_account_type'] ?? ''));
 
     $wantCopy = !empty($input['want_copy_of_signup']);
     $invoicesEmailed = !empty($input['invoices_emailed']);
@@ -302,17 +311,6 @@ if ($action === 'submit') {
     if ($state === '') $errors[] = 'State is required.';
     if ($zip === '') $errors[] = 'ZIP code is required.';
     if ($row['account_kind'] === 'Commercial' && $businessName === '') $errors[] = 'Business name is required for a Commercial account.';
-    if (!in_array($paymentMethod, ['card', 'ach'], true)) {
-        $errors[] = 'Please choose a payment method.';
-    } elseif ($paymentMethod === 'card') {
-        if ($altpayPaymentMethodIdInput === '' || $altpayCustomerIdInput === '') {
-            $errors[] = 'Please add a card before submitting.';
-        }
-    } else { // ach
-        if (!preg_match('/^\d{9}$/', $bankRoutingNumber)) $errors[] = 'A valid 9-digit routing number is required.';
-        if ($bankAccountNumber === '' || !preg_match('/^\d{4,17}$/', $bankAccountNumber)) $errors[] = 'A valid bank account number is required.';
-        if (!in_array($bankAccountType, ['checking', 'savings'], true)) $errors[] = 'Please choose checking or savings.';
-    }
     if (!$agreed) $errors[] = 'You must check the box acknowledging the terms and conditions.';
     if (!str_starts_with($signatureDataUrl, 'data:image/')) $errors[] = 'A signature is required.';
 
@@ -324,34 +322,27 @@ if ($action === 'submit') {
     // (per Michael) -- the company in ConnectWise is the person's own name.
     $companyName = $row['account_kind'] === 'Commercial' ? $businessName : trim($firstName . ' ' . $lastName);
 
-    $saveSubmission = function (
+    $saveStep1 = function (
         string $status,
         ?string $failReason,
         ?int $cwCompanyId,
         ?int $cwContactId,
         ?string $altpayCustomerId = null,
-        ?string $altpayPaymentMethodId = null,
-        ?string $altpaySummary = null,
-        ?string $altpayStatus = null,
-        ?string $altpayFailReason = null
-    ) use ($pdo, $row, $firstName, $lastName, $businessName, $email, $addr1, $addr2, $city, $state, $zip, $paymentMethod, $wantCopy, $invoicesEmailed, $agreed, $signatureDataUrl, $ipAddress): void {
+        ?string $altpayInvoiceId = null
+    ) use ($pdo, $row, $firstName, $lastName, $businessName, $email, $addr1, $addr2, $city, $state, $zip, $wantCopy, $invoicesEmailed, $agreed, $signatureDataUrl, $ipAddress): void {
         $stmt = $pdo->prepare(
             'UPDATE rate_sheet_requests SET
                 status = :status, fail_reason = :fail_reason,
                 first_name = :first_name, last_name = :last_name, business_name = :business_name,
                 customer_email = :email, address_line1 = :addr1, address_line2 = :addr2,
                 city = :city, state = :state, zip = :zip,
-                payment_method = :payment_method, want_copy_of_signup = :want_copy,
-                invoices_emailed = :invoices_emailed, agreed_to_terms = :agreed,
+                want_copy_of_signup = :want_copy, invoices_emailed = :invoices_emailed, agreed_to_terms = :agreed,
                 signature_data = :signature, signed_at = :signed_at, ip_address = :ip_address,
                 cw_company_id = :cw_company_id, cw_contact_id = :cw_contact_id,
-                altpay_customer_id = :altpay_customer_id, altpay_payment_method_id = :altpay_payment_method_id,
-                altpay_payment_method_summary = :altpay_summary, altpay_status = :altpay_status,
-                altpay_fail_reason = :altpay_fail_reason,
-                submitted_at = COALESCE(submitted_at, :submitted_at)
+                altpay_customer_id = COALESCE(:altpay_customer_id, altpay_customer_id),
+                altpay_invoice_id = COALESCE(:altpay_invoice_id, altpay_invoice_id)
              WHERE id = :id'
         );
-        $now = gmdate('Y-m-d\TH:i:s\Z');
         $stmt->execute([
             ':status' => $status,
             ':fail_reason' => $failReason,
@@ -364,21 +355,16 @@ if ($action === 'submit') {
             ':city' => $city,
             ':state' => $state,
             ':zip' => $zip,
-            ':payment_method' => $paymentMethod,
             ':want_copy' => $wantCopy ? 1 : 0,
             ':invoices_emailed' => $invoicesEmailed ? 1 : 0,
             ':agreed' => $agreed ? 1 : 0,
             ':signature' => $signatureDataUrl,
-            ':signed_at' => $now,
+            ':signed_at' => gmdate('Y-m-d\TH:i:s\Z'),
             ':ip_address' => $ipAddress !== '' ? $ipAddress : null,
             ':cw_company_id' => $cwCompanyId,
             ':cw_contact_id' => $cwContactId,
             ':altpay_customer_id' => $altpayCustomerId,
-            ':altpay_payment_method_id' => $altpayPaymentMethodId,
-            ':altpay_summary' => $altpaySummary,
-            ':altpay_status' => $altpayStatus,
-            ':altpay_fail_reason' => $altpayFailReason,
-            ':submitted_at' => $now,
+            ':altpay_invoice_id' => $altpayInvoiceId,
             ':id' => $row['id'],
         ]);
     };
@@ -399,20 +385,100 @@ if ($action === 'submit') {
         $contactId = (int) $contact['id'];
     } catch (Throwable $e) {
         error_log('[ratesheet/public] ConnectWise create failed for request ' . $row['id'] . ': ' . $e->getMessage());
-        $saveSubmission('failed', $e->getMessage(), null, null);
+        $saveStep1('failed', $e->getMessage(), null, null);
         ratesheet_respond(502, ['ok' => false, 'error' => 'We could not finish creating your account automatically, but your information was saved -- a CodeBlue Technology team member will finish setting up your account shortly.']);
     }
 
-    // Record/vault the payment method with Alternative Payments --
-    // fail-open, same philosophy as the ConnectWise Team-row/Territory
-    // lookups above: a vaulting problem never undoes the signup or the
-    // ConnectWise account that already exists, it's just flagged so staff
-    // know to collect payment manually.
+    // Alternative Payments customer + permanent setup invoice, needed so
+    // Step 2 (action=card-checkout-init) has something to check out
+    // against. Best-effort: if this fails, Step 1 still succeeds (the
+    // ConnectWise account is the part that can't be redone) -- Step 2's
+    // own card-checkout-init will just create these itself on demand.
+    $altpayCustomerId = null;
+    $altpayInvoiceId = null;
+    try {
+        $altpayCustomerId = ratesheet_altpay_ensure_customer_for_row($pdo, $row, $companyName, $email, $addr1, $addr2, $city, $state, $zip);
+        $altpayInvoiceId = ratesheet_altpay_ensure_invoice_for_row($pdo, $row, $altpayCustomerId);
+    } catch (Throwable $e) {
+        error_log('[ratesheet/public] Alternative Payments customer/invoice setup failed for request ' . $row['id'] . ': ' . $e->getMessage());
+    }
+
+    $saveStep1('awaiting_payment', null, $companyId, $contactId, $altpayCustomerId, $altpayInvoiceId);
+
+    ratesheet_respond(200, ['ok' => true]);
+}
+
+/**
+ * Step 2 -- payment only. Checks out against the invoice Step 1 created,
+ * vaults the payment method, and only THEN releases Credit Hold. Per
+ * Michael's explicit call (2026-09-17 follow-up #4): unlike Step 1 (and
+ * unlike the old single-step flow), a vaulting failure here does NOT save
+ * or fail open -- status stays 'awaiting_payment' and Credit Hold stays
+ * on, so the customer can just retry. See this file's header.
+ */
+if ($action === 'step2-submit') {
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        ratesheet_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
+    }
+    if ($row['status'] === 'submitted') {
+        ratesheet_respond(409, ['ok' => false, 'error' => 'This rate sheet has already been submitted.']);
+    }
+    if ($row['status'] !== 'awaiting_payment') {
+        ratesheet_respond(409, ['ok' => false, 'error' => 'Please complete Step 1 first.']);
+    }
+
+    $input = ratesheet_read_json_body();
+    $paymentMethod = trim((string) ($input['payment_method'] ?? ''));
+
+    // Card: by the time Submit is clicked, the card has already been
+    // vaulted client-side via Alternative Payments' Web SDK (see
+    // action=card-checkout-init above and signup.js) -- these are just
+    // the resulting ids/summary, never card data itself. ACH: raw
+    // routing/account numbers, held only in these local variables and
+    // relayed straight through to Alternative Payments below -- never
+    // written to $input's origin (the request body) back out, never
+    // persisted, never logged.
+    $altpayCustomerIdInput = trim((string) ($input['altpay_customer_id'] ?? ''));
+    $altpayPaymentMethodIdInput = trim((string) ($input['altpay_payment_method_id'] ?? ''));
+    $altpayPaymentMethodSummaryInput = trim((string) ($input['altpay_payment_method_summary'] ?? ''));
+    $bankRoutingNumber = trim((string) ($input['bank_routing_number'] ?? ''));
+    $bankAccountNumber = trim((string) ($input['bank_account_number'] ?? ''));
+    $bankAccountType = trim((string) ($input['bank_account_type'] ?? ''));
+
+    $errors = [];
+    if (!in_array($paymentMethod, ['card', 'ach'], true)) {
+        $errors[] = 'Please choose a payment method.';
+    } elseif ($paymentMethod === 'card') {
+        if ($altpayPaymentMethodIdInput === '' || $altpayCustomerIdInput === '') {
+            $errors[] = 'Please add a card before submitting.';
+        }
+    } else { // ach
+        if (!preg_match('/^\d{9}$/', $bankRoutingNumber)) $errors[] = 'A valid 9-digit routing number is required.';
+        if ($bankAccountNumber === '' || !preg_match('/^\d{4,17}$/', $bankAccountNumber)) $errors[] = 'A valid bank account number is required.';
+        if (!in_array($bankAccountType, ['checking', 'savings'], true)) $errors[] = 'Please choose checking or savings.';
+    }
+    if ($errors !== []) {
+        ratesheet_respond(400, ['ok' => false, 'error' => implode(' ', $errors)]);
+    }
+
+    // Everything else (name/address/business name) already lives on the
+    // row from Step 1 -- this step only ever touches payment fields.
+    $firstName = (string) $row['first_name'];
+    $lastName = (string) $row['last_name'];
+    $businessName = (string) $row['business_name'];
+    $email = (string) $row['customer_email'];
+    $addr1 = (string) $row['address_line1'];
+    $addr2 = (string) $row['address_line2'];
+    $city = (string) $row['city'];
+    $state = (string) $row['state'];
+    $zip = (string) $row['zip'];
+    $companyName = $row['account_kind'] === 'Commercial' ? $businessName : trim($firstName . ' ' . $lastName);
+    $companyId = $row['cw_company_id'] !== null ? (int) $row['cw_company_id'] : null;
+    $contactId = $row['cw_contact_id'] !== null ? (int) $row['cw_contact_id'] : null;
+
     $altpayCustomerId = null;
     $altpayPaymentMethodId = null;
     $altpaySummary = null;
-    $altpayStatus = 'failed';
-    $altpayFailReason = null;
 
     if ($paymentMethod === 'card') {
         // Nothing to call here -- the card was already vaulted client-side
@@ -425,7 +491,6 @@ if ($action === 'submit') {
         $altpayCustomerId = !empty($row['altpay_customer_id']) ? (string) $row['altpay_customer_id'] : $altpayCustomerIdInput;
         $altpayPaymentMethodId = $altpayPaymentMethodIdInput;
         $altpaySummary = $altpayPaymentMethodSummaryInput !== '' ? $altpayPaymentMethodSummaryInput : 'Card on file';
-        $altpayStatus = 'vaulted';
     } else {
         try {
             $altpayCustomerId = ratesheet_altpay_ensure_customer_for_row($pdo, $row, $companyName, $email, $addr1, $addr2, $city, $state, $zip);
@@ -437,23 +502,48 @@ if ($action === 'submit') {
             ]);
             $altpayPaymentMethodId = $vaulted['id'];
             $altpaySummary = $vaulted['summary'];
-            $altpayStatus = 'vaulted';
         } catch (Throwable $e) {
             // Deliberately NOT logging $e->getMessage() here -- Alternative
             // Payments' error response could conceivably echo back the
             // submitted routing/account number in a validation message, and
             // that must never land in a server log.
             error_log('[ratesheet/public] Alternative Payments bank vaulting failed for request ' . $row['id'] . ' (' . get_class($e) . ') -- see Alternative Payments dashboard for details.');
-            $altpayFailReason = 'Bank account vaulting failed -- see Alternative Payments dashboard for this customer.';
+            // Per Michael's explicit call: do NOT save or fail open here --
+            // status stays 'awaiting_payment', Credit Hold stays on, and
+            // the customer just sees an error and can try again.
+            ratesheet_respond(502, ['ok' => false, 'error' => 'We could not save your bank account for payment. Please double-check the routing and account numbers and try again, or choose a card instead.']);
         }
     }
 
-    $saveSubmission('submitted', null, $companyId, $contactId, $altpayCustomerId, $altpayPaymentMethodId, $altpaySummary, $altpayStatus, $altpayFailReason);
+    $stmt = $pdo->prepare(
+        'UPDATE rate_sheet_requests SET
+            status = :status, payment_method = :payment_method,
+            altpay_customer_id = :altpay_customer_id, altpay_payment_method_id = :altpay_payment_method_id,
+            altpay_payment_method_summary = :altpay_summary, altpay_status = :altpay_status,
+            altpay_fail_reason = NULL, submitted_at = COALESCE(submitted_at, :submitted_at)
+         WHERE id = :id'
+    );
+    $stmt->execute([
+        ':status' => 'submitted',
+        ':payment_method' => $paymentMethod,
+        ':altpay_customer_id' => $altpayCustomerId,
+        ':altpay_payment_method_id' => $altpayPaymentMethodId,
+        ':altpay_summary' => $altpaySummary,
+        ':altpay_status' => 'vaulted',
+        ':submitted_at' => gmdate('Y-m-d\TH:i:s\Z'),
+        ':id' => $row['id'],
+    ]);
+
+    // Only now -- payment actually vaulted and saved -- release Credit
+    // Hold. Fail-open/logged (connectwise.php): a ConnectWise quirk here
+    // should never re-surface as a failure to a customer who already paid.
+    if ($companyId !== null) {
+        ratesheet_cw_release_credit_hold($companyId);
+    }
 
     // Both emails are best-effort: a failure here never undoes the
-    // ConnectWise create or fails the customer's submission -- they've
-    // already signed and their account already exists. Status is logged
-    // to the row so staff can see + manually follow up if needed.
+    // ConnectWise account or the payment method already on file. Status
+    // is logged to the row so staff can see + manually follow up if needed.
     $internalStatus = 'failed';
     $copyStatus = null;
     $configPath = __DIR__ . '/../../mail/mail-config.php';
@@ -462,14 +552,15 @@ if ($action === 'submit') {
         $config = require $configPath;
         require_once __DIR__ . '/../../mail/graph-mailer.php';
 
+        $wantCopy = (bool) $row['want_copy_of_signup'];
         $submission = [
             'first_name' => $firstName, 'last_name' => $lastName, 'business_name' => $businessName,
             'email' => $email, 'addr1' => $addr1, 'addr2' => $addr2, 'city' => $city, 'state' => $state, 'zip' => $zip,
             'location' => $row['location'], 'account_kind' => $row['account_kind'], 'hourly_rate' => (float) $row['hourly_rate'],
-            'payment_method' => $paymentMethod, 'want_copy' => $wantCopy, 'invoices_emailed' => $invoicesEmailed,
+            'payment_method' => $paymentMethod, 'want_copy' => $wantCopy, 'invoices_emailed' => (bool) $row['invoices_emailed'],
             'rep_name' => $row['rep_name'], 'rep_email' => $row['rep_email'],
             'cw_company_id' => $companyId, 'cw_contact_id' => $contactId,
-            'altpay_summary' => $altpaySummary, 'altpay_status' => $altpayStatus,
+            'altpay_summary' => $altpaySummary, 'altpay_status' => 'vaulted',
         ];
 
         try {
@@ -574,6 +665,13 @@ function ratesheet_cw_create_company(string $name, string $addressLine1, string 
         'customFields' => [
             ['id' => 34, 'value' => $today], // "Terms Renewal Date", confirmed
         ],
+        // Added 2026-09-17 (follow-up #4): the two-step signup creates this
+        // Company at the end of Step 1, before payment exists -- Credit
+        // Hold starts ON and is only released
+        // (ratesheet_cw_release_credit_hold(), connectwise.php) once Step 2
+        // actually vaults a payment method. Field name unconfirmed against
+        // this live instance -- see that function's header.
+        'creditHold' => true,
     ];
     if ($addressLine1 !== '') $body['addressLine1'] = $addressLine1;
     if ($addressLine2 !== '') $body['addressLine2'] = $addressLine2;
