@@ -64,7 +64,7 @@
     submitError: null,
     submitted: false, // set true only once submit succeeds THIS session
     form: {
-      first_name: '', last_name: '', email: '',
+      first_name: '', last_name: '', email: '', phone: '',
       address_line1: '', address_line2: '', city: '', state: '', zip: '',
       business_name: '',
       payment_method: '',
@@ -213,6 +213,7 @@
     if (!f.first_name.trim()) return 'First name is required.';
     if (!f.last_name.trim()) return 'Last name is required.';
     if (!f.email.trim() || f.email.indexOf('@') === -1) return 'A valid email address is required.';
+    if (f.phone.replace(/\D/g, '').length < 7) return 'A valid phone number is required.';
     if (!f.address_line1.trim()) return 'Address is required.';
     if (!f.city.trim()) return 'City is required.';
     if (!f.state.trim()) return 'State is required.';
@@ -236,7 +237,7 @@
 
     var f = state.form;
     var body = {
-      first_name: f.first_name, last_name: f.last_name, email: f.email,
+      first_name: f.first_name, last_name: f.last_name, email: f.email, phone: f.phone,
       business_name: f.business_name, address_line1: f.address_line1, address_line2: f.address_line2,
       city: f.city, state: f.state, zip: f.zip,
       payment_method: f.payment_method,
@@ -292,6 +293,7 @@
       '    <div class="field-label">First Name</div><input type="text" data-field="first_name" value="' + e(f.first_name) + '" />' +
       '    <div class="field-label">Last Name</div><input type="text" data-field="last_name" value="' + e(f.last_name) + '" />' +
       '    <div class="field-label">Email Address</div><input type="email" data-field="email" value="' + e(f.email) + '" />' +
+      '    <div class="field-label">Phone Number</div><input type="tel" data-field="phone" value="' + e(f.phone) + '" />' +
       (isCommercial ? '    <div class="field-label">Business Name</div><input type="text" data-field="business_name" value="' + e(f.business_name) + '" />' : '') +
       '    <div class="field-label">Address</div><input type="text" placeholder="Street address" data-field="address_line1" value="' + e(f.address_line1) + '" />' +
       '    <input type="text" placeholder="Apt / Suite (optional)" data-field="address_line2" value="' + e(f.address_line2) + '" style="margin-top:8px;" />' +

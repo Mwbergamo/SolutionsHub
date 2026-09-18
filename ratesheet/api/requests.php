@@ -123,6 +123,7 @@ function ratesheet_request_row(array $r, bool $includeCustomerFields, array $sta
         $out['last_name'] = $r['last_name'];
         $out['business_name'] = $r['business_name'];
         $out['customer_email'] = $r['customer_email'];
+        $out['phone'] = $r['phone'];
         $out['payment_method'] = $r['payment_method'];
         $out['cw_company_id'] = $r['cw_company_id'] !== null ? (int) $r['cw_company_id'] : null;
         $out['cw_contact_id'] = $r['cw_contact_id'] !== null ? (int) $r['cw_contact_id'] : null;
@@ -211,6 +212,7 @@ if ($action === 'detail') {
         'last_name' => $r['last_name'],
         'business_name' => $r['business_name'],
         'customer_email' => $r['customer_email'],
+        'phone' => $r['phone'],
         'address_line1' => $r['address_line1'],
         'address_line2' => $r['address_line2'],
         'city' => $r['city'],

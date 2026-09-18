@@ -138,7 +138,6 @@ function ratesheet_migrate(PDO $pdo): void
             cw_contact_id INTEGER,
 
             internal_email_status TEXT,   -- hello@codebluetechnology.com notice: 'sent' | 'failed' | NULL
-            invoicing_email_status TEXT,  -- invoicing@codebluetechnology.com "ready for payment" notice: 'sent' | 'failed' | NULL, added 2026-09-18
             customer_copy_email_status TEXT, -- only attempted when want_copy_of_signup=1
 
             sent_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -190,12 +189,36 @@ function ratesheet_migrate(PDO $pdo): void
     //
     // credit_hold_status here just records what THIS APP attempted at
     // signup time (informational only, e.g. for the printable record):
-    // 'held' (the "Credit Hold" ConnectWise Company Status was resolved
-    // and set on create) | 'lookup_failed' (it could not be resolved, so
-    // the Company was created as Active instead -- loudly flagged in both
-    // notification emails, see public.php) | NULL (ConnectWise create
-    // itself failed, so no Company/Status was ever set).
+    // 'held' (the "Credit Hold" ConnectWise Company Status was resolved,
+    // set on create, AND confirmed by a post-create read-back -- see
+    // public.php) | 'lookup_failed' (it could not be resolved OR the
+    // post-create read-back didn't confirm it -- either way the Company
+    // was created as Active instead, loudly flagged in both notification
+    // emails, see public.php) | NULL (ConnectWise create itself failed,
+    // so no Company/Status was ever set).
     ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'credit_hold_status', 'TEXT');
+
+    // Added 2026-09-18 (follow-up, per Michael): the invoicing@ "ready for
+    // payment" notice's own send status -- BUG FIX 2026-09-19: this was
+    // originally added as a literal column in the CREATE TABLE statement
+    // above, which only takes effect for a brand-new database. On this
+    // app's already-live production database, `CREATE TABLE IF NOT
+    // EXISTS` is a no-op, so the live table never actually got this
+    // column -- every submit crashed with "no such column:
+    // invoicing_email_status" on the final status-bookkeeping UPDATE
+    // (after the ConnectWise Company/Contact had ALREADY been created and
+    // both notification emails had ALREADY been attempted, so a customer
+    // hitting this saw a raw server error even though their signup had
+    // actually gone through). Moved here, the same ALTER-TABLE-if-missing
+    // path every other post-launch column in this table already uses, so
+    // it actually reaches the live schema. 'sent' | 'failed' | NULL.
+    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'invoicing_email_status', 'TEXT');
+
+    // Added 2026-09-19, per Michael: Invoicing needs the customer's phone
+    // number (alongside name/email, already collected) to actually reach
+    // them. Required on the signup form -- see public.php's validation --
+    // so this is only NULL for older rows submitted before this was added.
+    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'phone', 'TEXT');
 }
 
 /** Same ALTER-TABLE-if-needed helper as register/relationships use for live schema changes. */

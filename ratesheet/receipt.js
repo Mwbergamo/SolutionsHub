@@ -73,6 +73,7 @@
       '  <div class="info-grid">' +
       '    <div><span class="k">Name:</span> <span class="v">' + e(fullName.trim()) + '</span></div>' +
       '    <div><span class="k">Email:</span> <span class="v">' + e(r.customer_email) + '</span></div>' +
+      '    <div><span class="k">Phone:</span> <span class="v">' + e(r.phone || '—') + '</span></div>' +
       (r.business_name ? '    <div><span class="k">Business:</span> <span class="v">' + e(r.business_name) + '</span></div>' : '') +
       '    <div><span class="k">Account Type:</span> <span class="v">' + e(r.account_kind) + '</span></div>' +
       '    <div><span class="k">Address:</span> <span class="v">' + e(fullAddress) + '</span></div>' +

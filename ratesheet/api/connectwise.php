@@ -268,22 +268,42 @@ function ratesheet_cw_put_company_with_retry(int $companyId, array $fields): arr
  * via a live `GET /company/statuses` name search -- *** ENDPOINT PATH
  * UNVERIFIED AGAINST THIS INSTANCE ***, guessed by analogy with
  * `/company/territories` and `/company/contacts/types`, both real,
- * confirmed endpoints elsewhere in this codebase. Returns null (never
- * throws) on any failure -- a missing/wrong status is HIGH STAKES here
- * (it's the entire Credit Hold safeguard), so unlike Territory's fail-open
- * default this deliberately does NOT invent a fallback id itself; the
- * caller (ratesheet_cw_create_company()) decides what to do when this
- * returns null, and does so loudly rather than silently.
+ * confirmed endpoints elsewhere in this codebase (neither repeats
+ * "company" in the resource name, which is why this doesn't try
+ * `/company/companyStatuses` as an alternate guess -- no evidence on this
+ * instance supports that shape). Returns null (never throws) on any
+ * failure -- a missing/wrong status is HIGH STAKES here (it's the entire
+ * Credit Hold safeguard), so unlike Territory's fail-open default this
+ * deliberately does NOT invent a fallback id itself; the caller
+ * (ratesheet_cw_create_company()) decides what to do when this returns
+ * null, and does so loudly rather than silently.
+ *
+ * Deliberately does NOT trust $rows[0] blindly (added 2026-09-19, after a
+ * live test landed on the wrong Status despite this function apparently
+ * "succeeding") -- some ConnectWise reference/catalog endpoints silently
+ * ignore an unsupported `conditions` filter and just return their default
+ * page, which would otherwise make this quietly return the id of whatever
+ * status happens to sort first (often "Active") while looking like a
+ * clean match. Requests a larger page and only accepts a row whose own
+ * `name` field actually contains the target string (case-insensitive),
+ * so a filter that got ignored server-side is still caught client-side.
+ * This is belt-and-suspenders alongside public.php's post-create
+ * verification (ratesheet_cw_company_status_name() read-back), which is
+ * the real safety net -- see that call site's comment.
  */
 function ratesheet_cw_resolve_status_id_by_name(string $name): ?int
 {
     try {
         $condition = 'name like "%' . ratesheet_cw_condition_escape($name) . '%"';
-        $rows = ratesheet_cw_request('/company/statuses', ['conditions' => $condition, 'fields' => 'id,name'], 'GET', null, 15, 6);
-        if (isset($rows[0]['id']) && is_int($rows[0]['id'])) {
-            return (int) $rows[0]['id'];
+        $rows = ratesheet_cw_request('/company/statuses', ['conditions' => $condition, 'fields' => 'id,name', 'pageSize' => 200], 'GET', null, 15, 6);
+        foreach ($rows as $row) {
+            $rowName = $row['name'] ?? null;
+            $rowId = $row['id'] ?? null;
+            if (is_string($rowName) && is_int($rowId) && stripos($rowName, $name) !== false) {
+                return (int) $rowId;
+            }
         }
-        error_log('ratesheet_cw_resolve_status_id_by_name: no ConnectWise Company Status matched "' . $name . '".');
+        error_log('ratesheet_cw_resolve_status_id_by_name: no ConnectWise Company Status matched "' . $name . '" among ' . count($rows) . ' returned row(s).');
     } catch (Throwable $e) {
         error_log('ratesheet_cw_resolve_status_id_by_name: lookup failed for "' . $name . '": ' . $e->getMessage());
     }

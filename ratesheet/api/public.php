@@ -127,6 +127,7 @@ if ($action === 'submit') {
     $firstName = trim((string) ($input['first_name'] ?? ''));
     $lastName = trim((string) ($input['last_name'] ?? ''));
     $email = trim((string) ($input['email'] ?? ''));
+    $phone = trim((string) ($input['phone'] ?? ''));
     $addr1 = trim((string) ($input['address_line1'] ?? ''));
     $addr2 = trim((string) ($input['address_line2'] ?? ''));
     $city = trim((string) ($input['city'] ?? ''));
@@ -152,6 +153,7 @@ if ($action === 'submit') {
     if ($firstName === '') $errors[] = 'First name is required.';
     if ($lastName === '') $errors[] = 'Last name is required.';
     if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) $errors[] = 'A valid email address is required.';
+    if (strlen(preg_replace('/\D+/', '', $phone) ?? '') < 7) $errors[] = 'A valid phone number is required.';
     if ($addr1 === '') $errors[] = 'Address is required.';
     if ($city === '') $errors[] = 'City is required.';
     if ($state === '') $errors[] = 'State is required.';
@@ -175,12 +177,12 @@ if ($action === 'submit') {
         ?int $cwCompanyId,
         ?int $cwContactId,
         ?string $creditHoldStatus
-    ) use ($pdo, $row, $firstName, $lastName, $businessName, $email, $addr1, $addr2, $city, $state, $zip, $paymentMethod, $wantCopy, $invoicesEmailed, $agreed, $signatureDataUrl, $ipAddress): void {
+    ) use ($pdo, $row, $firstName, $lastName, $businessName, $email, $phone, $addr1, $addr2, $city, $state, $zip, $paymentMethod, $wantCopy, $invoicesEmailed, $agreed, $signatureDataUrl, $ipAddress): void {
         $stmt = $pdo->prepare(
             'UPDATE rate_sheet_requests SET
                 status = :status, fail_reason = :fail_reason,
                 first_name = :first_name, last_name = :last_name, business_name = :business_name,
-                customer_email = :email, address_line1 = :addr1, address_line2 = :addr2,
+                customer_email = :email, phone = :phone, address_line1 = :addr1, address_line2 = :addr2,
                 city = :city, state = :state, zip = :zip,
                 payment_method = :payment_method, want_copy_of_signup = :want_copy,
                 invoices_emailed = :invoices_emailed, agreed_to_terms = :agreed,
@@ -198,6 +200,7 @@ if ($action === 'submit') {
             ':last_name' => $lastName,
             ':business_name' => $businessName !== '' ? $businessName : null,
             ':email' => $email,
+            ':phone' => $phone,
             ':addr1' => $addr1,
             ':addr2' => $addr2 !== '' ? $addr2 : null,
             ':city' => $city,
@@ -237,21 +240,37 @@ if ($action === 'submit') {
     // Company (never lose the customer's signed data) but loudly flags
     // BOTH notification emails below so a human catches it immediately.
     $creditHoldStatusId = ratesheet_cw_resolve_status_id_by_name(RATESHEET_CREDIT_HOLD_STATUS_NAME);
-    $creditHoldApplied = $creditHoldStatusId !== null;
-    if (!$creditHoldApplied) {
-        error_log('[ratesheet/public] URGENT: could not resolve the ConnectWise "Credit Hold" Company Status for request ' . $row['id'] . ' -- creating the Company as Active instead. Set Billing Status to Credit Hold manually.');
-        $creditHoldStatusId = 1; // Active, confirmed fallback (register/api/customers.php) -- flagged loudly above and in both emails below, never silent.
+    if ($creditHoldStatusId === null) {
+        error_log('[ratesheet/public] could not resolve the ConnectWise "Credit Hold" Company Status for request ' . $row['id'] . ' -- creating the Company as Active instead, pending manual correction.');
+        $creditHoldStatusId = 1; // Active, confirmed fallback (register/api/customers.php).
     }
 
     try {
         $company = ratesheet_cw_create_company($companyName, $addr1, $addr2, $city, $state, $zip, $territoryId, $creditHoldStatusId);
         $companyId = (int) $company['id'];
-        $contact = ratesheet_cw_create_contact($companyId, $firstName, $lastName, $email);
+        $contact = ratesheet_cw_create_contact($companyId, $firstName, $lastName, $phone, $email);
         $contactId = (int) $contact['id'];
     } catch (Throwable $e) {
         error_log('[ratesheet/public] ConnectWise create failed for request ' . $row['id'] . ': ' . $e->getMessage());
         $saveSubmission('failed', $e->getMessage(), null, null, null);
         ratesheet_respond(502, ['ok' => false, 'error' => 'We could not finish creating your account automatically, but your information was saved -- a CodeBlue Technology team member will finish setting up your account shortly.']);
+    }
+
+    // Verify, don't just trust the resolve step above -- added 2026-09-19
+    // after a live test landed on the wrong Billing Status despite the
+    // resolve step appearing to succeed (see
+    // ratesheet_cw_resolve_status_id_by_name()'s docblock: an ignored
+    // `conditions` filter, a wrongly-matched row, or ConnectWise itself
+    // silently normalizing the `status` field on create could all cause
+    // this). Read the just-created Company back and use its ACTUAL live
+    // Billing Status name as the authoritative signal for whether Credit
+    // Hold really took -- not whatever the pre-create resolve step
+    // returned. $actualStatusName also gets surfaced in both notification
+    // emails below so a mismatch is visible without server log access.
+    $actualStatusName = ratesheet_cw_company_status_name($companyId);
+    $creditHoldApplied = $actualStatusName !== null && stripos($actualStatusName, RATESHEET_CREDIT_HOLD_STATUS_NAME) !== false;
+    if (!$creditHoldApplied) {
+        error_log('[ratesheet/public] URGENT: ConnectWise Company ' . $companyId . ' (request ' . $row['id'] . ') did not land on "Credit Hold" -- live Billing Status reads "' . ($actualStatusName ?? 'unknown -- verification lookup itself failed') . '". Set it manually.');
     }
 
     $saveSubmission('submitted', null, $companyId, $contactId, $creditHoldApplied ? 'held' : 'lookup_failed');
@@ -271,12 +290,12 @@ if ($action === 'submit') {
 
         $submission = [
             'first_name' => $firstName, 'last_name' => $lastName, 'business_name' => $businessName,
-            'email' => $email, 'addr1' => $addr1, 'addr2' => $addr2, 'city' => $city, 'state' => $state, 'zip' => $zip,
+            'email' => $email, 'phone' => $phone, 'addr1' => $addr1, 'addr2' => $addr2, 'city' => $city, 'state' => $state, 'zip' => $zip,
             'location' => $row['location'], 'account_kind' => $row['account_kind'], 'hourly_rate' => (float) $row['hourly_rate'],
             'payment_method' => $paymentMethod, 'want_copy' => $wantCopy, 'invoices_emailed' => $invoicesEmailed,
             'rep_name' => $row['rep_name'], 'rep_email' => $row['rep_email'],
             'cw_company_id' => $companyId, 'cw_contact_id' => $contactId,
-            'credit_hold_applied' => $creditHoldApplied,
+            'credit_hold_applied' => $creditHoldApplied, 'credit_hold_actual_status' => $actualStatusName,
         ];
 
         try {
@@ -430,7 +449,14 @@ function ratesheet_cw_create_company(string $name, string $addressLine1, string 
     return $company;
 }
 
-function ratesheet_cw_create_contact(int $companyId, string $firstName, string $lastName, string $email): array
+/**
+ * $phone added 2026-09-19, per Michael. The "Direct" phone communication
+ * type (id 2) and the "Phone" communicationType string are the same
+ * confirmed values register/api/customers.php's register_cw_create_contact()
+ * already uses successfully on this same ConnectWise instance -- reused
+ * here rather than guessed fresh.
+ */
+function ratesheet_cw_create_contact(int $companyId, string $firstName, string $lastName, string $phone, string $email): array
 {
     $contact = ratesheet_cw_request('/company/contacts', [], 'POST', [
         'firstName' => $firstName,
@@ -441,6 +467,18 @@ function ratesheet_cw_create_contact(int $companyId, string $firstName, string $
     ], 20, 8);
 
     $contactId = $contact['id'] ?? null;
+    if (is_int($contactId) && $phone !== '') {
+        try {
+            ratesheet_cw_request('/company/contacts/' . $contactId . '/communications', [], 'POST', [
+                'type' => ['id' => 2], // "Direct", confirmed (register/api/customers.php)
+                'value' => $phone,
+                'communicationType' => 'Phone',
+                'defaultFlag' => true,
+            ], 20, 8);
+        } catch (Throwable $e) {
+            error_log('ratesheet_cw_create_contact: failed to add phone for contact ' . $contactId . ': ' . $e->getMessage());
+        }
+    }
     if (is_int($contactId) && $email !== '') {
         try {
             ratesheet_cw_request('/company/contacts/' . $contactId . '/communications', [], 'POST', [
@@ -479,11 +517,12 @@ function ratesheet_internal_notice_html(array $s): string
     $paymentLabel = $s['payment_method'] === 'ach' ? 'ACH (bank transfer) — 3% discount applies' : 'Credit Card';
     $billingStatus = $s['credit_hold_applied']
         ? '<span style="color:#1D5FBF;">Credit Hold (awaiting Invoicing)</span>'
-        : '<span style="color:#A6362B;">⚠ Could not set automatically -- set to Credit Hold manually in ConnectWise.</span>';
+        : '<span style="color:#A6362B;">⚠ Not set automatically -- ConnectWise shows "' . $e($s['credit_hold_actual_status'] ?? 'unknown') . '". Set to Credit Hold manually.</span>';
 
     $rows = $row('Name', $e($s['first_name'] . ' ' . $s['last_name']))
         . ($s['business_name'] !== '' ? $row('Business Name', $e($s['business_name'])) : '')
         . $row('Email', $e($s['email']))
+        . $row('Phone', $e($s['phone']))
         . $row('Address', $e($fullAddress))
         . $row('Location', $e($s['location']) . ' ($' . number_format($s['hourly_rate'], 2) . '/hr)')
         . $row('Account Type', $e($s['account_kind']))
@@ -517,7 +556,7 @@ function ratesheet_invoicing_notice_html(array $s): string
 
     $alertBanner = $s['credit_hold_applied'] ? '' :
         '<tr><td style="padding:12px 24px;background:#FBE6E4;border-bottom:1px solid #E5534B;">' .
-        '<div style="font-size:13px;font-family:Arial,Helvetica,sans-serif;color:#8a2a24;font-weight:700;">⚠ Action needed: Billing Status could not be set to Credit Hold automatically for this Company. Please set it manually in ConnectWise.</div>' .
+        '<div style="font-size:13px;font-family:Arial,Helvetica,sans-serif;color:#8a2a24;font-weight:700;">⚠ Action needed: Billing Status could not be set to Credit Hold automatically for this Company (ConnectWise shows it as "' . $e($s['credit_hold_actual_status'] ?? 'unknown') . '"). Please set it manually in ConnectWise.</div>' .
         '</td></tr>';
 
     return '<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#F4F5F7;font-family:Arial,Helvetica,sans-serif;">' .
@@ -528,7 +567,7 @@ function ratesheet_invoicing_notice_html(array $s): string
         '<tr><td style="padding:16px 24px;font-size:13px;color:#33394A;line-height:1.7;">' .
         'A new customer has signed their CodeBlue Technology rate sheet and is ready to have a payment method added in Alternative Payments. Their ConnectWise Company was created on <strong>Credit Hold</strong> and should stay that way until this is done.<br><br>' .
         '<strong>Company:</strong> ' . $e($s['business_name'] !== '' ? $s['business_name'] : ($s['first_name'] . ' ' . $s['last_name'])) . ' (ConnectWise Company #' . (int) $s['cw_company_id'] . ')<br>' .
-        '<strong>Contact:</strong> ' . $e($s['first_name'] . ' ' . $s['last_name']) . ' — ' . $e($s['email']) . ' (ConnectWise Contact #' . (int) $s['cw_contact_id'] . ')<br>' .
+        '<strong>Contact:</strong> ' . $e($s['first_name'] . ' ' . $s['last_name']) . ' — ' . $e($s['email']) . ' — ' . $e($s['phone']) . ' (ConnectWise Contact #' . (int) $s['cw_contact_id'] . ')<br>' .
         '<strong>Requested Payment Method:</strong> ' . $e($paymentLabel) . '<br><br>' .
         'Once the payment method is added in Alternative Payments, please also change this Company\'s Billing Status off Credit Hold in ConnectWise.' .
         '</td></tr>' .
