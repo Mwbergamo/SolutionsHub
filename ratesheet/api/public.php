@@ -27,7 +27,9 @@
  *     agreed_to_terms: true, signature_data_url }
  *   -> { ok: true } once the Company (Credit Hold ON --
  *      ratesheet_cw_create_company() below) + Contact are created in
- *      ConnectWise, and an Alternative Payments customer + a PERMANENT
+ *      ConnectWise, a ConnectWise Special/Miscellaneous invoice exists
+ *      under that Company (ratesheet_cw_create_setup_invoice() below,
+ *      best-effort), and an Alternative Payments customer + a PERMANENT
  *      "account setup" invoice exist for this signup (see altpay.php's
  *      ratesheet_altpay_create_placeholder_invoice() -- no longer a
  *      throwaway, never archived). Sets status='awaiting_payment'.
@@ -388,6 +390,11 @@ if ($action === 'step1-submit') {
         $saveStep1('failed', $e->getMessage(), null, null);
         ratesheet_respond(502, ['ok' => false, 'error' => 'We could not finish creating your account automatically, but your information was saved -- a CodeBlue Technology team member will finish setting up your account shortly.']);
     }
+
+    // ConnectWise Special/Miscellaneous invoice (per Michael, follow-up
+    // #5) -- best-effort, same as Credit Hold status: the Company/Contact
+    // already exist by this point, so this never blocks the signup.
+    ratesheet_cw_create_setup_invoice($companyId);
 
     // Alternative Payments customer + permanent setup invoice, needed so
     // Step 2 (action=card-checkout-init) has something to check out
@@ -770,6 +777,48 @@ function ratesheet_cw_create_contact(int $companyId, string $firstName, string $
     }
 
     return $contact;
+}
+
+/**
+ * Creates a ConnectWise "Special Invoice" under the new company, added
+ * 2026-09-17 (follow-up #5, per Michael): "still need to create a Special
+ * Invoice, as a Miscellaneous Invoice Type, Invoice Status should be set
+ * to Closed after saved with a Miscellaneous total of 0.01 under the new
+ * company." Called from step1-submit right after the Company + Contact
+ * are created -- best-effort/non-blocking, same reasoning as Credit Hold
+ * status and the team-row assignments in ratesheet_cw_create_company()
+ * above: the account itself is the part that can't be redone, so this
+ * must never fail the signup.
+ *
+ * *** FIELD NAMES / SHAPE UNCONFIRMED *** -- no local ConnectWise
+ * credentials exist to exercise this against the live API from here (see
+ * connectwise-config.sample.php). Best guess based on ConnectWise
+ * Manage's general Invoice REST object: 'type' and 'status' as plain
+ * strings (Invoice Type/Status are small fixed system enums, not
+ * per-tenant Setup Table entries the way Company Status/Territory are --
+ * so unlike ratesheet_cw_resolve_company_status_id() above, this doesn't
+ * attempt a live name lookup). 'miscellaneousTotal' guesses the REST
+ * field name behind the invoice's "Miscellaneous" line -- ConnectWise
+ * invoices split totals into Labor/Expense/Product/Agreement/
+ * Miscellaneous buckets in the UI, but the exact API field name for that
+ * last one isn't confirmed. Watch the error_log below on the first live
+ * Step 1 completion; if it 400s naming a specific field, that tells us
+ * exactly what to fix.
+ */
+function ratesheet_cw_create_setup_invoice(int $companyId): void
+{
+    try {
+        ratesheet_cw_request('/finance/invoices', [], 'POST', [
+            'company' => ['id' => $companyId],
+            'billToCompany' => ['id' => $companyId],
+            'type' => 'Miscellaneous',
+            'status' => 'Closed',
+            'invoiceDate' => gmdate('Y-m-d\T00:00:00\Z'),
+            'miscellaneousTotal' => 0.01,
+        ], 20, 8);
+    } catch (Throwable $e) {
+        error_log('ratesheet_cw_create_setup_invoice: failed for company ' . $companyId . ': ' . $e->getMessage());
+    }
 }
 
 // ---------------------------------------------------------------------
