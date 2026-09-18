@@ -32,7 +32,8 @@
   // it), same order Michael gave.
   var SENDER_ROSTER = [
     'Chester Sienko', 'Moe Okeilli', 'Walter Drew', 'Claire Hayden',
-    'Casey Mayes', 'Michael Bergamo', 'Courtney Cruz', 'Kasie Van Fossen', 'Trey Hayden'
+    'Casey Mayes', 'Michael Bergamo', 'Courtney Cruz', 'Kasie Van Fossen', 'Trey Hayden',
+    'Daemian Caron', 'Kevin Headley'
   ];
 
   var root = document.getElementById('app-root');
@@ -50,7 +51,10 @@
 
     requests: null,
     requestsLoading: false,
-    requestsError: null
+    requestsError: null,
+
+    clearingTestData: false,
+    clearTestDataError: null
   };
 
   function e(s) {
@@ -116,6 +120,29 @@
     }).catch(function () {
       state.requestsLoading = false;
       state.requestsError = 'Could not load rate sheets — check your connection and try again.';
+      render();
+    });
+  }
+
+  function clearTestData() {
+    if (state.clearingTestData) return;
+    if (!window.confirm('This permanently deletes every rate sheet in the dashboard (sent, signed, everything) — there is no undo. Continue?')) {
+      return;
+    }
+    state.clearingTestData = true;
+    state.clearTestDataError = null;
+    render();
+    apiPost('api/requests.php?action=clear-test-data', { confirm: true }).then(function (r) {
+      state.clearingTestData = false;
+      if (r.data && r.data.ok) {
+        loadRequests();
+      } else {
+        state.clearTestDataError = (r.data && r.data.error) || 'Could not clear rate sheets.';
+        render();
+      }
+    }).catch(function () {
+      state.clearingTestData = false;
+      state.clearTestDataError = 'Could not reach the server — check your connection and try again.';
       render();
     });
   }
@@ -229,6 +256,22 @@
       '</div>';
   }
 
+  // Admin-only, per Michael (2026-09-18): one-time cleanup of the
+  // development/testing rate sheets sent while this app was being built.
+  // See api/requests.php's ?action=clear-test-data docblock -- wipes
+  // every row (there's no "test" flag to filter on), gated by both the
+  // admin check server-side and a confirm() here so it can't fire by
+  // accident. Shown above the dashboard table whenever it renders,
+  // including the empty state, so an admin can confirm a clear worked.
+  function clearTestDataButtonHtml() {
+    if (!state.isAdmin) return '';
+    return '<div class="clear-test-data-row">' +
+      (state.clearingTestData ? '<span class="clear-test-data-status">Clearing…</span>' : '') +
+      (state.clearTestDataError ? '<span class="clear-test-data-status" style="color:#e5534b;">' + e(state.clearTestDataError) + '</span>' : '') +
+      '<button class="secondary-btn" data-action="clear-test-data" ' + (state.clearingTestData ? 'disabled' : '') + '>Clear Test Data</button>' +
+      '</div>';
+  }
+
   function dashboardHtml() {
     if (state.requestsLoading && state.requests === null) {
       return '<div class="loading">Loading rate sheets…</div>';
@@ -238,7 +281,7 @@
     }
     var rows = state.requests || [];
     if (rows.length === 0) {
-      return '<div class="empty-state">No rate sheets sent yet.</div>';
+      return clearTestDataButtonHtml() + '<div class="empty-state">No rate sheets sent yet.</div>';
     }
     var body = rows.map(function (r) {
       // Only a submitted or failed row has anything to show on the
@@ -258,6 +301,7 @@
     }).join('');
 
     return '' +
+      clearTestDataButtonHtml() +
       '<div class="card">' +
       '  <table class="data-table">' +
       '    <thead><tr><th></th><th>Prospect Email</th><th>Sent By</th><th>Time Sent</th><th>Type</th><th>Location</th><th>Payment Method</th><th>Invoices Emailed</th></tr></thead>' +
@@ -297,6 +341,8 @@
       submitSendForm();
     } else if (action === 'view-detail') {
       window.open('receipt.html?id=' + encodeURIComponent(el.getAttribute('data-id')), '_blank');
+    } else if (action === 'clear-test-data') {
+      clearTestData();
     }
   });
 

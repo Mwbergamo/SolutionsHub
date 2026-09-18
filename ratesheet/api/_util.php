@@ -95,16 +95,23 @@ function ratesheet_require_login(PDO $pdo): array
 }
 
 /**
- * The fixed 9-person "Sending Representative" roster, verbatim
- * names/order/emails as Michael gave them (chat, 2026-09-17): the first
- * 6 names' emails come from relationships/api/catalog.php's
- * relationships_todo_roster_cw_email() (same 7-person roster minus Jake
- * Bradshaw, who isn't a sender here -- see ratesheet_admin_emails() below
- * for where Jake does show up); the last 3 (Courtney Cruz, Kasie Van
- * Fossen, Trey Hayden) came with their emails spelled out directly in
- * Michael's request. Not a ratesheet_users query, same reasoning as
- * relationships_todo_roster(): this list is the source of truth for the
- * dropdown regardless of who has actually signed in yet.
+ * The "Sending Representative" roster, verbatim names/emails as Michael
+ * gave them (chat, 2026-09-17): the first 6 names' emails come from
+ * relationships/api/catalog.php's relationships_todo_roster_cw_email()
+ * (same 7-person roster minus Jake Bradshaw, who isn't a sender here --
+ * see ratesheet_admin_emails() below for where Jake does show up); the
+ * next 3 (Courtney Cruz, Kasie Van Fossen, Trey Hayden) came with their
+ * emails spelled out directly in Michael's request. Not a
+ * ratesheet_users query, same reasoning as relationships_todo_roster():
+ * this list is the source of truth for the dropdown regardless of who
+ * has actually signed in yet.
+ *
+ * Daemian Caron and Kevin Headley added 2026-09-18, per Michael, with
+ * their emails spelled out directly in his request the same way
+ * Courtney/Kasie/Trey's were -- appended to the end rather than
+ * alphabetized in, so the dropdown order for the original 9 names never
+ * shifts. Keep app.js's SENDER_ROSTER array (names only) in sync with
+ * this list if it's ever changed again.
  *
  * @return array<string,string> name => email
  */
@@ -120,6 +127,8 @@ function ratesheet_sender_roster(): array
         'Courtney Cruz' => 'Ccruz@codebluetechnology.com',
         'Kasie Van Fossen' => 'Kvanfossen@codebluetechnology.com',
         'Trey Hayden' => 'Thayden@codebluetechnology.com',
+        'Daemian Caron' => 'Dcaron@codebluetechnology.com',
+        'Kevin Headley' => 'Kheadley@codebluetechnology.com',
     ];
 }
 
@@ -130,8 +139,12 @@ function ratesheet_sender_roster(): array
  * above (he's not a rate-sheet sender, just a dashboard viewer) -- his
  * email comes from the same confirmed roster map in
  * relationships/api/catalog.php. Anyone signed in but NOT in this list
- * (Moe, Chester, Walter, or anyone else) sees only rows whose rep_email
- * matches their own signed-in email -- see requests.php's ?action=list.
+ * sees only rows whose rep_email matches their own signed-in email --
+ * see requests.php's ?action=list.
+ *
+ * Charlie Trible added 2026-09-18 as an admin (full visibility), per
+ * Michael -- his email spelled out directly in the request, same pattern
+ * as the sender-roster additions above.
  *
  * @return string[] lowercased emails
  */
@@ -145,6 +158,7 @@ function ratesheet_admin_emails(): array
         'chayden@codebluetechnology.com',
         'jbradshaw@codebluetechnology.com',
         'cmayes@codebluetechnology.com',
+        'ctrible@codebluetechnology.com',
     ];
 }
 
