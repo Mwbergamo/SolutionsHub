@@ -665,13 +665,6 @@ function ratesheet_cw_create_company(string $name, string $addressLine1, string 
         'customFields' => [
             ['id' => 34, 'value' => $today], // "Terms Renewal Date", confirmed
         ],
-        // Added 2026-09-17 (follow-up #4): the two-step signup creates this
-        // Company at the end of Step 1, before payment exists -- Credit
-        // Hold starts ON and is only released
-        // (ratesheet_cw_release_credit_hold(), connectwise.php) once Step 2
-        // actually vaults a payment method. Field name unconfirmed against
-        // this live instance -- see that function's header.
-        'creditHold' => true,
     ];
     if ($addressLine1 !== '') $body['addressLine1'] = $addressLine1;
     if ($addressLine2 !== '') $body['addressLine2'] = $addressLine2;
@@ -683,6 +676,24 @@ function ratesheet_cw_create_company(string $name, string $addressLine1, string 
     $companyId = $company['id'] ?? null;
     if (!is_int($companyId)) {
         throw new RatesheetConnectWiseError('ConnectWise did not return a new company id.');
+    }
+
+    // Credit Hold ON, added 2026-09-17 (follow-up #4) -- deliberately a
+    // SEPARATE best-effort PUT after creation, not part of the POST body
+    // above. FIXED same day: 'creditHold' in the initial POST body broke
+    // company creation outright for every signup (ConnectWise rejected
+    // the whole create over an unconfirmed field, with no self-healing
+    // retry on a plain POST) -- unlike ratesheet_cw_release_credit_hold()'s
+    // PUT-with-retry path, a bad field here has nowhere safe to land. This
+    // mirrors the team-row pattern right below: creating the account is
+    // the part that can't be redone, so it must succeed even if setting
+    // Credit Hold doesn't. Uses ratesheet_cw_put_company_with_retry()
+    // (connectwise.php) so a wrong field name degrades to "logged, hold
+    // just doesn't get set" rather than failing this call.
+    try {
+        ratesheet_cw_put_company_with_retry($companyId, ['creditHold' => true]);
+    } catch (Throwable $e) {
+        error_log('ratesheet_cw_create_company: failed to set Credit Hold for company ' . $companyId . ': ' . $e->getMessage());
     }
 
     foreach ([
