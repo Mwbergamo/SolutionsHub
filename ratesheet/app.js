@@ -11,7 +11,15 @@
  *                 Representative, Location, Kind of Account, Send).
  *   'dashboard' — list of rate sheets this rep can see (role-based, see
  *                 api/requests.php's ?action=list), with a status dot
- *                 (green=submitted, yellow=pending, red=failed).
+ *                 driven by the server's `payment_status` field -- per
+ *                 Michael's 2026-09-18 redesign: RED "Sent" (link sent,
+ *                 not yet submitted) -> YELLOW "Signed" (customer
+ *                 submitted, ConnectWise Company on Credit Hold) -> GREEN
+ *                 "Payment Added" (Invoicing has since changed the
+ *                 Company's Billing Status in ConnectWise -- detected
+ *                 live, not tracked in this app's own database, see
+ *                 api/requests.php's ratesheet_payment_status()). A
+ *                 distinct red "Failed" covers a ConnectWise create error.
  */
 
 (function () {
@@ -142,29 +150,28 @@
 
   // ---- Render ----------------------------------------------------------
 
-  // 'awaiting_payment' added 2026-09-17 (follow-up #4, two-step signup):
-  // Step 1 done (ConnectWise Company/Contact created, Credit Hold ON),
-  // customer just hasn't finished Step 2 (payment) yet -- distinct from
-  // 'pending' (link sent, nothing done) so staff can tell them apart.
-  function statusDot(status) {
-    var color = status === 'submitted' ? '#2ecc71' : status === 'failed' ? '#e5534b' : status === 'awaiting_payment' ? '#e08a2e' : '#e8c547';
-    var label = status === 'submitted' ? 'Submitted' : status === 'failed' ? 'Failed' : status === 'awaiting_payment' ? 'Awaiting Payment' : 'Pending';
+  // payment_status is computed server-side (api/requests.php's
+  // ratesheet_payment_status()) from a live ConnectWise lookup -- see this
+  // file's header. 'sent' (RED), 'signed' (YELLOW), 'payment_added'
+  // (GREEN), 'failed' (RED, distinct label).
+  function statusDot(paymentStatus) {
+    var colors = { sent: '#e5534b', signed: '#e8c547', payment_added: '#2ecc71', failed: '#e5534b' };
+    var labels = { sent: 'Sent', signed: 'Signed', payment_added: 'Payment Added', failed: 'Failed' };
+    var color = colors[paymentStatus] || '#8A93A3';
+    var label = labels[paymentStatus] || 'Unknown';
     return '<span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:' + color + ';">' +
       '<span style="width:9px;height:9px;border-radius:999px;background:' + color + ';display:inline-block;"></span>' + label + '</span>';
   }
 
-  // altpay_status is only meaningful once a customer has actually
-  // completed Step 2 (pending/awaiting_payment rows have no payment
-  // method attempt yet). Red "Needs follow-up" is reserved for a REAL
-  // recorded failure (altpay_fail_reason) -- a fresh awaiting_payment row
-  // is normal, in-progress, not a problem.
-  function paymentOnFileCell(r) {
+  // No payment numbers are ever collected by this app (Invoicing adds the
+  // real payment method directly in Alternative Payments, see
+  // api/public.php's header) -- this column just shows the customer's
+  // stated Card/ACH preference from the signup form.
+  function paymentMethodCell(r) {
     if (r.status === 'pending') return '—';
-    if (r.altpay_status === 'vaulted' && r.altpay_payment_method_summary) {
-      return '<span style="color:#1E8A4C;">' + e(r.altpay_payment_method_summary) + '</span>';
-    }
-    if (r.status === 'awaiting_payment') return '<span style="color:#8A93A3;">Awaiting payment</span>';
-    return '<span style="color:#e5534b;">Needs follow-up</span>';
+    if (r.payment_method === 'ach') return 'ACH';
+    if (r.payment_method === 'card') return 'Card';
+    return '—';
   }
 
   function topbarHtml() {
@@ -239,13 +246,13 @@
       // signature/timestamp/IP yet, so it's not clickable.
       var clickable = r.status !== 'pending';
       return '<tr' + (clickable ? ' class="row-clickable" data-action="view-detail" data-id="' + r.id + '"' : '') + '>' +
-        '<td>' + statusDot(r.status) + '</td>' +
+        '<td>' + statusDot(r.payment_status) + '</td>' +
         '<td>' + e(r.prospect_email) + '</td>' +
         '<td>' + e(r.rep_name) + '</td>' +
         '<td>' + fmtDateTime(r.sent_at) + '</td>' +
         '<td>' + e(r.account_kind) + '</td>' +
         '<td>' + e(r.location) + '</td>' +
-        '<td>' + paymentOnFileCell(r) + '</td>' +
+        '<td>' + paymentMethodCell(r) + '</td>' +
         '<td>' + (r.invoices_emailed === null ? '—' : (r.invoices_emailed ? 'Yes' : 'No')) + '</td>' +
         '</tr>';
     }).join('');
@@ -253,7 +260,7 @@
     return '' +
       '<div class="card">' +
       '  <table class="data-table">' +
-      '    <thead><tr><th></th><th>Prospect Email</th><th>Sent By</th><th>Time Sent</th><th>Type</th><th>Location</th><th>Payment On File</th><th>Invoices Emailed</th></tr></thead>' +
+      '    <thead><tr><th></th><th>Prospect Email</th><th>Sent By</th><th>Time Sent</th><th>Type</th><th>Location</th><th>Payment Method</th><th>Invoices Emailed</th></tr></thead>' +
       '    <tbody>' + body + '</tbody>' +
       '  </table>' +
       '  <div class="table-hint">Click a submitted or failed row to view the signed terms record.</div>' +

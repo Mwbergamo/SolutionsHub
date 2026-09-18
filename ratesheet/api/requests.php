@@ -30,6 +30,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
+require_once __DIR__ . '/connectwise.php';
 
 ratesheet_install_error_handlers();
 
@@ -44,7 +45,50 @@ const RATESHEET_LOGO_URL = 'https://portal.codebluetechnology.com/assets/email/c
 // SolutionsHub site root is two levels up from /ratesheet/api/.
 const RATESHEET_SITE_BASE = 'https://portal.codebluetechnology.com';
 
-function ratesheet_request_row(array $r, bool $includeCustomerFields): array
+/**
+ * The dashboard's RED/YELLOW/GREEN state, per Michael's Phase-C redesign
+ * (2026-09-18): "When the form is sent, the rep should see it in their
+ * dashboard with status RED (Sent) / It should change status to (Yellow)
+ * signed / It should change status to (Green) Payment added." Michael's
+ * explicit choice ("Auto-detect from ConnectWise") means the green state
+ * is never stored in this database -- it's derived here from a LIVE
+ * ConnectWise Company Status lookup ($statusNames, keyed by cw_company_id
+ * -- see ratesheet_cw_company_statuses()/ratesheet_cw_company_status_name()
+ * in connectwise.php), so ConnectWise stays the single source of truth and
+ * this app can never drift out of sync with what Invoicing actually did.
+ *
+ * Deliberately fails CLOSED, not open: if the live lookup is missing or
+ * unavailable for a submitted row (ConnectWise outage, company not found,
+ * etc.), this returns 'signed' (yellow) rather than guessing 'payment_added'
+ * (green) -- reps should never see a false "paid" before it's confirmed.
+ *
+ * @param array<int,string> $statusNames cw_company_id => live ConnectWise Company Status name
+ * @return 'sent'|'signed'|'payment_added'|'failed'
+ */
+function ratesheet_payment_status(array $r, array $statusNames): string
+{
+    if ($r['status'] === 'pending') {
+        return 'sent';
+    }
+    if ($r['status'] === 'failed') {
+        return 'failed';
+    }
+    if ($r['status'] === 'submitted') {
+        $companyId = $r['cw_company_id'] !== null ? (int) $r['cw_company_id'] : null;
+        $liveName = $companyId !== null ? ($statusNames[$companyId] ?? null) : null;
+        if ($liveName !== null && strcasecmp($liveName, RATESHEET_CREDIT_HOLD_STATUS_NAME) !== 0) {
+            return 'payment_added';
+        }
+        return 'signed';
+    }
+    // Legacy 'awaiting_payment' rows (superseded same-day redesign, see
+    // db.php) -- treat as signed rather than inventing a new bucket for a
+    // value nothing writes anymore.
+    return 'signed';
+}
+
+/** @param array<int,string> $statusNames cw_company_id => live ConnectWise Company Status name (only needed when $includeCustomerFields) */
+function ratesheet_request_row(array $r, bool $includeCustomerFields, array $statusNames = []): array
 {
     $out = [
         'id' => (int) $r['id'],
@@ -66,10 +110,14 @@ function ratesheet_request_row(array $r, bool $includeCustomerFields): array
         $out['business_name'] = $r['business_name'];
         $out['customer_email'] = $r['customer_email'];
         $out['payment_method'] = $r['payment_method'];
-        $out['altpay_status'] = $r['altpay_status'];
-        $out['altpay_payment_method_summary'] = $r['altpay_payment_method_summary'];
         $out['cw_company_id'] = $r['cw_company_id'] !== null ? (int) $r['cw_company_id'] : null;
         $out['cw_contact_id'] = $r['cw_contact_id'] !== null ? (int) $r['cw_contact_id'] : null;
+        // Informational only -- what THIS APP attempted at signup time, see
+        // db.php's column comment. The dashboard color comes from
+        // payment_status below, not this.
+        $out['credit_hold_status'] = $r['credit_hold_status'];
+        // RED "Sent" / YELLOW "Signed" / GREEN "Payment Added" / RED "Failed".
+        $out['payment_status'] = ratesheet_payment_status($r, $statusNames);
     }
     return $out;
 }
@@ -81,7 +129,18 @@ if ($action === 'list') {
         $stmt = $pdo->prepare('SELECT * FROM rate_sheet_requests WHERE rep_email = :email COLLATE NOCASE ORDER BY sent_at DESC');
         $stmt->execute([':email' => $user['email']]);
     }
-    $rows = array_map(fn (array $r) => ratesheet_request_row($r, true), $stmt->fetchAll(PDO::FETCH_ASSOC));
+    $allRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // One batched live ConnectWise lookup for every submitted row's
+    // Company, rather than one API call per row -- see
+    // ratesheet_cw_company_statuses()'s docblock in connectwise.php.
+    $submittedCompanyIds = array_values(array_filter(array_map(
+        fn (array $r) => $r['status'] === 'submitted' && $r['cw_company_id'] !== null ? (int) $r['cw_company_id'] : null,
+        $allRows
+    )));
+    $statusNames = $submittedCompanyIds === [] ? [] : ratesheet_cw_company_statuses($submittedCompanyIds);
+
+    $rows = array_map(fn (array $r) => ratesheet_request_row($r, true, $statusNames), $allRows);
     ratesheet_respond(200, ['ok' => true, 'requests' => $rows]);
 }
 
@@ -120,9 +179,19 @@ if ($action === 'detail') {
         ratesheet_respond(409, ['ok' => false, 'error' => 'This customer has not submitted their signup yet -- there is nothing to show.']);
     }
 
+    // Single live ConnectWise lookup for this one row (list uses a batched
+    // call instead -- see ?action=list above).
+    $companyId = $r['cw_company_id'] !== null ? (int) $r['cw_company_id'] : null;
+    $liveStatusName = ($r['status'] === 'submitted' && $companyId !== null)
+        ? ratesheet_cw_company_status_name($companyId)
+        : null;
+    $statusNames = ($companyId !== null && $liveStatusName !== null) ? [$companyId => $liveStatusName] : [];
+
     ratesheet_respond(200, ['ok' => true, 'request' => [
         'id' => (int) $r['id'],
         'status' => $r['status'],
+        'payment_status' => ratesheet_payment_status($r, $statusNames),
+        'live_billing_status' => $liveStatusName,
         'fail_reason' => $r['fail_reason'],
         'first_name' => $r['first_name'],
         'last_name' => $r['last_name'],
@@ -137,11 +206,7 @@ if ($action === 'detail') {
         'account_kind' => $r['account_kind'],
         'hourly_rate' => (float) $r['hourly_rate'],
         'payment_method' => $r['payment_method'],
-        'altpay_status' => $r['altpay_status'],
-        'altpay_payment_method_summary' => $r['altpay_payment_method_summary'],
-        'altpay_fail_reason' => $r['altpay_fail_reason'],
-        'altpay_customer_id' => $r['altpay_customer_id'],
-        'altpay_payment_method_id' => $r['altpay_payment_method_id'],
+        'credit_hold_status' => $r['credit_hold_status'],
         'invoices_emailed' => $r['invoices_emailed'] === null ? null : (bool) $r['invoices_emailed'],
         'want_copy_of_signup' => $r['want_copy_of_signup'] === null ? null : (bool) $r['want_copy_of_signup'],
         'agreed_to_terms' => (bool) $r['agreed_to_terms'],
@@ -150,7 +215,7 @@ if ($action === 'detail') {
         'ip_address' => $r['ip_address'],
         'rep_name' => $r['rep_name'],
         'rep_email' => $r['rep_email'],
-        'cw_company_id' => $r['cw_company_id'] !== null ? (int) $r['cw_company_id'] : null,
+        'cw_company_id' => $companyId,
         'cw_contact_id' => $r['cw_contact_id'] !== null ? (int) $r['cw_contact_id'] : null,
         'legal_text' => ratesheet_legal_text(),
         'checkbox_text' => ratesheet_checkbox_text(),

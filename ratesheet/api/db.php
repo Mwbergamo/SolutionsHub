@@ -77,15 +77,12 @@ function ratesheet_migrate(PDO $pdo): void
 
     // One row per rate sheet a rep sends. Filled in gradually: created at
     // send-time with just the rep/prospect/location/account fields and a
-    // random token; the customer-facing identity/address/terms/signature
-    // fields (plus cw_company_id/cw_contact_id/altpay_customer_id/
-    // altpay_invoice_id) are added by public.php's ?action=step1-submit,
-    // and payment_method/altpay_payment_method_id only once
-    // ?action=step2-submit actually vaults a payment method (see that
-    // file's header -- follow-up #4). Nothing here is ever deleted -- a
-    // failed Step 1 ConnectWise create leaves status='failed' with the
-    // customer's typed data still saved, so staff can finish the signup
-    // by hand rather
+    // random token; the customer-facing fields (name, address, payment
+    // method, signature, ...) are added by public.php's ?action=submit,
+    // and cw_company_id/cw_contact_id only once ConnectWise actually
+    // confirms the create. Nothing here is ever deleted -- a failed
+    // ConnectWise create leaves status='failed' with the customer's typed
+    // data still saved, so staff can finish the signup by hand rather
     // than losing what the customer already filled in.
     $pdo->exec(<<<'SQL'
         CREATE TABLE IF NOT EXISTS rate_sheet_requests (
@@ -105,12 +102,18 @@ function ratesheet_migrate(PDO $pdo): void
             account_kind TEXT NOT NULL,    -- 'Commercial' | 'Residential'
             hourly_rate REAL NOT NULL,     -- resolved at send-time from location
 
-            -- 'pending' (link sent, not yet started) | 'awaiting_payment'
-            -- (Step 1 done -- CW company+contact created, Credit Hold ON,
-            -- waiting on Step 2 payment; added follow-up #4) | 'submitted'
-            -- (Step 2 done -- payment vaulted, Credit Hold released) |
-            -- 'failed' (Step 1's CW create itself failed -- see
-            -- fail_reason; their typed data is still saved below).
+            -- 'pending' (link sent, not yet submitted -- dashboard: red
+            -- "Sent") | 'submitted' (customer completed the form -- CW
+            -- company+contact created, Billing Status "Credit Hold" --
+            -- dashboard: yellow "Signed", or green "Payment Added" once a
+            -- live ConnectWise lookup shows Billing Status changed away
+            -- from Credit Hold, see requests.php) | 'failed' (ConnectWise
+            -- create failed -- see fail_reason; their typed data is still
+            -- saved below, and they can retry). 'awaiting_payment' is a
+            -- legacy value from a same-day two-step redesign that was
+            -- superseded before going live (see credit_hold_status below)
+            -- -- no current code sets it, but old rows (if any) fall back
+            -- to showing the signup form again, same as 'pending'/'failed'.
             status TEXT NOT NULL DEFAULT 'pending',
             fail_reason TEXT,
 
@@ -135,6 +138,7 @@ function ratesheet_migrate(PDO $pdo): void
             cw_contact_id INTEGER,
 
             internal_email_status TEXT,   -- hello@codebluetechnology.com notice: 'sent' | 'failed' | NULL
+            invoicing_email_status TEXT,  -- invoicing@codebluetechnology.com "ready for payment" notice: 'sent' | 'failed' | NULL, added 2026-09-18
             customer_copy_email_status TEXT, -- only attempted when want_copy_of_signup=1
 
             sent_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -152,34 +156,46 @@ function ratesheet_migrate(PDO $pdo): void
     // app is already live with real rows.
     ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'ip_address', 'TEXT');
 
-    // Added 2026-09-17 (follow-up #2, per Michael): real payment
-    // collection via Alternative Payments (altpay.php), replacing the
-    // "payment_method choice only" placeholder above. The actual card/
-    // bank numbers are never stored here -- only Alternative Payments'
-    // own customer id + payment method id, plus a redacted display
-    // string ("Visa ending 4242") for the dashboard/receipt. See
-    // altpay.php's header for the vaulting flow and public.php's
-    // ?action=submit for how a vaulting failure is handled (fail-open,
-    // same as the existing ConnectWise-failure pattern -- the signup
-    // still completes and is flagged for staff to finish manually).
+    // Added 2026-09-17 (follow-up #2, per Michael), and SUPERSEDED
+    // 2026-09-18 (see below) -- these 5 columns were for real-time,
+    // self-service payment collection via Alternative Payments
+    // (altpay.php). That design was replaced the same day by Michael's
+    // "Invoicing adds the payment method manually in Alternative
+    // Payments" workflow (see public.php's header) -- nothing writes to
+    // these columns anymore. Left in place (not dropped) as dormant/
+    // legacy rather than risk a DROP COLUMN against a live SQLite file
+    // for columns that cost nothing sitting empty; a future revival of
+    // self-service vaulting could reuse them as-is.
     ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_customer_id', 'TEXT');
     ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_payment_method_id', 'TEXT');
     ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_payment_method_summary', 'TEXT');
-    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_status', 'TEXT'); // 'vaulted' | 'failed' | NULL
+    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_status', 'TEXT'); // dormant, see above
     ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_fail_reason', 'TEXT');
+    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_invoice_id', 'TEXT'); // dormant, see above (added briefly same-day for the two-step redesign)
+    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'credit_hold_fail_reason', 'TEXT'); // dormant -- was for an API-driven Credit Hold release, no longer used (Invoicing releases it manually in ConnectWise)
 
-    // Added 2026-09-17 (follow-up #4, per Michael): two-step signup --
-    // Step 1 (info/terms/signature) now creates the ConnectWise Company
-    // (with Credit Hold on) + Contact and a PERMANENT Alternative Payments
-    // setup invoice up front; Step 2 (payment only) checks out against
-    // that same invoice and releases Credit Hold once a payment method is
-    // actually vaulted. See public.php's ?action=step1-submit/
-    // ?action=step2-submit and connectwise.php's
-    // ratesheet_cw_release_credit_hold(). Unlike the old throwaway
-    // invoice (created and archived per card attempt, id only ever held
-    // in browser JS state), this invoice is never archived, so its id
-    // needs to persist on the row itself.
-    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'altpay_invoice_id', 'TEXT');
+    // Added 2026-09-18 (this is the design that actually shipped -- see
+    // public.php's header for the full story of same-day redesigns).
+    // Per Michael: the customer picks Card/ACH as a plain PREFERENCE only
+    // (no numbers collected here at all); on submit, the ConnectWise
+    // Company + Contact are created, with the Company's Billing Status set
+    // to "Credit Hold"; Invoicing gets emailed and adds the real payment
+    // method directly in Alternative Payments themselves, then changes
+    // Billing Status manually in ConnectWise once done. The dashboard's
+    // green "Payment Added" state is computed live from ConnectWise's own
+    // Billing Status (see requests.php) -- Michael's explicit choice over
+    // tracking a "payment added" flag in this database, so ConnectWise
+    // stays the single source of truth and nothing here can drift out of
+    // sync with it.
+    //
+    // credit_hold_status here just records what THIS APP attempted at
+    // signup time (informational only, e.g. for the printable record):
+    // 'held' (the "Credit Hold" ConnectWise Company Status was resolved
+    // and set on create) | 'lookup_failed' (it could not be resolved, so
+    // the Company was created as Active instead -- loudly flagged in both
+    // notification emails, see public.php) | NULL (ConnectWise create
+    // itself failed, so no Company/Status was ever set).
+    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'credit_hold_status', 'TEXT');
 }
 
 /** Same ALTER-TABLE-if-needed helper as register/relationships use for live schema changes. */

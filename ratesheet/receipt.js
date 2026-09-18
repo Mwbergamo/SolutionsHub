@@ -52,11 +52,15 @@
       (r.city ? ', ' + r.city : '') + (r.state ? ', ' + r.state : '') + (r.zip ? ' ' + r.zip : '');
     var locationLabel = r.location === 'Richmond' ? 'Richmond' : 'Northern Neck (Warsaw)';
     var paymentLabel = r.payment_method === 'ach' ? 'ACH (Bank Transfer)' : r.payment_method === 'card' ? 'Credit Card' : '—';
-    var statusBadge = r.status === 'submitted'
-      ? '<span class="status-badge status-submitted">Submitted &amp; Accepted</span>'
-      : r.status === 'awaiting_payment'
-        ? '<span class="status-badge status-submitted">Account Created — Awaiting Payment</span>'
-        : '<span class="status-badge status-failed">Submitted — Account Creation Failed</span>';
+    // payment_status is computed server-side from a live ConnectWise
+    // lookup (api/requests.php's ratesheet_payment_status()) -- see
+    // Michael's 2026-09-18 redesign in public.php's header. 'sent' never
+    // reaches this page (a still-pending row 409s before render() runs).
+    var statusBadge = r.payment_status === 'payment_added'
+      ? '<span class="status-badge status-payment-added">Submitted &amp; Payment Added</span>'
+      : r.payment_status === 'signed'
+      ? '<span class="status-badge status-signed">Submitted — Awaiting Payment</span>'
+      : '<span class="status-badge status-failed">Submitted — Account Creation Failed</span>';
 
     root.innerHTML = '' +
       '<div class="sheet">' +
@@ -73,21 +77,15 @@
       '    <div><span class="k">Account Type:</span> <span class="v">' + e(r.account_kind) + '</span></div>' +
       '    <div><span class="k">Address:</span> <span class="v">' + e(fullAddress) + '</span></div>' +
       '    <div><span class="k">Rate:</span> <span class="v">$' + r.hourly_rate.toFixed(2) + '/hr — ' + e(locationLabel) + '</span></div>' +
-      '    <div><span class="k">Payment Method:</span> <span class="v">' + e(paymentLabel) + '</span></div>' +
-      '    <div><span class="k">Payment On File:</span> <span class="v">' + (r.altpay_status === 'vaulted' ? e(r.altpay_payment_method_summary) : r.status === 'awaiting_payment' ? '<span style="color:#8A93A3;">Not added yet — Step 2 pending</span>' : '<span style="color:#A6362B;">Needs manual follow-up</span>') + '</span></div>' +
+      '    <div><span class="k">Payment Method (Selected):</span> <span class="v">' + e(paymentLabel) + '</span></div>' +
+      '    <div><span class="k">ConnectWise Billing Status:</span> <span class="v">' + (r.live_billing_status ? e(r.live_billing_status) : (r.status === 'submitted' ? '<span style="color:#8A93A3;">unavailable right now</span>' : '—')) + '</span></div>' +
       '    <div><span class="k">Emailed Invoices:</span> <span class="v">' + (r.invoices_emailed ? 'Yes' : 'No') + '</span></div>' +
       '    <div><span class="k">Sent By:</span> <span class="v">' + e(r.rep_name) + '</span></div>' +
       (r.cw_company_id ? '    <div><span class="k">ConnectWise:</span> <span class="v">Company #' + r.cw_company_id + ' / Contact #' + r.cw_contact_id + '</span></div>' : '') +
+      (r.credit_hold_status === 'lookup_failed' ? '    <div><span class="k">Credit Hold:</span> <span class="v" style="color:#A6362B;">Could not be set automatically at signup — verify manually in ConnectWise</span></div>' : '') +
       '  </div>' +
 
       (r.status === 'failed' && r.fail_reason ? '  <div class="section-title">Note</div><div style="font-size:11.5px;color:#A6362B;">Account creation in ConnectWise failed at submission time — a CodeBlue Technology team member needs to finish this manually. (' + e(r.fail_reason) + ')</div>' : '') +
-      (r.altpay_status && r.altpay_status !== 'vaulted' ?
-        '  <div class="section-title">Payment Vaulting Note</div><div style="font-size:11.5px;color:#A6362B;">' +
-        e(r.altpay_fail_reason || '(no failure reason recorded)') +
-        (r.altpay_customer_id ? '<br>Alternative Payments customer: ' + e(r.altpay_customer_id) : '') +
-        (r.altpay_payment_method_id ? '<br>Alternative Payments payment method: ' + e(r.altpay_payment_method_id) : '') +
-        '</div>'
-        : '') +
 
       '  <div class="section-title">Terms &amp; Conditions Presented At Signing</div>' +
       '  <div class="legal-block">' + e(r.legal_text) + '</div>' +

@@ -140,119 +140,204 @@ function ratesheet_cw_condition_escape(string $value): string
     return $value;
 }
 
-/**
- * Updates one or more fields on an existing Company via PUT (not PATCH),
- * added 2026-09-17 (follow-up #4) for releasing Credit Hold once Step 2
- * payment vaults -- see public.php's ?action=step2-submit.
- *
- * PUT, not PATCH, because this ConnectWise instance's Company PATCH
- * endpoint revalidates the ENTIRE stored record on every PATCH (not just
- * the field touched) and 500s with a generic DateTime error the moment
- * any pre-existing field on the company is invalid by today's stricter
- * validation -- confirmed live against this same instance in the
- * relationships app (relationships/api/connectwise-outgrow.php's header)
- * and register app (register_cw_put_company_with_retry()). Ported
- * verbatim from relationships/api/connectwise.php's
- * relationships_cw_put_company_with_retry() + relationships_cw_offending_
- * field(): GET the full record, merge in just the field(s) actually being
- * changed, PUT the whole thing back, and if ConnectWise's structured error
- * names a specific pre-existing field as invalid, strip THAT field from
- * the payload (leaving its stored value untouched) and retry -- rather
- * than failing the whole update over a field nobody's trying to change.
- *
- * This also means an unconfirmed field name in $fieldsToSet (see
- * ratesheet_cw_release_credit_hold() below) degrades gracefully: if
- * ConnectWise's error names that exact field as invalid/unrecognized,
- * it's the one that gets stripped and retried away, rather than a hard
- * failure.
- */
-function ratesheet_cw_put_company_with_retry(int $cwCompanyId, array $fieldsToSet, int $maxAttempts = 5): array
-{
-    $full = ratesheet_cw_request('/company/companies/' . $cwCompanyId, []);
-    $modified = $fieldsToSet + $full;
+// ---------------------------------------------------------------------
+// Company update (PUT-with-retry) -- added 2026-09-18. ConnectWise's PATCH
+// endpoint is confirmed broken on this instance for the Company entity:
+// the register app's own live testing (claude/register-app.md) found
+// every PATCH attempt 500s with a generic "String was not recognized as a
+// valid DateTime" error regardless of target field or payload. The proven
+// working mechanism, first built as register_cw_finalize_company_invoicing()
+// and then generalized into register_cw_put_company_with_retry() /
+// relationships_cw_put_company_with_retry(), is: fetch the full Company
+// record, merge the intended field changes on top, PUT the whole thing
+// back. ConnectWise's PUT validator rejects a handful of create-only
+// fields the GET response itself includes (e.g. "typeIds can only be used
+// when creating a new company") -- when that happens, strip exactly that
+// field from the payload and retry, up to 5 attempts. This is this app's
+// own copy of that same proven pattern -- kept general-purpose (not tied
+// to any one field) since this app doesn't currently need it for the
+// Credit Hold feature itself (see public.php's header: that's now a real
+// Company Status value set at CREATE time via a plain POST, and released
+// manually by the Invoicing team in ConnectWise, not via an API PUT from
+// this app) but a future feature updating some other part of a Company
+// record can reach for this rather than re-diagnosing the PATCH landmine
+// from scratch.
+// ---------------------------------------------------------------------
 
-    for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
-        try {
-            return ratesheet_cw_request('/company/companies/' . $cwCompanyId, [], 'PUT', $modified);
-        } catch (RatesheetConnectWiseError $e) {
-            $realKey = ratesheet_cw_offending_field($e->getMessage(), $modified);
-            if ($realKey === null) {
-                throw $e;
+/**
+ * Parses the one field name ConnectWise's error is complaining about out
+ * of a RatesheetConnectWiseError's message, so
+ * ratesheet_cw_put_company_with_retry() can strip it and retry. Tries the
+ * structured errors[].field ConnectWise's JSON error body carries first
+ * (ratesheet_cw_request() embeds the raw response snippet after " — " in
+ * the exception message), then falls back to parsing "X can only be used
+ * when creating a new company" out of the plain text. ConnectWise's
+ * internal field name in either place can differ from the real JSON key
+ * on the record (confirmed live in the register app: "typeIds" for the
+ * real "types" array) -- an "Ids"/"Id" suffix is rewritten to a plural/
+ * singular guess as a second try if the literal name isn't a key in
+ * $payload. Returns null if nothing usable was found (caller then
+ * rethrows the original error rather than retrying blindly).
+ */
+function ratesheet_cw_offending_field(string $message, array $payload): ?string
+{
+    $jsonStart = strpos($message, '{');
+    if ($jsonStart !== false) {
+        $decoded = json_decode(substr($message, $jsonStart), true);
+        if (is_array($decoded) && isset($decoded['errors']) && is_array($decoded['errors'])) {
+            foreach ($decoded['errors'] as $err) {
+                $field = is_array($err) ? ($err['field'] ?? null) : null;
+                if (is_string($field) && $field !== '') {
+                    $resolved = ratesheet_cw_resolve_field_name($field, $payload);
+                    if ($resolved !== null) {
+                        return $resolved;
+                    }
+                }
             }
-            unset($modified[$realKey]);
         }
     }
-
-    throw new RatesheetConnectWiseError('Could not update company ' . $cwCompanyId . ' after ' . $maxAttempts . ' attempts.');
+    if (preg_match('/([A-Za-z0-9_]+)\s+can only be used when creating/i', $message, $m)) {
+        $resolved = ratesheet_cw_resolve_field_name($m[1], $payload);
+        if ($resolved !== null) {
+            return $resolved;
+        }
+    }
+    return null;
 }
 
-/**
- * Parses the JSON body embedded in a RatesheetConnectWiseError message
- * (see ratesheet_cw_request()'s "HTTP $status ... $snippet" shape) for a
- * ConnectWise structured errors[] entry naming a specific field, and
- * resolves it to the matching key actually present in $payload -- ported
- * verbatim from relationships/api/connectwise.php's
- * relationships_cw_offending_field(). Returns null if the error body
- * isn't ConnectWise's structured shape, or names a field this payload
- * doesn't have.
- */
-function ratesheet_cw_offending_field(string $errorMessage, array $payload): ?string
+function ratesheet_cw_resolve_field_name(string $field, array $payload): ?string
 {
-    $jsonStart = strpos($errorMessage, '{');
-    $decoded = $jsonStart !== false ? json_decode(substr($errorMessage, $jsonStart), true) : null;
-    if (!is_array($decoded) || !is_array($decoded['errors'] ?? null)) {
-        return null;
+    if (array_key_exists($field, $payload)) {
+        return $field;
     }
-
-    $offendingField = null;
-    foreach ($decoded['errors'] as $err) {
-        $field = is_array($err) ? ($err['field'] ?? null) : null;
-        if (is_string($field) && $field !== '') {
-            $offendingField = $field;
-            break;
+    if (str_ends_with($field, 'Ids')) {
+        $rewritten = substr($field, 0, -3) . 's'; // e.g. typeIds -> types
+        if (array_key_exists($rewritten, $payload)) {
+            return $rewritten;
         }
     }
-    if ($offendingField === null) {
-        return null;
-    }
-
-    $candidates = [$offendingField];
-    if (substr($offendingField, -3) === 'Ids') {
-        $base = substr($offendingField, 0, -3);
-        $candidates[] = $base . 's';
-        $candidates[] = $base;
-    }
-    foreach ($candidates as $candidate) {
-        if (array_key_exists($candidate, $payload)) {
-            return $candidate;
+    if (str_ends_with($field, 'Id')) {
+        $rewritten = substr($field, 0, -2); // e.g. someId -> some
+        if (array_key_exists($rewritten, $payload)) {
+            return $rewritten;
         }
     }
     return null;
 }
 
 /**
- * Releases Credit Hold on a Company once Step 2 payment actually vaults
- * (see public.php's ?action=step2-submit) -- added 2026-09-17 (follow-up
- * #4), CORRECTED same day per Michael: Credit Hold isn't a boolean field
- * at all -- it's a Company STATUS (set at creation time via
- * ratesheet_cw_create_company()'s ratesheet_cw_resolve_company_status_id()
- * call in public.php). Releasing it is just putting the Company's
- * `status` back to Active -- id 1, already confirmed elsewhere in this
- * codebase (register/api/customers.php, and this app's own
- * ratesheet_cw_create_company()), so no live name lookup is needed here
- * the way setting "Credit Hold" itself required one.
- *
- * Deliberately fail-open: by the time this is called, the customer's
- * payment method is already vaulted and their signup already saved, so a
- * ConnectWise quirk here should never re-surface as a failure to the
- * customer -- it's logged instead, so staff can release the hold by hand
- * if this ever misfires.
+ * Updates a ConnectWise Company record by PUT-with-retry (see this
+ * section's header for why PATCH isn't used). $fields is merged onto the
+ * full current record before sending -- callers only need to name what
+ * they're actually changing.
  */
-function ratesheet_cw_release_credit_hold(int $cwCompanyId): void
+function ratesheet_cw_put_company_with_retry(int $companyId, array $fields): array
+{
+    $current = ratesheet_cw_request('/company/companies/' . $companyId, [], 'GET');
+    $payload = array_merge($current, $fields);
+
+    for ($attempt = 1; $attempt <= 5; $attempt++) {
+        try {
+            return ratesheet_cw_request('/company/companies/' . $companyId, [], 'PUT', $payload);
+        } catch (RatesheetConnectWiseError $e) {
+            $offending = ratesheet_cw_offending_field($e->getMessage(), $payload);
+            if ($offending === null || $attempt === 5) {
+                throw $e;
+            }
+            unset($payload[$offending]);
+        }
+    }
+    throw new RatesheetConnectWiseError('ConnectWise company PUT retry loop exhausted for company ' . $companyId . '.');
+}
+
+// ---------------------------------------------------------------------
+// Company Status lookups -- added 2026-09-18 for the Credit Hold feature
+// (see public.php's header for the full flow). Michael confirmed this
+// instance has a real Company Status (the "Billing Status" dropdown, same
+// field this app already sets to "Active" on every create) literally
+// named "Credit Hold" -- so the new Company is created directly with that
+// Status (a plain POST field, same as the existing `status: {id: 1}`
+// Active default, not a PATCH/PUT) rather than a separate boolean flag.
+// Resolved by a live name search the same way ratesheet_cw_resolve_territory_id()
+// already does for Territory, since only Active's id (1) was previously
+// confirmed in this codebase.
+// ---------------------------------------------------------------------
+
+/**
+ * Looks up a ConnectWise Company Status id by name (e.g. "Credit Hold")
+ * via a live `GET /company/statuses` name search -- *** ENDPOINT PATH
+ * UNVERIFIED AGAINST THIS INSTANCE ***, guessed by analogy with
+ * `/company/territories` and `/company/contacts/types`, both real,
+ * confirmed endpoints elsewhere in this codebase. Returns null (never
+ * throws) on any failure -- a missing/wrong status is HIGH STAKES here
+ * (it's the entire Credit Hold safeguard), so unlike Territory's fail-open
+ * default this deliberately does NOT invent a fallback id itself; the
+ * caller (ratesheet_cw_create_company()) decides what to do when this
+ * returns null, and does so loudly rather than silently.
+ */
+function ratesheet_cw_resolve_status_id_by_name(string $name): ?int
 {
     try {
-        ratesheet_cw_put_company_with_retry($cwCompanyId, ['status' => ['id' => 1]]); // Active, confirmed
+        $condition = 'name like "%' . ratesheet_cw_condition_escape($name) . '%"';
+        $rows = ratesheet_cw_request('/company/statuses', ['conditions' => $condition, 'fields' => 'id,name'], 'GET', null, 15, 6);
+        if (isset($rows[0]['id']) && is_int($rows[0]['id'])) {
+            return (int) $rows[0]['id'];
+        }
+        error_log('ratesheet_cw_resolve_status_id_by_name: no ConnectWise Company Status matched "' . $name . '".');
     } catch (Throwable $e) {
-        error_log('[ratesheet/connectwise] could not release Credit Hold (restore Active status) for company ' . $cwCompanyId . ': ' . $e->getMessage());
+        error_log('ratesheet_cw_resolve_status_id_by_name: lookup failed for "' . $name . '": ' . $e->getMessage());
     }
+    return null;
+}
+
+/**
+ * Live per-company Status name for ONE company (used by requests.php's
+ * ?action=detail -- the printable record's single row). Returns null on
+ * any failure (fail-open: the caller shows a neutral "unknown" state
+ * rather than erroring the whole page).
+ */
+function ratesheet_cw_company_status_name(int $companyId): ?string
+{
+    try {
+        $company = ratesheet_cw_request('/company/companies/' . $companyId, ['fields' => 'id,status'], 'GET', null, 15, 6);
+        $name = $company['status']['name'] ?? null;
+        return is_string($name) ? $name : null;
+    } catch (Throwable $e) {
+        error_log('ratesheet_cw_company_status_name: lookup failed for company ' . $companyId . ': ' . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * Live Status names for MULTIPLE companies in one batched request (used
+ * by requests.php's ?action=list -- the dashboard, so N rows cost one
+ * ConnectWise call, not N). Returns [companyId => statusName]; a company
+ * id ConnectWise didn't return (deleted, or the lookup partially failed)
+ * is simply absent from the result -- the caller treats a missing entry
+ * as "unknown," never as any specific status. Returns [] (never throws)
+ * if the whole batched call fails, same fail-open reasoning as the
+ * single-company version above.
+ */
+function ratesheet_cw_company_statuses(array $companyIds): array
+{
+    $ids = array_values(array_unique(array_map('intval', $companyIds)));
+    if ($ids === []) {
+        return [];
+    }
+    try {
+        $condition = 'id in (' . implode(',', $ids) . ')';
+        $rows = ratesheet_cw_request('/company/companies', ['conditions' => $condition, 'fields' => 'id,status'], 'GET', null, 20, 8);
+    } catch (Throwable $e) {
+        error_log('ratesheet_cw_company_statuses: batched lookup failed for ' . count($ids) . ' companies: ' . $e->getMessage());
+        return [];
+    }
+    $out = [];
+    foreach ($rows as $row) {
+        $id = $row['id'] ?? null;
+        $name = $row['status']['name'] ?? null;
+        if (is_int($id) && is_string($name)) {
+            $out[$id] = $name;
+        }
+    }
+    return $out;
 }

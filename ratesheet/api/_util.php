@@ -204,6 +204,18 @@ function ratesheet_rep_territory_search_term(string $repName): ?string
 const RATESHEET_HOUSE_ACCOUNTS_TERRITORY_ID = 45;
 
 /**
+ * The literal ConnectWise Company Status name Michael says exists on this
+ * instance for a not-yet-paying account (2026-09-18): "the Billing Status
+ * of that company should be marked 'Credit Hold' until Invoicing team
+ * changes it manually with a card/ach added in Alt Pay." Used both to
+ * resolve the real status id at signup (ratesheet_cw_resolve_status_id_by_name()
+ * in connectwise.php) and to recognize when Invoicing has since changed
+ * it away from this (the dashboard's "Payment Added" green state -- see
+ * requests.php).
+ */
+const RATESHEET_CREDIT_HOLD_STATUS_NAME = 'Credit Hold';
+
+/**
  * The legal text shown under the signature block on the public signup
  * page, verbatim per Michael (chat, 2026-09-17). Single source of truth
  * -- signup.js keeps its own copy for the public (unauthenticated) form
