@@ -269,28 +269,27 @@ function ratesheet_cw_put_company_with_retry(int $companyId, array $fields): arr
 // ---------------------------------------------------------------------
 
 /**
- * Looks up a ConnectWise Company Status id by name (e.g. "Credit Hold")
- * via a live name search. *** ENDPOINT PATH STILL UNCONFIRMED AGAINST
- * THIS INSTANCE, updated 2026-09-22 ***: a live test showed every new
- * Company still landing on "Active" with this app's own logs (per
- * Michael) reporting the Credit Hold status change failing, consistent
- * with this lookup never finding a match. The original single guess,
- * `/company/statuses` (by analogy with the confirmed `/company/territories`
- * and `/company/contacts/types`), turned out to have at least one
- * plausible competing shape in third-party ConnectWise API references:
- * `/companies/statuses` (plural resource root). Rather than keep
- * guessing once, this now tries each candidate path in order and uses
- * the first one that returns an actual name match -- cheap (reference
- * data, not a write), and removes the guess as a variable while the real
- * cause gets confirmed. ⚠️ Please forward the next
- * "ratesheet_cw_resolve_status_id_by_name" line from the server's PHP
- * error log after a live signup attempt -- it will say plainly whether
- * a candidate path 404s/errors outright (wrong path) or returns rows
- * that never match "Credit Hold" by name (right path, some other cause
- * -- e.g. this API Member's security role not being permitted to read
- * this reference table, or the status genuinely being named something
- * else on this instance) -- that line is server-side and not something
- * this session can see on its own.
+ * Looks up a ConnectWise Company Status id by name (e.g. "Credit Hold").
+ * *** REWORKED 2026-09-22 (second attempt) ***: the previous version only
+ * tried two guessed reference-data endpoints (`/company/statuses` and
+ * `/companies/statuses`), and a live test still showed the new Company
+ * landing on Active -- both guesses were apparently wrong, or blocked, or
+ * something else entirely. Neither guess could be confirmed without live
+ * credentials this session doesn't have, so rather than add a third guess
+ * at the same kind of endpoint, this now tries something structurally
+ * different FIRST: a live search of `/company/companies` itself --
+ * an endpoint this codebase has already proven works (it's the same one
+ * ratesheet_cw_company_status_name()/ratesheet_cw_company_statuses() use
+ * for the post-create verification below) -- filtered on the Company's
+ * OWN nested `status/name` field, e.g. "give me any company whose status
+ * name contains 'Credit Hold'", and reads that company's `status.id` off
+ * the match. This only works if at least one Company on this ConnectWise
+ * instance is already sitting on "Credit Hold" (plausible: it's a
+ * pre-existing status Michael confirmed by name, not one this app
+ * invented) -- if none is, or the nested-field condition syntax itself
+ * isn't supported the way plain top-level conditions are, this falls
+ * through to the original two reference-endpoint guesses as a second and
+ * third attempt, unchanged from before.
  *
  * Returns null (never throws) if every candidate fails -- a missing/wrong
  * status is HIGH STAKES here (it's the entire Credit Hold safeguard), so
@@ -298,22 +297,52 @@ function ratesheet_cw_put_company_with_retry(int $companyId, array $fields): arr
  * a fallback id itself; the caller decides what to do when this returns
  * null, and does so loudly rather than silently.
  *
- * Deliberately does NOT trust $rows[0] blindly (added 2026-09-19, after a
- * live test landed on the wrong Status despite this function apparently
- * "succeeding") -- some ConnectWise reference/catalog endpoints silently
- * ignore an unsupported `conditions` filter and just return their default
- * page, which would otherwise make this quietly return the id of whatever
- * status happens to sort first (often "Active") while looking like a
- * clean match. Requests a larger page and only accepts a row whose own
- * `name` field actually contains the target string (case-insensitive),
- * so a filter that got ignored server-side is still caught client-side.
- * This is belt-and-suspenders alongside public.php's post-create
- * verification (ratesheet_cw_company_status_name() read-back) and the
- * follow-up enforcement PUT, which are the real safety nets -- see those
- * call sites' comments.
+ * ⚠️ Please forward the next "ratesheet_cw_resolve_status_id_by_name"
+ * line(s) from the server's PHP error log after a live signup attempt if
+ * this STILL doesn't resolve -- this session has no live ConnectWise API
+ * credentials and cannot test any of these candidates directly, so the
+ * log line is the only way to see which one (if any) actually worked or
+ * why each one failed.
+ *
+ * Deliberately does NOT trust $rows[0] blindly on the reference-endpoint
+ * fallbacks (added 2026-09-19, after a live test landed on the wrong
+ * Status despite this function apparently "succeeding") -- some
+ * ConnectWise reference/catalog endpoints silently ignore an unsupported
+ * `conditions` filter and just return their default page, which would
+ * otherwise make this quietly return the id of whatever status happens
+ * to sort first (often "Active") while looking like a clean match.
+ * Requests a larger page and only accepts a row whose own `name` field
+ * actually contains the target string (case-insensitive), so a filter
+ * that got ignored server-side is still caught client-side. This is
+ * belt-and-suspenders alongside public.php's post-create verification
+ * (ratesheet_cw_company_status_name() read-back) and the follow-up
+ * enforcement PUT, which are the real safety nets -- see those call
+ * sites' comments.
  */
 function ratesheet_cw_resolve_status_id_by_name(string $name): ?int
 {
+    // Attempt 1: search an already-proven-working endpoint
+    // (/company/companies) by its own nested status name, instead of a
+    // guessed reference-data endpoint. Most likely to actually work.
+    try {
+        $nestedCondition = 'status/name like "%' . ratesheet_cw_condition_escape($name) . '%"';
+        $rows = ratesheet_cw_request('/company/companies', ['conditions' => $nestedCondition, 'fields' => 'id,status', 'pageSize' => 1], 'GET', null, 15, 6);
+        foreach ($rows as $row) {
+            $rowStatus = $row['status'] ?? null;
+            $rowStatusName = is_array($rowStatus) ? ($rowStatus['name'] ?? null) : null;
+            $rowStatusId = is_array($rowStatus) ? ($rowStatus['id'] ?? null) : null;
+            if (is_string($rowStatusName) && is_int($rowStatusId) && stripos($rowStatusName, $name) !== false) {
+                error_log('ratesheet_cw_resolve_status_id_by_name: matched "' . $name . '" (id ' . $rowStatusId . ') via /company/companies nested status search -- consider hardcoding this id once confirmed stable.');
+                return (int) $rowStatusId;
+            }
+        }
+        error_log('ratesheet_cw_resolve_status_id_by_name: /company/companies nested status search responded but no company is currently on a status matching "' . $name . '" -- trying reference-endpoint guesses next.');
+    } catch (Throwable $e) {
+        error_log('ratesheet_cw_resolve_status_id_by_name: /company/companies nested status search failed: ' . $e->getMessage() . ' -- trying reference-endpoint guesses next.');
+    }
+
+    // Attempts 2-3: the original guessed reference-data endpoints, kept
+    // as a fallback in case no existing Company is on Credit Hold yet.
     $candidatePaths = ['/company/statuses', '/companies/statuses'];
     $condition = 'name like "%' . ratesheet_cw_condition_escape($name) . '%"';
 
@@ -328,12 +357,12 @@ function ratesheet_cw_resolve_status_id_by_name(string $name): ?int
                     return (int) $rowId;
                 }
             }
-            error_log('ratesheet_cw_resolve_status_id_by_name: ' . $path . ' responded but no row matched "' . $name . '" among ' . count($rows) . ' returned row(s) -- trying next candidate path, if any.');
+            error_log('ratesheet_cw_resolve_status_id_by_name: ' . $path . ' responded but no row matched "' . $name . '" among ' . count($rows) . ' returned row(s) -- trying next candidate, if any.');
         } catch (Throwable $e) {
-            error_log('ratesheet_cw_resolve_status_id_by_name: ' . $path . ' failed: ' . $e->getMessage() . ' -- trying next candidate path, if any.');
+            error_log('ratesheet_cw_resolve_status_id_by_name: ' . $path . ' failed: ' . $e->getMessage() . ' -- trying next candidate, if any.');
         }
     }
-    error_log('ratesheet_cw_resolve_status_id_by_name: no candidate path resolved "' . $name . '" -- Credit Hold will not be enforced for this signup.');
+    error_log('ratesheet_cw_resolve_status_id_by_name: no candidate resolved "' . $name . '" -- Credit Hold will not be enforced for this signup.');
     return null;
 }
 
