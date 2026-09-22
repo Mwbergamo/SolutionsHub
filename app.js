@@ -371,6 +371,22 @@ var SCOPE_LIBRARY = {
   ],
 };
 
+// Equipment Sales > Networking reuses the exact same scope-of-work entries
+// already approved for the Provided Equipment pillar's Network Switches and
+// Access Points categories (sold variants only, since Equipment Sales always
+// sells CodeBlue-provided hardware -- see the pillar's own blurb), plus the
+// existing "network rack UPS" install scope from es-accessories for the
+// Rack-Depth Networking UPS Battery product. Referencing the source arrays
+// (rather than duplicating their text) keeps this list byte-identical to
+// those scopes if they're ever revised. No pre-existing scope covers a rack
+// enclosure itself, so the two Rack Enclosure products don't get a scope
+// entry here, same as other simple hardware-only accessories (e.g. Custom
+// Monitor Mount) that also have none. Per Michael, 2026-09-22: "pull scope
+// of work from the provided networking. The scope will be the same."
+SCOPE_LIBRARY['es-networking'] = SCOPE_LIBRARY['switches'].filter(function (e) { return /-sold$/.test(e.id); })
+  .concat(SCOPE_LIBRARY['access-points'].filter(function (e) { return /-sold$/.test(e.id); }))
+  .concat(SCOPE_LIBRARY['es-accessories'].filter(function (e) { return e.id === 'new-ups-installation-network-rack'; }));
+
 var PILLARS = [
   {
     id: 'it', name: 'IT Services',
@@ -806,6 +822,21 @@ var PILLARS = [
               { id: 'wireless-mouse', label: 'Wireless Mouse', image: 'assets/products/wireless-mouse.png', sectionBreak: 'All Others', options: [] },
               { id: 'wireless-keyboard', label: 'Wireless Keyboard', image: 'assets/products/wireless-keyboard.png', options: [] },
               { id: 'spare-laptop-power', label: 'Secondary Laptop Power Supply', image: 'assets/products/laptop-power-adapter.png', options: [] }
+            ] },
+          { id: 'es-networking', name: 'Networking', blurb: "Switches, wireless access points, and network closet equipment, configured to spec for the sales engineer to quote.", solutionHeading: 'Networking Equipment', pricingMode: 'parts',
+            products: [
+              { id: 'network-switch', label: 'Switching', sectionBreak: 'Switching', options: [
+                  { id: 'port-count', label: 'Port Count', type: 'chip', choices: [ { id: '24-port', label: '24 Port' }, { id: '48-port', label: '48 Port' } ] },
+                  { id: 'poe', label: 'PoE', type: 'chip', choices: [ { id: 'poe-full', label: 'PoE Full' }, { id: 'poe-half', label: 'PoE Half' }, { id: 'non-poe', label: 'Non-PoE' } ] },
+                  { id: 'management', label: 'Management', type: 'chip', choices: [ { id: 'intelligent', label: 'Intelligent' }, { id: 'non-intelligent', label: 'Not-Intelligent' } ] }
+                ] },
+              { id: 'wireless-access-point', label: 'Wireless Access', sectionBreak: 'Wireless Access', options: [
+                  { id: 'installation', label: 'Installation', type: 'chip', choices: [ { id: 'indoor', label: 'Indoor' }, { id: 'outdoor', label: 'Outdoor' } ] },
+                  { id: 'grade', label: 'Grade', type: 'chip', choices: [ { id: 'home-grade', label: 'Home-Grade' }, { id: 'small-business-grade', label: 'Small Business Grade' }, { id: 'enterprise-grade', label: 'Enterprise Grade' } ] }
+                ] },
+              { id: 'rack-enclosure-small', label: 'Small Rack Enclosure', sectionBreak: 'Network Closets', options: [] },
+              { id: 'rack-enclosure-medium', label: 'Medium Rack Enclosure', options: [] },
+              { id: 'rack-ups-battery', label: 'Rack-Depth Networking UPS Battery', options: [] }
             ] },
           { id: 'es-printers', name: 'Printers', blurb: "Discovery questions on volume, output needs, functionality, and compliance, plus accessories and add-ons — everything for the printer solution in one place, configured to spec for the sales engineer to quote.", solutionHeading: 'Printer / MFP Solution', pricingMode: 'parts',
             products: [
