@@ -944,9 +944,60 @@
                         <button data-on-click="{{prod.onIncQty}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
                       </div>
                     </div>
+
+                    <!-- Computer Configuration visual layout (2026-09-22).
+                         Read-only preview built from the chip picks below --
+                         appears once Form Factor is chosen. Same card also
+                         renders on the Solution Summary / printed quote. -->
+                    <sc-if value="{{prod.hasComputerVisual}}" hint-placeholder-val="{{false}}">
+                      <div style="margin-top:14px;padding-top:14px;border-top:1px solid oklch(0.9 0.006 255);">
+                        <div style="font-size:10.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;">Configuration Preview</div>
+                        <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                          <div style="flex:0 0 auto;width:170px;height:170px;background:white;border:1px solid oklch(0.88 0.006 255);border-radius:12px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+                            <sc-if value="{{prod.computerVisual.hasFormFactorImage}}" hint-placeholder-val="{{false}}">
+                              <img src="{{prod.computerVisual.formFactorImage}}" alt="{{prod.computerVisual.formFactorLabel}}" style="width:100%;height:100%;object-fit:contain;padding:10px;" />
+                            </sc-if>
+                          </div>
+                          <div style="flex:1;min-width:180px;display:flex;flex-direction:column;gap:8px;">
+                            <div style="background:white;border:1px solid oklch(0.88 0.006 255);border-radius:10px;padding:10px 14px;">
+                              <div style="font-size:9.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Processor Info</div>
+                              <div style="margin-top:2px;font-size:13.5px;font-weight:700;color:oklch(0.2 0.03 255);">{{prod.computerVisual.cpuText}}</div>
+                            </div>
+                            <div style="background:white;border:1px solid oklch(0.88 0.006 255);border-radius:10px;padding:10px 14px;">
+                              <div style="font-size:9.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">RAM Info</div>
+                              <div style="margin-top:2px;font-size:13.5px;font-weight:700;color:oklch(0.2 0.03 255);">{{prod.computerVisual.ramText}}</div>
+                            </div>
+                            <div style="background:white;border:1px solid oklch(0.88 0.006 255);border-radius:10px;padding:10px 14px;">
+                              <div style="font-size:9.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Storage Info</div>
+                              <div style="margin-top:2px;font-size:13.5px;font-weight:700;color:oklch(0.2 0.03 255);">{{prod.computerVisual.storageText}}</div>
+                            </div>
+                          </div>
+                        </div>
+                        <div style="margin-top:12px;display:flex;gap:12px;flex-wrap:wrap;">
+                          <div style="flex:2;min-width:220px;display:grid;grid-template-columns:1fr 1fr;gap:8px;align-content:start;">
+                            <sc-for list="{{prod.computerVisual.accessoryBoxes}}" as="acc" hint-placeholder-count="2">
+                              <div style="background:white;border:1px solid oklch(0.88 0.006 255);border-radius:10px;padding:12px 14px;display:flex;align-items:center;min-height:48px;">
+                                <div style="font-size:12.5px;font-weight:700;color:oklch(0.2 0.03 255);">{{acc.label}}</div>
+                              </div>
+                            </sc-for>
+                            <sc-if value="{{prod.computerVisual.noAccessories}}" hint-placeholder-val="{{false}}">
+                              <div style="grid-column:1/-1;font-size:11.5px;font-weight:600;color:oklch(0.55 0.02 255);padding:6px 2px;">No accessories selected yet</div>
+                            </sc-if>
+                          </div>
+                          <div style="flex:1;min-width:140px;background:white;border:1px solid oklch(0.88 0.006 255);border-radius:10px;padding:12px 14px;">
+                            <div style="font-size:9.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Warranty Info</div>
+                            <sc-for list="{{prod.computerVisual.warrantyLines}}" as="w" hint-placeholder-count="2">
+                              <div style="margin-top:4px;font-size:12.5px;font-weight:700;color:oklch(0.2 0.03 255);">{{w.text}}</div>
+                            </sc-for>
+                          </div>
+                        </div>
+                      </div>
+                    </sc-if>
+
                     <sc-if value="{{prod.hasOptions}}" hint-placeholder-val="{{false}}">
                       <div style="margin-top:12px;padding-top:12px;border-top:1px solid oklch(0.9 0.006 255);display:flex;flex-wrap:wrap;gap:18px;">
                         <sc-for list="{{prod.options}}" as="opt" hint-placeholder-count="2">
+                          <sc-if value="{{opt.isVisible}}" hint-placeholder-val="{{true}}">
                           <div>
                             <div data-on-click="{{opt.onHeadingClick}}" style="{{opt.headingStyle}}">
                               <span>{{opt.label}}</span>
@@ -976,6 +1027,7 @@
                               </sc-if>
                             </sc-if>
                           </div>
+                          </sc-if>
                         </sc-for>
                       </div>
                     </sc-if>
@@ -1189,6 +1241,54 @@
                       </div>
                       <button data-on-click="{{it.onRemove}}" style="background:none;border:none;color:oklch(0.55 0.02 255);font-size:12.5px;font-weight:600;cursor:pointer;padding:6px 8px;flex:0 0 auto;">Remove</button>
                     </div>
+                    <!-- Computer Configuration visual card -- same layout as
+                         the live Computers screen (see its docblock), built
+                         from the state captured at addPartsCategoryToSolution
+                         time. Renders here in the Solution Summary, which is
+                         also this app's Print Quote output (.summary-print-area). -->
+                    <sc-if value="{{it.hasComputerVisual}}" hint-placeholder-val="{{false}}">
+                      <div style="margin-top:10px;padding-top:10px;border-top:1px solid oklch(0.9 0.006 255);">
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                          <div style="flex:0 0 auto;width:110px;height:110px;background:white;border:1px solid oklch(0.88 0.006 255);border-radius:10px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+                            <sc-if value="{{it.computerVisual.hasFormFactorImage}}" hint-placeholder-val="{{false}}">
+                              <img src="{{it.computerVisual.formFactorImage}}" alt="{{it.computerVisual.formFactorLabel}}" style="width:100%;height:100%;object-fit:contain;padding:6px;" />
+                            </sc-if>
+                          </div>
+                          <div style="flex:1;min-width:150px;display:flex;flex-direction:column;gap:6px;">
+                            <div style="background:white;border:1px solid oklch(0.88 0.006 255);border-radius:8px;padding:6px 10px;">
+                              <div style="font-size:8.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Processor Info</div>
+                              <div style="font-size:12px;font-weight:700;color:oklch(0.2 0.03 255);">{{it.computerVisual.cpuText}}</div>
+                            </div>
+                            <div style="background:white;border:1px solid oklch(0.88 0.006 255);border-radius:8px;padding:6px 10px;">
+                              <div style="font-size:8.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">RAM Info</div>
+                              <div style="font-size:12px;font-weight:700;color:oklch(0.2 0.03 255);">{{it.computerVisual.ramText}}</div>
+                            </div>
+                            <div style="background:white;border:1px solid oklch(0.88 0.006 255);border-radius:8px;padding:6px 10px;">
+                              <div style="font-size:8.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Storage Info</div>
+                              <div style="font-size:12px;font-weight:700;color:oklch(0.2 0.03 255);">{{it.computerVisual.storageText}}</div>
+                            </div>
+                          </div>
+                        </div>
+                        <div style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;">
+                          <div style="flex:2;min-width:180px;display:grid;grid-template-columns:1fr 1fr;gap:6px;align-content:start;">
+                            <sc-for list="{{it.computerVisual.accessoryBoxes}}" as="acc" hint-placeholder-count="2">
+                              <div style="background:white;border:1px solid oklch(0.88 0.006 255);border-radius:8px;padding:8px 10px;display:flex;align-items:center;min-height:36px;">
+                                <div style="font-size:11px;font-weight:700;color:oklch(0.2 0.03 255);">{{acc.label}}</div>
+                              </div>
+                            </sc-for>
+                            <sc-if value="{{it.computerVisual.noAccessories}}" hint-placeholder-val="{{false}}">
+                              <div style="grid-column:1/-1;font-size:10.5px;font-weight:600;color:oklch(0.55 0.02 255);">No accessories selected</div>
+                            </sc-if>
+                          </div>
+                          <div style="flex:1;min-width:120px;background:white;border:1px solid oklch(0.88 0.006 255);border-radius:8px;padding:8px 10px;">
+                            <div style="font-size:8.5px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;">Warranty Info</div>
+                            <sc-for list="{{it.computerVisual.warrantyLines}}" as="w" hint-placeholder-count="2">
+                              <div style="margin-top:2px;font-size:11px;font-weight:700;color:oklch(0.2 0.03 255);">{{w.text}}</div>
+                            </sc-for>
+                          </div>
+                        </div>
+                      </div>
+                    </sc-if>
                     <sc-if value="{{it.hasNote}}" hint-placeholder-val="{{false}}">
                       <div style="margin-top:9px;padding:9px 11px;background:oklch(0.96 0.01 90);border-radius:8px;">
                         <div style="font-size:10px;font-weight:700;color:oklch(0.5 0.05 80);text-transform:uppercase;letter-spacing:.04em;">Rep Notes</div>
@@ -1649,8 +1749,8 @@
 </div>
 </script>
 
-<script src="app.js?v=e6e513b"></script>
-<script src="runtime.js?v=e6e513b"></script>
+<script src="app.js?v=c9f21a4"></script>
+<script src="runtime.js?v=c9f21a4"></script>
 <script>
   // Sign-in gate (added 2026-09-15) -- app.js/runtime.js load unconditionally
   // above (they're just static definitions; nothing runs yet), but the app

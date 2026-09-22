@@ -717,16 +717,18 @@ var PILLARS = [
         categories: [
           { id: 'es-computers', name: 'Computers', blurb: "Configure a new computer to spec — form factor, memory, CPU, brand, and add-ons — for the sales engineer to quote.", solutionHeading: 'Computer Purchase', pricingMode: 'parts',
             products: [
-              { id: 'computer', label: 'Computer', options: [
+              { id: 'computer', label: 'Computer', isComputerBuilder: true, options: [
                   { id: 'form-factor', label: 'Computer Form Factor', type: 'chip', choices: [
-                      { id: 'laptop-14', label: '14" Laptop (No Number Pad)' },
-                      { id: 'laptop-15-16', label: '15.6"–16" Laptop (Number Pad)' },
-                      { id: 'mini-desktop', label: 'Mini Desktop' },
-                      { id: 'tower-desktop', label: 'Tower Desktop' } ] },
-                  { id: 'ram', label: 'Memory (RAM)', type: 'chip', choices: [
-                      { id: '8gb', label: '8GB' }, { id: '16gb', label: '16GB' }, { id: '32gb', label: '32GB' }, { id: '64gb', label: '64GB' }, { id: 'best-available', label: 'Best Available' } ] },
+                      { id: 'laptop-14', label: '14" Laptop (No Number Pad)', image: 'assets/products/computer-form-laptop-14.png' },
+                      { id: 'laptop-15-16', label: '15.6"–16" Laptop (Number Pad)', image: 'assets/products/computer-form-laptop-15-16.png' },
+                      { id: 'mini-desktop', label: 'Mini Desktop', image: 'assets/products/computer-form-mini-desktop.png' },
+                      { id: 'tower-desktop', label: 'Tower Desktop', image: 'assets/products/computer-form-tower-desktop.png' } ] },
                   { id: 'cpu', label: 'CPU', type: 'chip', choices: [
                       { id: 'ryzen-5', label: 'Ryzen 5' }, { id: 'intel-i5', label: 'Intel i5' }, { id: 'ryzen-7', label: 'Ryzen 7' }, { id: 'intel-i7', label: 'Intel i7' }, { id: 'ryzen-9', label: 'Ryzen 9' }, { id: 'intel-i9', label: 'Intel i9' }, { id: 'best-available', label: 'Best Available' } ] },
+                  { id: 'ram', label: 'Memory (RAM)', type: 'chip', choices: [
+                      { id: '8gb', label: '8GB' }, { id: '16gb', label: '16GB' }, { id: '32gb', label: '32GB' }, { id: '64gb', label: '64GB' }, { id: 'best-available', label: 'Best Available' } ] },
+                  { id: 'storage', label: 'Storage', type: 'chip', choices: [
+                      { id: '256gb', label: '256GB SSD' }, { id: '512gb', label: '512GB SSD' }, { id: '1tb', label: '1TB SSD' }, { id: '2tb', label: '2TB SSD' }, { id: 'best-available', label: 'Best Available' } ] },
                   { id: 'brand', label: 'Brand Preference', type: 'chip', choices: [
                       { id: 'hp', label: 'HP' }, { id: 'dell', label: 'Dell' }, { id: 'lenovo', label: 'Lenovo' }, { id: 'best-available', label: 'Best Available' } ] },
                   { id: 'warranty', label: 'Warranty Coverage', type: 'chip', choices: [
@@ -2550,6 +2552,17 @@ class Component extends DCLogic {
     // to regex the joined string back apart. `lines`/optionLabel stay
     // exactly as before for the rest of the app (Solution Summary, etc.).
     var partsLines = [];
+    // Computer Configuration visual card (2026-09-22, per Michael): the
+    // same Product/Processor/RAM/Storage + Accessories/Warranty card the
+    // live Computers screen shows (see the 'parts' render branch above)
+    // also needs to survive onto the Solution Summary / printed quote, not
+    // just the plain "label x qty (specs)" text line every other parts
+    // category gets -- captured here, once, at add-to-solution time, since
+    // the Summary screen doesn't have live access to partsSelections state
+    // the way the config screen does.
+    var computerVisual = null;
+    var accessoriesCatForBOM = this.findCategory(pillarId, serviceId, 'es-accessories');
+    var accEntriesForBOM = allParts['es-accessories'] || {};
     cat.products.forEach(function (p) {
       var entry = byCategory[p.id];
       var qty = entry ? (entry.qty || 0) : 0;
@@ -2593,6 +2606,45 @@ class Component extends DCLogic {
       if (detailParts.length) line += ' (' + detailParts.join(', ') + ')';
       lines.push(line);
       partsLines.push({ label: p.label, sku: p.sku || '', qty: qty, brand: brand, specs: specs });
+      if (p.isComputerBuilder && (entry.chips || {})['form-factor']) {
+        var cvChips = entry.chips || {};
+        var cvChipLabel = function (optId) {
+          var optDef = (p.options || []).filter(function (o) { return o.id === optId; })[0];
+          var cid = optDef ? cvChips[optId] : null;
+          if (!cid) return null;
+          var match = optDef ? (optDef.choices || []).filter(function (c) { return c.id === cid; })[0] : null;
+          return match ? match.label : null;
+        };
+        var cvFormFactorOpt = (p.options || []).filter(function (o) { return o.id === 'form-factor'; })[0];
+        var cvFormFactorChoice = cvFormFactorOpt ? (cvFormFactorOpt.choices || []).filter(function (c) { return c.id === cvChips['form-factor']; })[0] : null;
+        var cvWarrantyLabel = cvChipLabel('warranty');
+        var cvWarrantyLines = [{ text: 'Factory Warranty' }];
+        if (cvWarrantyLabel) cvWarrantyLines.push({ text: cvWarrantyLabel });
+        var cvAccessoryBoxes = [];
+        ['addon-accidental-damage', 'addon-docking-station', 'addon-wireless-mouse', 'addon-wireless-keyboard', 'addon-ups'].forEach(function (optId) {
+          var lbl = cvChipLabel(optId);
+          if (lbl) cvAccessoryBoxes.push({ label: lbl });
+        });
+        if (accessoriesCatForBOM) {
+          accessoriesCatForBOM.products.forEach(function (ap) {
+            var aEntry = accEntriesForBOM[ap.id];
+            var aQty = aEntry ? (aEntry.qty || 0) : 0;
+            if (aQty > 0) cvAccessoryBoxes.push({ label: ap.label + (aQty > 1 ? (' ×' + aQty) : '') });
+          });
+        }
+        computerVisual = {
+          formFactorLabel: cvFormFactorChoice ? cvFormFactorChoice.label : '',
+          hasFormFactorImage: !!(cvFormFactorChoice && cvFormFactorChoice.image),
+          formFactorImage: (cvFormFactorChoice && cvFormFactorChoice.image) || '',
+          cpuText: cvChipLabel('cpu') || 'Not selected',
+          ramText: cvChipLabel('ram') || 'Not selected',
+          storageText: cvChipLabel('storage') || 'Not selected',
+          warrantyLines: cvWarrantyLines,
+          hasAccessories: cvAccessoryBoxes.length > 0,
+          noAccessories: cvAccessoryBoxes.length === 0,
+          accessoryBoxes: cvAccessoryBoxes
+        };
+      }
     });
     if (cat.phonePicker) {
       var triggerEntryBOM = byCategory[cat.phonePicker.productId] || { ranges: {} };
@@ -2624,6 +2676,7 @@ class Component extends DCLogic {
       optionId: 'category', optionLabel: optionLabel, optionDetail: optionLabel,
       outcomeTags: svc.outcome,
       categoryId: categoryId, scopeQtyMap: scopeQtyMap, partsLines: partsLines,
+      hasComputerVisual: !!computerVisual, computerVisual: computerVisual,
       note: this.state.categoryNotes[key] || ''
     };
     var patch = { selections: sel };
@@ -3241,6 +3294,14 @@ class Component extends DCLogic {
         var partsProducts = visibleProducts.map(function (p) {
           var entry = partsByCat[p.id] || { qty: 0, chips: {}, ranges: {} };
           var qty = entry.qty || 0;
+          // Computer Configuration visual layout (2026-09-22, per Michael):
+          // once a Form Factor is picked on the 'computer' product (see its
+          // `isComputerBuilder` flag), every OTHER option row on that same
+          // product (CPU/RAM/Storage/Brand/Warranty/add-ons/labor) stays
+          // hidden until then — Form Factor is always the first decision.
+          // Used below both to gate option visibility and to shrink a chip
+          // group's unselected choices once one is picked (see `opts` map).
+          var formFactorChosen = !!p.isComputerBuilder && !!((entry.chips || {})['form-factor']);
           var recommendNote = null;
           if (p.recommendWhenQty) {
             var refEntry = partsByCat[p.recommendWhenQty];
@@ -3261,6 +3322,7 @@ class Component extends DCLogic {
               var hasWattsSuggestion = !!opt.wattsPerUnit && val > 0;
               return {
                 id: opt.id, label: opt.label, isRange: true, isChip: false,
+                isVisible: !p.isComputerBuilder || opt.id === 'form-factor' || formFactorChosen,
                 hasValue: val > 0,
                 valueText: val > 0 ? (val + (opt.unit ? (' ' + opt.unit) : '')) : 'Not set',
                 rangeHint: opt.min + '–' + opt.max + (opt.unit ? (' ' + opt.unit) : ''),
@@ -3275,8 +3337,17 @@ class Component extends DCLogic {
             var chosenChoiceMatches = (opt.choices || []).filter(function (c) { return c.id === chosenId; });
             var chosenChoice = chosenChoiceMatches.length ? chosenChoiceMatches[0] : null;
             var headingImage = chosenChoice && chosenChoice.image ? chosenChoice.image : null;
+            // Once a real (2+ choice) spec on the computer builder has a
+            // selection, its unpicked alternatives shrink down instead of
+            // staying full-size next to the chosen one — per Michael, "when
+            // you select the option, the remaining options should render
+            // smaller." Multi-choice groups only (form-factor/cpu/ram/
+            // storage/brand/warranty) — a single-choice add-on toggle like
+            // "Docking Station" has nothing else in its own group to shrink.
+            var shrinkUnselected = !!p.isComputerBuilder && (opt.choices || []).length > 1 && !!chosenId;
             return {
               id: opt.id, label: opt.label, isRange: false, isChip: true,
+              isVisible: !p.isComputerBuilder || opt.id === 'form-factor' || formFactorChosen,
               // Tapping the option heading previews the currently-selected
               // choice's photo — only wired (and only shown as tappable)
               // when that choice actually has an `image`.
@@ -3285,9 +3356,13 @@ class Component extends DCLogic {
               onHeadingClick: headingImage ? function () { self.openImagePreview(headingImage, chosenChoice.label); } : null,
               choices: (opt.choices || []).map(function (c) {
                 var isSelected = chosenId === c.id;
+                var shrink = shrinkUnselected && !isSelected;
+                var style = shrink
+                  ? 'border:none;border-radius:999px;padding:4px 9px;font-size:10px;font-weight:600;cursor:pointer;opacity:.5;background:oklch(0.93 0.004 255);color:oklch(0.55 0.02 255);'
+                  : ('border:none;border-radius:999px;padding:7px 14px;font-size:12.5px;font-weight:700;cursor:pointer;' + (isSelected ? ('background:' + accentColor + ';color:#ffffff;') : 'background:oklch(0.9 0.006 255);color:oklch(0.3 0.02 255);'));
                 return {
                   id: c.id, label: c.label, isSelected: isSelected,
-                  style: 'border:none;border-radius:999px;padding:7px 14px;font-size:12.5px;font-weight:700;cursor:pointer;' + (isSelected ? ('background:' + accentColor + ';color:#ffffff;') : 'background:oklch(0.9 0.006 255);color:oklch(0.3 0.02 255);'),
+                  style: style,
                   onClick: function () { self.choosePartsChip(catCategoryId, p.id, opt.id, c.id); }
                 };
               })
@@ -3299,6 +3374,67 @@ class Component extends DCLogic {
             var ok = (h.matchMode === 'any') ? results.some(function (r) { return r; }) : results.every(function (r) { return r; });
             if (ok) hints.push({ text: h.text });
           });
+          // Computer Configuration visual layout (2026-09-22, per Michael,
+          // with a reference mockup): once Form Factor is picked, a preview
+          // card renders above the normal chip controls -- a device photo
+          // plus Processor/RAM/Storage Info boxes (mirrors his "Product /
+          // Processor Info / RAM Info / Storage Info" mockup), and a second
+          // card with an Accessories grid + a Warranty Info box (his other
+          // mockup). Both stay live as the rep keeps picking chips below --
+          // this is a read-only summary of `entry.chips`, not a separate
+          // input. Confirmed via AskUserQuestion: Storage capacities are
+          // 256GB/512GB/1TB/2TB/Best Available (no Storage field existed
+          // before this); the Accessory grid combines BOTH this product's
+          // own add-on toggles (Docking Station/Wireless Mouse/Wireless
+          // Keyboard/UPS/Accidental Damage -- EDR, Patch Mgmt, System Prep,
+          // and the labor chips are protection/labor, not accessories, and
+          // are left out) AND whatever the rep has separately added on the
+          // standalone Accessories category (es-accessories) for this same
+          // solution; and this same card is also what renders in the
+          // Solution Summary / printed quote (see addPartsCategoryToSolution
+          // and the summary-building code) -- not just this live screen.
+          var computerVisualVM = null;
+          if (p.isComputerBuilder && formFactorChosen) {
+            var cbChips = entry.chips || {};
+            var cbChipLabel = function (optId) {
+              var optDef = (p.options || []).filter(function (o) { return o.id === optId; })[0];
+              var cid = optDef ? cbChips[optId] : null;
+              if (!cid) return null;
+              var match = optDef ? (optDef.choices || []).filter(function (c) { return c.id === cid; })[0] : null;
+              return match ? match.label : null;
+            };
+            var cbFormFactorOpt = (p.options || []).filter(function (o) { return o.id === 'form-factor'; })[0];
+            var cbFormFactorChoice = cbFormFactorOpt ? (cbFormFactorOpt.choices || []).filter(function (c) { return c.id === cbChips['form-factor']; })[0] : null;
+            var cbWarrantyLabel = cbChipLabel('warranty');
+            var cbWarrantyLines = [{ text: 'Factory Warranty' }];
+            if (cbWarrantyLabel) cbWarrantyLines.push({ text: cbWarrantyLabel });
+            var cbAccessoryBoxes = [];
+            ['addon-accidental-damage', 'addon-docking-station', 'addon-wireless-mouse', 'addon-wireless-keyboard', 'addon-ups'].forEach(function (optId) {
+              var lbl = cbChipLabel(optId);
+              if (lbl) cbAccessoryBoxes.push({ label: lbl });
+            });
+            var cbAccessoriesCat = self.findCategory(catPillarId, catServiceId, 'es-accessories');
+            if (cbAccessoriesCat) {
+              var cbAccEntries = self.state.partsSelections['es-accessories'] || {};
+              cbAccessoriesCat.products.forEach(function (ap) {
+                var aEntry = cbAccEntries[ap.id];
+                var aQty = aEntry ? (aEntry.qty || 0) : 0;
+                if (aQty > 0) cbAccessoryBoxes.push({ label: ap.label + (aQty > 1 ? (' ×' + aQty) : '') });
+              });
+            }
+            computerVisualVM = {
+              formFactorLabel: cbFormFactorChoice ? cbFormFactorChoice.label : '',
+              hasFormFactorImage: !!(cbFormFactorChoice && cbFormFactorChoice.image),
+              formFactorImage: (cbFormFactorChoice && cbFormFactorChoice.image) || '',
+              hasCpu: !!cbChipLabel('cpu'), cpuText: cbChipLabel('cpu') || 'Not selected yet',
+              hasRam: !!cbChipLabel('ram'), ramText: cbChipLabel('ram') || 'Not selected yet',
+              hasStorage: !!cbChipLabel('storage'), storageText: cbChipLabel('storage') || 'Not selected yet',
+              warrantyLines: cbWarrantyLines,
+              hasAccessories: cbAccessoryBoxes.length > 0,
+              noAccessories: cbAccessoryBoxes.length === 0,
+              accessoryBoxes: cbAccessoryBoxes
+            };
+          }
           return {
             id: p.id, label: p.label, hasSku: !!p.sku, sku: p.sku || '',
             hasSpecText: !!p.specText, specText: p.specText || '',
@@ -3310,6 +3446,8 @@ class Component extends DCLogic {
             qty: qty, qtyText: String(qty),
             hasOptions: opts.length > 0,
             options: opts,
+            hasComputerVisual: !!computerVisualVM,
+            computerVisual: computerVisualVM,
             onIncQty: function () { self.incPartsQty(catCategoryId, p.id, 1); },
             onDecQty: function () { self.incPartsQty(catCategoryId, p.id, -1); }
           };
@@ -3579,6 +3717,9 @@ class Component extends DCLogic {
                 hasScopeLines: scopeLinesVM.length > 0, scopeLines: scopeLinesVM,
                 scopeSubtotalText: '$' + scopeComputed.subtotal.toFixed(2),
                 hasNote: !!(s.note && s.note.trim()), noteText: s.note || '',
+                // Computer Configuration visual card, captured at
+                // addPartsCategoryToSolution time -- see its docblock.
+                hasComputerVisual: !!s.hasComputerVisual, computerVisual: s.computerVisual || null,
                 onRemove: function () { self.removeSelection(sKey); }
               };
             })
