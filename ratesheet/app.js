@@ -180,10 +180,17 @@
   // payment_status is computed server-side (api/requests.php's
   // ratesheet_payment_status()) from a live ConnectWise lookup -- see this
   // file's header. 'sent' (RED), 'signed' (YELLOW), 'payment_added'
-  // (GREEN), 'failed' (RED, distinct label).
+  // (GREEN), 'failed' (RED, distinct label), 'hold_not_set' (ORANGE,
+  // added 2026-09-22 -- distinct from 'failed': the Company itself was
+  // created fine, but Credit Hold never took at signup, so a live status
+  // off Credit Hold here is NOT evidence Invoicing added payment -- see
+  // ratesheet_payment_status()'s docblock. Needs a human to check
+  // ConnectWise and set Credit Hold manually, same urgency as 'failed'
+  // but a different cause, so it gets its own color+label rather than
+  // reusing either 'failed' or a false 'payment_added').
   function statusDot(paymentStatus) {
-    var colors = { sent: '#e5534b', signed: '#e8c547', payment_added: '#2ecc71', failed: '#e5534b' };
-    var labels = { sent: 'Sent', signed: 'Signed', payment_added: 'Payment Added', failed: 'Failed' };
+    var colors = { sent: '#e5534b', signed: '#e8c547', payment_added: '#2ecc71', failed: '#e5534b', hold_not_set: '#d9822b' };
+    var labels = { sent: 'Sent', signed: 'Signed', payment_added: 'Payment Added', failed: 'Failed', hold_not_set: 'Credit Hold Not Set' };
     var color = colors[paymentStatus] || '#8A93A3';
     var label = labels[paymentStatus] || 'Unknown';
     return '<span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:' + color + ';">' +

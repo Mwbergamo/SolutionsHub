@@ -76,8 +76,20 @@ const RATESHEET_SITE_BASE = 'https://portal.codebluetechnology.com';
  * etc.), this returns 'signed' (yellow) rather than guessing 'payment_added'
  * (green) -- reps should never see a false "paid" before it's confirmed.
  *
+ * ALSO fails closed against a second, distinct hazard (found live
+ * 2026-09-22, per Michael): a live status that isn't Credit Hold is only
+ * real evidence Invoicing released it on purpose if this app actually got
+ * the Company onto Credit Hold in the first place. If the signup-time
+ * attempt never confirmed that (credit_hold_status !== 'held' -- see
+ * public.php's post-create verification), the Company can simply be
+ * stuck on its default status (e.g. "Active") from day one, and reading
+ * "not Credit Hold" as "paid" would show a false GREEN on an account that
+ * was never actually protected. That combination gets its own
+ * 'hold_not_set' state instead -- never silently reinterpreted as
+ * 'payment_added'.
+ *
  * @param array<int,string> $statusNames cw_company_id => live ConnectWise Company Status name
- * @return 'sent'|'signed'|'payment_added'|'failed'
+ * @return 'sent'|'signed'|'payment_added'|'failed'|'hold_not_set'
  */
 function ratesheet_payment_status(array $r, array $statusNames): string
 {
@@ -90,10 +102,24 @@ function ratesheet_payment_status(array $r, array $statusNames): string
     if ($r['status'] === 'submitted') {
         $companyId = $r['cw_company_id'] !== null ? (int) $r['cw_company_id'] : null;
         $liveName = $companyId !== null ? ($statusNames[$companyId] ?? null) : null;
-        if ($liveName !== null && strcasecmp($liveName, RATESHEET_CREDIT_HOLD_STATUS_NAME) !== 0) {
-            return 'payment_added';
+        if ($liveName === null) {
+            // Live lookup unavailable for this row (ConnectWise outage,
+            // company not found, etc.) -- fail closed to the conservative
+            // "still on hold" state rather than guessing either way.
+            return 'signed';
         }
-        return 'signed';
+        if (strcasecmp($liveName, RATESHEET_CREDIT_HOLD_STATUS_NAME) === 0) {
+            return 'signed';
+        }
+        // Live status is definitively NOT Credit Hold. Only trust that as
+        // "Invoicing released it" if this app actually confirmed Credit
+        // Hold was applied at signup -- otherwise it just means the
+        // safeguard never took, which is its own, more urgent state (see
+        // this function's docblock).
+        if ($r['credit_hold_status'] !== 'held') {
+            return 'hold_not_set';
+        }
+        return 'payment_added';
     }
     // Legacy 'awaiting_payment' rows (superseded same-day redesign, see
     // db.php) -- treat as signed rather than inventing a new bucket for a

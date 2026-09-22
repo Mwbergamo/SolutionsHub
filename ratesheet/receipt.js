@@ -56,10 +56,21 @@
     // lookup (api/requests.php's ratesheet_payment_status()) -- see
     // Michael's 2026-09-18 redesign in public.php's header. 'sent' never
     // reaches this page (a still-pending row 409s before render() runs).
+    // Explicit branch per known state, added 2026-09-22 -- previously
+    // this was a two-way ternary that silently fell through to "Account
+    // Creation Failed" for anything that wasn't 'payment_added' or
+    // 'signed', which would have mislabeled the new 'hold_not_set' state.
+    // See ratesheet_payment_status()'s docblock in api/requests.php for
+    // why 'hold_not_set' is its own state, never folded into
+    // 'payment_added': a live status off Credit Hold only means Invoicing
+    // released it on purpose if this app actually got it onto Credit Hold
+    // at signup in the first place.
     var statusBadge = r.payment_status === 'payment_added'
       ? '<span class="status-badge status-payment-added">Submitted &amp; Payment Added</span>'
       : r.payment_status === 'signed'
       ? '<span class="status-badge status-signed">Submitted — Awaiting Payment</span>'
+      : r.payment_status === 'hold_not_set'
+      ? '<span class="status-badge status-hold-not-set">Submitted — Credit Hold Not Set</span>'
       : '<span class="status-badge status-failed">Submitted — Account Creation Failed</span>';
 
     root.innerHTML = '' +
