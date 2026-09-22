@@ -45,6 +45,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/connectwise.php';
+require_once __DIR__ . '/altpay.php';
 
 ratesheet_install_error_handlers();
 
@@ -127,6 +128,110 @@ function ratesheet_payment_status(array $r, array $statusNames): string
     return 'signed';
 }
 
+// Per-page-load cap on how many still-on-hold rows
+// ratesheet_maybe_auto_release_credit_hold() will check against
+// Alternative Payments, so a large batch of simultaneously-pending
+// accounts can't turn one dashboard load into dozens of sequential API
+// calls -- any rows past this cap are simply picked up on the next load.
+const RATESHEET_AUTO_RELEASE_MAX_CHECKS = 25;
+
+/**
+ * Auto-release check, added 2026-09-22 per Michael: "The account should
+ * be automatically marked active only when a valid payment is added to
+ * the account within Alternative Payment on that new account." Invoicing
+ * adds that payment method directly in Alternative Payments' own
+ * dashboard (see public.php's header -- this app never touches payment
+ * data itself), with no field today tying that record back to a
+ * specific rate sheet signup, so this looks the Alternative Payments
+ * customer up **by email** (the one identifier guaranteed to exist in
+ * both systems -- Michael's choice, asked directly) and checks whether
+ * they have at least one payment method on file.
+ *
+ * Runs live on every dashboard/receipt view (also Michael's choice,
+ * asked directly) rather than a scheduled job or an Alternative Payments
+ * webhook -- the same "compute live, never store" philosophy this app
+ * already uses for the GREEN/YELLOW read (see this file's header),
+ * just extended one step further into an actual ConnectWise write once
+ * the evidence is there.
+ *
+ * Only acts on rows the live ConnectWise lookup shows as CURRENTLY on
+ * Credit Hold -- nothing to release otherwise. When a payment method is
+ * found, PUTs the Company to Active (id 1, the same confirmed id this
+ * app already uses as its create-time fallback -- see
+ * ratesheet_cw_create_company()'s caller in public.php) via the same
+ * proven ratesheet_cw_put_company_with_retry() mechanism the Credit Hold
+ * enforcement itself uses.
+ *
+ * *** UNVERIFIED AGAINST THE LIVE ALTERNATIVE PAYMENTS API *** -- this
+ * session has no Alternative Payments credentials, and the customer/
+ * payment-method lookups this depends on
+ * (ratesheet_altpay_find_customer_by_email()/
+ * ratesheet_altpay_list_payment_methods() in altpay.php) have never been
+ * exercised live -- only the POST create endpoints were, and only for
+ * the abandoned two-step self-vaulting design. Every failure mode there
+ * is designed to fail CLOSED (see those functions' docblocks): a false
+ * negative here just leaves an account on Credit Hold a little longer
+ * (safe); a false positive would release a real billing safeguard on
+ * the wrong account (not safe). Please forward the relevant error-log
+ * lines if this doesn't work on the first live try.
+ *
+ * @param array<int,array<string,mixed>> $rows the raw DB rows (needs customer_email, cw_company_id, status)
+ * @param array<int,string> $statusNames cw_company_id => live ConnectWise Company Status name -- MUTATED IN PLACE so a row auto-released during this call renders correctly in the SAME page load rather than waiting for the next one.
+ */
+function ratesheet_maybe_auto_release_credit_hold(array $rows, array &$statusNames): void
+{
+    $checked = 0;
+    foreach ($rows as $r) {
+        if ($r['status'] !== 'submitted') {
+            continue;
+        }
+        $companyId = $r['cw_company_id'] !== null ? (int) $r['cw_company_id'] : null;
+        if ($companyId === null) {
+            continue;
+        }
+        $liveName = $statusNames[$companyId] ?? null;
+        if ($liveName === null || strcasecmp($liveName, RATESHEET_CREDIT_HOLD_STATUS_NAME) !== 0) {
+            continue; // not currently on Credit Hold live -- nothing to release
+        }
+        if ($checked >= RATESHEET_AUTO_RELEASE_MAX_CHECKS) {
+            error_log('ratesheet_maybe_auto_release_credit_hold: hit the per-load check cap (' . RATESHEET_AUTO_RELEASE_MAX_CHECKS . ') -- remaining on-hold rows will be checked on the next load.');
+            break;
+        }
+        $email = is_string($r['customer_email'] ?? null) ? trim((string) $r['customer_email']) : '';
+        if ($email === '') {
+            continue;
+        }
+        $checked++;
+
+        try {
+            $customerId = ratesheet_altpay_find_customer_by_email($email);
+            if ($customerId === null) {
+                continue;
+            }
+            $paymentMethods = ratesheet_altpay_list_payment_methods($customerId);
+            if ($paymentMethods === null || $paymentMethods === []) {
+                continue;
+            }
+            $hasValidMethod = false;
+            foreach ($paymentMethods as $pm) {
+                if (is_array($pm) && !empty($pm['id'])) {
+                    $hasValidMethod = true;
+                    break;
+                }
+            }
+            if (!$hasValidMethod) {
+                continue;
+            }
+
+            ratesheet_cw_put_company_with_retry($companyId, ['status' => ['id' => 1]]); // Active, confirmed id (register/api/customers.php)
+            $statusNames[$companyId] = 'Active';
+            error_log('ratesheet_maybe_auto_release_credit_hold: auto-released Credit Hold for company ' . $companyId . ' (request ' . $r['id'] . ') -- Alternative Payments customer ' . $customerId . ' has a payment method on file.');
+        } catch (Throwable $e) {
+            error_log('ratesheet_maybe_auto_release_credit_hold: check/release failed for request ' . $r['id'] . ' (company ' . $companyId . '): ' . $e->getMessage());
+        }
+    }
+}
+
 /** @param array<int,string> $statusNames cw_company_id => live ConnectWise Company Status name (only needed when $includeCustomerFields) */
 function ratesheet_request_row(array $r, bool $includeCustomerFields, array $statusNames = []): array
 {
@@ -181,6 +286,13 @@ if ($action === 'list') {
     )));
     $statusNames = $submittedCompanyIds === [] ? [] : ratesheet_cw_company_statuses($submittedCompanyIds);
 
+    // See ratesheet_maybe_auto_release_credit_hold()'s docblock above --
+    // checks Alternative Payments for still-on-hold rows and releases
+    // Credit Hold in ConnectWise when a payment method is found.
+    // $statusNames is mutated in place so this same render reflects any
+    // release immediately.
+    ratesheet_maybe_auto_release_credit_hold($allRows, $statusNames);
+
     $rows = array_map(fn (array $r) => ratesheet_request_row($r, true, $statusNames), $allRows);
     ratesheet_respond(200, ['ok' => true, 'requests' => $rows]);
 }
@@ -227,6 +339,10 @@ if ($action === 'detail') {
         ? ratesheet_cw_company_status_name($companyId)
         : null;
     $statusNames = ($companyId !== null && $liveStatusName !== null) ? [$companyId => $liveStatusName] : [];
+
+    // See ratesheet_maybe_auto_release_credit_hold()'s docblock above.
+    ratesheet_maybe_auto_release_credit_hold([$r], $statusNames);
+    $liveStatusName = ($companyId !== null) ? ($statusNames[$companyId] ?? $liveStatusName) : $liveStatusName;
 
     ratesheet_respond(200, ['ok' => true, 'request' => [
         'id' => (int) $r['id'],

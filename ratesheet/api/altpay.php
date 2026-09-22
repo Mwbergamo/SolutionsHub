@@ -301,3 +301,110 @@ function ratesheet_altpay_create_bank_payment_method(string $customerId, array $
 
     return ['id' => (string) $result['id'], 'summary' => $summary];
 }
+
+// ---------------------------------------------------------------------
+// Customer/payment-method lookups -- added 2026-09-22 for the Credit
+// Hold auto-release feature (see requests.php's
+// ratesheet_maybe_auto_release_credit_hold()). Per Michael: "The account
+// should be automatically marked active only when a valid payment is
+// added to the account within Alternative Payment on that new account."
+// Invoicing adds that payment method directly in Alternative Payments'
+// own dashboard (see this file's header -- this app never touches
+// payment data itself), so these are read-only GET lookups this app
+// uses to notice that a payment method now exists, not anything that
+// writes to Alternative Payments.
+//
+// *** UNVERIFIED AGAINST THE LIVE API *** -- no live credentials in this
+// session, and unlike the POST endpoints above (exercised, even if only
+// during the abandoned two-step design), these GET/list endpoints and
+// their exact query-param names and response envelope shape have never
+// been confirmed against this account. Both functions are written to
+// fail closed (return null) on ANY ambiguity -- wrong endpoint, wrong
+// query param, an unexpected response shape, ambiguous/no match -- since
+// they gate an AUTOMATIC ConnectWise write (releasing Credit Hold): a
+// false negative just leaves an account on hold a little longer (safe);
+// a false positive would release a real billing safeguard on the wrong
+// account (not safe). Please forward the next
+// "ratesheet_altpay_find_customer_by_email"/"ratesheet_altpay_list_payment_methods"
+// line(s) from the server's PHP error log if auto-release doesn't work
+// on the first live try -- same reasoning as the ConnectWise Company
+// Status endpoint guesses: this session can't test Alternative
+// Payments' API directly, so the log line is the fastest way to know
+// what actually happened.
+// ---------------------------------------------------------------------
+
+/**
+ * Finds an Alternative Payments customer by email (case-insensitive,
+ * exact match only). Returns the customer id, or null if no confirmed
+ * match was found or the lookup itself failed -- never guesses at a
+ * partial/ambiguous match. Tries GET /customers?email=<email>; accepts
+ * either a bare JSON array response or a {"data": [...]} envelope, since
+ * this endpoint's real response shape isn't confirmed (see this
+ * section's header).
+ */
+function ratesheet_altpay_find_customer_by_email(string $email): ?string
+{
+    $email = trim($email);
+    if ($email === '') {
+        return null;
+    }
+    try {
+        $token = ratesheet_altpay_access_token();
+        $result = ratesheet_altpay_request(
+            '/customers?' . http_build_query(['email' => $email]),
+            $token,
+            'GET',
+            null,
+            [],
+            15,
+            6
+        );
+        $rows = (isset($result['data']) && is_array($result['data'])) ? $result['data'] : $result;
+        if (!is_array($rows)) {
+            return null;
+        }
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $rowEmail = $row['email'] ?? null;
+            $rowId = $row['id'] ?? null;
+            if (is_string($rowEmail) && $rowId !== null && strcasecmp(trim($rowEmail), $email) === 0) {
+                return (string) $rowId;
+            }
+        }
+        return null;
+    } catch (Throwable $e) {
+        error_log('ratesheet_altpay_find_customer_by_email: lookup failed for "' . $email . '": ' . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * Lists an Alternative Payments customer's payment methods. Returns the
+ * array of payment-method records (possibly empty if the customer
+ * exists but has none on file), or null if the lookup itself failed.
+ * Same unconfirmed-shape caveat as
+ * ratesheet_altpay_find_customer_by_email() above -- accepts either a
+ * bare array or a {"data": [...]} envelope.
+ */
+function ratesheet_altpay_list_payment_methods(string $customerId): ?array
+{
+    try {
+        $token = ratesheet_altpay_access_token();
+        $result = ratesheet_altpay_request(
+            '/customers/' . rawurlencode($customerId) . '/payment-methods',
+            $token,
+            'GET',
+            null,
+            [],
+            15,
+            6
+        );
+        $rows = (isset($result['data']) && is_array($result['data'])) ? $result['data'] : $result;
+        return is_array($rows) ? $rows : null;
+    } catch (Throwable $e) {
+        error_log('ratesheet_altpay_list_payment_methods: lookup failed for customer "' . $customerId . '": ' . $e->getMessage());
+        return null;
+    }
+}
