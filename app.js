@@ -4029,6 +4029,7 @@ class Component extends DCLogic {
       logoWhite: CBT_LOGO_WHITE,
       logoColor: CBT_LOGO_COLOR,
       logoForTheme: this.state.theme === 'light' ? CBT_LOGO_COLOR : CBT_LOGO_WHITE,
+      clydeForTheme: this.state.theme === 'light' ? 'assets/clyde-solution-helper-light.png' : 'assets/clyde-solution-helper.png',
       isLightTheme: this.state.theme === 'light',
       isDarkTheme: this.state.theme !== 'light',
       onToggleTheme: function () { self.toggleTheme(); },
