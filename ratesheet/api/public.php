@@ -54,10 +54,17 @@
  *     want_copy_of_signup: bool, invoices_emailed: bool,
  *     agreed_to_terms: true, signature_data_url }
  *   -> { ok: true } once the Company + Contact are created in ConnectWise
- *      (Company created with its Billing Status set to "Credit Hold" --
- *      see ratesheet_cw_create_company()) and both notification emails
- *      (hello@ general notice, invoicing@ "ready for payment" notice) are
- *      attempted.
+ *      (Company created with its Billing Status set to "Credit Hold" at
+ *      create time -- see ratesheet_cw_create_company() -- and then, per
+ *      Michael, 2026-09-22, EXPLICITLY re-set via a follow-up
+ *      ratesheet_cw_put_company_with_retry() call, the same fetch-merge-
+ *      PUT-with-retry mechanism register/relationships already use for
+ *      Company updates. This mirrors what a person does by hand: open the
+ *      new Company's Finance tab, change Status to "Credit Hold," and
+ *      click Save -- a real corrective action, not just a warning, since
+ *      the create-time field alone was found not to reliably stick) and
+ *      both notification emails (hello@ general notice, invoicing@
+ *      "ready for payment" notice) are attempted.
  *   -> { ok: false, error } on validation failure (400), if this row has
  *      already been submitted (409), or on a ConnectWise failure (502) --
  *      a ConnectWise failure still SAVES everything the customer typed
@@ -240,7 +247,8 @@ if ($action === 'submit') {
     // Company (never lose the customer's signed data) but loudly flags
     // BOTH notification emails below so a human catches it immediately.
     $creditHoldStatusId = ratesheet_cw_resolve_status_id_by_name(RATESHEET_CREDIT_HOLD_STATUS_NAME);
-    if ($creditHoldStatusId === null) {
+    $creditHoldStatusResolved = $creditHoldStatusId !== null;
+    if (!$creditHoldStatusResolved) {
         error_log('[ratesheet/public] could not resolve the ConnectWise "Credit Hold" Company Status for request ' . $row['id'] . ' -- creating the Company as Active instead, pending manual correction.');
         $creditHoldStatusId = 1; // Active, confirmed fallback (register/api/customers.php).
     }
@@ -256,7 +264,31 @@ if ($action === 'submit') {
         ratesheet_respond(502, ['ok' => false, 'error' => 'We could not finish creating your account automatically, but your information was saved -- a CodeBlue Technology team member will finish setting up your account shortly.']);
     }
 
-    // Verify, don't just trust the resolve step above -- added 2026-09-19
+    // Explicitly enforce Credit Hold as its own follow-up step, per
+    // Michael (2026-09-22): "Create the company and then navigate to that
+    // new company's Company Finance and change the Company Status to
+    // Credit Hold and save it there." This is that same edit-and-save,
+    // done via ratesheet_cw_put_company_with_retry() -- the proven
+    // fetch-merge-PUT-with-retry mechanism register/relationships already
+    // use for Company updates (see its docblock in connectwise.php). The
+    // create-time `status` field above is left in place as a first
+    // attempt (harmless either way), but this is the real corrective
+    // action -- a live test previously showed that field alone doesn't
+    // reliably stick. Only attempted when the resolve step above actually
+    // found "Credit Hold" (never when it fell back to Active, since
+    // that'd force every new Company onto Credit Hold with no real
+    // target id); failure here is logged and falls through to the
+    // existing read-back verification + loud email warning below rather
+    // than blocking the customer's already-successful signup.
+    if ($creditHoldStatusResolved) {
+        try {
+            ratesheet_cw_put_company_with_retry($companyId, ['status' => ['id' => $creditHoldStatusId]]);
+        } catch (Throwable $e) {
+            error_log('[ratesheet/public] follow-up Credit Hold PUT failed for company ' . $companyId . ' (request ' . $row['id'] . '): ' . $e->getMessage());
+        }
+    }
+
+    // Verify, don't just trust the resolve/PUT steps above -- added 2026-09-19
     // after a live test landed on the wrong Billing Status despite the
     // resolve step appearing to succeed (see
     // ratesheet_cw_resolve_status_id_by_name()'s docblock: an ignored
@@ -402,9 +434,12 @@ function ratesheet_cw_resolve_territory_id(string $searchTerm): int
  * -- see this file's header and ratesheet_cw_resolve_status_id_by_name()
  * in connectwise.php for how that id is resolved and what happens if it
  * can't be). This is a plain create-time field (the same `status` field
- * this app already sent as Active/id 1 before), not a follow-up
- * PATCH/PUT -- no separate Company-update call is needed for this half of
- * the feature at all.
+ * this app already sent as Active/id 1 before). UPDATED 2026-09-22: this
+ * create-time field is no longer relied on alone -- the caller now
+ * follows a successful create with an explicit
+ * ratesheet_cw_put_company_with_retry() call (see this file's header) to
+ * actually enforce Credit Hold, the same edit-and-save a person would do
+ * by hand in the Company's Finance tab.
  */
 function ratesheet_cw_create_company(string $name, string $addressLine1, string $addressLine2, string $city, string $state, string $zip, int $territoryId, int $statusId): array
 {

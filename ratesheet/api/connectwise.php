@@ -155,13 +155,18 @@ function ratesheet_cw_condition_escape(string $value): string
 // when creating a new company") -- when that happens, strip exactly that
 // field from the payload and retry, up to 5 attempts. This is this app's
 // own copy of that same proven pattern -- kept general-purpose (not tied
-// to any one field) since this app doesn't currently need it for the
-// Credit Hold feature itself (see public.php's header: that's now a real
-// Company Status value set at CREATE time via a plain POST, and released
-// manually by the Invoicing team in ConnectWise, not via an API PUT from
-// this app) but a future feature updating some other part of a Company
-// record can reach for this rather than re-diagnosing the PATCH landmine
-// from scratch.
+// to any one field). UPDATED 2026-09-22, per Michael: this is now also
+// the Credit Hold feature's real enforcement step. The create-time
+// `status` field (a plain POST) is left in place as a first attempt, but
+// is no longer trusted alone -- a live test landed on the wrong Billing
+// Status despite that field appearing to take. public.php's submit flow
+// now follows a successful create with an explicit
+// ratesheet_cw_put_company_with_retry($companyId, ['status' => [...]])
+// call: the same fetch-merge-PUT-with-retry mechanism, mirroring what a
+// person does by hand -- open the new Company's Finance tab, change
+// Status to "Credit Hold," and click Save. A future feature updating
+// some other part of a Company record can still reach for this same
+// helper rather than re-diagnosing the PATCH landmine from scratch.
 // ---------------------------------------------------------------------
 
 /**
