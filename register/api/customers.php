@@ -140,9 +140,11 @@
  *      "Main" site, "House accounts" territory, Account ID (accountNumber
  *      and identifier, sanitized per register_cw_sanitize_account_id()) =
  *      name, Date Acquired = today, Terms Renewal Date custom field =
- *      today, and two Company Team rows (Sales Rep + Account Manager,
- *      both Michael Bergamo). state defaults to "VA", country to United
- *      States, per Michael's stated defaults.
+ *      today + 365 days (per Michael, 2026-09-22 -- see
+ *      register_cw_create_company()'s docblock), and two Company Team
+ *      rows (Sales Rep + Account Manager, both Michael Bergamo). state
+ *      defaults to "VA", country to United States, per Michael's stated
+ *      defaults.
  *
  * POST /register/api/customers.php?action=create-contact
  *   body: { company_id, first_name, last_name, phone?, email? }
@@ -290,7 +292,13 @@ if ($action === 'search-contacts') {
  * "Main" is required; Territory = "House accounts" (system/locations id
  * 45); Account ID (accountNumber) = the company name, truncated to
  * ConnectWise's real 41-char max; Date Acquired = today; Terms Renewal
- * Date (custom field id 34) = today. Adds two Company Team rows, both
+ * Date (custom field id 34) = today + 365 days -- UPDATED 2026-09-22,
+ * per Michael: "I need them created with a Term Renewal Date of 1 year
+ * (365 days) after the date they sign up," swept across every
+ * ConnectWise company-create call in this codebase (see
+ * ratesheet/api/submit-core.php's ratesheet_cw_create_company() for the
+ * identical fix there); previously this was set to today, same as Date
+ * Acquired. Adds two Company Team rows, both
  * Michael Bergamo (member id 202): Sales Rep (teamRole id 3) and Account
  * Manager (teamRole id 1) -- best-effort, since the company itself is
  * already created successfully by that point and a team-row failure
@@ -342,6 +350,16 @@ function register_cw_create_company(
     ?int $taxCodeId = null
 ): array {
     $today = gmdate('Y-m-d\T00:00:00\Z');
+    // Terms Renewal Date = signup date + 365 days (1 year), per Michael
+    // (2026-09-22): "I need them created with a Term Renewal Date of 1
+    // year (365 days) after the date they sign up... adjust this in all
+    // apps and sub-apps, including rate sheets." Previously set to
+    // $today (same as Date Acquired) -- swept across every ConnectWise
+    // company-create call in this codebase, see
+    // ratesheet/api/submit-core.php's ratesheet_cw_create_company() for
+    // the identical fix. Date Acquired itself is unchanged -- still
+    // today, the real signup date.
+    $termsRenewalDate = gmdate('Y-m-d\T00:00:00\Z', strtotime('+365 days'));
 
     $body = [
         'identifier' => register_cw_sanitize_account_id($identifier ?? $name),
@@ -354,7 +372,7 @@ function register_cw_create_company(
         'accountNumber' => register_cw_sanitize_account_id($name), // "mirror the Company Name, no special characters"
         'dateAcquired' => $today,
         'customFields' => [
-            ['id' => 34, 'value' => $today], // "Terms Renewal Date", confirmed
+            ['id' => 34, 'value' => $termsRenewalDate], // "Terms Renewal Date" -- signup date + 365 days, per Michael (2026-09-22)
         ],
     ];
     // Tax Code (added 2026-09-16, per Michael: new register customers get a

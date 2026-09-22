@@ -364,6 +364,15 @@ function ratesheet_cw_resolve_territory_id(string $searchTerm): int
 function ratesheet_cw_create_company(string $name, string $addressLine1, string $addressLine2, string $city, string $state, string $zip, int $territoryId, int $statusId): array
 {
     $today = gmdate('Y-m-d\T00:00:00\Z');
+    // Terms Renewal Date = signup date + 365 days (1 year), per Michael
+    // (2026-09-22): "I need them created with a Term Renewal Date of 1
+    // year (365 days) after the date they sign up... adjust this in all
+    // apps and sub-apps, including rate sheets." Previously set to
+    // $today (same as Date Acquired) -- swept across every ConnectWise
+    // company-create call in this codebase, see register/api/customers.php's
+    // register_cw_create_company() for the identical fix. Date Acquired
+    // itself is unchanged -- still today, the real signup date.
+    $termsRenewalDate = gmdate('Y-m-d\T00:00:00\Z', strtotime('+365 days'));
 
     $body = [
         'identifier' => ratesheet_cw_sanitize_account_id($name),
@@ -375,7 +384,7 @@ function ratesheet_cw_create_company(string $name, string $addressLine1, string 
         'accountNumber' => ratesheet_cw_sanitize_account_id($name),
         'dateAcquired' => $today,
         'customFields' => [
-            ['id' => 34, 'value' => $today], // "Terms Renewal Date", confirmed
+            ['id' => 34, 'value' => $termsRenewalDate], // "Terms Renewal Date" -- signup date + 365 days, per Michael (2026-09-22)
         ],
     ];
     if ($addressLine1 !== '') $body['addressLine1'] = $addressLine1;
