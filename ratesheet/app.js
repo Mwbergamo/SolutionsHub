@@ -197,6 +197,18 @@
       '<span style="width:9px;height:9px;border-radius:999px;background:' + color + ';display:inline-block;"></span>' + label + '</span>';
   }
 
+  // Added 2026-09-22 per Michael's walk-in rate sheet request: a small
+  // badge next to the rep name distinguishing a walk-in customer's own
+  // signup (walkin.php, rep_name is literally 'Walk-In' already, but a
+  // colored badge makes it scannable at a glance in a long list) from a
+  // rate sheet a rep actually sent out (public.php). Matches statusDot()
+  // above's inline-style pattern rather than adding a new CSS class.
+  function sentByCell(r) {
+    var name = e(r.rep_name);
+    if (r.source !== 'walkin') return name;
+    return name + ' <span style="display:inline-block;margin-left:6px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:#6B3FA0;background:#F1E9FA;border:1px solid #D9C5EF;border-radius:999px;padding:2px 8px;vertical-align:middle;">Walk-In</span>';
+  }
+
   // No payment numbers are ever collected by this app (Invoicing adds the
   // real payment method directly in Alternative Payments, see
   // api/public.php's header) -- this column just shows the customer's
@@ -298,7 +310,7 @@
       return '<tr' + (clickable ? ' class="row-clickable" data-action="view-detail" data-id="' + r.id + '"' : '') + '>' +
         '<td>' + statusDot(r.payment_status) + '</td>' +
         '<td>' + e(r.prospect_email) + '</td>' +
-        '<td>' + e(r.rep_name) + '</td>' +
+        '<td>' + sentByCell(r) + '</td>' +
         '<td>' + fmtDateTime(r.sent_at) + '</td>' +
         '<td>' + e(r.account_kind) + '</td>' +
         '<td>' + e(r.location) + '</td>' +

@@ -219,6 +219,16 @@ function ratesheet_migrate(PDO $pdo): void
     // them. Required on the signup form -- see public.php's validation --
     // so this is only NULL for older rows submitted before this was added.
     ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'phone', 'TEXT');
+
+    // Added 2026-09-22 per Michael's walk-in rate sheet request: a row
+    // created by a walk-in customer at the counter (walkin.php, no rep,
+    // no prior emailed link) rather than sent out by a rep (public.php).
+    // Every existing row is implicitly 'email' -- DEFAULT 'email'
+    // backfills that for free on this ALTER TABLE, no data migration
+    // needed. Drives the dashboard's "Walk-In" badge (requests.php/
+    // app.js) and lets walkin.php set rep_name='Walk-In' without losing
+    // the distinction from a real rep's send.
+    ratesheet_add_column_if_missing($pdo, 'rate_sheet_requests', 'source', "TEXT NOT NULL DEFAULT 'email'");
 }
 
 /** Same ALTER-TABLE-if-needed helper as register/relationships use for live schema changes. */

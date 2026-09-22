@@ -146,6 +146,11 @@ function ratesheet_sender_roster(): array
  * Michael -- his email spelled out directly in the request, same pattern
  * as the sender-roster additions above.
  *
+ * Daemian Caron and Kevin Headley added 2026-09-22 as admins (full
+ * visibility), per Michael's walk-in-rate-sheet request: they previously
+ * saw only rows they personally sent (not in this list at all) --
+ * promoted to match Charlie Trible's full-dashboard access.
+ *
  * @return string[] lowercased emails
  */
 function ratesheet_admin_emails(): array
@@ -159,6 +164,8 @@ function ratesheet_admin_emails(): array
         'jbradshaw@codebluetechnology.com',
         'cmayes@codebluetechnology.com',
         'ctrible@codebluetechnology.com',
+        'dcaron@codebluetechnology.com',
+        'kheadley@codebluetechnology.com',
     ];
 }
 

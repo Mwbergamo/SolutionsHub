@@ -237,6 +237,11 @@ function ratesheet_request_row(array $r, bool $includeCustomerFields, array $sta
 {
     $out = [
         'id' => (int) $r['id'],
+        // Added 2026-09-22 per Michael's walk-in rate sheet request --
+        // 'email' for a rep-sent link (public.php) or 'walkin' for a
+        // walk-in customer at the counter (walkin.php) -- see db.php's
+        // column comment. Drives app.js's "Walk-In" badge.
+        'source' => $r['source'] ?? 'email',
         'prospect_email' => $r['prospect_email'],
         'rep_name' => $r['rep_name'],
         'rep_email' => $r['rep_email'],
@@ -373,6 +378,7 @@ if ($action === 'detail') {
         'ip_address' => $r['ip_address'],
         'rep_name' => $r['rep_name'],
         'rep_email' => $r['rep_email'],
+        'source' => $r['source'] ?? 'email', // 'email' | 'walkin' -- see db.php's column comment
         'cw_company_id' => $companyId,
         'cw_contact_id' => $r['cw_contact_id'] !== null ? (int) $r['cw_contact_id'] : null,
         'legal_text' => ratesheet_legal_text(),
