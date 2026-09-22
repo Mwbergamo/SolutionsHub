@@ -722,7 +722,8 @@ var PILLARS = [
                       { id: 'laptop-14', label: '14" Laptop (No Number Pad)', image: 'assets/products/computer-form-laptop-14.png' },
                       { id: 'laptop-15-16', label: '15.6"–16" Laptop (Number Pad)', image: 'assets/products/computer-form-laptop-15-16.png' },
                       { id: 'mini-desktop', label: 'Mini Desktop', image: 'assets/products/computer-form-mini-desktop.png' },
-                      { id: 'tower-desktop', label: 'Tower Desktop', image: 'assets/products/computer-form-tower-desktop.png' } ] },
+                      { id: 'tower-desktop', label: 'Tower Desktop', image: 'assets/products/computer-form-tower-desktop.png' },
+                      { id: 'tablet', label: 'Tablet', image: 'assets/products/computer-form-tablet.png' } ] },
                   { id: 'cpu', label: 'CPU', type: 'chip', choices: [
                       { id: 'ryzen-5', label: 'Ryzen 5' }, { id: 'intel-i5', label: 'Intel i5' }, { id: 'ryzen-7', label: 'Ryzen 7' }, { id: 'intel-i7', label: 'Intel i7' }, { id: 'ryzen-9', label: 'Ryzen 9' }, { id: 'intel-i9', label: 'Intel i9' }, { id: 'best-available', label: 'Best Available' } ] },
                   { id: 'ram', label: 'Memory (RAM)', type: 'chip', choices: [
@@ -741,10 +742,15 @@ var PILLARS = [
                   { id: 'addon-ups', label: 'UPS (Battery Backup)', type: 'chip', choices: [ { id: 'ups', label: 'UPS (Battery Backup)' } ] },
                   { id: 'addon-edr', label: 'EDR Anti-Virus', type: 'chip', choices: [ { id: 'edr', label: 'EDR Anti-Virus' } ] },
                   { id: 'addon-patch-mgmt', label: 'Patch Management', type: 'chip', choices: [ { id: 'patch-mgmt', label: 'Patch Management' } ] },
-                  { id: 'labor-system-prep', label: 'System Prep', type: 'chip', choices: [ { id: 'system-prep', label: 'System Prep' } ] },
-                  { id: 'labor-pc-replacement', label: 'PC Replacement Labor', type: 'chip', choices: [ { id: 'pc-replacement', label: 'PC Replacement Labor' } ] },
-                  { id: 'labor-new-pc-install', label: 'New PC Installation Labor', type: 'chip', choices: [ { id: 'new-pc-install', label: 'New PC Installation Labor' } ] },
-                  { id: 'labor-recycling', label: 'Recycling of Old PC', type: 'chip', choices: [ { id: 'recycling', label: 'Recycling of Old PC' } ] }
+                  { id: 'labor-system-prep', label: 'System Prep', type: 'chip', choices: [ { id: 'system-prep', label: 'System Prep' } ] }
+                  // PC Replacement Labor / New PC Installation Labor /
+                  // Recycling of Old PC removed 2026-09-22 per Michael --
+                  // redundant with the Scope of Work (Optional) section
+                  // this category already renders below (SCOPE_LIBRARY
+                  // ['es-computers']: New PC Setup with/without Data
+                  // Migration, Old PC Disposal with/without Data
+                  // Destruction), which prices the same labor by real hours
+                  // x the rep's hourly rate instead of an unpriced toggle.
                 ] }
             ] },
           { id: 'es-servers', name: 'Servers', blurb: "Configure a new server to spec — function, form factor, memory, CPU, storage, and software — for the sales engineer to quote.", solutionHeading: 'Server Purchase', pricingMode: 'parts',
