@@ -1413,6 +1413,7 @@ class Component extends DCLogic {
   constructor(props) {
     super(props);
     this.state = {
+      theme: (typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme')) || 'dark',
       view: 'overview', pillarId: null, serviceId: null, categoryId: null, selections: {}, returnView: 'overview', returnPillarId: null,
       searchQuery: '', voiceListening: false,
       managedIT: {
@@ -1605,6 +1606,12 @@ class Component extends DCLogic {
   }
 
   goOverview() { this.setState({ view: 'overview' }); }
+  toggleTheme() {
+    var next = this.state.theme === 'light' ? 'dark' : 'light';
+    try { document.documentElement.setAttribute('data-theme', next); } catch (e) {}
+    try { localStorage.setItem('cbt-theme', next); } catch (e) {}
+    this.setState({ theme: next });
+  }
   // Added 2026-09-16 -- Solutions Creator consolidation (per Michael): the
   // front page's search box and 5 pillar tiles now live one level in, on
   // their own view, rather than on the true Overview.
@@ -4021,6 +4028,11 @@ class Component extends DCLogic {
       accentColor: accentColor,
       logoWhite: CBT_LOGO_WHITE,
       logoColor: CBT_LOGO_COLOR,
+      logoForTheme: this.state.theme === 'light' ? CBT_LOGO_COLOR : CBT_LOGO_WHITE,
+      isLightTheme: this.state.theme === 'light',
+      isDarkTheme: this.state.theme !== 'light',
+      onToggleTheme: function () { self.toggleTheme(); },
+      themeToggleLabel: this.state.theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode',
       isOverview: view === 'overview',
       isSolutionsCreator: view === 'solutions-creator',
       isPillar: view === 'pillar',

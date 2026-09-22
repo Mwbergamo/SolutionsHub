@@ -1,13 +1,30 @@
 <!doctype html>
 <html lang="en">
 <head>
+<script>
+// Set the theme attribute before first paint so there's no flash of the
+// wrong theme. Mirrors what toggleTheme() in app.js does at runtime;
+// kept tiny and dependency-free since it must run before anything else.
+(function () {
+  var theme = 'dark';
+  try {
+    var saved = localStorage.getItem('cbt-theme');
+    if (saved === 'light' || saved === 'dark') {
+      theme = saved;
+    } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+      theme = 'light';
+    }
+  } catch (e) {}
+  document.documentElement.setAttribute('data-theme', theme);
+})();
+</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SolutionsHub</title>
 <meta name="description" content="CodeBlue Technology solutions-consulting quoting tool.">
 <link rel="icon" type="image/png" href="assets/favicon.png">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=b7c2e91">
+<link rel="stylesheet" href="styles.css?v=e14a2c8">
 </head>
 <body>
 <div id="app-root"></div>
@@ -27,7 +44,7 @@
   <div class="app-header" style="flex:0 0 84px;display:flex;align-items:center;justify-content:space-between;padding:0 40px;background:var(--cbt-bg-header);border-bottom:1px solid var(--cbt-border-header);">
     <div style="display:flex;align-items:center;gap:22px;">
       <div style="display:flex;align-items:center;gap:10px;cursor:pointer;" data-on-click="{{goOverview}}">
-        <img src="{{logoWhite}}" alt="CodeBlue Technology" style="height:34px;width:auto;object-fit:contain;" />
+        <img src="{{logoForTheme}}" alt="CodeBlue Technology" style="height:34px;width:auto;object-fit:contain;" />
       </div>
       <sc-if value="{{showBreadcrumb}}" hint-placeholder-val="{{false}}">
         <div style="display:flex;align-items:center;gap:8px;color:var(--cbt-text-on-dark-muted);font-size:14px;">
@@ -39,7 +56,15 @@
     <div style="display:flex;align-items:center;gap:12px;">
       <!-- Zultys Call Experience Configurator link moved into the Solutions
            Creator tile grid 2026-09-16, per Michael -- no longer in the header. -->
-      <button data-on-click="{{openSummary}}" style="display:flex;align-items:center;gap:8px;background:var(--cbt-bg-control);border:1px solid var(--cbt-border-control);color:white;font-size:14px;font-weight:600;padding:10px 18px;border-radius:999px;cursor:pointer;">
+      <button data-on-click="{{onToggleTheme}}" aria-label="{{themeToggleLabel}}" title="{{themeToggleLabel}}" style="display:flex;align-items:center;justify-content:center;width:38px;height:38px;background:var(--cbt-bg-control);border:1px solid var(--cbt-border-control);border-radius:999px;cursor:pointer;color:var(--cbt-text-on-dark-primary);">
+        <sc-if value="{{isDarkTheme}}" hint-placeholder-val="{{true}}">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"></path></svg>
+        </sc-if>
+        <sc-if value="{{isLightTheme}}" hint-placeholder-val="{{false}}">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+        </sc-if>
+      </button>
+      <button data-on-click="{{openSummary}}" style="display:flex;align-items:center;gap:8px;background:var(--cbt-bg-control);border:1px solid var(--cbt-border-control);color:var(--cbt-text-on-dark-primary);font-size:14px;font-weight:600;padding:10px 18px;border-radius:999px;cursor:pointer;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h2l2.4 12.2a2 2 0 0 0 2 1.6h7.2a2 2 0 0 0 2-1.6L21 8H6"></path><circle cx="9.5" cy="21" r="1"></circle><circle cx="17.5" cy="21" r="1"></circle></svg>
         Solution
         <span style="background:{{accentColor}};color:white;font-size:12px;font-weight:700;min-width:20px;height:20px;border-radius:999px;display:flex;align-items:center;justify-content:center;padding:0 5px;">{{selectionCount}}</span>
@@ -57,7 +82,7 @@
           <img src="assets/clyde-solution-helper.png" alt="CodeBlue Clyde — Solution Helper" style="width:150px;max-width:38vw;height:auto;flex:0 0 auto;" />
           <div style="flex:1;min-width:300px;">
 
-        <div style="font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:700;color:white;max-width:680px;line-height:1.15;">What can we build for you today?</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:700;color:var(--cbt-text-on-dark-primary);max-width:680px;line-height:1.15;">What can we build for you today?</div>
         <div style="margin-top:10px;font-size:15px;color:var(--cbt-text-on-dark-tertiary);max-width:620px;">Start wide, then tap into whatever's relevant to this conversation. Nothing here commits to anything — it's a starting point to think through together.</div>
 
           </div>
@@ -131,7 +156,7 @@
           <div data-on-click="{{goOverview}}" style="width:36px;height:36px;border-radius:999px;background:var(--cbt-bg-control-2);display:flex;align-items:center;justify-content:center;cursor:pointer;">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
           </div>
-          <div style="font-family:'Space Grotesk',sans-serif;font-size:25px;font-weight:700;color:white;">Solutions Creator</div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:25px;font-weight:700;color:var(--cbt-text-on-dark-primary);">Solutions Creator</div>
         </div>
         <div style="margin-top:8px;margin-left:50px;font-size:14px;color:oklch(0.62 0.02 255);max-width:680px;">Search services, or tap into whatever's relevant to this conversation.</div>
 
@@ -279,7 +304,7 @@
           <div data-on-click="{{backToSolutionsCreator}}" style="width:36px;height:36px;border-radius:999px;background:var(--cbt-bg-control-2);display:flex;align-items:center;justify-content:center;cursor:pointer;">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
           </div>
-          <div style="font-family:'Space Grotesk',sans-serif;font-size:25px;font-weight:700;color:white;">{{currentPillar.name}}</div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:25px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{currentPillar.name}}</div>
         </div>
         <div style="margin-top:8px;margin-left:50px;font-size:14px;color:oklch(0.62 0.02 255);max-width:680px;">{{currentPillar.tagline}}</div>
 
@@ -318,7 +343,7 @@
         </div>
 
         <div style="margin-left:50px;max-width:740px;">
-          <div style="font-family:'Space Grotesk',sans-serif;font-size:27px;font-weight:700;color:white;margin-top:6px;">{{currentService.name}}</div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:27px;font-weight:700;color:var(--cbt-text-on-dark-primary);margin-top:6px;">{{currentService.name}}</div>
           <div style="margin-top:10px;font-size:15px;line-height:1.55;color:var(--cbt-text-on-dark-secondary);">{{currentService.blurb}}</div>
 
           <div style="margin-top:22px;background:var(--cbt-bg-panel);border-radius:14px;padding:18px 22px;">
@@ -329,11 +354,11 @@
           <sc-if value="{{currentService.hasPresentation}}" hint-placeholder-val="{{false}}">
             <div style="margin-top:26px;">
               <div style="font-size:11px;font-weight:700;letter-spacing:.08em;color:{{accentColor}};text-transform:uppercase;">{{currentService.presentationVM.eyebrow}}</div>
-              <div style="margin-top:6px;font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:700;color:white;">{{currentService.presentationVM.headline}}</div>
+              <div style="margin-top:6px;font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{currentService.presentationVM.headline}}</div>
               <div style="margin-top:4px;font-size:14px;color:oklch(0.72 0.02 255);">{{currentService.presentationVM.tagline}}</div>
               <div style="margin-top:14px;font-size:13.5px;line-height:1.6;color:oklch(0.78 0.01 255);">{{currentService.presentationVM.intro}}</div>
               <div style="margin-top:16px;background:var(--cbt-bg-panel);border-left:3px solid {{accentColor}};border-radius:10px;padding:16px 20px;">
-                <div style="font-size:14.5px;font-style:italic;line-height:1.5;color:white;">“{{currentService.presentationVM.quote}}”</div>
+                <div style="font-size:14.5px;font-style:italic;line-height:1.5;color:var(--cbt-text-on-dark-primary);">“{{currentService.presentationVM.quote}}”</div>
                 <div style="margin-top:8px;font-size:12px;color:var(--cbt-text-on-dark-tertiary);">— {{currentService.presentationVM.quoteAttribution}}</div>
               </div>
               <div style="margin-top:14px;font-size:12.5px;line-height:1.55;color:oklch(0.62 0.02 255);">{{currentService.presentationVM.historyNote}}</div>
@@ -342,7 +367,7 @@
                 <div style="margin-top:30px;">
                   <div style="display:flex;align-items:baseline;gap:10px;">
                     <div style="font-size:12px;font-weight:700;color:{{accentColor}};">{{sec.number}}</div>
-                    <div style="font-size:15px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.04em;">{{sec.title}}</div>
+                    <div style="font-size:15px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.04em;">{{sec.title}}</div>
                   </div>
 
                   <sc-if value="{{sec.isCards}}" hint-placeholder-val="{{false}}">
@@ -376,7 +401,7 @@
                       <sc-for list="{{sec.contact}}" as="row" hint-placeholder-count="4">
                         <div>
                           <div style="font-size:11px;font-weight:700;color:var(--cbt-text-on-dark-muted);text-transform:uppercase;letter-spacing:.04em;">{{row.label}}</div>
-                          <div style="margin-top:3px;font-size:13.5px;font-weight:600;color:white;">{{row.value}}</div>
+                          <div style="margin-top:3px;font-size:13.5px;font-weight:600;color:var(--cbt-text-on-dark-primary);">{{row.value}}</div>
                         </div>
                       </sc-for>
                     </div>
@@ -409,7 +434,7 @@
           </sc-if>
 
           <sc-if value="{{currentService.hasOptions}}" hint-placeholder-val="{{false}}">
-            <div style="margin-top:30px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Options to discuss</div>
+            <div style="margin-top:30px;font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">Options to discuss</div>
             <div style="margin-top:14px;display:flex;gap:16px;flex-wrap:wrap;">
               <sc-for list="{{currentService.options}}" as="opt" hint-placeholder-count="2">
                 <div data-on-click="{{opt.onClick}}" style="{{opt.cardStyle}}">
@@ -444,7 +469,7 @@
 
           <sc-if value="{{isManagedIT}}" hint-placeholder-val="{{false}}">
             <div style="margin-top:26px;">
-              <div style="font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">How is this sold?</div>
+              <div style="font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">How is this sold?</div>
               <div style="display:flex;gap:12px;">
                 <div data-on-click="{{managedItVM.setPeopleFirst}}" style="{{managedItVM.peopleFirstStyle}}">
                   <div style="font-weight:700;font-size:15px;color:{{managedItVM.peopleFirstTitleColor}};">PeopleFirst Membership</div>
@@ -457,14 +482,14 @@
               </div>
 
               <sc-if value="{{managedItVM.approachIsPeopleFirst}}" hint-placeholder-val="{{true}}">
-                <div style="margin-top:28px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Size the network</div>
+                <div style="margin-top:28px;font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">Size the network</div>
                 <div style="margin-top:4px;font-size:12.5px;color:var(--cbt-text-on-light-muted);">Forecast this together with the customer — it's easy to true up later.</div>
                 <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px;">
                   <div style="background:var(--cbt-bg-panel);border-radius:12px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;border:1px solid {{accentColor}};">
-                    <div style="font-size:14px;color:white;font-weight:700;">Full-Time Staff Members (coverage)</div>
+                    <div style="font-size:14px;color:var(--cbt-text-on-dark-primary);font-weight:700;">Full-Time Staff Members (coverage)</div>
                     <div style="display:flex;align-items:center;gap:14px;">
-                      <button data-on-click="{{managedItVM.membersDec}}" style="width:30px;height:30px;border-radius:999px;background:var(--cbt-bg-control-3);border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
-                      <div style="min-width:26px;text-align:center;font-size:15px;font-weight:700;color:white;">{{managedItVM.members}}</div>
+                      <button data-on-click="{{managedItVM.membersDec}}" style="width:30px;height:30px;border-radius:999px;background:var(--cbt-bg-control-3);border:none;color:var(--cbt-text-on-dark-primary);font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                      <div style="min-width:26px;text-align:center;font-size:15px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{managedItVM.members}}</div>
                       <button data-on-click="{{managedItVM.membersInc}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
                     </div>
                   </div>
@@ -472,8 +497,8 @@
                     <div style="background:var(--cbt-bg-panel);border-radius:12px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;">
                       <div style="font-size:14px;color:oklch(0.85 0.01 255);font-weight:600;">{{row.label}}</div>
                       <div style="display:flex;align-items:center;gap:14px;">
-                        <button data-on-click="{{row.onDec}}" style="width:30px;height:30px;border-radius:999px;background:var(--cbt-bg-control-3);border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
-                        <div style="min-width:26px;text-align:center;font-size:15px;font-weight:700;color:white;">{{row.qty}}</div>
+                        <button data-on-click="{{row.onDec}}" style="width:30px;height:30px;border-radius:999px;background:var(--cbt-bg-control-3);border:none;color:var(--cbt-text-on-dark-primary);font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                        <div style="min-width:26px;text-align:center;font-size:15px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{row.qty}}</div>
                         <button data-on-click="{{row.onInc}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
                       </div>
                     </div>
@@ -481,7 +506,7 @@
                 </div>
               </sc-if>
 
-              <div style="margin-top:28px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Hardware — Provided Firewall</div>
+              <div style="margin-top:28px;font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">Hardware — Provided Firewall</div>
               <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px;">
                 <sc-for list="{{managedItVM.miFirewalls}}" as="fw" hint-placeholder-count="3">
                   <div data-on-click="{{fw.onClick}}" style="{{fw.cardStyle}}">
@@ -501,7 +526,7 @@
                 </sc-for>
               </div>
 
-              <div style="margin-top:28px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Security Software</div>
+              <div style="margin-top:28px;font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">Security Software</div>
               <div style="margin-top:4px;font-size:12.5px;color:var(--cbt-text-on-light-muted);">{{managedItVM.securitySoftwareHint}}</div>
               <sc-if value="{{managedItVM.approachIsAlaCarte}}" hint-placeholder-val="{{false}}">
                 <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px;">
@@ -516,8 +541,8 @@
                           </sc-if>
                         </div>
                         <div style="display:flex;align-items:center;gap:14px;">
-                          <button data-on-click="{{sw.onDec}}" style="width:30px;height:30px;border-radius:999px;background:var(--cbt-bg-control-3);border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
-                          <div style="min-width:26px;text-align:center;font-size:15px;font-weight:700;color:white;">{{sw.qty}}</div>
+                          <button data-on-click="{{sw.onDec}}" style="width:30px;height:30px;border-radius:999px;background:var(--cbt-bg-control-3);border:none;color:var(--cbt-text-on-dark-primary);font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                          <div style="min-width:26px;text-align:center;font-size:15px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{sw.qty}}</div>
                           <button data-on-click="{{sw.onInc}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
                         </div>
                       </div>
@@ -540,8 +565,8 @@
                         </sc-if>
                       </div>
                       <div style="display:flex;align-items:center;gap:14px;">
-                        <button data-on-click="{{ad.onDec}}" style="width:30px;height:30px;border-radius:999px;background:var(--cbt-bg-control-3);border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
-                        <div style="min-width:26px;text-align:center;font-size:15px;font-weight:700;color:white;">{{ad.qty}}</div>
+                        <button data-on-click="{{ad.onDec}}" style="width:30px;height:30px;border-radius:999px;background:var(--cbt-bg-control-3);border:none;color:var(--cbt-text-on-dark-primary);font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                        <div style="min-width:26px;text-align:center;font-size:15px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{ad.qty}}</div>
                         <button data-on-click="{{ad.onInc}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
                       </div>
                     </div>
@@ -554,17 +579,17 @@
 
               <div style="margin-top:28px;background:var(--cbt-bg-panel);border-radius:12px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;">
                 <div>
-                  <div style="font-size:14px;color:white;font-weight:700;">Support Labor Rate</div>
+                  <div style="font-size:14px;color:var(--cbt-text-on-dark-primary);font-weight:700;">Support Labor Rate</div>
                   <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);margin-top:2px;">CodeBlue's Hourly Rate — default $180/hr.</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:14px;">
-                  <button data-on-click="{{managedItVM.rateDec}}" style="width:30px;height:30px;border-radius:999px;background:var(--cbt-bg-control-3);border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
-                  <div style="min-width:60px;text-align:center;font-size:15px;font-weight:700;color:white;">${{managedItVM.hourlyRate}}/hr</div>
+                  <button data-on-click="{{managedItVM.rateDec}}" style="width:30px;height:30px;border-radius:999px;background:var(--cbt-bg-control-3);border:none;color:var(--cbt-text-on-dark-primary);font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                  <div style="min-width:60px;text-align:center;font-size:15px;font-weight:700;color:var(--cbt-text-on-dark-primary);">${{managedItVM.hourlyRate}}/hr</div>
                   <button data-on-click="{{managedItVM.rateInc}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
                 </div>
               </div>
 
-              <div style="margin-top:30px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">The Numbers</div>
+              <div style="margin-top:30px;font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">The Numbers</div>
               <div class="mi-devices-grid" style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
                 <div style="background:var(--cbt-card-bg);border-radius:14px;padding:16px 18px;">
                   <div style="font-size:11px;font-weight:700;color:var(--cbt-text-on-dark-faint);text-transform:uppercase;letter-spacing:.05em;">Software Cost</div>
@@ -578,7 +603,7 @@
                 </div>
                 <div style="background:{{accentColor}};border-radius:14px;padding:16px 18px;">
                   <div style="font-size:11px;font-weight:700;color:oklch(0.95 0.01 255);text-transform:uppercase;letter-spacing:.05em;">{{managedItVM.supportLabel}}</div>
-                  <div style="margin-top:6px;font-size:19px;font-weight:700;color:white;">{{managedItVM.supportText}}</div>
+                  <div style="margin-top:6px;font-size:19px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{managedItVM.supportText}}</div>
                   <div style="margin-top:4px;font-size:11.5px;color:oklch(0.92 0.01 255);">{{managedItVM.supportSub}}</div>
                 </div>
                 <div style="background:var(--cbt-card-bg);border-radius:14px;padding:16px 18px;">
@@ -594,18 +619,18 @@
               <sc-if value="{{managedItVM.showOnboardingDiscount}}" hint-placeholder-val="{{true}}">
                 <div style="margin-top:30px;background:var(--cbt-bg-panel);border-radius:12px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;">
                   <div>
-                    <div style="font-size:14px;color:white;font-weight:700;">Existing-Customer Onboarding Discount</div>
+                    <div style="font-size:14px;color:var(--cbt-text-on-dark-primary);font-weight:700;">Existing-Customer Onboarding Discount</div>
                     <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);margin-top:2px;">For companies already with CodeBlue onboarding onto PeopleFirst — up to 50% off the one-time onboarding total.</div>
                   </div>
                   <div style="display:flex;align-items:center;gap:14px;flex:0 0 auto;">
-                    <button data-on-click="{{managedItVM.discountDec}}" style="width:30px;height:30px;border-radius:999px;background:var(--cbt-bg-control-3);border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
-                    <div style="min-width:40px;text-align:center;font-size:15px;font-weight:700;color:white;">{{managedItVM.onboardingDiscountPct}}%</div>
+                    <button data-on-click="{{managedItVM.discountDec}}" style="width:30px;height:30px;border-radius:999px;background:var(--cbt-bg-control-3);border:none;color:var(--cbt-text-on-dark-primary);font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                    <div style="min-width:40px;text-align:center;font-size:15px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{managedItVM.onboardingDiscountPct}}%</div>
                     <button data-on-click="{{managedItVM.discountInc}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
                   </div>
                 </div>
               </sc-if>
 
-              <div style="margin-top:30px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">On-Site Support Travel</div>
+              <div style="margin-top:30px;font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">On-Site Support Travel</div>
               <div style="margin-top:4px;font-size:12.5px;color:var(--cbt-text-on-light-muted);">Many customers are far enough away that a one-way trip charge applies per visit — set this per deal. Carries through to the Check Out proposal.</div>
               <div style="margin-top:12px;display:flex;gap:10px;">
                 <div data-on-click="{{managedItVM.setTravelIncluded}}" style="{{managedItVM.travelIncludedStyle}}">
@@ -626,16 +651,16 @@
                 </div>
               </div>
 
-              <div style="margin-top:30px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Customer's Current Monthly IT Spend <span style="font-weight:400;text-transform:none;color:var(--cbt-text-on-dark-muted);">(optional)</span></div>
+              <div style="margin-top:30px;font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">Customer's Current Monthly IT Spend <span style="font-weight:400;text-transform:none;color:var(--cbt-text-on-dark-muted);">(optional)</span></div>
               <div style="margin-top:4px;font-size:12.5px;color:var(--cbt-text-on-light-muted);">Feeds the old-vs-new comparison on the Check Out proposal — leave blank to skip it.</div>
               <div style="margin-top:10px;display:flex;align-items:center;gap:8px;">
                 <span style="font-size:14px;color:var(--cbt-text-on-dark-secondary);">$</span>
-                <input type="number" min="0" value="{{managedItVM.currentSpendText}}" data-on-input="{{managedItVM.onCurrentSpendInput}}" placeholder="0.00" style="width:160px;font-size:14px;padding:9px 10px;border:1px solid var(--cbt-border-control);border-radius:8px;background:var(--cbt-bg-panel);color:white;font-family:'IBM Plex Sans',sans-serif;">
+                <input type="number" min="0" value="{{managedItVM.currentSpendText}}" data-on-input="{{managedItVM.onCurrentSpendInput}}" placeholder="0.00" style="width:160px;font-size:14px;padding:9px 10px;border:1px solid var(--cbt-border-control);border-radius:8px;background:var(--cbt-bg-panel);color:var(--cbt-text-on-dark-primary);font-family:'IBM Plex Sans',sans-serif;">
                 <span style="font-size:12px;color:var(--cbt-text-on-dark-muted);">/ month</span>
               </div>
 
               <div style="margin-top:14px;background:var(--cbt-bg-panel);border:1px solid var(--cbt-bg-control-5);border-radius:12px;padding:14px 16px;">
-                <div style="font-size:12.5px;font-weight:700;color:white;">Or Upload Their Current Invoice (PDF)</div>
+                <div style="font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);">Or Upload Their Current Invoice (PDF)</div>
                 <div style="margin-top:3px;font-size:11.5px;color:var(--cbt-text-on-light-muted);">Claude reads it, fills in the number above, and builds a line-item breakdown for the side-by-side comparison on Check Out.</div>
 
                 <sc-if value="{{managedItVM.invoiceIsIdle}}" hint-placeholder-val="{{true}}">
@@ -657,7 +682,7 @@
                 <sc-if value="{{managedItVM.invoiceIsError}}" hint-placeholder-val="{{false}}">
                   <div style="margin-top:10px;">
                     <div style="font-size:12.5px;color:oklch(0.65 0.16 40);">{{managedItVM.invoiceErrorText}}</div>
-                    <button data-on-click="{{managedItVM.onInvoiceRetry}}" style="margin-top:8px;background:var(--cbt-bg-control-3);color:white;border:none;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:999px;cursor:pointer;">Try Again</button>
+                    <button data-on-click="{{managedItVM.onInvoiceRetry}}" style="margin-top:8px;background:var(--cbt-bg-control-3);color:var(--cbt-text-on-dark-primary);border:none;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:999px;cursor:pointer;">Try Again</button>
                   </div>
                 </sc-if>
 
@@ -668,7 +693,7 @@
                 <sc-if value="{{managedItVM.invoiceIsDone}}" hint-placeholder-val="{{false}}">
                   <div style="margin-top:12px;background:var(--cbt-bg-page);border-radius:10px;padding:12px 14px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-                      <div style="font-size:12.5px;font-weight:700;color:white;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{managedItVM.invoiceFileName}}</div>
+                      <div style="font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{managedItVM.invoiceFileName}}</div>
                       <button data-on-click="{{managedItVM.onInvoiceRemove}}" style="flex:0 0 auto;background:none;border:none;color:var(--cbt-text-on-light-muted);font-size:12px;cursor:pointer;">Remove</button>
                     </div>
                     <sc-if value="{{managedItVM.invoiceHasVendor}}" hint-placeholder-val="{{false}}">
@@ -681,7 +706,7 @@
                         </div>
                       </sc-for>
                     </div>
-                    <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--cbt-bg-control-4);display:flex;justify-content:space-between;font-size:13px;font-weight:700;color:white;">
+                    <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--cbt-bg-control-4);display:flex;justify-content:space-between;font-size:13px;font-weight:700;color:var(--cbt-text-on-dark-primary);">
                       <span>Total</span><span>{{managedItVM.invoiceMonthlyTotalText}}</span>
                     </div>
                     <sc-if value="{{managedItVM.invoiceHasNotes}}" hint-placeholder-val="{{false}}">
@@ -698,9 +723,9 @@
               </div>
 
               <div style="margin-top:22px;">
-                <div style="font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Rep Notes <span style="font-weight:400;text-transform:none;color:var(--cbt-text-on-dark-muted);">(optional — visible to the inside rep fulfilling this)</span></div>
+                <div style="font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">Rep Notes <span style="font-weight:400;text-transform:none;color:var(--cbt-text-on-dark-muted);">(optional — visible to the inside rep fulfilling this)</span></div>
                 <div style="margin-top:10px;position:relative;">
-                  <textarea value="{{managedItVM.noteText}}" data-on-input="{{managedItVM.onNoteInput}}" rows="3" placeholder="Type or dictate notes for this service — configuration details, site conditions, customer asks…" style="width:100%;box-sizing:border-box;resize:vertical;font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;line-height:1.5;color:white;background:var(--cbt-bg-panel);border:1px solid var(--cbt-border-control);border-radius:12px;padding:12px 44px 12px 14px;"></textarea>
+                  <textarea value="{{managedItVM.noteText}}" data-on-input="{{managedItVM.onNoteInput}}" rows="3" placeholder="Type or dictate notes for this service — configuration details, site conditions, customer asks…" style="width:100%;box-sizing:border-box;resize:vertical;font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;line-height:1.5;color:var(--cbt-text-on-dark-primary);background:var(--cbt-bg-panel);border:1px solid var(--cbt-border-control);border-radius:12px;padding:12px 44px 12px 14px;"></textarea>
                   <sc-if value="{{managedItVM.noteVoiceSupported}}" hint-placeholder-val="{{false}}">
                     <button data-on-click="{{managedItVM.onNoteVoiceClick}}" aria-label="Dictate notes" style="{{managedItVM.noteVoiceBtnStyle}}">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
@@ -720,26 +745,26 @@
 
           <sc-if value="{{isVcio}}" hint-placeholder-val="{{false}}">
             <div style="margin-top:26px;">
-              <div style="font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Hours per month</div>
+              <div style="font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">Hours per month</div>
               <div style="margin-top:4px;font-size:12.5px;color:var(--cbt-text-on-light-muted);">Sliding scale, 2–8 hours/month — set by the rep based on the customer's needs.</div>
               <div style="margin-top:14px;background:var(--cbt-bg-panel);border-radius:12px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;">
                 <div>
-                  <div style="font-size:14px;color:white;font-weight:700;">Fractional CIO Time</div>
+                  <div style="font-size:14px;color:var(--cbt-text-on-dark-primary);font-weight:700;">Fractional CIO Time</div>
                   <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);margin-top:2px;">{{vcioVM.rateText}} per hour, billed monthly</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:14px;">
-                  <button data-on-click="{{vcioVM.hoursDec}}" style="width:30px;height:30px;border-radius:999px;background:var(--cbt-bg-control-3);border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
-                  <div style="min-width:70px;text-align:center;font-size:15px;font-weight:700;color:white;">{{vcioVM.hours}} hrs/mo</div>
+                  <button data-on-click="{{vcioVM.hoursDec}}" style="width:30px;height:30px;border-radius:999px;background:var(--cbt-bg-control-3);border:none;color:var(--cbt-text-on-dark-primary);font-size:17px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                  <div style="min-width:70px;text-align:center;font-size:15px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{vcioVM.hours}} hrs/mo</div>
                   <button data-on-click="{{vcioVM.hoursInc}}" style="width:30px;height:30px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:17px;font-weight:700;cursor:pointer;line-height:1;">+</button>
                 </div>
               </div>
 
               <div style="margin-top:20px;background:{{accentColor}};border-radius:14px;padding:16px 18px;">
                 <div style="font-size:11px;font-weight:700;color:oklch(0.95 0.01 255);text-transform:uppercase;letter-spacing:.05em;">Monthly Investment</div>
-                <div style="margin-top:6px;font-size:19px;font-weight:700;color:white;">{{vcioVM.priceText}}</div>
+                <div style="margin-top:6px;font-size:19px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{vcioVM.priceText}}</div>
               </div>
 
-              <div style="margin-top:28px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">What's included</div>
+              <div style="margin-top:28px;font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">What's included</div>
               <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px;">
                 <sc-for list="{{vcioVM.vcioAreas}}" as="area" hint-placeholder-count="4">
                   <div style="background:var(--cbt-card-bg);border-radius:14px;padding:16px 20px;">
@@ -750,9 +775,9 @@
               </div>
 
               <div style="margin-top:22px;">
-                <div style="font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Rep Notes <span style="font-weight:400;text-transform:none;color:var(--cbt-text-on-dark-muted);">(optional — visible to the inside rep fulfilling this)</span></div>
+                <div style="font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">Rep Notes <span style="font-weight:400;text-transform:none;color:var(--cbt-text-on-dark-muted);">(optional — visible to the inside rep fulfilling this)</span></div>
                 <div style="margin-top:10px;position:relative;">
-                  <textarea value="{{vcioVM.noteText}}" data-on-input="{{vcioVM.onNoteInput}}" rows="3" placeholder="Type or dictate notes for this service — configuration details, site conditions, customer asks…" style="width:100%;box-sizing:border-box;resize:vertical;font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;line-height:1.5;color:white;background:var(--cbt-bg-panel);border:1px solid var(--cbt-border-control);border-radius:12px;padding:12px 44px 12px 14px;"></textarea>
+                  <textarea value="{{vcioVM.noteText}}" data-on-input="{{vcioVM.onNoteInput}}" rows="3" placeholder="Type or dictate notes for this service — configuration details, site conditions, customer asks…" style="width:100%;box-sizing:border-box;resize:vertical;font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;line-height:1.5;color:var(--cbt-text-on-dark-primary);background:var(--cbt-bg-panel);border:1px solid var(--cbt-border-control);border-radius:12px;padding:12px 44px 12px 14px;"></textarea>
                   <sc-if value="{{vcioVM.noteVoiceSupported}}" hint-placeholder-val="{{false}}">
                     <button data-on-click="{{vcioVM.onNoteVoiceClick}}" aria-label="Dictate notes" style="{{vcioVM.noteVoiceBtnStyle}}">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
@@ -771,7 +796,7 @@
           </sc-if>
 
           <sc-if value="{{isCategoryService}}" hint-placeholder-val="{{false}}">
-            <div style="margin-top:30px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Choose a category</div>
+            <div style="margin-top:30px;font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">Choose a category</div>
             <div style="margin-top:4px;font-size:12.5px;color:var(--cbt-text-on-light-muted);">Tap into a category to see the relevant products.</div>
             <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:14px;">
               <sc-for list="{{categoryServiceVM.categories}}" as="cat" hint-placeholder-count="4">
@@ -815,18 +840,18 @@
           <div style="font-size:12px;font-weight:700;letter-spacing:.08em;color:{{accentColor}};text-transform:uppercase;">{{currentCategory.pillarName}} / {{currentCategory.serviceName}}</div>
         </div>
         <div style="margin-left:50px;max-width:740px;">
-          <div style="font-family:'Space Grotesk',sans-serif;font-size:27px;font-weight:700;color:white;margin-top:6px;">{{currentCategory.name}}</div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:27px;font-weight:700;color:var(--cbt-text-on-dark-primary);margin-top:6px;">{{currentCategory.name}}</div>
           <div style="margin-top:10px;font-size:15px;line-height:1.55;color:var(--cbt-text-on-dark-secondary);">{{currentCategory.blurb}}</div>
 
           <sc-if value="{{currentCategory.hasDeviceCountFeature}}" hint-placeholder-val="{{false}}">
             <div style="margin-top:24px;background:var(--cbt-bg-panel);border:1px solid var(--cbt-bg-control-5);border-radius:14px;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;">
               <div>
-                <div style="font-weight:700;font-size:14.5px;color:white;">{{currentCategory.deviceCountLabel}}</div>
+                <div style="font-weight:700;font-size:14.5px;color:var(--cbt-text-on-dark-primary);">{{currentCategory.deviceCountLabel}}</div>
                 <div style="margin-top:4px;font-size:12px;line-height:1.5;color:oklch(0.62 0.02 255);">Adjusts Remote Access Agent, Patch Management, and Guardz by the same amount — fine-tune any product below afterward as needed.</div>
               </div>
               <div style="display:flex;align-items:center;gap:14px;flex:0 0 auto;">
-                <button data-on-click="{{currentCategory.onDecDeviceCount}}" style="width:32px;height:32px;border-radius:999px;background:var(--cbt-bg-control-4);border:none;color:white;font-size:18px;font-weight:700;cursor:pointer;line-height:1;">−</button>
-                <div style="min-width:32px;text-align:center;font-size:17px;font-weight:700;color:white;">{{currentCategory.deviceCountText}}</div>
+                <button data-on-click="{{currentCategory.onDecDeviceCount}}" style="width:32px;height:32px;border-radius:999px;background:var(--cbt-bg-control-4);border:none;color:var(--cbt-text-on-dark-primary);font-size:18px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                <div style="min-width:32px;text-align:center;font-size:17px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{currentCategory.deviceCountText}}</div>
                 <button data-on-click="{{currentCategory.onIncDeviceCount}}" style="width:32px;height:32px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:18px;font-weight:700;cursor:pointer;line-height:1;">+</button>
               </div>
             </div>
@@ -842,7 +867,7 @@
             <sc-if value="{{currentCategory.isPriced}}" hint-placeholder-val="{{false}}">
               <sc-for list="{{currentCategory.groups}}" as="grp" hint-placeholder-count="2">
                 <sc-if value="{{grp.hasName}}" hint-placeholder-val="{{false}}">
-                  <div style="margin-top:26px;font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">{{grp.name}}</div>
+                  <div style="margin-top:26px;font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">{{grp.name}}</div>
                 </sc-if>
                 <sc-if value="{{grp.hasToggle}}" hint-placeholder-val="{{false}}">
                   <div style="margin-top:10px;display:inline-flex;background:var(--cbt-bg-panel);border:1px solid var(--cbt-bg-control-5);border-radius:999px;padding:4px;gap:4px;">
@@ -895,12 +920,12 @@
                 <div style="margin-top:20px;display:flex;gap:12px;">
                   <div style="flex:1;background:{{accentColor}};border-radius:14px;padding:16px 18px;">
                     <div style="font-size:11px;font-weight:700;color:oklch(0.95 0.01 255);text-transform:uppercase;letter-spacing:.05em;">Monthly Total</div>
-                    <div style="margin-top:6px;font-size:19px;font-weight:700;color:white;">{{currentCategory.totalText}}</div>
+                    <div style="margin-top:6px;font-size:19px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{currentCategory.totalText}}</div>
                   </div>
                   <sc-if value="{{currentCategory.hasOnboarding}}" hint-placeholder-val="{{false}}">
                     <div style="flex:1;background:var(--cbt-bg-control-2);border:1px solid var(--cbt-border-control);border-radius:14px;padding:16px 18px;">
                       <div style="font-size:11px;font-weight:700;color:var(--cbt-text-on-dark-secondary);text-transform:uppercase;letter-spacing:.05em;">Onboarding Total</div>
-                      <div style="margin-top:6px;font-size:19px;font-weight:700;color:white;">{{currentCategory.onboardingTotalText}}</div>
+                      <div style="margin-top:6px;font-size:19px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{currentCategory.onboardingTotalText}}</div>
                     </div>
                   </sc-if>
                 </div>
@@ -1133,9 +1158,9 @@
             </sc-if>
 
             <div style="margin-top:22px;">
-              <div style="font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Rep Notes <span style="font-weight:400;text-transform:none;color:var(--cbt-text-on-dark-muted);">(optional — visible to the inside rep fulfilling this)</span></div>
+              <div style="font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">Rep Notes <span style="font-weight:400;text-transform:none;color:var(--cbt-text-on-dark-muted);">(optional — visible to the inside rep fulfilling this)</span></div>
               <div style="margin-top:10px;position:relative;">
-                <textarea value="{{currentCategory.noteText}}" data-on-input="{{currentCategory.onNoteInput}}" rows="3" placeholder="Type or dictate notes for this product or service — configuration details, site conditions, customer asks…" style="width:100%;box-sizing:border-box;resize:vertical;font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;line-height:1.5;color:white;background:var(--cbt-bg-panel);border:1px solid var(--cbt-border-control);border-radius:12px;padding:12px 44px 12px 14px;"></textarea>
+                <textarea value="{{currentCategory.noteText}}" data-on-input="{{currentCategory.onNoteInput}}" rows="3" placeholder="Type or dictate notes for this product or service — configuration details, site conditions, customer asks…" style="width:100%;box-sizing:border-box;resize:vertical;font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;line-height:1.5;color:var(--cbt-text-on-dark-primary);background:var(--cbt-bg-panel);border:1px solid var(--cbt-border-control);border-radius:12px;padding:12px 44px 12px 14px;"></textarea>
                 <sc-if value="{{currentCategory.noteVoiceSupported}}" hint-placeholder-val="{{false}}">
                   <button data-on-click="{{currentCategory.onNoteVoiceClick}}" aria-label="Dictate notes" style="{{currentCategory.noteVoiceBtnStyle}}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
@@ -1179,9 +1204,9 @@
                 <div data-on-click="{{currentCategory.goToSource}}" style="margin-top:14px;font-size:12px;font-weight:700;color:{{accentColor}};cursor:pointer;">Edit the primary server →</div>
               </div>
               <div style="margin-top:22px;">
-                <div style="font-size:12.5px;font-weight:700;color:white;text-transform:uppercase;letter-spacing:.05em;">Rep Notes <span style="font-weight:400;text-transform:none;color:var(--cbt-text-on-dark-muted);">(optional — visible to the inside rep fulfilling this)</span></div>
+                <div style="font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">Rep Notes <span style="font-weight:400;text-transform:none;color:var(--cbt-text-on-dark-muted);">(optional — visible to the inside rep fulfilling this)</span></div>
                 <div style="margin-top:10px;position:relative;">
-                  <textarea value="{{currentCategory.noteText}}" data-on-input="{{currentCategory.onNoteInput}}" rows="3" placeholder="Type or dictate notes for this product or service — configuration details, site conditions, customer asks…" style="width:100%;box-sizing:border-box;resize:vertical;font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;line-height:1.5;color:white;background:var(--cbt-bg-panel);border:1px solid var(--cbt-border-control);border-radius:12px;padding:12px 44px 12px 14px;"></textarea>
+                  <textarea value="{{currentCategory.noteText}}" data-on-input="{{currentCategory.onNoteInput}}" rows="3" placeholder="Type or dictate notes for this product or service — configuration details, site conditions, customer asks…" style="width:100%;box-sizing:border-box;resize:vertical;font-family:'IBM Plex Sans',sans-serif;font-size:13.5px;line-height:1.5;color:var(--cbt-text-on-dark-primary);background:var(--cbt-bg-panel);border:1px solid var(--cbt-border-control);border-radius:12px;padding:12px 44px 12px 14px;"></textarea>
                   <sc-if value="{{currentCategory.noteVoiceSupported}}" hint-placeholder-val="{{false}}">
                     <button data-on-click="{{currentCategory.onNoteVoiceClick}}" aria-label="Dictate notes" style="{{currentCategory.noteVoiceBtnStyle}}">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
@@ -1205,8 +1230,8 @@
     <sc-if value="{{isSummary}}" hint-placeholder-val="{{false}}">
       <div class="summary-print-area view-pad view-enter" style="padding:36px 56px 48px;max-width:800px;">
         <div style="display:flex;align-items:center;justify-content:space-between;">
-          <div style="font-family:'Space Grotesk',sans-serif;font-size:27px;font-weight:700;color:white;">Your Solution</div>
-          <button data-on-click="{{closeSummary}}" style="background:var(--cbt-bg-control-2);border:1px solid var(--cbt-border-control);color:white;font-size:13.5px;font-weight:600;padding:9px 18px;border-radius:999px;cursor:pointer;">Close</button>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:27px;font-weight:700;color:var(--cbt-text-on-dark-primary);">Your Solution</div>
+          <button data-on-click="{{closeSummary}}" style="background:var(--cbt-bg-control-2);border:1px solid var(--cbt-border-control);color:var(--cbt-text-on-dark-primary);font-size:13.5px;font-weight:600;padding:9px 18px;border-radius:999px;cursor:pointer;">Close</button>
         </div>
         <div style="margin-top:14px;background:white;border-radius:12px;padding:10px 16px;display:inline-block;">
           <img src="{{logoColor}}" alt="CodeBlue Technology" style="height:34px;width:auto;object-fit:contain;display:block;" />
@@ -1334,20 +1359,20 @@
             <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;gap:14px;background:var(--cbt-bg-panel);border:1px solid var(--cbt-bg-control-5);border-radius:14px;padding:14px 18px;flex-wrap:wrap;">
               <div style="font-size:12.5px;font-weight:600;color:var(--cbt-text-on-dark-secondary);">CodeBlue's Hourly Rate — applies to all Scope of Work pricing</div>
               <div style="display:flex;align-items:center;gap:10px;">
-                <button data-on-click="{{onScopeRateDec}}" style="width:28px;height:28px;border-radius:999px;background:var(--cbt-bg-control-5);border:none;color:white;font-size:15px;font-weight:700;cursor:pointer;line-height:1;">−</button>
-                <div style="min-width:60px;text-align:center;font-size:15px;font-weight:700;color:white;">{{scopeRateText}}</div>
+                <button data-on-click="{{onScopeRateDec}}" style="width:28px;height:28px;border-radius:999px;background:var(--cbt-bg-control-5);border:none;color:var(--cbt-text-on-dark-primary);font-size:15px;font-weight:700;cursor:pointer;line-height:1;">−</button>
+                <div style="min-width:60px;text-align:center;font-size:15px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{scopeRateText}}</div>
                 <button data-on-click="{{onScopeRateInc}}" style="width:28px;height:28px;border-radius:999px;background:{{accentColor}};border:none;color:white;font-size:15px;font-weight:700;cursor:pointer;line-height:1;">+</button>
               </div>
             </div>
             <div style="margin-top:10px;background:{{accentColor}};border-radius:14px;padding:16px 18px;">
               <div style="font-size:11px;font-weight:700;color:oklch(0.95 0.01 255);text-transform:uppercase;letter-spacing:.05em;">Estimated Scope of Work / Labor Total</div>
-              <div style="margin-top:6px;font-size:19px;font-weight:700;color:white;">{{scopeGrandTotalText}}</div>
+              <div style="margin-top:6px;font-size:19px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{scopeGrandTotalText}}</div>
             </div>
           </sc-if>
           <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
-            <input value="{{customerEmail}}" data-on-input="{{onCustomerEmailInput}}" placeholder="Customer email (optional)" style="flex:1;min-width:220px;font-size:13.5px;padding:10px 12px;border:1px solid var(--cbt-bg-control-5);border-radius:8px;background:var(--cbt-bg-panel);color:white;font-family:'IBM Plex Sans',sans-serif;">
+            <input value="{{customerEmail}}" data-on-input="{{onCustomerEmailInput}}" placeholder="Customer email (optional)" style="flex:1;min-width:220px;font-size:13.5px;padding:10px 12px;border:1px solid var(--cbt-bg-control-5);border-radius:8px;background:var(--cbt-bg-panel);color:var(--cbt-text-on-dark-primary);font-family:'IBM Plex Sans',sans-serif;">
             <button data-on-click="{{onSendQuoteEmail}}" style="background:var(--cbt-success-text);border:none;color:white;font-size:13.5px;font-weight:700;padding:11px 20px;border-radius:999px;cursor:pointer;">{{sendQuoteLabel}}</button>
-            <button data-on-click="{{onPrintQuote}}" style="background:var(--cbt-bg-control-2);border:1px solid var(--cbt-border-control);color:white;font-size:13.5px;font-weight:700;padding:11px 20px;border-radius:999px;cursor:pointer;">Print Quote</button>
+            <button data-on-click="{{onPrintQuote}}" style="background:var(--cbt-bg-control-2);border:1px solid var(--cbt-border-control);color:var(--cbt-text-on-dark-primary);font-size:13.5px;font-weight:700;padding:11px 20px;border-radius:999px;cursor:pointer;">Print Quote</button>
             <button data-on-click="{{onOpenInsideSales}}" style="background:var(--cbt-purple-inside-sales);border:none;color:white;font-size:13.5px;font-weight:700;padding:11px 20px;border-radius:999px;cursor:pointer;">Send to Inside Sales</button>
           </div>
           <sc-if value="{{sendQuoteHasError}}" hint-placeholder-val="{{false}}">
@@ -1362,7 +1387,7 @@
               <div style="background:var(--cbt-bg-panel);border-radius:14px;padding:16px 20px;">
                 <div style="display:flex;align-items:center;gap:10px;">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="{{accentColor}}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 5-3.5 7.5-7 9-3.5-1.5-7-4-7-9V6l7-3z"></path></svg>
-                  <div style="font-weight:700;font-size:14.5px;color:white;">Risk Reduced</div>
+                  <div style="font-weight:700;font-size:14.5px;color:var(--cbt-text-on-dark-primary);">Risk Reduced</div>
                 </div>
                 <div style="margin-top:8px;font-size:12.5px;color:oklch(0.62 0.02 255);">Fewer blind spots, fewer surprises.</div>
                 <div style="margin-top:10px;display:flex;flex-direction:column;gap:5px;">
@@ -1376,7 +1401,7 @@
               <div style="background:var(--cbt-bg-panel);border-radius:14px;padding:16px 20px;">
                 <div style="display:flex;align-items:center;gap:10px;">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="{{accentColor}}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 4 14 12 14 11 22 20 10 12 10 13 2"></polyline></svg>
-                  <div style="font-weight:700;font-size:14.5px;color:white;">Uptime Gained</div>
+                  <div style="font-weight:700;font-size:14.5px;color:var(--cbt-text-on-dark-primary);">Uptime Gained</div>
                 </div>
                 <div style="margin-top:8px;font-size:12.5px;color:oklch(0.62 0.02 255);">Less downtime, faster recovery when something breaks.</div>
                 <div style="margin-top:10px;display:flex;flex-direction:column;gap:5px;">
@@ -1390,7 +1415,7 @@
               <div style="background:var(--cbt-bg-panel);border-radius:14px;padding:16px 20px;">
                 <div style="display:flex;align-items:center;gap:10px;">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="{{accentColor}}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M9 15.5s1 1.5 3 1.5 3-1 3-2-1-1.5-3-2-3-1-3-2 1-2 3-2 3 1.5 3 1.5"></path></svg>
-                  <div style="font-weight:700;font-size:14.5px;color:white;">Cost Avoided</div>
+                  <div style="font-weight:700;font-size:14.5px;color:var(--cbt-text-on-dark-primary);">Cost Avoided</div>
                 </div>
                 <div style="margin-top:8px;font-size:12.5px;color:oklch(0.62 0.02 255);">Spend redirected from firefighting to the business.</div>
                 <div style="margin-top:10px;display:flex;flex-direction:column;gap:5px;">
@@ -1420,8 +1445,8 @@
     <sc-if value="{{isCheckout}}" hint-placeholder-val="{{false}}">
       <div class="checkout-print-area view-pad view-enter" style="padding:36px 56px 48px;max-width:800px;">
         <div style="display:flex;align-items:center;justify-content:space-between;">
-          <div style="font-family:'Space Grotesk',sans-serif;font-size:27px;font-weight:700;color:white;">PeopleFirst Check Out</div>
-          <button data-on-click="{{checkoutVM.backToSummary}}" style="background:var(--cbt-bg-control-2);border:1px solid var(--cbt-border-control);color:white;font-size:13.5px;font-weight:600;padding:9px 18px;border-radius:999px;cursor:pointer;">← Back to Solution</button>
+          <div style="font-family:'Space Grotesk',sans-serif;font-size:27px;font-weight:700;color:var(--cbt-text-on-dark-primary);">PeopleFirst Check Out</div>
+          <button data-on-click="{{checkoutVM.backToSummary}}" style="background:var(--cbt-bg-control-2);border:1px solid var(--cbt-border-control);color:var(--cbt-text-on-dark-primary);font-size:13.5px;font-weight:600;padding:9px 18px;border-radius:999px;cursor:pointer;">← Back to Solution</button>
         </div>
         <div style="margin-top:4px;font-size:12.5px;color:var(--cbt-text-on-dark-muted);">A printer-friendly proposal, built live from what's been added to the Solution — ready to walk through at a second meeting.</div>
 
@@ -1597,7 +1622,7 @@
               </div>
               <div style="flex:1;min-width:150px;background:var(--cbt-purple-peoplefirst);border-radius:12px;padding:14px 16px;">
                 <div style="font-size:10.5px;font-weight:700;color:oklch(0.75 0.06 265);text-transform:uppercase;letter-spacing:.05em;">Total Monthly Investment</div>
-                <div style="margin-top:6px;font-size:19px;font-weight:700;color:white;">{{checkoutVM.newMonthlyTotalText}}</div>
+                <div style="margin-top:6px;font-size:19px;font-weight:700;color:var(--cbt-text-on-dark-primary);">{{checkoutVM.newMonthlyTotalText}}</div>
                 <div style="margin-top:2px;font-size:11.5px;color:oklch(0.8 0.04 265);">+ {{checkoutVM.onboardingTotalText}} onboarding</div>
                 <sc-if value="{{checkoutVM.hasOnboardingDiscount}}" hint-placeholder-val="{{false}}">
                   <div style="margin-top:2px;font-size:11.5px;color:oklch(0.85 0.08 155);">{{checkoutVM.onboardingDiscountText}}</div>
@@ -1749,8 +1774,8 @@
 </div>
 </script>
 
-<script src="app.js?v=b7c2e91"></script>
-<script src="runtime.js?v=b7c2e91"></script>
+<script src="app.js?v=e14a2c8"></script>
+<script src="runtime.js?v=e14a2c8"></script>
 <script>
   // Sign-in gate (added 2026-09-15) -- app.js/runtime.js load unconditionally
   // above (they're just static definitions; nothing runs yet), but the app
