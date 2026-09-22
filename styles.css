@@ -111,6 +111,113 @@ body { overflow-x: hidden; }
   .app-shell, .app-body { overflow-x: hidden; }
 }
 
+/* ============================= COLOR TOKENS ============================= */
+/* Added 2026-09-22 as the first step of the frontend-design pass (see the
+   "solutionshub-frontend-design-recommendations" doc). This block is purely
+   additive right now: nothing in index.html or app.js references these
+   custom properties yet, so defining them changes nothing on screen. The
+   dark-theme values below are exact copies of the literal oklch(...)/white
+   values already used throughout index.html today (confirmed by a
+   frequency/context pass over every color literal in the file) -- the goal
+   is that swapping a literal for var(--token-name) later is a no-op visually.
+   The light-mode overrides are a first design draft, not yet visually
+   checked against the live app; they'll be verified with an isolated
+   preview before the theme toggle is wired up.
+
+   Two coexisting surface systems drive the naming below, discovered while
+   cataloguing the literals: a pervasive "dark chrome" system (headers, page
+   background, content panels, most text) and a "light card" system (white
+   /near-white tiles -- the Overview pillar tiles, the search bar, and
+   several product-selection cards embedded inside otherwise-dark views)
+   that keeps dark text on a light surface in both systems' current usage.
+   Tokens are grouped to match. Status/accent colors (badges, success,
+   warning, danger, the two brand-purple uses) are shared across both
+   surface systems and, for now, kept identical between the dark and light
+   themes -- retuning them is part of the later visual-cleanup pass, not
+   this step. */
+
+:root {
+  /* Dark chrome / canvas */
+  --cbt-bg-page: oklch(0.15 0.028 255);
+  --cbt-bg-header: oklch(0.12 0.026 255);
+  --cbt-bg-panel: oklch(0.19 0.03 255);
+  --cbt-bg-control: oklch(0.2 0.03 255);
+  --cbt-bg-control-2: oklch(0.22 0.03 255);
+  --cbt-bg-control-3: oklch(0.26 0.03 255);
+  --cbt-bg-control-4: oklch(0.28 0.03 255);
+  --cbt-bg-control-5: oklch(0.3 0.03 255);
+  --cbt-border-header: oklch(0.24 0.03 255);
+  --cbt-border-control: oklch(0.32 0.03 255);
+
+  /* Light "paper" cards (Overview tiles, search bar, product cards) */
+  --cbt-card-bg: oklch(0.98 0.006 255);
+  --cbt-card-bg-alt: oklch(0.97 0.006 255);
+  --cbt-card-border: oklch(0.9 0.006 255);
+  --cbt-card-border-strong: oklch(0.88 0.006 255);
+
+  /* Text on dark chrome/panels */
+  --cbt-text-on-dark-primary: white;
+  --cbt-text-on-dark-secondary: oklch(0.7 0.02 255);
+  --cbt-text-on-dark-tertiary: oklch(0.6 0.02 255);
+  --cbt-text-on-dark-muted: oklch(0.55 0.02 255);
+  --cbt-text-on-dark-faint: oklch(0.5 0.02 255);
+  --cbt-text-on-dark-disabled: oklch(0.4 0.02 255);
+
+  /* Text on light cards */
+  --cbt-text-on-light-primary: oklch(0.2 0.03 255);
+  --cbt-text-on-light-secondary: oklch(0.45 0.02 255);
+  --cbt-text-on-light-muted: oklch(0.58 0.02 255);
+
+  /* Status / accent (shared across themes for now) */
+  --cbt-badge-amber-bg: oklch(0.78 0.14 85);
+  --cbt-badge-amber-text: oklch(0.2 0.05 85);
+  --cbt-warning-text: oklch(0.62 0.14 55);
+  --cbt-success-text: oklch(0.55 0.14 150);
+  --cbt-success-text-alt: oklch(0.5 0.14 155);
+  --cbt-danger-text: oklch(0.7 0.18 30);
+  --cbt-purple-inside-sales: oklch(0.5 0.16 300);
+  --cbt-purple-peoplefirst: oklch(0.32 0.11 265);
+  --cbt-note-bg: oklch(0.96 0.01 90);
+  --cbt-note-label: oklch(0.5 0.05 80);
+  --cbt-note-text: oklch(0.35 0.03 80);
+}
+
+/* Light theme -- draft values, not yet wired to a toggle (no code sets
+   data-theme="light" anywhere yet). Kept here so the token names are
+   final and the design intent is recorded while the analysis is fresh;
+   will be visually sanity-checked with an isolated preview before the
+   toggle ships. */
+:root[data-theme="light"] {
+  --cbt-bg-page: oklch(0.97 0.006 255);
+  --cbt-bg-header: oklch(0.99 0.003 255);
+  --cbt-bg-panel: white;
+  --cbt-bg-control: oklch(0.94 0.006 255);
+  --cbt-bg-control-2: oklch(0.92 0.006 255);
+  --cbt-bg-control-3: oklch(0.89 0.006 255);
+  --cbt-bg-control-4: oklch(0.87 0.006 255);
+  --cbt-bg-control-5: oklch(0.85 0.006 255);
+  --cbt-border-header: oklch(0.88 0.006 255);
+  --cbt-border-control: oklch(0.8 0.006 255);
+
+  /* Light cards need a real border now that the page behind them is also
+     light -- today's card-border values would nearly vanish. */
+  --cbt-card-bg: white;
+  --cbt-card-bg-alt: oklch(0.98 0.006 255);
+  --cbt-card-border: oklch(0.82 0.01 255);
+  --cbt-card-border-strong: oklch(0.78 0.01 255);
+
+  --cbt-text-on-dark-primary: oklch(0.2 0.03 255);
+  --cbt-text-on-dark-secondary: oklch(0.4 0.02 255);
+  --cbt-text-on-dark-tertiary: oklch(0.48 0.02 255);
+  --cbt-text-on-dark-muted: oklch(0.55 0.02 255);
+  --cbt-text-on-dark-faint: oklch(0.62 0.02 255);
+  --cbt-text-on-dark-disabled: oklch(0.75 0.02 255);
+
+  --cbt-text-on-light-primary: oklch(0.2 0.03 255);
+  --cbt-text-on-light-secondary: oklch(0.45 0.02 255);
+  --cbt-text-on-light-muted: oklch(0.58 0.02 255);
+}
+
 /* ============================= MOTION ============================= */
 /* Added per the animation/design-eng audit (2026-09-15). Tokens, press
    feedback, view/modal entrance, and a compositor-only cross-sell glow
