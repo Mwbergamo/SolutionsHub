@@ -1301,29 +1301,33 @@ var OPTIONAL_ADDONS = [
     description: "Per Person support for Microsoft 365 Moves and Changes. Passwords, File Access, Email and App support included." }
 ];
 
-// PeopleFirst Support illustration (added 2026-09-23, per Michael) -- the
-// device/add-on picker above drives a read-only illustration panel showing
-// what the customer is (and isn't) getting, matching the marketing graphic
-// Michael supplied. Each pill lights up (the same amber/yellow used for
-// badges/highlights elsewhere in the app) once its mapped device count or
-// add-on toggle is greater than zero -- see the isManagedIT render block
-// for the active-state computation, and styles.css's .pf-pill rules for
-// the look. Order/pairing matches Michael's mockup exactly (7 full-width
-// rows, then 3 two-across rows).
+// PeopleFirst Support illustration (added 2026-09-23, per Michael; restyled
+// 2026-09-23 -- see the note by .pf-pill in styles.css) -- the device/add-on
+// picker above drives a read-only illustration panel showing what the
+// customer is (and isn't) getting, matching the marketing graphic Michael
+// supplied. Each pill lights up (white with the same gold glow used for
+// cross-sell reminders elsewhere in the app -- see CROSS_SELL_GLOW) once
+// its mapped device count or add-on toggle is greater than zero -- see the
+// isManagedIT render block for the active-state computation. Single
+// column, one pill per row: Michael's original mockup paired the last 6
+// into a two-across grid, but at a width that actually fits every label
+// ("Data Backup for Computer", "Quarterly Risk Evaluation", ...) without
+// truncating, pairing them no longer fits next to her within the same
+// screen width -- Michael okayed changing the layout to fix the fit.
 var PEOPLEFIRST_PILLS = [
-  { key: 'computer', label: 'Computer Support', full: true },
-  { key: 'app', label: 'App Support', full: true },
-  { key: 'network', label: 'Networking Support', full: true },
-  { key: 'access', label: 'Access Control Support', full: true },
-  { key: 'printing', label: 'Printing Support', full: true },
-  { key: 'mobile', label: 'Mobile Device Support', full: true },
-  { key: 'phone', label: 'Business Phone Support', full: true },
-  { key: 'cyber', label: 'Cyber Security Coverage', full: false },
-  { key: 'wsbackup', label: 'Data Backup for Computer', full: false },
-  { key: 'mfa', label: 'MFA/2FA Support', full: false },
-  { key: 'm365support', label: 'Microsoft 365 Support', full: false },
-  { key: 'm365backup', label: 'Microsoft 365 Backup', full: false },
-  { key: 'riskscan', label: 'Quarterly Risk Evaluation', full: false }
+  { key: 'computer', label: 'Computer Support' },
+  { key: 'app', label: 'App Support' },
+  { key: 'network', label: 'Networking Support' },
+  { key: 'access', label: 'Access Control Support' },
+  { key: 'printing', label: 'Printing Support' },
+  { key: 'mobile', label: 'Mobile Device Support' },
+  { key: 'phone', label: 'Business Phone Support' },
+  { key: 'cyber', label: 'Cyber Security Coverage' },
+  { key: 'wsbackup', label: 'Data Backup for Computer' },
+  { key: 'mfa', label: 'MFA/2FA Support' },
+  { key: 'm365support', label: 'Microsoft 365 Support' },
+  { key: 'm365backup', label: 'Microsoft 365 Backup' },
+  { key: 'riskscan', label: 'Quarterly Risk Evaluation' }
 ];
 
 var FIREWALL_MODELS = [
@@ -3070,7 +3074,7 @@ class Component extends DCLogic {
         var active = !!pfActive[p.key];
         return {
           key: p.key, label: p.label,
-          pillClass: 'pf-pill' + (p.full ? ' pf-pill--full' : '') + (active ? ' pf-pill--active' : '')
+          pillClass: 'pf-pill' + (active ? ' pf-pill--active cross-sell-glow' : '')
         };
       });
 

@@ -318,60 +318,76 @@ body { overflow-x: hidden; }
    Added 2026-09-23, per Michael -- a read-only visual readout of what the
    device/add-on picker above has selected, next to a cropped version of
    the "PeopleFirst Support" campaign photo he supplied (assets/
-   peoplefirst-illustration.png). Each pill starts dark/muted and lights
-   up in the same amber highlight used for badges elsewhere in the app
-   (see .cross-sell-glow above for the same oklch(0.78 0.14 85) token)
-   once its mapped device count or add-on toggle is greater than zero --
-   see app.js's pfActive / peopleFirstPills for the mapping. Order and
-   pairing (7 full-width rows, then 3 two-across rows) matches Michael's
-   mockup exactly.
+   peoplefirst-illustration.png). See app.js's pfActive / peopleFirstPills
+   for the active-state mapping.
+
+   Restyled 2026-09-23, also per Michael, after the first pass: the
+   original two-across layout for the last 6 pills was too narrow for
+   their labels ("Data Backup for Computer", "Quarterly Risk Evaluation"),
+   and the active state used a solid gold fill -- he wanted white pills
+   with a gold glow instead, "like reminders throughout the rest of the
+   Solutions Hub." That's literally .cross-sell-glow (see above) plus the
+   near-white/gold-border card treatment CROSS_SELL_GLOW uses in app.js
+   for the cross-sell suggestion cards -- reused here rather than
+   reinvented, applied to .pf-pill--active below. Switched to one pill
+   per row (no more pairing) so every label fits on one line at a width
+   that still comfortably co-exists with her photo and the 1440px
+   breakpoint below -- pairing them and also fitting the longest labels
+   would have needed far more horizontal room than is available next to
+   the 740px-wide configurator column.
 
    Desktop-only by design, not just by convenience: the configurator
    column above is already 846px from the left edge of the viewport
    (56px view padding + 50px content margin + 740px content width), so
    this panel only has room to sit beside it -- without overlapping --
-   once the viewport is wide enough. 1440px gives ~130px of clearance;
-   Michael confirmed hiding it below that (rather than stacking it under
-   the form) is fine, so it never shows on tablets or phones, only on
-   wide desktop/laptop screens.
+   once the viewport is wide enough. Michael confirmed hiding it below
+   that (rather than stacking it under the form) is fine, so it never
+   shows on tablets or phones, only on wide desktop/laptop screens. The
+   panel is vertically centered (not pinned to a fixed top offset) so it
+   self-adjusts across the range of desktop screen heights this targets.
    ============================================================ */
 .pf-panel {
   display: none;
   position: fixed;
-  top: 130px;
+  top: 50%;
   right: 40px;
-  width: 420px;
+  transform: translateY(-50%);
+  width: 450px;
   align-items: center;
-  gap: 16px;
+  gap: 20px;
   pointer-events: none;
   z-index: 5;
 }
 .pf-pills {
-  flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  flex: 0 0 260px;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .pf-pill {
+  box-sizing: border-box;
+  width: 100%;
   border-radius: 999px;
-  padding: 13px 14px;
-  font-size: 12.5px;
+  padding: 11px 18px;
+  font-size: 13px;
   font-weight: 700;
-  line-height: 1.25;
+  line-height: 1.3;
+  white-space: nowrap;
   text-align: center;
   color: var(--cbt-text-on-dark-muted);
   background: var(--cbt-bg-control-3);
-  transition: background-color .45s ease, color .45s ease, box-shadow .45s ease;
+  border: 2px solid transparent;
+  transition: background-color .45s ease, color .45s ease, border-color .45s ease;
 }
-.pf-pill--full { grid-column: 1 / -1; }
 .pf-pill--active {
-  color: var(--cbt-badge-amber-text);
-  background: var(--cbt-badge-amber-bg);
-  box-shadow: 0 0 0 3px oklch(0.78 0.14 85 / 0.3), 0 0 18px 2px oklch(0.78 0.14 85 / 0.25);
+  color: var(--cbt-text-on-light-primary);
+  background: oklch(0.98 0.006 255);
+  border-color: oklch(0.78 0.14 85);
 }
 .pf-figure {
   flex: 0 0 auto;
-  width: 175px;
+  width: 170px;
   display: block;
   filter: drop-shadow(0 14px 26px rgba(0,0,0,.4));
 }
