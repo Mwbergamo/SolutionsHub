@@ -563,3 +563,47 @@ body { overflow-x: hidden; }
   .pm-tray { right: 16px; bottom: 16px; }
   .pm-tray-panel { width: calc(100vw - 32px); }
 }
+
+/* Project Mode star badge (2026-09-23) -- see
+   claude/solutions-creator-project-mode.md. One shared button style used
+   on pillar/service/category tiles, always placed as a normal flex-row
+   sibling next to whatever else sits at that tile's top-right (an
+   existing "N selected" badge, a checkmark, a chevron) rather than
+   absolutely positioned, so it can never overlap them. .pm-star--on is
+   the "starred" state (tapped -> added to the project cart as a
+   placeholder). Uses currentColor so the SVG star inside just inherits
+   `color` rather than needing separate fill/stroke fields computed in JS. */
+.pm-star-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  background: rgba(255,255,255,0.78);
+  color: oklch(0.55 0.02 255);
+}
+.pm-star-btn.pm-star--on {
+  background: oklch(0.78 0.14 85);
+  color: oklch(0.4 0.1 85);
+}
+.pm-star-btn svg {
+  fill: none;
+  stroke: currentColor;
+}
+.pm-star-btn.pm-star--on svg {
+  fill: currentColor;
+  stroke: currentColor;
+}
+/* Tray placeholder rows (starred but not yet configured) -- see the
+   projectTrayGroups computation in app.js. */
+.pm-tray-item--placeholder .pm-tray-item-service {
+  color: var(--cbt-text-on-light-secondary);
+}
+.pm-tray-item--placeholder .pm-tray-item-detail {
+  color: oklch(0.55 0.1 85);
+  font-weight: 600;
+}

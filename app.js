@@ -1351,7 +1351,7 @@ class Component extends DCLogic {
       // how browsing looks (gold highlight glow at every level) and shows
       // the floating project tray; projectTrayOpen tracks whether that
       // tray's expanded list is open.
-      projectMode: false, projectTrayOpen: false,
+      projectMode: false, projectTrayOpen: false, projectStars: {},
       view: 'overview', pillarId: null, serviceId: null, categoryId: null, selections: {}, returnView: 'overview', returnPillarId: null,
       searchQuery: '', voiceListening: false,
       managedIT: {
@@ -1569,6 +1569,62 @@ class Component extends DCLogic {
     this.setState({ projectMode: next, projectTrayOpen: next ? this.state.projectTrayOpen : false });
   }
   toggleProjectTray() { this.setState({ projectTrayOpen: !this.state.projectTrayOpen }); }
+
+  // Project Mode star (2026-09-23, per Michael): tapping the gold star on
+  // a pillar/service/category tile adds "that level of choices" to the
+  // project cart as a lightweight placeholder -- independent of whether
+  // anything under it has actually been configured yet (that's
+  // `selections`, a separate dict -- see addCategoryToSolution() etc).
+  // Keys are 'pillar::<pillarId>', 'service::<serviceId>', or
+  // 'category::<serviceId>::<categoryId>'.
+  toggleProjectStar(key) {
+    var stars = Object.assign({}, this.state.projectStars);
+    if (stars[key]) { delete stars[key]; } else { stars[key] = true; }
+    this.setState({ projectStars: stars });
+  }
+
+  // Given a projectStars key, looks up the pillar/service/category it
+  // points at (searching the whole PILLARS catalog, since a star key
+  // only carries the id(s), not which pillar a service/category lives
+  // under) -- used to render the tray's placeholder rows and to route
+  // "Configure" there.
+  resolveStarNode(key) {
+    var parts = key.split('::');
+    var level = parts[0];
+    if (level === 'pillar') {
+      var p = this.findPillar(parts[1]);
+      if (!p) return null;
+      return { level: 'pillar', pillarId: p.id, pillarName: p.name, name: p.name };
+    }
+    if (level === 'service') {
+      for (var i = 0; i < PILLARS.length; i++) {
+        var pp = PILLARS[i];
+        for (var j = 0; j < pp.services.length; j++) {
+          if (pp.services[j].id === parts[1]) {
+            return { level: 'service', pillarId: pp.id, pillarName: pp.name, serviceId: parts[1], name: pp.services[j].name };
+          }
+        }
+      }
+      return null;
+    }
+    if (level === 'category') {
+      for (var i2 = 0; i2 < PILLARS.length; i2++) {
+        var pp2 = PILLARS[i2];
+        for (var j2 = 0; j2 < pp2.services.length; j2++) {
+          if (pp2.services[j2].id === parts[1]) {
+            var cats = pp2.services[j2].categories || [];
+            for (var k2 = 0; k2 < cats.length; k2++) {
+              if (cats[k2].id === parts[2]) {
+                return { level: 'category', pillarId: pp2.id, pillarName: pp2.name, serviceId: parts[1], categoryId: parts[2], name: cats[k2].name };
+              }
+            }
+          }
+        }
+      }
+      return null;
+    }
+    return null;
+  }
 
   // Given a `selections` key (a bare serviceId for a single-toggle/option
   // service or managed-it/vcio, or `serviceId::categoryId` for a category
@@ -2871,32 +2927,71 @@ class Component extends DCLogic {
     var view = this.state.view;
     var selections = this.state.selections;
     var selectionCount = Object.keys(selections).length;
+    var pmStars = this.state.projectStars;
     // Project Mode tray (2026-09-23) -- a lightweight grouped listing of
-    // every current selection, independent of which view is showing
-    // (unlike summaryGroups below, which only computes on the
+    // everything in the project so far, independent of which view is
+    // showing (unlike summaryGroups below, which only computes on the
     // Summary/Checkout views). See claude/solutions-creator-project-mode.md.
+    // Merges two sources: real `selections` entries (already configured
+    // and priced) and `projectStars` placeholders (a pillar/service/
+    // category the rep starred but hasn't configured yet) -- a
+    // placeholder is hidden once a real selection exists at that exact
+    // category (or single-toggle service), so the same thing never shows
+    // twice once it's actually been finished.
     var projectTrayGroups = [];
+    var projectTrayTotalCount = 0;
     if (this.state.projectMode) {
       var trayByPillar = {};
       var trayOrder = [];
+      var trayEnsurePillar = function (pid, pname) {
+        if (!trayByPillar[pid]) { trayByPillar[pid] = { pillarName: pname, rows: [] }; trayOrder.push(pid); }
+      };
       for (var ptKey in selections) {
         var ptEntry = selections[ptKey];
-        if (!trayByPillar[ptEntry.pillarId]) { trayByPillar[ptEntry.pillarId] = []; trayOrder.push(ptEntry.pillarId); }
-        trayByPillar[ptEntry.pillarId].push({ key: ptKey, entry: ptEntry });
+        var ptPillarObj = self.findPillar(ptEntry.pillarId);
+        trayEnsurePillar(ptEntry.pillarId, ptPillarObj ? ptPillarObj.name : ptEntry.pillarId);
+        trayByPillar[ptEntry.pillarId].rows.push({
+          key: ptKey, isPlaceholder: false, serviceName: ptEntry.serviceName, optionLabel: ptEntry.optionLabel, node: null
+        });
       }
+      Object.keys(this.state.projectStars).forEach(function (starKey) {
+        var node = self.resolveStarNode(starKey);
+        if (!node) return;
+        var alreadyReal = false;
+        if (node.level === 'category') { alreadyReal = !!selections[node.serviceId + '::' + node.categoryId]; }
+        else if (node.level === 'service') { alreadyReal = !!selections[node.serviceId]; }
+        if (alreadyReal) return;
+        trayEnsurePillar(node.pillarId, node.pillarName);
+        var levelLabel = node.level === 'pillar' ? 'Pillar' : (node.level === 'service' ? 'Service area' : 'Category');
+        trayByPillar[node.pillarId].rows.push({
+          key: starKey, isPlaceholder: true, serviceName: node.name, optionLabel: levelLabel + ' \u2014 tap to configure', node: node
+        });
+      });
       projectTrayGroups = trayOrder.map(function (pid) {
-        var pillarObj = self.findPillar(pid);
         return {
-          pillarName: pillarObj ? pillarObj.name : pid,
-          items: trayByPillar[pid].map(function (row) {
+          pillarName: trayByPillar[pid].pillarName,
+          items: trayByPillar[pid].rows.map(function (row) {
             return {
-              key: row.key, serviceName: row.entry.serviceName, optionLabel: row.entry.optionLabel,
-              onFocus: function () { self.focusProjectItem(row.key); },
-              onRemove: function () { self.removeSelection(row.key); }
+              key: row.key, isPlaceholder: row.isPlaceholder,
+              trayItemClass: row.isPlaceholder ? 'pm-tray-item pm-tray-item--placeholder' : 'pm-tray-item',
+              serviceName: row.serviceName, optionLabel: row.optionLabel,
+              onFocus: function () {
+                if (!row.isPlaceholder) { self.focusProjectItem(row.key); return; }
+                self.setState({ projectTrayOpen: false });
+                var node = row.node;
+                if (node.level === 'pillar') { self.openPillar(node.pillarId); }
+                else if (node.level === 'service') { self.openService(node.pillarId, node.serviceId); }
+                else { self.openCategory(node.pillarId, node.serviceId, node.categoryId); }
+              },
+              onRemove: function () {
+                if (row.isPlaceholder) { self.toggleProjectStar(row.key); }
+                else { self.removeSelection(row.key); }
+              }
             };
           })
         };
       });
+      projectTrayTotalCount = trayOrder.reduce(function (sum, pid) { return sum + trayByPillar[pid].rows.length; }, 0);
     }
 
     // Cross-sell reminder: EDR Anti-Virus / Patch Management are sold as
@@ -3028,13 +3123,17 @@ class Component extends DCLogic {
             // anything under it (the service itself, or any of its
             // categories) has been added -- selections keys are either
             // the bare serviceId or `serviceId::categoryId`, so a prefix
-            // check over both forms covers every case.
+            // check over both forms covers every case. Starring (see
+            // toggleProjectStar()) also counts, independent of whether
+            // anything's been configured yet.
             var svcHasSelections = Object.keys(selections).some(function (k) {
               return k === s.id || k.indexOf(s.id + '::') === 0;
             });
-            var svcProjectGlow = self.state.projectMode && svcHasSelections;
+            var svcStarKey = 'service::' + s.id;
+            var svcStarred = !!pmStars[svcStarKey];
+            var svcProjectGlow = self.state.projectMode && (svcHasSelections || svcStarred);
             var svcGlow = svcCyberHighlighted || svcProjectGlow;
-            var svcCardStyle = 'background:oklch(0.98 0.006 255);border-radius:14px;padding:17px 20px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;' +
+            var svcCardStyle = 'position:relative;background:oklch(0.98 0.006 255);border-radius:14px;padding:17px 20px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;' +
               (svcGlow ? CROSS_SELL_GLOW : 'border:2px solid transparent;');
             return {
               id: s.id, name: s.name, blurb: s.blurb,
@@ -3042,6 +3141,8 @@ class Component extends DCLogic {
               isCyberHighlighted: svcCyberHighlighted,
               cardStyle: svcCardStyle,
               crossSellClass: svcGlow ? 'cross-sell-glow' : '',
+              starClass: svcStarred ? 'pm-star--on' : '',
+              onToggleStar: function (e) { if (e && e.stopPropagation) e.stopPropagation(); self.toggleProjectStar(svcStarKey); },
               onClick: function () { self.openService(p.id, s.id); }
             };
           })
@@ -3374,13 +3475,15 @@ class Component extends DCLogic {
             highlightBadgeText = '✦ EDR / Patch Mgmt selected — add here';
           }
           // Project Mode (2026-09-23): glow gold once this exact category
-          // has been added to the solution, on top of whatever cross-sell
-          // reason (if any) already glows it -- doesn't touch
+          // has been added to the solution OR starred, on top of whatever
+          // cross-sell reason (if any) already glows it -- doesn't touch
           // highlightBadgeText, since a Project Mode glow isn't a
           // cross-sell nudge and shouldn't claim to be one.
-          var pmCatAdded = self.state.projectMode && !!selections[catSvcForTiles.id + '::' + cat.id];
+          var catStarKey = 'category::' + catSvcForTiles.id + '::' + cat.id;
+          var catStarred = !!pmStars[catStarKey];
+          var pmCatAdded = self.state.projectMode && (!!selections[catSvcForTiles.id + '::' + cat.id] || catStarred);
           isHighlighted = isHighlighted || pmCatAdded;
-          var cardStyle = 'width:340px;background:oklch(0.98 0.006 255);border-radius:16px;padding:20px 22px;cursor:pointer;' +
+          var cardStyle = 'position:relative;width:340px;background:oklch(0.98 0.006 255);border-radius:16px;padding:20px 22px;cursor:pointer;' +
             (isHighlighted ? CROSS_SELL_GLOW : 'border:2px solid transparent;');
           return {
             id: cat.id, name: cat.name, blurb: cat.blurb,
@@ -3388,6 +3491,8 @@ class Component extends DCLogic {
             hasProducts: !!(cat.products && cat.products.length > 0),
             isHighlighted: isHighlighted, highlightBadgeText: highlightBadgeText, cardStyle: cardStyle,
             crossSellClass: isHighlighted ? 'cross-sell-glow' : '',
+            starClass: catStarred ? 'pm-star--on' : '',
+            onToggleStar: function (e) { if (e && e.stopPropagation) e.stopPropagation(); self.toggleProjectStar(catStarKey); },
             onClick: function () { self.openCategory(catSvcPillar.id, catSvcForTiles.id, cat.id); }
           };
         })
@@ -4184,8 +4289,8 @@ class Component extends DCLogic {
       projectModeLabel: this.state.projectMode ? 'Project Mode: On' : 'Project Mode',
       projectTrayOpen: this.state.projectTrayOpen,
       onToggleProjectTray: function () { self.toggleProjectTray(); },
-      projectTrayCount: selectionCount,
-      projectTrayHasItems: selectionCount > 0,
+      projectTrayCount: projectTrayTotalCount,
+      projectTrayHasItems: projectTrayTotalCount > 0,
       projectTrayGroups: projectTrayGroups,
       onProjectReview: function () { self.setState({ projectTrayOpen: false }); self.openSummary(); },
       projectModeToggleStyle: this.state.projectMode
@@ -4202,25 +4307,35 @@ class Component extends DCLogic {
       goOverview: function () { self.goOverview(); },
       goToSolutionsCreator: function () { self.goSolutionsCreator(); },
       itCyberSellFlag: cyberSecFlag,
-      itCrossSellClass: (cyberSecFlag || (this.state.projectMode && itCount > 0)) ? 'cross-sell-glow' : '',
-      itCardStyle: 'width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
-        ((cyberSecFlag || (this.state.projectMode && itCount > 0)) ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
+      itCrossSellClass: (cyberSecFlag || (this.state.projectMode && (itCount > 0 || !!pmStars['pillar::it']))) ? 'cross-sell-glow' : '',
+      itCardStyle: 'position:relative;width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
+        ((cyberSecFlag || (this.state.projectMode && (itCount > 0 || !!pmStars['pillar::it']))) ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
+      onToggleItStar: function (e) { if (e && e.stopPropagation) e.stopPropagation(); self.toggleProjectStar('pillar::it'); },
+      itStarClass: pmStars['pillar::it'] ? 'pm-star--on' : '',
       // Project Mode gold highlight (2026-09-23) for the other 4 pillar
       // tiles -- IT above piggybacks on its pre-existing Cyber Security
       // cross-sell glow; these 4 have no such glow today, so Project Mode
       // is the only thing that ever lights them up.
-      dcCrossSellClass: (this.state.projectMode && dcCount > 0) ? 'cross-sell-glow' : '',
-      dcCardStyle: 'width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
-        ((this.state.projectMode && dcCount > 0) ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
-      voipCrossSellClass: (this.state.projectMode && voipCount > 0) ? 'cross-sell-glow' : '',
-      voipCardStyle: 'width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
-        ((this.state.projectMode && voipCount > 0) ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
-      cablingCrossSellClass: (this.state.projectMode && cablingCount > 0) ? 'cross-sell-glow' : '',
-      cablingCardStyle: 'width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
-        ((this.state.projectMode && cablingCount > 0) ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
-      securityCrossSellClass: (this.state.projectMode && securityCount > 0) ? 'cross-sell-glow' : '',
-      securityCardStyle: 'width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
-        ((this.state.projectMode && securityCount > 0) ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
+      dcCrossSellClass: (this.state.projectMode && (dcCount > 0 || !!pmStars['pillar::dc'])) ? 'cross-sell-glow' : '',
+      dcCardStyle: 'position:relative;width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
+        ((this.state.projectMode && (dcCount > 0 || !!pmStars['pillar::dc'])) ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
+      onToggleDcStar: function (e) { if (e && e.stopPropagation) e.stopPropagation(); self.toggleProjectStar('pillar::dc'); },
+      dcStarClass: pmStars['pillar::dc'] ? 'pm-star--on' : '',
+      voipCrossSellClass: (this.state.projectMode && (voipCount > 0 || !!pmStars['pillar::voip'])) ? 'cross-sell-glow' : '',
+      voipCardStyle: 'position:relative;width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
+        ((this.state.projectMode && (voipCount > 0 || !!pmStars['pillar::voip'])) ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
+      onToggleVoipStar: function (e) { if (e && e.stopPropagation) e.stopPropagation(); self.toggleProjectStar('pillar::voip'); },
+      voipStarClass: pmStars['pillar::voip'] ? 'pm-star--on' : '',
+      cablingCrossSellClass: (this.state.projectMode && (cablingCount > 0 || !!pmStars['pillar::cabling'])) ? 'cross-sell-glow' : '',
+      cablingCardStyle: 'position:relative;width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
+        ((this.state.projectMode && (cablingCount > 0 || !!pmStars['pillar::cabling'])) ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
+      onToggleCablingStar: function (e) { if (e && e.stopPropagation) e.stopPropagation(); self.toggleProjectStar('pillar::cabling'); },
+      cablingStarClass: pmStars['pillar::cabling'] ? 'pm-star--on' : '',
+      securityCrossSellClass: (this.state.projectMode && (securityCount > 0 || !!pmStars['pillar::security'])) ? 'cross-sell-glow' : '',
+      securityCardStyle: 'position:relative;width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
+        ((this.state.projectMode && (securityCount > 0 || !!pmStars['pillar::security'])) ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
+      onToggleSecurityStar: function (e) { if (e && e.stopPropagation) e.stopPropagation(); self.toggleProjectStar('pillar::security'); },
+      securityStarClass: pmStars['pillar::security'] ? 'pm-star--on' : '',
       goToIT: function () { self.openPillar('it'); },
       goToDC: function () { self.openPillar('dc'); },
       goToVoIP: function () { self.openPillar('voip'); },

@@ -209,9 +209,17 @@
               <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
               </div>
+
+              <div style="display:flex;align-items:center;gap:8px;">
+                <sc-if value="{{projectMode}}" hint-placeholder-val="{{false}}">
+                  <button class="pm-star-btn {{itStarClass}}" data-on-click="{{onToggleItStar}}" aria-label="Add IT Services to project">
+                    <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l2.9 6.1 6.6.7-4.9 4.5 1.3 6.6L12 17l-5.9 3.4 1.3-6.6-4.9-4.5 6.6-.7z"></path></svg>
+                  </button>
+                </sc-if>
               <sc-if value="{{itHasSelections}}" hint-placeholder-val="{{false}}">
                 <div style="background:{{accentColor}};color:white;font-size:12px;font-weight:700;padding:4px 11px;border-radius:999px;">{{itSelectedCount}} selected</div>
               </sc-if>
+              </div>
             </div>
             <div>
               <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">IT Services</div>
@@ -228,9 +236,17 @@
               <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="6.5" rx="1.4"></rect><rect x="4" y="14.5" width="16" height="6.5" rx="1.4"></rect><circle cx="8" cy="6.25" r="0.9" fill="white" stroke="none"></circle><circle cx="8" cy="17.75" r="0.9" fill="white" stroke="none"></circle></svg>
               </div>
+
+              <div style="display:flex;align-items:center;gap:8px;">
+                <sc-if value="{{projectMode}}" hint-placeholder-val="{{false}}">
+                  <button class="pm-star-btn {{dcStarClass}}" data-on-click="{{onToggleDcStar}}" aria-label="Add Data Center Services to project">
+                    <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l2.9 6.1 6.6.7-4.9 4.5 1.3 6.6L12 17l-5.9 3.4 1.3-6.6-4.9-4.5 6.6-.7z"></path></svg>
+                  </button>
+                </sc-if>
               <sc-if value="{{dcHasSelections}}" hint-placeholder-val="{{false}}">
                 <div style="background:{{accentColor}};color:white;font-size:12px;font-weight:700;padding:4px 11px;border-radius:999px;">{{dcSelectedCount}} selected</div>
               </sc-if>
+              </div>
             </div>
             <div>
               <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Data Center Services</div>
@@ -244,9 +260,17 @@
               <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13v-1.5a8 8 0 0 1 16 0V13"></path><rect x="2" y="13" width="4.5" height="7" rx="2"></rect><rect x="17.5" y="13" width="4.5" height="7" rx="2"></rect></svg>
               </div>
+
+              <div style="display:flex;align-items:center;gap:8px;">
+                <sc-if value="{{projectMode}}" hint-placeholder-val="{{false}}">
+                  <button class="pm-star-btn {{voipStarClass}}" data-on-click="{{onToggleVoipStar}}" aria-label="Add Voice over IP Services to project">
+                    <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l2.9 6.1 6.6.7-4.9 4.5 1.3 6.6L12 17l-5.9 3.4 1.3-6.6-4.9-4.5 6.6-.7z"></path></svg>
+                  </button>
+                </sc-if>
               <sc-if value="{{voipHasSelections}}" hint-placeholder-val="{{false}}">
                 <div style="background:{{accentColor}};color:white;font-size:12px;font-weight:700;padding:4px 11px;border-radius:999px;">{{voipSelectedCount}} selected</div>
               </sc-if>
+              </div>
             </div>
             <div>
               <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Voice over IP Services</div>
@@ -260,9 +284,17 @@
               <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7L4 10a4 4 0 0 0 0 5.5l0.5 0.5a4 4 0 0 0 5.5 0L13 13"></path><path d="M17 17l3-3a4 4 0 0 0 0-5.5l-0.5-0.5a4 4 0 0 0-5.5 0L11 11"></path></svg>
               </div>
+
+              <div style="display:flex;align-items:center;gap:8px;">
+                <sc-if value="{{projectMode}}" hint-placeholder-val="{{false}}">
+                  <button class="pm-star-btn {{cablingStarClass}}" data-on-click="{{onToggleCablingStar}}" aria-label="Add Data Cabling to project">
+                    <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l2.9 6.1 6.6.7-4.9 4.5 1.3 6.6L12 17l-5.9 3.4 1.3-6.6-4.9-4.5 6.6-.7z"></path></svg>
+                  </button>
+                </sc-if>
               <sc-if value="{{cablingHasSelections}}" hint-placeholder-val="{{false}}">
                 <div style="background:{{accentColor}};color:white;font-size:12px;font-weight:700;padding:4px 11px;border-radius:999px;">{{cablingSelectedCount}} selected</div>
               </sc-if>
+              </div>
             </div>
             <div>
               <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Data Cabling</div>
@@ -276,9 +308,17 @@
               <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 5-3.5 7.5-7 9-3.5-1.5-7-4-7-9V6l7-3z"></path></svg>
               </div>
+
+              <div style="display:flex;align-items:center;gap:8px;">
+                <sc-if value="{{projectMode}}" hint-placeholder-val="{{false}}">
+                  <button class="pm-star-btn {{securityStarClass}}" data-on-click="{{onToggleSecurityStar}}" aria-label="Add Premise Security to project">
+                    <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l2.9 6.1 6.6.7-4.9 4.5 1.3 6.6L12 17l-5.9 3.4 1.3-6.6-4.9-4.5 6.6-.7z"></path></svg>
+                  </button>
+                </sc-if>
               <sc-if value="{{securityHasSelections}}" hint-placeholder-val="{{false}}">
                 <div style="background:{{accentColor}};color:white;font-size:12px;font-weight:700;padding:4px 11px;border-radius:999px;">{{securitySelectedCount}} selected</div>
               </sc-if>
+              </div>
             </div>
             <div>
               <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Premise Security</div>
@@ -330,6 +370,11 @@
                   <div style="width:24px;height:24px;border-radius:999px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;flex:0 0 auto;">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 9 18 20 6"></polyline></svg>
                   </div>
+                </sc-if>
+                <sc-if value="{{projectMode}}" hint-placeholder-val="{{false}}">
+                  <button class="pm-star-btn {{svc.starClass}}" data-on-click="{{svc.onToggleStar}}" aria-label="Add {{svc.name}} to project">
+                    <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l2.9 6.1 6.6.7-4.9 4.5 1.3 6.6L12 17l-5.9 3.4 1.3-6.6-4.9-4.5 6.6-.7z"></path></svg>
+                  </button>
                 </sc-if>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.65 0.02 255)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"></polyline></svg>
               </div>
@@ -810,7 +855,14 @@
                 <div class="{{cat.crossSellClass}}" data-on-click="{{cat.onClick}}" style="{{cat.cardStyle}}">
                   <div style="display:flex;align-items:center;justify-content:space-between;">
                     <div style="font-weight:700;font-size:16px;color:var(--cbt-text-on-light-primary);">{{cat.name}}</div>
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--cbt-text-on-dark-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"></polyline></svg>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                      <sc-if value="{{projectMode}}" hint-placeholder-val="{{false}}">
+                        <button class="pm-star-btn {{cat.starClass}}" data-on-click="{{cat.onToggleStar}}" aria-label="Add {{cat.name}} to project">
+                          <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l2.9 6.1 6.6.7-4.9 4.5 1.3 6.6L12 17l-5.9 3.4 1.3-6.6-4.9-4.5 6.6-.7z"></path></svg>
+                        </button>
+                      </sc-if>
+                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--cbt-text-on-dark-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"></polyline></svg>
+                    </div>
                   </div>
                   <div style="margin-top:8px;font-size:13px;line-height:1.5;color:oklch(0.48 0.02 255);">{{cat.blurb}}</div>
                   <sc-if value="{{cat.isHighlighted}}" hint-placeholder-val="{{false}}">
@@ -1838,7 +1890,7 @@
                 <div class="pm-tray-group">
                   <div class="pm-tray-group-name">{{grp.pillarName}}</div>
                   <sc-for list="{{grp.items}}" as="it" hint-placeholder-count="2">
-                    <div class="pm-tray-item">
+                    <div class="{{it.trayItemClass}}">
                       <div class="pm-tray-item-text" data-on-click="{{it.onFocus}}">
                         <div class="pm-tray-item-service">{{it.serviceName}}</div>
                         <div class="pm-tray-item-detail">{{it.optionLabel}}</div>
