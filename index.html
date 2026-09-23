@@ -468,17 +468,6 @@
           </sc-if>
 
           <sc-if value="{{isManagedIT}}" hint-placeholder-val="{{false}}">
-            <div class="pf-panel">
-              <div class="pf-pills">
-                <sc-for list="{{managedItVM.peopleFirstPills}}" as="pfp" hint-placeholder-count="7">
-                  <div class="{{pfp.pillClass}}" style="{{pfp.pillStyle}}">{{pfp.label}}</div>
-                </sc-for>
-              </div>
-              <img class="pf-figure" src="assets/peoplefirst-illustration.png" alt="" loading="lazy">
-            </div>
-          </sc-if>
-
-          <sc-if value="{{isManagedIT}}" hint-placeholder-val="{{false}}">
             <div style="margin-top:26px;">
               <div style="font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">How is this sold?</div>
               <div style="display:flex;gap:12px;">
@@ -1779,6 +1768,27 @@
           <button data-on-click="{{insideSalesVM.onSend}}" style="background:var(--cbt-purple-inside-sales);border:none;color:white;font-size:13.5px;font-weight:700;padding:10px 20px;border-radius:999px;cursor:pointer;">{{insideSalesVM.sendLabel}}</button>
         </div>
       </div>
+    </div>
+  </sc-if>
+
+  <!-- PeopleFirst Support illustration (Managed IT configurator) -- a
+       sibling of .app-body, not nested inside .view-pad.view-enter, on
+       purpose: .view-enter's entrance animation leaves a permanent
+       transform: translateY(0) on .view-pad after it finishes (fill-mode
+       both), and any transform on an ancestor turns this element's
+       position:fixed into position relative to THAT ancestor's box
+       instead of the viewport -- which is why it used to scroll away and
+       disappear instead of staying put. Placed here (like the two
+       modals above) so it stays genuinely fixed to the screen while the
+       form scrolls, per Michael. -->
+  <sc-if value="{{isManagedIT}}" hint-placeholder-val="{{false}}">
+    <div class="pf-panel">
+      <div class="pf-pills">
+        <sc-for list="{{managedItVM.peopleFirstPills}}" as="pfp" hint-placeholder-count="7">
+          <div class="{{pfp.pillClass}}" style="{{pfp.pillStyle}}">{{pfp.label}}</div>
+        </sc-for>
+      </div>
+      <img class="pf-figure" src="assets/peoplefirst-illustration.png" alt="" loading="lazy">
     </div>
   </sc-if>
 
