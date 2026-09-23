@@ -782,6 +782,88 @@ a { color: inherit; }
   padding: 10px 14px;
 }
 
+/* Contact card (address + primary contact, tap-to-call/email) -- added
+   2026-09-23, per Michael: "pull in address, primary contact name, email
+   and phone number from ConnectWise on each Customer in Relationships and
+   show that data cleanly above Outgrow Last Touch." Same dark-card
+   language as .outgrow-card just below (this sits directly above it),
+   deliberately quieter -- no label row/header, since this is reference
+   info to glance at rather than something to interact with, apart from
+   the two tap targets. */
+
+.contact-card {
+  margin-top: 18px;
+  background: oklch(0.17 0.016 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 16px;
+  padding: 16px 20px;
+}
+
+.contact-card-address {
+  font-size: 13px;
+  line-height: 1.5;
+  color: oklch(0.68 0.015 255);
+}
+
+.contact-card-person {
+  margin-top: 10px;
+}
+.contact-card-address + .contact-card-person {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid oklch(0.24 0.016 255);
+}
+
+.contact-card-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: white;
+}
+
+.contact-card-links {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.contact-card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #8fc3ff;
+  text-decoration: none;
+}
+.contact-card-link:hover { color: #b7d8ff; text-decoration: underline; }
+.contact-card-link svg { flex: none; opacity: .85; }
+
+.contact-card-confirm {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid oklch(0.24 0.016 255);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.contact-card-confirm-label {
+  font-size: 12.5px;
+  color: oklch(0.7 0.02 255);
+}
+
+.contact-card-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.contact-card-error {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: #f87171;
+}
+
 /* OutGrow Last Touch -- added 2026-09-15, per Michael */
 
 .outgrow-card {

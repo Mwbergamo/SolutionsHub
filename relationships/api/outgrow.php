@@ -34,11 +34,14 @@
  *   erroring the whole customer dashboard over a best-effort read.
  *
  * POST /relationships/api/outgrow.php?action=set
- *   { customer_id, touch_date: "YYYY-MM-DD" }
+ *   { customer_id, touch_date: "YYYY-MM-DD", source?: "manual"|"call"|"email" }
  *   -> { ok: true, current: {...}, history: [...], cw_push: { attempted, status, error } }
  *
- *   Always saves locally first (a new history row, source = 'manual',
- *   attributed to the signed-in CRC) -- that save can never fail because of
+ *   Always saves locally first (a new history row -- source defaults to
+ *   'manual', or 'call'/'email' when this came from the Relationships
+ *   contact card's confirm-after-tap flow (added 2026-09-23, per Michael --
+ *   see contact-card.php's file header), attributed to the signed-in CRC)
+ *   -- that save can never fail because of
  *   ConnectWise. Then tries to push the same date into ConnectWise (skipped
  *   entirely, cw_push.status = 'skipped', for a mock/unsynced customer with
  *   no real ConnectWise id); the outcome is recorded on the new history row
@@ -200,11 +203,22 @@ if ($action === 'set') {
     // locally, log the ConnectWise failure" instruction for this whole
     // integration (see connectwise-activity-create.php). This can never
     // fail because of ConnectWise.
+    // Source distinguishes a manual date-edit from a touch logged right
+    // after a rep taps a synced contact's phone/email on the Relationships
+    // contact card (2026-09-23, per Michael: "Both actions should trigger
+    // the same outgrow workflow and log an outgrow touch" -- see
+    // contact-card.php). Whitelisted rather than trusted verbatim from the
+    // request body; anything unrecognized falls back to 'manual'.
+    $source = (string) ($data['source'] ?? 'manual');
+    if (!in_array($source, ['manual', 'call', 'email'], true)) {
+        $source = 'manual';
+    }
+
     $insert = $pdo->prepare(
         'INSERT INTO outgrow_last_touch_history (customer_id, touch_date, source, set_by_user_id, set_by_name)
-         VALUES (:cid, :date, \'manual\', :uid, :name)'
+         VALUES (:cid, :date, :source, :uid, :name)'
     );
-    $insert->execute([':cid' => $customerId, ':date' => $touchDate, ':uid' => $user['id'], ':name' => $user['name']]);
+    $insert->execute([':cid' => $customerId, ':date' => $touchDate, ':source' => $source, ':uid' => $user['id'], ':name' => $user['name']]);
     $historyId = (int) $pdo->lastInsertId();
 
     $cwPush = ['attempted' => false, 'status' => 'skipped', 'error' => null];

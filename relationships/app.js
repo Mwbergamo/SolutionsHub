@@ -448,6 +448,28 @@
     state.outgrowError = null;
   }
 
+  // Contact card (address + primary contact + tap-to-call/email) --
+  // added 2026-09-23 per Michael: "pull in address, primary contact name,
+  // email and phone number from ConnectWise on each Customer in
+  // Relationships and show that data cleanly above Outgrow Last Touch."
+  // Loaded live alongside the rest of a customer's dashboard data (same
+  // per-open pattern as loadActivitySummary's ticket count -- see that
+  // function's own comment) rather than nightly-synced, since address and
+  // phone have never been synced anywhere in this app before now. See
+  // api/contact-card.php's file header for what's confirmed vs. an
+  // unverified guess about ConnectWise's field shapes.
+  function resetContactCardState() {
+    state.contactCard = null;
+    state.contactCardLoading = false;
+    state.contactCardError = null;
+    // Pending "log this as an OutGrow touch?" confirmation -- per
+    // Michael's explicit choice (AskUserQuestion) that tapping call/email
+    // must NOT log the touch immediately; it only opens the dialer/email
+    // app and logs after this confirm step is answered "yes".
+    // { source: 'call' | 'email' } | null
+    state.outgrowConfirm = null;
+  }
+
   function outgrowTodayYmd() {
     var d = new Date();
     var mm = d.getMonth() + 1;
@@ -464,6 +486,17 @@
     var parts = String(ymd).split('-');
     if (parts.length !== 3) return ymd;
     return parseInt(parts[1], 10) + '/' + parseInt(parts[2], 10) + '/' + parts[0].slice(2);
+  }
+
+  // A short lead-in for who-set-this text, distinguishing a touch logged
+  // via the contact card's tap-to-call/email confirm step (2026-09-23)
+  // from an ordinary manual date edit -- e.g. "after a call by Jane Doe"
+  // vs. plain "by Jane Doe". Empty string for 'manual' (and anything
+  // else unrecognized) leaves the existing "by <name>" phrasing alone.
+  function outgrowSourceNote(source) {
+    if (source === 'call') return 'after a call ';
+    if (source === 'email') return 'after an email ';
+    return '';
   }
 
   function loadOutgrow(customerId) {
@@ -514,11 +547,133 @@
     });
   }
 
+  // Logs an OutGrow touch with an explicit source ('call' or 'email'),
+  // reached only after the confirm-step banner in contactCardHtml() is
+  // answered "yes" -- see resetContactCardState()'s comment. Posts to the
+  // exact same outgrow.php?action=set endpoint saveOutgrow() above uses
+  // (same local-save-then-ConnectWise-push behavior, same history/current
+  // response shape) so both the date-edit flow and this one stay one
+  // source of truth; only the touch_date (today) and source differ.
+  function logOutgrowTouch(customerId, source) {
+    state.outgrowSaving = true;
+    state.outgrowError = null;
+    render();
+    apiPost('api/outgrow.php?action=set', { customer_id: customerId, touch_date: outgrowTodayYmd(), source: source }).then(function (r) {
+      state.outgrowSaving = false;
+      if (r.data && r.data.ok) {
+        state.outgrowCurrent = r.data.current;
+        state.outgrowHistory = r.data.history;
+        if (r.data.cw_push && r.data.cw_push.status === 'error') {
+          state.outgrowError = 'Logged here, but didn\u2019t reach ConnectWise: ' + r.data.cw_push.error;
+        }
+      } else {
+        state.outgrowError = (r.data && r.data.error) || 'Could not log the touch.';
+      }
+      render();
+    }).catch(function () {
+      state.outgrowSaving = false;
+      state.outgrowError = 'Could not log the touch \u2014 check your connection.';
+      render();
+    });
+  }
+
+  function loadContactCard(customerId) {
+    state.contactCardLoading = true;
+    var requestFor = Number(customerId);
+    apiGet('api/contact-card.php?action=get&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.contactCardLoading = false;
+      if (r.data && r.data.ok) {
+        state.contactCard = r.data;
+      } else {
+        state.contactCard = { available: false };
+        state.contactCardError = (r.data && r.data.error) || 'Could not load contact info from ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.contactCardLoading = false;
+      state.contactCardError = 'Could not load contact info \u2014 check your connection.';
+      render();
+    });
+  }
+
+  // Contact card HTML -- address, primary contact name/email, and
+  // tap-to-call/tap-to-email links, shown just above the OutGrow Last
+  // Touch card (per Michael's "show that data cleanly above Outgrow Last
+  // Touch"). Renders nothing at all for a mock/unsynced customer
+  // (available: false) rather than an empty card. The inline confirm
+  // banner (state.outgrowConfirm) is what actually logs the OutGrow touch
+  // -- tapping the tel:/mailto: link itself only opens the dialer/email
+  // app and shows this banner; see logOutgrowTouch()'s comment and
+  // resetContactCardState()'s comment on why that's a separate step.
+  function contactCardHtml() {
+    var card = state.contactCard;
+    if (state.contactCardLoading && !card) {
+      return '<div class="contact-card"><div class="loading">Loading contact info\u2026</div></div>';
+    }
+    if (!card || !card.available) {
+      return '';
+    }
+
+    var html = '<div class="contact-card">';
+
+    if (card.address) {
+      var addr = card.address;
+      var cityLine = [addr.city, addr.state, addr.zip].filter(Boolean).join(', ');
+      html += '<div class="contact-card-address">' +
+        (addr.line1 ? escapeHtml(addr.line1) + '<br>' : '') +
+        (addr.line2 ? escapeHtml(addr.line2) + '<br>' : '') +
+        (cityLine ? escapeHtml(cityLine) : '') +
+      '</div>';
+    }
+
+    if (card.contact) {
+      html += '<div class="contact-card-person">';
+      if (card.contact.name) {
+        html += '<div class="contact-card-name">' + escapeHtml(card.contact.name) + '</div>';
+      }
+      var links = '';
+      if (card.contact.phone) {
+        links += '<a class="contact-card-link" href="tel:' + escapeHtml(card.contact.phone) + '" data-action="contact-call">' +
+          '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.362 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.338 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>' +
+          escapeHtml(card.contact.phone) + '</a>';
+      }
+      if (card.contact.email) {
+        links += '<a class="contact-card-link" href="mailto:' + escapeHtml(card.contact.email) + '" data-action="contact-email">' +
+          '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>' +
+          escapeHtml(card.contact.email) + '</a>';
+      }
+      if (links) {
+        html += '<div class="contact-card-links">' + links + '</div>';
+      }
+      html += '</div>';
+    }
+
+    if (state.outgrowConfirm) {
+      var confirmLabel = state.outgrowConfirm.source === 'call' ? 'Log this call as an OutGrow touch?' : 'Log this email as an OutGrow touch?';
+      html += '<div class="contact-card-confirm">' +
+        '<span class="contact-card-confirm-label">' + escapeHtml(confirmLabel) + '</span>' +
+        '<div class="contact-card-confirm-actions">' +
+          '<button type="button" class="svc-action-btn primary" data-action="contact-confirm-yes" ' + (state.outgrowSaving ? 'disabled' : '') + '>' + (state.outgrowSaving ? 'Logging\u2026' : 'Yes, log it') + '</button>' +
+          '<button type="button" class="svc-action-btn secondary" data-action="contact-confirm-no" ' + (state.outgrowSaving ? 'disabled' : '') + '>No</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    if (state.contactCardError) {
+      html += '<div class="contact-card-error">' + escapeHtml(state.contactCardError) + '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
   function outgrowFieldHtml() {
     var current = state.outgrowCurrent;
     var valueText = current ? fmtOutgrowDate(current.touch_date) : 'Not recorded yet';
     var subText = current
-      ? (current.source === 'connectwise_seed' ? 'Synced from ConnectWise' : 'by ' + escapeHtml(current.set_by_name))
+      ? (current.source === 'connectwise_seed' ? 'Synced from ConnectWise' : outgrowSourceNote(current.source) + 'by ' + escapeHtml(current.set_by_name))
       : '';
 
     var html = '<div class="outgrow-card">';
@@ -568,7 +723,7 @@
         var warn = h.cw_push_status === 'error'
           ? '<div class="outgrow-history-warn" title="' + escapeHtml(h.cw_push_error || '') + '">Didn\u2019t sync to ConnectWise</div>'
           : '';
-        var whoText = h.source === 'connectwise_seed' ? 'Synced from ConnectWise' : escapeHtml(h.set_by_name);
+        var whoText = h.source === 'connectwise_seed' ? 'Synced from ConnectWise' : outgrowSourceNote(h.source) + escapeHtml(h.set_by_name);
         html += '<div class="outgrow-history-row">' +
           '<div class="outgrow-history-main">' +
             '<span class="outgrow-history-date">' + escapeHtml(fmtOutgrowDate(h.touch_date)) + '</span>' +
@@ -993,6 +1148,8 @@
         loadActivitySummary(id);
         resetOutgrowState();
         loadOutgrow(id);
+        resetContactCardState();
+        loadContactCard(id);
         resetVendorState();
         loadVendorNotes(id);
         resetMeetingsState();
@@ -2771,6 +2928,7 @@
       '</div>' +
     '</div>';
 
+    html += contactCardHtml();
     html += outgrowFieldHtml();
 
     if (detail.customer.is_peoplefirst) {
@@ -3455,6 +3613,7 @@
       state.resultsOpen = false;
       resetActivityState();
       resetOutgrowState();
+      resetContactCardState();
       resetVendorState();
       resetMeetingsState();
       render();
@@ -3592,6 +3751,22 @@
       saveOutgrow(state.selectedCustomer.customer.id);
     } else if (action === 'outgrow-history-toggle') {
       state.outgrowHistoryOpen = !state.outgrowHistoryOpen;
+      render();
+    } else if (action === 'contact-call') {
+      // Doesn't preventDefault -- the <a href="tel:..."> still opens the
+      // dialer as normal. This just surfaces the confirm banner alongside
+      // it; per Michael's explicit choice, the touch is NOT logged yet.
+      state.outgrowConfirm = { source: 'call' };
+      render();
+    } else if (action === 'contact-email') {
+      state.outgrowConfirm = { source: 'email' };
+      render();
+    } else if (action === 'contact-confirm-yes') {
+      var confirmedSource = state.outgrowConfirm ? state.outgrowConfirm.source : 'manual';
+      state.outgrowConfirm = null;
+      logOutgrowTouch(state.selectedCustomer.customer.id, confirmedSource);
+    } else if (action === 'contact-confirm-no') {
+      state.outgrowConfirm = null;
       render();
     } else if (action === 'vendor-edit-start') {
       var vPillarId = el.getAttribute('data-pillar');
