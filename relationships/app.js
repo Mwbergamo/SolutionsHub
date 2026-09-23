@@ -311,6 +311,23 @@
     // same pattern state.pendingFocus already uses for the checklist.
     pendingTaskFocus: null, // { meetingId, taskId } | null
 
+    // Risk-scan file uploads (api/risk-scans.php) -- added 2026-09-23 per
+    // Michael: a service team member uploads a customer's risk-scan zip
+    // from that customer's dashboard; a rep downloads and reviews it, then
+    // marks it reviewed. Open (unreviewed) uploads also show as alerts in
+    // the Global To-Do Checklist panel -- server-computed (reviewed_at IS
+    // NULL in meetings.php's 'global' action), not tracked in state here.
+    riskScans: null, // [ { id, original_filename, size_bytes, uploaded_by_name, uploaded_at, reviewed_at, reviewed_by_name }, ... ] | null while loading
+    riskScansLoading: false,
+    riskScansError: null,
+    riskScanDraftFile: null, // File object chosen but not yet uploaded, or null
+    riskScanUploading: false,
+    riskScanTogglingId: null, // scan id currently mid mark/unmark-reviewed (button disabled while true)
+    // Deep-link target set by openCustomerAtRiskScan() (Global To-Do panel
+    // -> a specific customer's risk-scan alert) -- same pattern as
+    // pendingTaskFocus above, consumed once inside loadRiskScans().
+    pendingRiskScanFocus: null, // { scanId } | null
+
     // Global master to-do dashboard -- the Relationships front page's new
     // right-hand panel (api/meetings.php?action=global), added 2026-09-15.
     globalTodosLoading: false,
@@ -355,6 +372,15 @@
       ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   }
 
+  // Risk-scan file sizes (bytes from the server) -- KB up to 1000 KB, MB
+  // above that, one decimal place either way.
+  function fmtFileSize(bytes) {
+    var n = Number(bytes) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
   // Date-only formatting for ConnectWise ticket/invoice dates -- these come
   // back as full ISO datetimes but only the date is meaningful here.
   function fmtDate(raw) {
@@ -382,6 +408,22 @@
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body || {})
+    }).then(function (r) {
+      return r.json().then(function (data) { return { status: r.status, data: data }; });
+    });
+  }
+
+  // multipart/form-data POST -- for the risk-scan zip upload
+  // (api/risk-scans.php?action=upload) only. Deliberately NOT JSON like
+  // apiPost() above: a File object can't go in a JSON body, and setting
+  // Content-Type by hand here would drop the multipart boundary the
+  // browser generates -- fetch sets it correctly on its own as long as we
+  // leave the header out entirely.
+  function apiUpload(url, formData) {
+    return fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData
     }).then(function (r) {
       return r.json().then(function (data) { return { status: r.status, data: data }; });
     });
@@ -916,6 +958,113 @@
     });
   }
 
+  // ---- Risk-scan uploads (api/risk-scans.php) ---------------------------
+  // Added 2026-09-23 per Michael -- see the state block's comment above
+  // and risk-scans.php's file header for the full design. Same
+  // load/reset/deep-link pattern as Meetings/Checklist above.
+
+  function resetRiskScansState() {
+    state.riskScans = null;
+    state.riskScansLoading = false;
+    state.riskScansError = null;
+    state.riskScanDraftFile = null;
+    state.riskScanUploading = false;
+    state.riskScanTogglingId = null;
+    // pendingRiskScanFocus is deliberately NOT cleared here -- same reason
+    // pendingTaskFocus isn't cleared in resetMeetingsState() above.
+  }
+
+  function loadRiskScans(customerId) {
+    state.riskScansLoading = true;
+    var requestFor = Number(customerId);
+    apiGet('api/risk-scans.php?action=list&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.riskScansLoading = false;
+      var focusScanId = null;
+      if (r.data && r.data.ok) {
+        state.riskScans = r.data.scans;
+        if (state.pendingRiskScanFocus) {
+          focusScanId = state.pendingRiskScanFocus.scanId;
+          state.pendingRiskScanFocus = null;
+        }
+      } else {
+        state.riskScansError = (r.data && r.data.error) || 'Could not load risk scans.';
+      }
+      render();
+      if (focusScanId) {
+        var el = document.querySelector('[data-riskscan-row="' + focusScanId + '"]');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.riskScansLoading = false;
+      state.riskScansError = 'Could not load risk scans \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  function uploadRiskScan(customerId) {
+    var file = state.riskScanDraftFile;
+    if (!file) {
+      state.riskScansError = 'Choose a .zip file first.';
+      render();
+      return;
+    }
+    state.riskScanUploading = true;
+    state.riskScansError = null;
+    render();
+    var formData = new FormData();
+    formData.append('customer_id', String(customerId));
+    formData.append('file', file);
+    apiUpload('api/risk-scans.php?action=upload', formData).then(function (r) {
+      state.riskScanUploading = false;
+      if (r.data && r.data.ok) {
+        state.riskScanDraftFile = null;
+        // The upload response already carries the updated PeopleFirst
+        // fields when this is a PeopleFirst customer (risk-scans.php,
+        // 'upload' action) -- apply them locally rather than a whole
+        // extra round-trip just to refresh two date fields.
+        if (r.data.customer && state.selectedCustomer && Number(state.selectedCustomer.customer.id) === Number(customerId)) {
+          state.selectedCustomer.customer.last_risk_scan_at = r.data.customer.last_risk_scan_at;
+          state.selectedCustomer.customer.last_risk_scan_by = r.data.customer.last_risk_scan_by;
+        }
+        loadRiskScans(customerId);
+      } else {
+        state.riskScansError = (r.data && r.data.error) || 'Could not upload that file.';
+        render();
+      }
+    }).catch(function () {
+      state.riskScanUploading = false;
+      state.riskScansError = 'Could not upload that file \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  function setRiskScanReviewed(scanId, reviewed) {
+    state.riskScanTogglingId = scanId;
+    render();
+    apiPost('api/risk-scans.php?action=' + (reviewed ? 'mark_reviewed' : 'unmark_reviewed'), { id: scanId }).then(function (r) {
+      state.riskScanTogglingId = null;
+      if (r.data && r.data.ok && state.riskScans) {
+        var updated = r.data.scan;
+        state.riskScans = state.riskScans.map(function (s) { return s.id === updated.id ? updated : s; });
+      } else {
+        state.riskScansError = (r.data && r.data.error) || 'Could not update that scan.';
+      }
+      render();
+    }).catch(function () {
+      state.riskScanTogglingId = null;
+      state.riskScansError = 'Could not update that scan \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  function openCustomerAtRiskScan(customerId, scanId) {
+    state.view = 'dashboard';
+    state.pendingRiskScanFocus = { scanId: scanId };
+    selectCustomer(customerId);
+  }
+
   function saveMeeting(customerId) {
     var subject = (state.meetingDraftSubject || '').trim();
     var date = state.meetingDraftDate;
@@ -1230,6 +1379,8 @@
         loadVendorNotes(id);
         resetMeetingsState();
         loadMeetings(id);
+        resetRiskScansState();
+        loadRiskScans(id);
         if (state.pendingFocus) {
           var pf = state.pendingFocus;
           state.pendingFocus = null;
@@ -3326,6 +3477,8 @@
       html += '<div class="prospect-note">Prospect — a ConnectWise company with no active CodeBlue services yet. Every pillar below is a cross-sell opportunity.</div>';
     }
 
+    html += riskScansPanelHtml(detail.customer.id);
+
     html += activityPanelHtml(detail);
 
     html += '<div class="dashboard-grid">';
@@ -3416,6 +3569,69 @@
       '<div class="peoplefirst-field-value">' + valueHtml + '</div>' +
       '<button class="peoplefirst-log-btn" type="button" data-action="log-peoplefirst" data-customer="' + customer.id + '" data-type="' + type + '" ' +
         (isLogging ? 'disabled' : '') + '>' + (isLogging ? 'Logging…' : 'Log Today') + '</button>' +
+    '</div>';
+  }
+
+  // ---- Risk scans (upload/download/review) -------------------------------
+  // Added 2026-09-23 per Michael. Shown on EVERY customer's dashboard, not
+  // only PeopleFirst members (AskUserQuestion, 2026-09-23) -- a scan can be
+  // uploaded for any customer; it only also stamps the PeopleFirst
+  // "Last Risk Scan" fields above when this customer actually is one (see
+  // risk-scans.php's 'upload' action).
+
+  function riskScansPanelHtml(customerId) {
+    var html = '<div class="risk-scans-panel">';
+    html += '<div class="risk-scans-panel-header">' +
+      '<div class="view-title">Risk Scans</div>' +
+      '<div class="risk-scan-upload-row">' +
+        '<label class="risk-scan-file-label" for="riskScanFileInput">' +
+          (state.riskScanDraftFile ? escapeHtml(state.riskScanDraftFile.name) : 'Choose .zip file…') +
+        '</label>' +
+        '<input type="file" id="riskScanFileInput" accept=".zip" class="risk-scan-file-input">' +
+        '<button class="risk-scan-upload-btn" type="button" data-action="riskscan-upload" data-customer="' + customerId + '" ' +
+          (!state.riskScanDraftFile || state.riskScanUploading ? 'disabled' : '') + '>' +
+          (state.riskScanUploading ? 'Uploading…' : 'Upload') +
+        '</button>' +
+      '</div>' +
+    '</div>';
+
+    if (state.riskScansError) {
+      html += '<div class="error-banner">' + escapeHtml(state.riskScansError) + '</div>';
+    }
+
+    if (state.riskScansLoading && !state.riskScans) {
+      html += '<div class="loading">Loading…</div>';
+    } else if (!state.riskScans || !state.riskScans.length) {
+      html += '<div class="roster-empty">No risk scans uploaded yet.</div>';
+    } else {
+      html += '<div class="risk-scan-list">';
+      state.riskScans.forEach(function (scan) {
+        html += riskScanItemHtml(scan);
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function riskScanItemHtml(scan) {
+    var isReviewed = !!scan.reviewed_at;
+    var isToggling = state.riskScanTogglingId === scan.id;
+    return '<div class="risk-scan-item' + (isReviewed ? ' reviewed' : '') + '" data-riskscan-row="' + scan.id + '">' +
+      '<div class="risk-scan-item-main">' +
+        '<div class="risk-scan-item-name">' + escapeHtml(scan.original_filename) + '</div>' +
+        '<div class="risk-scan-item-meta">' + fmtFileSize(scan.size_bytes) + ' · uploaded by ' + escapeHtml(scan.uploaded_by_name) + ' · ' + escapeHtml(fmtTimestamp(scan.uploaded_at)) + '</div>' +
+        (isReviewed
+          ? '<div class="risk-scan-item-reviewed-meta">✓ Reviewed by ' + escapeHtml(scan.reviewed_by_name) + ' — ' + escapeHtml(fmtTimestamp(scan.reviewed_at)) + '</div>'
+          : '') +
+      '</div>' +
+      '<div class="risk-scan-item-actions">' +
+        '<a class="risk-scan-download-btn" href="api/risk-scans.php?action=download&id=' + scan.id + '">Download</a>' +
+        '<button class="risk-scan-review-btn" type="button" data-action="' + (isReviewed ? 'riskscan-unmark-reviewed' : 'riskscan-mark-reviewed') + '" data-scan="' + scan.id + '" ' + (isToggling ? 'disabled' : '') + '>' +
+          (isToggling ? '…' : (isReviewed ? 'Reopen' : 'Mark Reviewed')) +
+        '</button>' +
+      '</div>' +
     '</div>';
   }
 
@@ -3657,6 +3873,22 @@
       '</div>';
     });
     html += '</div>';
+
+    if (g.risk_scan_alerts && g.risk_scan_alerts.length) {
+      html += '<div class="global-riskscan-section">';
+      html += '<div class="global-riskscan-title">Risk Scans Awaiting Review (' + g.risk_scan_alerts.length + ')</div>';
+      html += '<div class="global-todo-list">';
+      g.risk_scan_alerts.forEach(function (a) {
+        html += '<div class="global-todo-item riskscan-alert" data-action="open-customer-riskscan" data-customer="' + a.customer_id + '" data-scan="' + a.id + '">' +
+          '<div class="global-todo-item-main">' +
+            '<div class="global-todo-item-desc">' + escapeHtml(a.original_filename) + '</div>' +
+            '<div class="global-todo-item-meta">' + escapeHtml(a.customer_name) + ' · uploaded by ' + escapeHtml(a.uploaded_by_name) + ' · ' + escapeHtml(fmtTimestamp(a.uploaded_at)) + '</div>' +
+          '</div>' +
+          '<div class="global-todo-item-go">Unassigned — Open →</div>' +
+        '</div>';
+      });
+      html += '</div></div>';
+    }
 
     if (g.tasks.length === 0) {
       html += '<div class="roster-empty">No meeting tasks yet.</div>';
@@ -4153,6 +4385,15 @@
         state.checklistNoteDraftText = e.target.value;
       });
     }
+
+    var riskScanFileInput = document.getElementById('riskScanFileInput');
+    if (riskScanFileInput) {
+      riskScanFileInput.addEventListener('change', function (e) {
+        state.riskScanDraftFile = (e.target.files && e.target.files[0]) || null;
+        state.riskScansError = null;
+        render();
+      });
+    }
   }
 
   function onRootClick(e) {
@@ -4173,6 +4414,7 @@
       resetContactCardState();
       resetVendorState();
       resetMeetingsState();
+      resetRiskScansState();
       render();
       if (!state.overview) loadOverview();
       loadGlobalTodos();
@@ -4444,6 +4686,17 @@
         parseInt(el.getAttribute('data-meeting'), 10),
         parseInt(el.getAttribute('data-task'), 10)
       );
+    } else if (action === 'open-customer-riskscan') {
+      openCustomerAtRiskScan(
+        parseInt(el.getAttribute('data-customer'), 10),
+        parseInt(el.getAttribute('data-scan'), 10)
+      );
+    } else if (action === 'riskscan-upload') {
+      uploadRiskScan(parseInt(el.getAttribute('data-customer'), 10));
+    } else if (action === 'riskscan-mark-reviewed') {
+      setRiskScanReviewed(parseInt(el.getAttribute('data-scan'), 10), true);
+    } else if (action === 'riskscan-unmark-reviewed') {
+      setRiskScanReviewed(parseInt(el.getAttribute('data-scan'), 10), false);
     } else if (action === 'show-rep-todos') {
       var repName = el.getAttribute('data-rep');
       var today = new Date();

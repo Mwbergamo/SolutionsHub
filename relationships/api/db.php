@@ -673,6 +673,39 @@ function relationships_migrate(PDO $pdo): void
             PRIMARY KEY (customer_id, pillar_id, service_id)
         )
     SQL);
+
+    // Risk scan uploads -- added 2026-09-23 per Michael: a service team
+    // member uploads a customer's risk-scan zip here; a rep downloads and
+    // reviews it, then marks it reviewed (see risk-scans.php). reviewed_at
+    // IS NULL is what makes an upload "unassigned" in the Global To-Do
+    // Checklist (relationships_global_risk_scan_alerts() in meetings.php)
+    // -- deliberately NOT a meeting_tasks row, since that table requires a
+    // real meeting_id and one of the 7 fixed roster names (no true
+    // "unassigned" state exists there). The uploaded file itself lives on
+    // disk under data/risk-scans/<customer_id>/ (blocked from direct HTTP
+    // access by data/.htaccess, same as the SQLite database) -- only this
+    // table's stored_filename says where; original_filename is what the
+    // rep sees and downloads as. 1-year retention/purge: see
+    // risk-scan-purge.php (cPanel cron), which deletes both the row and
+    // the file once uploaded_at is over a year old, regardless of review
+    // status -- kept off the server before it fills the disk.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS risk_scans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            original_filename TEXT NOT NULL,
+            stored_filename TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            uploaded_by_user_id INTEGER REFERENCES crc_users(id),
+            uploaded_by_name TEXT NOT NULL,
+            uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+            reviewed_at TEXT,
+            reviewed_by_user_id INTEGER REFERENCES crc_users(id),
+            reviewed_by_name TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_risk_scans_customer ON risk_scans(customer_id, uploaded_at DESC)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_risk_scans_open ON risk_scans(reviewed_at, uploaded_at DESC)');
 }
 
 /**

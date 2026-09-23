@@ -586,6 +586,133 @@ a { color: inherit; }
 .peoplefirst-log-btn:hover { background: oklch(0.78 0.15 85 / 0.26); }
 .peoplefirst-log-btn:disabled { opacity: .6; cursor: default; }
 
+/* Risk scans (upload/download/review) -- added 2026-09-23 per Michael.
+   Shown on every customer's dashboard, right under the activity panel. */
+
+.risk-scans-panel {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 18px;
+  padding: 18px;
+  margin-bottom: 18px;
+}
+
+.risk-scans-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.risk-scan-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.risk-scan-file-label {
+  font-size: 12px;
+  color: oklch(0.7 0.01 255);
+  background: oklch(0.16 0.012 255);
+  border: 1px solid oklch(0.3 0.02 255);
+  border-radius: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.risk-scan-file-label:hover { border-color: #8fc3ff; color: #8fc3ff; }
+
+.risk-scan-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.risk-scan-upload-btn {
+  background: oklch(0.78 0.15 85 / 0.16);
+  border: 1px solid oklch(0.78 0.15 85 / 0.4);
+  color: oklch(0.78 0.15 85);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.risk-scan-upload-btn:hover { background: oklch(0.78 0.15 85 / 0.26); }
+.risk-scan-upload-btn:disabled { opacity: .5; cursor: default; }
+
+.risk-scan-list {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.risk-scan-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 4px;
+  border-top: 1px solid oklch(0.25 0.02 255);
+  flex-wrap: wrap;
+}
+.risk-scan-item:first-child { border-top: none; }
+.risk-scan-item.reviewed { opacity: .65; }
+
+.risk-scan-item-name { font-size: 12.5px; font-weight: 600; color: oklch(0.82 0.006 255); }
+
+.risk-scan-item-meta {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: oklch(0.55 0.015 255);
+}
+
+.risk-scan-item-reviewed-meta {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: oklch(0.55 0.18 145);
+}
+
+.risk-scan-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.risk-scan-download-btn {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8fc3ff;
+  text-decoration: none;
+  border: 1px solid oklch(0.4 0.08 255 / 0.5);
+  border-radius: 7px;
+  padding: 6px 10px;
+}
+.risk-scan-download-btn:hover { background: oklch(0.4 0.08 255 / 0.14); }
+
+.risk-scan-review-btn {
+  background: transparent;
+  border: 1px solid oklch(0.3 0.02 255);
+  color: oklch(0.7 0.01 255);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.risk-scan-review-btn:hover { border-color: #8fc3ff; color: #8fc3ff; }
+.risk-scan-review-btn:disabled { opacity: .5; cursor: default; }
+
 /* PeopleFirst summary line atop the Cross-Sell Report */
 
 .peoplefirst-summary {
@@ -2255,6 +2382,28 @@ a { color: inherit; }
   flex: 0 0 auto;
   text-align: right;
 }
+
+/* Risk-scan upload alerts in the Global To-Do Checklist -- added
+   2026-09-23. Same list/item structure as the meeting to-dos above
+   (.global-todo-list / .global-todo-item), styled to stand out as
+   genuinely unclaimed rather than assigned-but-open. */
+
+.global-riskscan-section {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid oklch(0.26 0.02 255);
+}
+
+.global-riskscan-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: oklch(0.78 0.15 85);
+  margin-bottom: 4px;
+}
+
+.global-todo-item.riskscan-alert:hover .global-todo-item-desc { color: oklch(0.78 0.15 85); }
+.global-todo-item.riskscan-alert .global-todo-item-go { color: oklch(0.78 0.15 85); }
 
 /* Optional due-date field on the "+ Add Task" form -- added 2026-09-16. */
 .task-due-date-label {

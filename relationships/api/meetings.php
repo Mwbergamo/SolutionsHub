@@ -78,7 +78,19 @@
  *                completed_by_name }, ... ] (open tasks first, newest first
  *                within each group; completed tasks kept in the same list,
  *                not dropped, so the UI can render their strikethrough --
- *                capped at 300 rows total) }
+ *                capped at 300 rows total),
+ *     risk_scan_alerts: [ { id, customer_id, customer_name, original_filename,
+ *                uploaded_by_name, uploaded_at }, ... ] (added 2026-09-23,
+ *                per Michael -- open (reviewed_at IS NULL) risk_scans rows,
+ *                see risk-scans.php's file header for why these are their
+ *                own table rather than meeting_tasks rows: a real to-do
+ *                needs a meeting + one of the 7 fixed roster names, so
+ *                there's no way to represent a genuinely UNASSIGNED to-do
+ *                there. Newest upload first, capped at 100. Rendered in
+ *                the same Global To-Do Checklist panel as `tasks` above,
+ *                but not folded into it or the roster counts -- these
+ *                aren't assigned to anyone until a rep clicks
+ *                mark_reviewed.) }
  *
  * GET  /relationships/api/meetings.php?action=rep_todos&assigned_to_name=Claire+Hayden
  *   Added 2026-09-16 per Michael: "coordinators [click] on their names in
@@ -335,7 +347,31 @@ if ($action === 'global') {
 
     $tasks = array_map('relationships_cross_customer_task_row', $rows);
 
-    relationships_respond(200, ['ok' => true, 'roster' => $roster, 'counts' => $counts, 'tasks' => $tasks]);
+    // Risk-scan upload alerts -- added 2026-09-23, see risk-scans.php's
+    // file header and the docblock above. Same territory filter as the
+    // task query above (a restricted rep only ever sees alerts for their
+    // own customers), joined on customers the same way.
+    $riskScanStmt = $pdo->prepare(
+        "SELECT r.id, r.customer_id, c.name AS customer_name, r.original_filename, r.uploaded_by_name, r.uploaded_at
+         FROM risk_scans r
+         JOIN customers c ON c.id = r.customer_id
+         WHERE r.reviewed_at IS NULL {$territoryFilter['sql']}
+         ORDER BY r.uploaded_at DESC
+         LIMIT 100"
+    );
+    $riskScanStmt->execute($territoryFilter['params']);
+    $riskScanAlerts = array_map(static function (array $r): array {
+        return [
+            'id' => (int) $r['id'],
+            'customer_id' => (int) $r['customer_id'],
+            'customer_name' => $r['customer_name'],
+            'original_filename' => $r['original_filename'],
+            'uploaded_by_name' => $r['uploaded_by_name'],
+            'uploaded_at' => $r['uploaded_at'],
+        ];
+    }, $riskScanStmt->fetchAll(PDO::FETCH_ASSOC));
+
+    relationships_respond(200, ['ok' => true, 'roster' => $roster, 'counts' => $counts, 'tasks' => $tasks, 'risk_scan_alerts' => $riskScanAlerts]);
 }
 
 if ($action === 'rep_todos') {
