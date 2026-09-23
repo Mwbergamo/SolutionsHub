@@ -534,6 +534,10 @@
               </div>
 
               <sc-if value="{{managedItVM.approachIsPeopleFirst}}" hint-placeholder-val="{{true}}">
+                <!-- position:relative anchor for the PeopleFirst pills panel below --
+                     see its own comment for why it lives right here, inside this
+                     specific block, instead of floating fixed to the viewport. -->
+                <div style="position:relative;">
                 <div style="margin-top:28px;font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;">Size the network</div>
                 <div style="margin-top:4px;font-size:12.5px;color:var(--cbt-text-on-light-muted);">Forecast this together with the customer — it's easy to true up later.</div>
                 <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px;">
@@ -555,6 +559,21 @@
                       </div>
                     </div>
                   </sc-for>
+                </div>
+
+                <!-- PeopleFirst Support pills (2026-09-23, per Michael: anchor these
+                     to the Size-the-Network block itself -- scrolling together with
+                     it, positioned right beside it -- instead of floating fixed to
+                     the viewport. The illustration that used to sit next to them is
+                     removed entirely (per Michael: "it scales badly"). See .pf-panel
+                     in styles.css. -->
+                <div class="pf-panel">
+                  <div class="pf-pills">
+                    <sc-for list="{{managedItVM.peopleFirstPills}}" as="pfp" hint-placeholder-count="7">
+                      <div class="{{pfp.pillClass}}" style="{{pfp.pillStyle}}">{{pfp.label}}</div>
+                    </sc-for>
+                  </div>
+                </div>
                 </div>
               </sc-if>
 
@@ -1878,31 +1897,10 @@
     </div>
   </sc-if>
 
-  <!-- PeopleFirst Support illustration (Managed IT configurator) -- a
-       sibling of .app-body, not nested inside .view-pad.view-enter, on
-       purpose: .view-enter's entrance animation leaves a permanent
-       transform: translateY(0) on .view-pad after it finishes (fill-mode
-       both), and any transform on an ancestor turns this element's
-       position:fixed into position relative to THAT ancestor's box
-       instead of the viewport -- which is why it used to scroll away and
-       disappear instead of staying put. Placed here (like the two
-       modals above) so it stays genuinely fixed to the screen while the
-       form scrolls, per Michael. -->
-  <sc-if value="{{isManagedIT}}" hint-placeholder-val="{{false}}">
-    <div class="pf-panel">
-      <div class="pf-pills">
-        <sc-for list="{{managedItVM.peopleFirstPills}}" as="pfp" hint-placeholder-count="7">
-          <div class="{{pfp.pillClass}}" style="{{pfp.pillStyle}}">{{pfp.label}}</div>
-        </sc-for>
-      </div>
-    </div>
-    <div class="pf-figure-panel">
-      <img class="pf-figure" src="assets/peoplefirst-illustration.png" alt="" loading="lazy">
-    </div>
-  </sc-if>
-
   <!-- Project Mode tray (2026-09-23) -- see claude/solutions-creator-project-mode.md.
-       Same reasoning as the PeopleFirst panel above: a sibling of
+       Same reasoning as the PeopleFirst panel used to be (it's now anchored
+       in-flow next to the Size-the-Network block instead -- see .pf-panel
+       in styles.css and the isManagedIT block above): a sibling of
        .app-body, not nested in any .view-pad.view-enter, so it stays
        genuinely fixed to the viewport on every screen while the rep
        browses across pillars, instead of scrolling away or only being

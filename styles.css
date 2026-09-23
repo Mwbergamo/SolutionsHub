@@ -314,12 +314,10 @@ body { overflow-x: hidden; }
 }
 
 /* ============================================================
-   PeopleFirst Support illustration (Managed IT configurator)
+   PeopleFirst Support pills (Managed IT configurator)
    Added 2026-09-23, per Michael -- a read-only visual readout of what the
-   device/add-on picker above has selected, next to a cropped version of
-   the "PeopleFirst Support" campaign photo he supplied (assets/
-   peoplefirst-illustration.png). See app.js's pfActive / peopleFirstPills
-   for the active-state mapping.
+   device/add-on picker above has selected. See app.js's pfActive /
+   peopleFirstPills for the active-state mapping.
 
    Restyled 2026-09-23, also per Michael, after the first pass: the
    original two-across layout for the last 6 pills was too narrow for
@@ -330,21 +328,35 @@ body { overflow-x: hidden; }
    near-white/gold-border card treatment CROSS_SELL_GLOW uses in app.js
    for the cross-sell suggestion cards -- reused here rather than
    reinvented, applied to .pf-pill--active below. Switched to one pill
-   per row (no more pairing) so every label fits on one line at a width
-   that still comfortably co-exists with her photo and the 1440px
-   breakpoint below -- pairing them and also fitting the longest labels
-   would have needed far more horizontal room than is available next to
-   the 740px-wide configurator column.
+   per row (no more pairing) so every label fits on one line.
+
+   Originally paired with a "PeopleFirst Support" campaign photo (assets/
+   peoplefirst-illustration.png) next to the pills, and the whole panel
+   was position:fixed, centered on the viewport regardless of scroll.
+   Both removed 2026-09-23, per Michael:
+     - the photo "scales badly" -- dropped entirely, including its markup,
+       assets reference, and the .pf-figure/.pf-figure-panel rules that
+       used to live here (see git history if it's ever wanted back).
+     - the panel itself is no longer position:fixed/viewport-centered --
+       Michael wants the pills "fixed to the size of the network block of
+       input fields" specifically, i.e. scrolling together with that one
+       section rather than hovering independent of scroll position. So
+       .pf-panel now lives in normal document flow, nested directly
+       inside the "Size the network" sc-if block in index.html (right
+       after the device-count rows), wrapped in a plain
+       `<div style="position:relative;">` that sc-if adds around that
+       block's own content -- .pf-panel is position:absolute relative to
+       THAT wrapper, not the viewport, so it scrolls exactly with the
+       block Michael named instead of drifting through unrelated parts
+       of the form as the page scrolls.
 
    Desktop-only by design, not just by convenience: the configurator
-   column above is already 846px from the left edge of the viewport
-   (56px view padding + 50px content margin + 740px content width), so
-   this panel only has room to sit beside it -- without overlapping --
-   once the viewport is wide enough. Michael confirmed hiding it below
-   that (rather than stacking it under the form) is fine, so it never
-   shows on tablets or phones, only on wide desktop/laptop screens. The
-   panel is vertically centered (not pinned to a fixed top offset) so it
-   self-adjusts across the range of desktop screen heights this targets.
+   column is a max-width:740px block starting 50px in from its own
+   padding, so this panel only has room to sit beside it -- without
+   overlapping -- once the viewport is wide enough. Michael confirmed
+   hiding it below that (rather than stacking it under the form) is
+   fine, so it never shows on tablets or phones, only on wide
+   desktop/laptop screens.
 
    Reordering (added 2026-09-23, per Michael): selected pills should
    physically glide to the top of the list, unselected ones to the
@@ -366,19 +378,13 @@ body { overflow-x: hidden; }
    ============================================================ */
 .pf-panel {
   display: none;
-  position: fixed;
-  top: 50%;
-  right: 40px;
-  transform: translateY(-50%);
-  width: 450px;
-  align-items: center;
-  gap: 20px;
-  pointer-events: none;
-  z-index: 5;
+  position: absolute;
+  top: 0;
+  left: calc(100% + 40px);
+  width: 260px;
 }
 .pf-pills {
   position: relative;
-  flex: 0 0 260px;
   width: 260px;
   height: 603px; /* 13 pills * 47px row step - 8px (no trailing gap) */
 }
@@ -409,60 +415,11 @@ body { overflow-x: hidden; }
   background: oklch(0.98 0.006 255);
   border-color: oklch(0.78 0.14 85);
 }
-.pf-figure {
-  max-width: 100%;
-  max-height: 88vh;
-  width: auto;
-  height: auto;
-  display: block;
-  object-fit: contain;
-  filter: drop-shadow(0 14px 26px rgba(0,0,0,.4));
-}
-/* PeopleFirst illustration -- big center panel (2026-09-23, per Michael:
-   the figure used to be a small 170px image squeezed into the same flex
-   row as the pills, which pushed it out to .pf-panel's far edge (right:
-   40px), close to the viewport's right border. Moved to its own panel
-   in the gap between the configurator form (a fixed-width column ending
-   846px from the left edge -- see .pf-panel's comment above: 56px view
-   padding + 50px content margin + 740px content width) and the pills
-   panel (.pf-panel is right:40px, width:450px, so its left edge sits at
-   "right: 490px" from the viewport's right edge). left/right anchors
-   here (rather than a fixed width) so the panel's own width -- and so
-   the image inside it, via object-fit:contain -- responsively fills
-   whatever room is actually available between those two neighbors as
-   the viewport gets wider or narrower, instead of a hardcoded size that
-   only fit one specific screen. Same desktop-only / fixed-to-viewport /
-   sibling-of-.app-body treatment as .pf-panel, for the same reason (see
-   the scroll-bug comment on .pf-panel above) -- this is a sibling of
-   .pf-panel in the markup, both still outside .app-body.
-
-   IMPORTANT (2026-09-23, self-correction): this full rule -- including
-   its base display:none -- must stay ABOVE the "@media (min-width:
-   1440px)" block below, same as .pf-panel's own rule does. A first pass
-   at this accidentally placed this rule's definition AFTER that media
-   query in the file; since a plain (non-media) rule always wins a
-   cascade tie against an earlier media-query rule regardless of which
-   one's condition is actually true, that ordering silently forced
-   display:none at every viewport width, no matter how wide -- the
-   figure never rendered at all, not just in the wrong spot. */
-.pf-figure-panel {
-  display: none;
-  position: fixed;
-  top: 50%;
-  left: 866px;
-  right: 605px;
-  transform: translateY(-50%);
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-  z-index: 5;
-}
 @media (prefers-reduced-motion: reduce) {
   .pf-pill { transition: none; }
 }
 @media (min-width: 1440px) {
-  .pf-panel { display: flex; }
-  .pf-figure-panel { display: flex; }
+  .pf-panel { display: block; }
 }
 
 /* Project Mode tray (2026-09-23) -- see claude/solutions-creator-project-mode.md.
