@@ -626,6 +626,53 @@ function relationships_migrate(PDO $pdo): void
     // cw_push_status/cw_push_error already record the create attempt.
     relationships_add_column_if_missing($pdo, 'meeting_tasks', 'cw_close_status', 'TEXT');
     relationships_add_column_if_missing($pdo, 'meeting_tasks', 'cw_close_error', 'TEXT');
+
+    // Cross-sell step notes -- added 2026-09-23 per Michael: "add the
+    // ability to click a small + icon next to each step for a rep to put
+    // in their notes on any feedback from the customer as it relates to
+    // that specific outreach step... capture the timestamp/date and rep
+    // name along with their notes." One row per note, tagged to a single
+    // checklist step (customer_id, pillar_id, service_id, step_number) --
+    // NOT tied to checklist_progress by foreign key, since a note can be
+    // added on a step that isn't checked off yet (or ever). Also used as
+    // a lightweight audit trail for the Recycle action below (a system
+    // note gets inserted here when a checklist is recycled), rather than
+    // adding a separate log table for that one event.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS checklist_step_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            pillar_id TEXT NOT NULL,
+            service_id TEXT NOT NULL,
+            step_number INTEGER NOT NULL,
+            note_text TEXT NOT NULL,
+            created_by_user_id INTEGER REFERENCES crc_users(id),
+            created_by_name TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_checklist_step_notes_lookup ON checklist_step_notes(customer_id, pillar_id, service_id)');
+
+    // Cross-sell "Kill Opportunity" -- added 2026-09-23, the other half of
+    // the same request as the notes table above ("Recycle in 180 days or
+    // Kill Opportunity Button"). One row = this customer is permanently
+    // excluded from this service's blanket cross-sell mechanism (the
+    // Cross-Sell Report roster/queue) -- checked the same way activeSet
+    // already is in relationships_missing_services_with_progress() below.
+    // Deliberately NOT a delete of checklist_progress/notes -- killing an
+    // opportunity is reversible (see checklist.php's 'kill' action, which
+    // just deletes this row again), so nothing else is touched.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS cross_sell_killed (
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            pillar_id TEXT NOT NULL,
+            service_id TEXT NOT NULL,
+            killed_at TEXT NOT NULL DEFAULT (datetime('now')),
+            killed_by_user_id INTEGER REFERENCES crc_users(id),
+            killed_by_name TEXT,
+            PRIMARY KEY (customer_id, pillar_id, service_id)
+        )
+    SQL);
 }
 
 /**

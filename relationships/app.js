@@ -166,10 +166,44 @@
     overviewPeopleFirstOnly: false,
 
     // Checklist data, keyed by "customerId::pillarId::serviceId". Each
-    // value is: undefined (not fetched yet), 'error', or an array of the
-    // 7 step objects from checklist.php?action=get.
+    // value is: undefined (not fetched yet), 'error', or
+    // { steps: [...7 step objects...], killed: bool } from
+    // checklist.php?action=get.
     checklists: {},
     openChecklistKey: null,
+
+    // Cross-sell step notes (api/checklist.php?action=notes_get/notes_add)
+    // -- added 2026-09-23, per Michael: "add the ability to click a small
+    // + icon next to each step for a rep to put in their notes." Same
+    // "customerId::pillarId::serviceId" key shape as state.checklists;
+    // value is undefined (not fetched), 'error', or an array of note rows.
+    // Only one checklist's notes panel is ever open at a time, same
+    // single-key pattern as openChecklistKey itself.
+    checklistNotes: {},
+    openChecklistNotesKey: null,
+    // "customerId::pillarId::serviceId::stepNumber" of the single note
+    // textarea currently open (the "+" button per step), or null. Fully
+    // compound so switching customers/pillars never shows a stray open
+    // textarea against the wrong step.
+    checklistNoteDraftOpenKey: null,
+    checklistNoteDraftText: '',
+    checklistNoteSaving: false,
+
+    // Which contact is selected for a checklist's outreach actions --
+    // keyed the same "customerId::pillarId::serviceId" way. Independent
+    // of state.contactCardSelectedId (the OutGrow contact card's own
+    // selection just above) since a rep may want a different contact for
+    // a specific cross-sell push than whatever's selected for OutGrow.
+    // Reuses state.contactCard.contacts (already loaded per customer,
+    // filtered to contacts with complete info) as its data source --
+    // deliberately no second contact fetch for this.
+    checklistContactSelected: {},
+    openChecklistContactDropdownKey: null,
+
+    // "customerId::pillarId::serviceId" currently mid Recycle/Kill/Unkill
+    // request, so those buttons can show a saving state and can't
+    // double-fire.
+    checklistCloseoutSaving: null,
 
     // Set right before selectCustomer() when arriving from the queue view,
     // so the customer's dashboard opens straight to that pillar with that
@@ -1225,7 +1259,7 @@
       'api/checklist.php?action=get&customer_id=' + encodeURIComponent(customerId) +
       '&pillar_id=' + encodeURIComponent(pillarId) + '&service_id=' + encodeURIComponent(serviceId)
     ).then(function (r) {
-      state.checklists[key] = (r.data && r.data.ok) ? r.data.steps : 'error';
+      state.checklists[key] = (r.data && r.data.ok) ? { steps: r.data.steps, killed: !!r.data.killed } : 'error';
       render();
     }).catch(function () {
       state.checklists[key] = 'error';
@@ -1245,6 +1279,280 @@
         render();
       }
     }).catch(function () {
+      state.error = 'Could not save that — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Cross-sell outreach scripts, notes, and Recycle/Kill actions -- added
+  // 2026-09-23 per Michael: "I want to specify what happens with each
+  // cross sell opportunity by step... create content dynamically for each
+  // Pillar and step." Per Michael's own confirmed scope choice, only
+  // Voice over IP / Cloud Voice System has a real script right now
+  // (CROSS_SELL_SCRIPTS below) -- the notes/contact-selection/Recycle/Kill
+  // machinery is generic and already live for every cross-sell-tracked
+  // service (see relationships_cross_sell_map() in catalog.php); the
+  // other 5 just show plain checkboxes + notes until their scripts arrive.
+
+  // One entry per scripted cross-sell service, keyed "pillarId::serviceId".
+  // Steps 2/4/6 are always the generic "Phone Call Follow-Up" (no content
+  // needed -- see checklistStepRowHtml(), which just offers a tel: link
+  // once a contact is selected) and step 7 is the Recycle/Kill row (also
+  // generic, rendered once every step is checked off) -- so a script only
+  // ever needs entries for steps 1/3/5, each { subject, servicesIntro,
+  // body }. `body` is an array of lines (joined with \n for the plain-text
+  // mailto: body Michael chose over an in-app HTML send -- see
+  // claude/relationships-connectwise-sync.md for that decision) containing
+  // {{FirstName}}/{{CompanyName}} merge tokens and, where Michael's script
+  // has "Today, CodeBlue currently provides your team with...", the
+  // '{{SERVICES_BLOCK}}' marker -- crossSellEmailContent() below splices
+  // in that customer's actual active services there, or removes the line
+  // entirely when they have none (per Michael: "ignore the line... if
+  // there are no active pillar services in place").
+  //
+  // Steps 1 and 3's Subject lines were left blank when Michael first
+  // pasted this script into chat (only Step 5 had one) -- rather than
+  // guess, the real subjects (and a couple of small wording refinements
+  // Michael had already made) were pulled from his own saved Outlook
+  // drafts, found sitting in this repo's working tree as
+  // "Marketing Emails/*.msg" while this feature was being built:
+  // Step 1 = "Communication Solution with CodeBlue", Step 3 = "Zultys vs.
+  // the others: What changes with CodeBlue" (Step 5's .msg matched the
+  // chat script exactly). One stray citation-link artifact in Step 1's
+  // .msg body ("...in 2023.gitnux <https://gitnux.org/...>") was cleaned
+  // up to a plain sentence, and Step 3's "Hey{{FirstName}}," (missing
+  // "there"/a space) was straightened out to match the greeting style of
+  // the other two steps -- everything else below is verbatim.
+  //
+  // Still worth a look before relying on this: Step 3's original content
+  // included a two-column comparison TABLE (Consideration /
+  // Zultys+CodeBlue / Others) -- a mailto: body is plain text with no
+  // table support, so it's flattened below into one line per
+  // consideration ("Zultys + CodeBlue: ... / Others: ..."), preserving
+  // every word of the original cell text.
+  var CROSS_SELL_SCRIPTS = {
+    'voip::cloud-voice': {
+      1: {
+        subject: 'Communication Solution with CodeBlue',
+        servicesIntro: 'Today, CodeBlue currently provides your team with:',
+        body: [
+          'Hey there {{FirstName}},',
+          'We appreciate the opportunity to support you and your team here at CodeBlue.',
+          '{{SERVICES_BLOCK}}',
+          'As your business evolves, we want to make sure every part of your technology—including the way customers and employees communicate—keeps pace.',
+          '',
+          'A better way to stay connected',
+          'CodeBlue’s Zultys Voice over IP (VoIP) solution brings business calling, messaging, collaboration, and mobility into one secure, scalable platform.',
+          '',
+          '• Secure, reliable communications designed to support your business and customer experience',
+          '• Advanced call routing, mobile access, chat, texting, voicemail tools, and collaboration features',
+          '• Guidance from CodeBlue’s own voice and network engineering professionals, with responsive support when you need it',
+          '',
+          'Why businesses are moving to VoIP',
+          '• Businesses using VoIP commonly report 50–75% lower telephony costs compared with traditional public switched telephone network (PSTN) service',
+          '• 65% of enterprises worldwide used VoIP as their primary telephony system in 2023.',
+          '• VoIP allows calls to move between desktop phones, computers, and mobile devices—so employees can remain available without being tied to a single physical office',
+          '',
+          'Why bundle voice with CodeBlue?',
+          '• Simpler support experience: One knowledgeable partner that already understands your business and technology environment',
+          '• One-stop IT and voice partner: Coordinate your network, cybersecurity, managed IT, and communications through CodeBlue rather than multiple vendors',
+          '• End-to-end communications quality control: Our voice and networking engineers can help ensure the infrastructure behind your calls is designed for clear, dependable communication',
+          '',
+          'Every organization’s needs are different—we would welcome the opportunity to meet with you, and discuss a Zultys solution designed around your specific requirements.',
+          'Thank you again for your partnership and for trusting CodeBlue Technology. We are always here to help you solve your next technical challenge.',
+          '',
+          'Best regards,'
+        ]
+      },
+      3: {
+        subject: 'Zultys vs. the others: What changes with CodeBlue',
+        servicesIntro: 'Today, CodeBlue supports your organization with:',
+        body: [
+          'Hey there {{FirstName}},',
+          'We value the opportunity to support {{CompanyName}} and help keep your technology dependable, secure, and aligned with your business goals.',
+          '{{SERVICES_BLOCK}}',
+          'Because we already understand your environment, we wanted to introduce a communications option that can bring your phone system, IT infrastructure, and support experience closer together: Zultys Voice over IP, delivered and supported by CodeBlue.',
+          '',
+          'More than a hosted phone platform',
+          'There are over 2600 cloud-phone providers. However, a phone system is only as good as the support, network readiness, deployment planning, and long-term accountability behind it.',
+          '',
+          'With Zultys and CodeBlue, you receive a unified communications platform along with a local technology partner that can support the voice system and the IT environment it relies on. Zultys combines calling, messaging, video, mobility, and collaboration capabilities in one platform, while CodeBlue’s voice and network engineers help guide design, deployment, troubleshooting, and ongoing support.',
+          '',
+          'Side-by-side at a glance',
+          '• Support experience — Zultys + CodeBlue: Direct relationship with CodeBlue engineers and support staff who can understand both your voice and IT environment. Others: Centralized cloud-provider support; support availability may vary by plan and service.',
+          '• IT and voice accountability — Zultys + CodeBlue: One partner for communications, network readiness, managed IT, cybersecurity, and related technology services. Others: Voice platform provider; internal IT or another partner may manage network and endpoint issues.',
+          '• Deployment flexibility — Zultys + CodeBlue: Cloud, on-premise, and hybrid configurations can be evaluated around operational, continuity, and business requirements. Others: Primarily cloud-delivered unified communications.',
+          '• Hardware support approach — Zultys + CodeBlue: CodeBlue can help coordinate phones, configuration, deployment, and support as part of the broader solution. Others: Hardware terms, warranty coverage, and replacement processes should be reviewed in the applicable order and service agreement.',
+          '• Contract discussion — Zultys + CodeBlue: CodeBlue can structure an engagement around your requirements; ask us about month-to-month service options and equipment terms. Others: Plan, payment, and commitment options vary by offer and agreement.',
+          '• Quality control — Zultys + CodeBlue: One team can assess voice, internet connectivity, LAN/Wi-Fi, security, and user experience together. Others: Responsibility may span phone provider, internet provider, network partner, and internal IT.',
+          '',
+          'The CodeBlue difference',
+          '• Simpler support: Instead of determining whether an issue belongs to the phone vendor, internet provider, network provider, or IT company, start with CodeBlue. We can help coordinate the right response and support the full technology picture.',
+          '• One trusted technology partner: Your phones should not operate separately from the network, security, devices, and IT services your business relies on each day.',
+          '• End-to-end communication quality: Voice quality depends on more than the handset. CodeBlue can evaluate the systems behind the call—including network performance, connectivity, configuration, and business-continuity needs.',
+          '• Flexible commercial conversation: We will clearly review service, hardware, warranty, support, and contract terms before recommending a path. This matters because published equipment and subscription terms can differ significantly by provider, service type, and deployment model. For example, Zultys’ Hardware-as-a-Service offering is advertised with predictable monthly pricing but may require a three- or five-year agreement for qualifying deployments, while its equipment-rental program lists specific minimum commitments and early-termination terms.',
+          '',
+          'Let’s compare your actual needs',
+          'A meaningful comparison should go beyond a per-user monthly price. We would love the opportunity to review your current phone environment, service agreement, renewal date, support concerns, office locations, remote-work needs, and hardware requirements.',
+          '',
+          'From there, CodeBlue can help determine whether Zultys is the right fit—and provide a clear comparison of costs, features, support responsibilities, warranty coverage, and contract options based on your organization’s specific needs.',
+          'Thank you again for your partnership and your openness to letting CodeBlue help with your next technical challenge.',
+          '',
+          'Best regards,'
+        ]
+      },
+      5: {
+        subject: 'Is CodeBlue’s voice solution a fit for your business?',
+        body: [
+          'Hey there {{FirstName}},',
+          'Thank you for taking the time to review the information we recently shared about CodeBlue Technology’s Zultys Voice over IP solution, including how it compares with other business communications platforms.',
+          'Our goal is to understand how {{CompanyName}} handled customer phone calls and communications today, where you want to go, and whether CodeBlue can provide meaningful value through a more unified voice and IT support experience.',
+          '',
+          'We would appreciate the opportunity to schedule a 30-minute conversation to discuss:',
+          '• Your current communications environment, provider, and support experience',
+          '• Business goals around customer service, mobility, multiple locations, remote work, growth, and continuity',
+          '• Any communication challenges or upcoming contract, equipment, or renewal considerations',
+          '• Whether Zultys and CodeBlue’s engineering-led support model align with your needs',
+          '',
+          'At the end of the conversation, we can determine together whether there is a practical fit and value in moving forward. If there is not, you will still have a clearer view of the options available for your business communications strategy.',
+          '',
+          'Would you be available for a 30-minute meeting next week?',
+          'Thank you again for your continued partnership with CodeBlue Technology. We appreciate the opportunity to support your business and remain ready to help with any technical challenge your team faces.',
+          '',
+          'Best regards,'
+        ]
+      }
+    }
+  };
+
+  // Every currently-active service's name across every pillar for the
+  // selected customer -- the data behind {{SERVICES_BLOCK}} above. Same
+  // "active" flag customers.php?action=detail already returns (used
+  // identically by printSummaryHtml()'s "Services Currently In Place"
+  // section) -- not scoped to any one pillar, since Michael's script means
+  // this literally ("the active customer pillar's we currently provide"),
+  // and the service being marketed is by definition not active yet anyway.
+  function crossSellActiveServiceNames(detail) {
+    var names = [];
+    (detail.pillars || []).forEach(function (pillar) {
+      (pillar.services || []).forEach(function (svc) {
+        if (svc.active) names.push(svc.name);
+      });
+    });
+    return names;
+  }
+
+  // Fills in a scripted email for the given pillar/service/step + selected
+  // contact. Returns null when this pillar/service has no script yet (the
+  // 5 cross-sell services other than Cloud Voice System, until Michael
+  // supplies their content) or the step isn't one of the scripted ones
+  // (2/4/6 are plain phone-call steps, 7 is the closeout row).
+  function crossSellEmailContent(pillarId, serviceId, stepNumber, contact) {
+    var script = CROSS_SELL_SCRIPTS[pillarId + '::' + serviceId];
+    var tpl = script && script[stepNumber];
+    if (!tpl || !state.selectedCustomer) return null;
+
+    var companyName = state.selectedCustomer.customer.name;
+    var firstName = (contact.name || '').trim().split(/\s+/)[0] || 'there';
+    var activeServices = crossSellActiveServiceNames(state.selectedCustomer);
+    var servicesBlockLines = activeServices.length
+      ? [tpl.servicesIntro].concat(activeServices.map(function (s) { return '• ' + s; })).concat([''])
+      : [];
+
+    var lines = [];
+    tpl.body.forEach(function (line) {
+      if (line === '{{SERVICES_BLOCK}}') {
+        lines = lines.concat(servicesBlockLines);
+      } else {
+        lines.push(line);
+      }
+    });
+
+    var mergeFields = function (s) {
+      return s.split('{{FirstName}}').join(firstName).split('{{CompanyName}}').join(companyName);
+    };
+
+    return { subject: mergeFields(tpl.subject), body: mergeFields(lines.join('\n')) };
+  }
+
+  function crossSellMailtoHref(email, subject, body) {
+    return 'mailto:' + escapeHtml(email) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  }
+
+  function loadChecklistNotes(customerId, pillarId, serviceId) {
+    var key = customerId + '::' + pillarId + '::' + serviceId;
+    apiGet(
+      'api/checklist.php?action=notes_get&customer_id=' + encodeURIComponent(customerId) +
+      '&pillar_id=' + encodeURIComponent(pillarId) + '&service_id=' + encodeURIComponent(serviceId)
+    ).then(function (r) {
+      state.checklistNotes[key] = (r.data && r.data.ok) ? r.data.notes : 'error';
+      render();
+    }).catch(function () {
+      state.checklistNotes[key] = 'error';
+      render();
+    });
+  }
+
+  function addChecklistNote(customerId, pillarId, serviceId, stepNumber) {
+    var text = (state.checklistNoteDraftText || '').trim();
+    if (!text) return;
+    var key = customerId + '::' + pillarId + '::' + serviceId;
+    state.checklistNoteSaving = true;
+    render();
+    apiPost('api/checklist.php?action=notes_add', {
+      customer_id: customerId, pillar_id: pillarId, service_id: serviceId,
+      step_number: stepNumber, note_text: text
+    }).then(function (r) {
+      state.checklistNoteSaving = false;
+      if (r.data && r.data.ok) {
+        state.checklistNoteDraftOpenKey = null;
+        state.checklistNoteDraftText = '';
+        loadChecklistNotes(customerId, pillarId, serviceId); // re-render happens inside
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not save that note — try again.';
+        render();
+      }
+    }).catch(function () {
+      state.checklistNoteSaving = false;
+      state.error = 'Could not save that note — check your connection and try again.';
+      render();
+    });
+  }
+
+  function recycleChecklist(customerId, pillarId, serviceId) {
+    var key = customerId + '::' + pillarId + '::' + serviceId;
+    state.checklistCloseoutSaving = key;
+    render();
+    apiPost('api/checklist.php?action=recycle', { customer_id: customerId, pillar_id: pillarId, service_id: serviceId }).then(function (r) {
+      state.checklistCloseoutSaving = null;
+      if (r.data && r.data.ok) {
+        loadChecklist(customerId, pillarId, serviceId);
+        if (state.openChecklistNotesKey === key) loadChecklistNotes(customerId, pillarId, serviceId);
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not recycle that opportunity — try again.';
+        render();
+      }
+    }).catch(function () {
+      state.checklistCloseoutSaving = null;
+      state.error = 'Could not recycle that opportunity — check your connection and try again.';
+      render();
+    });
+  }
+
+  function setChecklistKilled(customerId, pillarId, serviceId, killed) {
+    var key = customerId + '::' + pillarId + '::' + serviceId;
+    state.checklistCloseoutSaving = key;
+    render();
+    apiPost('api/checklist.php?action=kill', { customer_id: customerId, pillar_id: pillarId, service_id: serviceId, killed: killed }).then(function (r) {
+      state.checklistCloseoutSaving = null;
+      if (r.data && r.data.ok) {
+        loadChecklist(customerId, pillarId, serviceId);
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not save that — try again.';
+        render();
+      }
+    }).catch(function () {
+      state.checklistCloseoutSaving = null;
       state.error = 'Could not save that — check your connection and try again.';
       render();
     });
@@ -3581,28 +3889,183 @@
 
     if (!isOpen) return html;
 
-    html += '<div class="checklist-panel" data-checklist-key="' + key + '">';
     var data = state.checklists[key];
+
+    html += '<div class="checklist-panel" data-checklist-key="' + key + '">';
+
     if (data === 'error') {
-      html += '<div class="checklist-error">Could not load the checklist — try again.</div>';
-    } else if (!data) {
-      html += '<div class="checklist-loading">Loading checklist…</div>';
-    } else {
-      data.forEach(function (step) {
-        html += '<label class="checklist-step ' + (step.completed ? 'done' : '') + '">' +
-          '<input type="checkbox" ' + (step.completed ? 'checked' : '') +
-            ' data-action="toggle-step" data-customer="' + customerId + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '"' +
-            ' data-service-name="' + escapeHtml(svc.name) + '" data-step="' + step.step_number + '" data-completed="' + (step.completed ? '1' : '0') + '">' +
-          '<div class="checklist-step-text">' +
-            '<div class="checklist-step-label">' + step.step_number + '. ' + escapeHtml(step.label) + '</div>' +
-            (step.completed
-              ? '<div class="checklist-step-meta">✓ ' + escapeHtml(step.completed_by_name) + ' — ' + escapeHtml(fmtTimestamp(step.completed_at)) + '</div>'
-              : '') +
-          '</div>' +
-        '</label>';
-      });
+      html += '<div class="checklist-error">Could not load the checklist — try again.</div>' + '</div>';
+      return html;
     }
-    html += '</div>';
+    if (!data) {
+      html += '<div class="checklist-loading">Loading checklist…</div>' + '</div>';
+      return html;
+    }
+
+    if (data.killed) {
+      html += '<div class="checklist-killed-note">' +
+        'Marked not interested — excluded from the Cross-Sell Report.' +
+        '<button type="button" class="checklist-inline-link" data-action="checklist-unkill" data-customer="' + customerId + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '"' +
+          (state.checklistCloseoutSaving === key ? ' disabled' : '') + '>Restore opportunity</button>' +
+      '</div>';
+    }
+
+    // Contact selection -- drives the Email/Call actions on the steps
+    // below. Reuses state.contactCard.contacts (already loaded for the
+    // OutGrow card, same completeness filtering) rather than a second
+    // fetch -- per Michael: "add a contact selection drop down... actions
+    // below that step will use the contact selected."
+    var contacts = (state.contactCard && state.contactCard.contacts) || [];
+    var selectedContactId = state.checklistContactSelected[key] || null;
+    var selectedContact = null;
+    for (var sci = 0; sci < contacts.length; sci++) {
+      if (contacts[sci].id === selectedContactId) { selectedContact = contacts[sci]; break; }
+    }
+    var contactDropdownOpen = state.openChecklistContactDropdownKey === key;
+
+    if (contacts.length) {
+      html += '<div class="checklist-contact-row">' +
+        '<div class="contact-card-dropdown checklist-contact-dropdown">' +
+          '<button type="button" class="contact-card-dropdown-toggle" data-action="checklist-contact-dropdown-toggle" data-checklist-key="' + key + '" aria-expanded="' + (contactDropdownOpen ? 'true' : 'false') + '">' +
+            '<span>' + (selectedContact ? escapeHtml(selectedContact.name || 'Contact') : 'Select a contact for outreach…') + '</span>' +
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="contact-card-dropdown-chevron"><polyline points="6 9 12 15 18 9"></polyline></svg>' +
+          '</button>';
+      if (contactDropdownOpen) {
+        html += '<div class="contact-card-dropdown-panel">';
+        contacts.forEach(function (c) {
+          var rowClass = 'contact-card-dropdown-row' + (selectedContact && c.id === selectedContact.id ? ' selected' : '');
+          html += '<div class="' + rowClass + '" data-action="checklist-contact-select" data-checklist-key="' + key + '" data-contact-id="' + escapeHtml(c.id) + '">' +
+            '<div class="contact-card-dropdown-name">' + escapeHtml(c.name || 'Contact') + '</div>' +
+            '<div class="contact-card-dropdown-meta">' + escapeHtml(c.email) + ' · ' + escapeHtml(c.phone) + '</div>' +
+          '</div>';
+        });
+        html += '</div>';
+      }
+      html += '</div>' +
+        '<div class="checklist-contact-hint">' + (selectedContact ? 'Email and call steps below will use this contact.' : 'Pick a contact to enable the Email/Call actions below.') + '</div>' +
+      '</div>';
+    }
+
+    // Notes toggle + the two-column layout it opens (steps on the right,
+    // a scrollable notes feed on the left) -- per Michael: "click (open
+    // notes) and have the notes appear in a box to the left of the
+    // outreach steps that you can scroll through."
+    var notesOpen = state.openChecklistNotesKey === key;
+    var notes = state.checklistNotes[key];
+    html += '<div class="checklist-notes-toggle-row">' +
+      '<button type="button" class="checklist-notes-toggle" data-action="checklist-notes-toggle" data-customer="' + customerId + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '">' +
+        (notesOpen ? 'Hide Notes ▴' : 'Open Notes ▾') + (notes && notes !== 'error' && notes.length ? ' (' + notes.length + ')' : '') +
+      '</button>' +
+    '</div>';
+
+    html += '<div class="checklist-notes-layout' + (notesOpen ? ' notes-open' : '') + '">';
+
+    if (notesOpen) {
+      html += '<div class="checklist-notes-panel">';
+      if (notes === 'error') {
+        html += '<div class="checklist-error">Could not load notes — try again.</div>';
+      } else if (!notes) {
+        html += '<div class="checklist-loading">Loading notes…</div>';
+      } else if (!notes.length) {
+        html += '<div class="checklist-notes-empty">No notes yet on this opportunity. A note added on any step — what the customer said, current services, contract renewal dates — shows up here.</div>';
+      } else {
+        html += '<div class="checklist-notes-scroll">' +
+          notes.map(function (n) {
+            return '<div class="checklist-note-item">' +
+              '<div class="checklist-note-item-step">Step ' + n.step_number + '</div>' +
+              '<div class="checklist-note-item-text">' + escapeHtml(n.note_text) + '</div>' +
+              '<div class="checklist-note-item-meta">' + escapeHtml(n.created_by_name || '') + ' — ' + escapeHtml(fmtTimestamp(n.created_at)) + '</div>' +
+            '</div>';
+          }).join('') +
+        '</div>';
+      }
+      html += '</div>';
+    }
+
+    html += '<div class="checklist-steps-col">';
+    data.steps.forEach(function (step) {
+      html += checklistStepRowHtml(customerId, pillar, svc, step, selectedContact, key);
+    });
+    html += '</div>'; // .checklist-steps-col
+
+    html += '</div>'; // .checklist-notes-layout
+
+    // Recycle / Kill Opportunity -- shown once every step is checked off,
+    // per Michael's script ending in "Recycle in 180 days or Kill
+    // Opportunity Button." No automatic 180-day timer -- see recycle()'s
+    // own comment in checklist.php.
+    var allDone = data.steps.every(function (s) { return s.completed; });
+    if (allDone && !data.killed) {
+      html += '<div class="checklist-closeout-row">' +
+        '<div class="checklist-closeout-label">Fully worked — recycle for another pass, or close it out.</div>' +
+        '<div class="checklist-closeout-actions">' +
+          '<button type="button" class="svc-action-btn secondary" data-action="checklist-recycle" data-customer="' + customerId + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '"' +
+            (state.checklistCloseoutSaving === key ? ' disabled' : '') + '>Recycle in 180 Days</button>' +
+          '<button type="button" class="svc-action-btn danger" data-action="checklist-kill" data-customer="' + customerId + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '"' +
+            (state.checklistCloseoutSaving === key ? ' disabled' : '') + '>Kill Opportunity</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    html += '</div>'; // .checklist-panel
+
+    return html;
+  }
+
+  // One step row: the existing checkbox, a "+" note button, an inline
+  // note-draft form when open, and (once a contact is selected) an
+  // Email/Call action for the scripted odd/even steps. Split out of
+  // checklistHtml() above once that function started doing much more than
+  // render a plain list.
+  function checklistStepRowHtml(customerId, pillar, svc, step, selectedContact, checklistKey) {
+    var stepKey = checklistKey + '::' + step.step_number;
+    var draftOpen = state.checklistNoteDraftOpenKey === stepKey;
+
+    var html = '<div class="checklist-step-row">';
+    html += '<label class="checklist-step ' + (step.completed ? 'done' : '') + '">' +
+      '<input type="checkbox" ' + (step.completed ? 'checked' : '') +
+        ' data-action="toggle-step" data-customer="' + customerId + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '"' +
+        ' data-service-name="' + escapeHtml(svc.name) + '" data-step="' + step.step_number + '" data-completed="' + (step.completed ? '1' : '0') + '">' +
+      '<div class="checklist-step-text">' +
+        '<div class="checklist-step-label">' + step.step_number + '. ' + escapeHtml(step.label) + '</div>' +
+        (step.completed
+          ? '<div class="checklist-step-meta">✓ ' + escapeHtml(step.completed_by_name) + ' — ' + escapeHtml(fmtTimestamp(step.completed_at)) + '</div>'
+          : '') +
+      '</div>' +
+    '</label>';
+    html += '<button type="button" class="checklist-note-add-btn" title="Add a note on this step" data-action="checklist-note-open" data-checklist-key="' + checklistKey + '" data-step="' + step.step_number + '">+</button>';
+    html += '</div>'; // .checklist-step-row
+
+    // Odd steps (1/3/5) are the scripted marketing-email steps; even steps
+    // (2/4/6) are always "Phone Call Follow-Up." Both need a contact
+    // selected first; Email additionally needs a script for this
+    // pillar/service (see CROSS_SELL_SCRIPTS -- only Cloud Voice System
+    // has one today).
+    var isEmailStep = step.step_number === 1 || step.step_number === 3 || step.step_number === 5;
+    var isCallStep = step.step_number === 2 || step.step_number === 4 || step.step_number === 6;
+    if (selectedContact && isEmailStep) {
+      var email = crossSellEmailContent(pillar.id, svc.id, step.step_number, selectedContact);
+      if (email) {
+        html += '<a class="checklist-step-action" href="' + crossSellMailtoHref(selectedContact.email, email.subject, email.body) + '" data-action="checklist-email-step">' +
+          'Email ' + escapeHtml(selectedContact.name || 'contact') + ' →' +
+        '</a>';
+      }
+    } else if (selectedContact && isCallStep) {
+      html += '<a class="checklist-step-action" href="tel:' + escapeHtml(selectedContact.phone) + '">' +
+        'Call ' + escapeHtml(selectedContact.name || 'contact') + ' — ' + escapeHtml(selectedContact.phone) + ' →' +
+      '</a>';
+    }
+
+    if (draftOpen) {
+      html += '<div class="checklist-note-form">' +
+        '<textarea id="checklistNoteTextarea" class="checklist-note-textarea" rows="3" placeholder="What did the customer say? Current service, contract renewal date, etc.">' + escapeHtml(state.checklistNoteDraftText) + '</textarea>' +
+        '<div class="checklist-note-form-actions">' +
+          '<button type="button" class="svc-action-btn primary" data-action="checklist-note-save" data-customer="' + customerId + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '" data-step="' + step.step_number + '"' +
+            (state.checklistNoteSaving ? ' disabled' : '') + '>' + (state.checklistNoteSaving ? 'Saving…' : 'Save Note') + '</button>' +
+          '<button type="button" class="svc-action-btn secondary" data-action="checklist-note-cancel"' + (state.checklistNoteSaving ? ' disabled' : '') + '>Cancel</button>' +
+        '</div>' +
+      '</div>';
+    }
 
     return html;
   }
@@ -3681,6 +4144,13 @@
     if (territoryAdminTerritoryInput) {
       territoryAdminTerritoryInput.addEventListener('input', function (e) {
         state.territoryAdminAddTerritory = e.target.value;
+      });
+    }
+
+    var checklistNoteTextarea = document.getElementById('checklistNoteTextarea');
+    if (checklistNoteTextarea) {
+      checklistNoteTextarea.addEventListener('input', function (e) {
+        state.checklistNoteDraftText = e.target.value;
       });
     }
   }
@@ -3784,6 +4254,49 @@
         el.getAttribute('data-customer'), el.getAttribute('data-pillar'), el.getAttribute('data-service'),
         el.getAttribute('data-service-name'), parseInt(el.getAttribute('data-step'), 10), !wasCompleted
       );
+    } else if (action === 'checklist-contact-dropdown-toggle') {
+      var ccdKey = el.getAttribute('data-checklist-key');
+      state.openChecklistContactDropdownKey = state.openChecklistContactDropdownKey === ccdKey ? null : ccdKey;
+      render();
+    } else if (action === 'checklist-contact-select') {
+      var ccsKey = el.getAttribute('data-checklist-key');
+      state.checklistContactSelected[ccsKey] = el.getAttribute('data-contact-id');
+      state.openChecklistContactDropdownKey = null;
+      render();
+    } else if (action === 'checklist-notes-toggle') {
+      var cnCustId = state.selectedCustomer.customer.id;
+      var cnKey = cnCustId + '::' + el.getAttribute('data-pillar') + '::' + el.getAttribute('data-service');
+      if (state.openChecklistNotesKey === cnKey) {
+        state.openChecklistNotesKey = null;
+        render();
+      } else {
+        state.openChecklistNotesKey = cnKey;
+        render();
+        if (!state.checklistNotes[cnKey]) {
+          loadChecklistNotes(cnCustId, el.getAttribute('data-pillar'), el.getAttribute('data-service'));
+        }
+      }
+    } else if (action === 'checklist-note-open') {
+      state.checklistNoteDraftOpenKey = el.getAttribute('data-checklist-key') + '::' + el.getAttribute('data-step');
+      state.checklistNoteDraftText = '';
+      render();
+      var newNoteTextarea = document.getElementById('checklistNoteTextarea');
+      if (newNoteTextarea) newNoteTextarea.focus();
+    } else if (action === 'checklist-note-cancel') {
+      state.checklistNoteDraftOpenKey = null;
+      state.checklistNoteDraftText = '';
+      render();
+    } else if (action === 'checklist-note-save') {
+      addChecklistNote(
+        el.getAttribute('data-customer'), el.getAttribute('data-pillar'), el.getAttribute('data-service'),
+        parseInt(el.getAttribute('data-step'), 10)
+      );
+    } else if (action === 'checklist-recycle') {
+      recycleChecklist(el.getAttribute('data-customer'), el.getAttribute('data-pillar'), el.getAttribute('data-service'));
+    } else if (action === 'checklist-kill') {
+      setChecklistKilled(el.getAttribute('data-customer'), el.getAttribute('data-pillar'), el.getAttribute('data-service'), true);
+    } else if (action === 'checklist-unkill') {
+      setChecklistKilled(el.getAttribute('data-customer'), el.getAttribute('data-pillar'), el.getAttribute('data-service'), false);
     } else if (action === 'open-tickets') {
       loadActivityTickets(state.selectedCustomer.customer.id);
     } else if (action === 'open-invoices') {
@@ -3969,6 +4482,12 @@
     // pattern as the customer search box above.
     if (state.contactCardOpen && !e.target.closest('.contact-card-dropdown')) {
       state.contactCardOpen = false;
+      changed = true;
+    }
+    // Checklist contact dropdown -- same pattern, separate open-key since
+    // more than one checklist's dropdown can exist on the page at once.
+    if (state.openChecklistContactDropdownKey && !e.target.closest('.checklist-contact-dropdown')) {
+      state.openChecklistContactDropdownKey = null;
       changed = true;
     }
     if (changed) render();

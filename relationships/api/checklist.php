@@ -50,6 +50,22 @@ $allowedTerritories = relationships_allowed_territories($pdo);
 
 $action = $_GET['action'] ?? '';
 
+/**
+ * Whether a (customer, pillar, service) triple has been marked "Kill
+ * Opportunity" -- see the 'kill' action below. Shared by the 'get' action
+ * (so the checklist panel can show the killed state) and
+ * relationships_missing_services_with_progress() (so a killed opportunity
+ * drops out of the Cross-Sell Report roster entirely).
+ */
+function relationships_is_cross_sell_killed(PDO $pdo, int $customerId, string $pillarId, string $serviceId): bool
+{
+    $stmt = $pdo->prepare(
+        'SELECT 1 FROM cross_sell_killed WHERE customer_id = :c AND pillar_id = :p AND service_id = :s'
+    );
+    $stmt->execute([':c' => $customerId, ':p' => $pillarId, ':s' => $serviceId]);
+    return $stmt->fetchColumn() !== false;
+}
+
 if ($action === 'get') {
     $customerId = (int) ($_GET['customer_id'] ?? 0);
     $pillarId = (string) ($_GET['pillar_id'] ?? '');
@@ -80,7 +96,11 @@ if ($action === 'get') {
             'completed_by_name' => $row['completed_by_name'] ?? null,
         ];
     }
-    relationships_respond(200, ['ok' => true, 'steps' => $steps]);
+    relationships_respond(200, [
+        'ok' => true,
+        'steps' => $steps,
+        'killed' => relationships_is_cross_sell_killed($pdo, $customerId, $pillarId, $serviceId),
+    ]);
 }
 
 if ($action === 'set') {
@@ -164,6 +184,134 @@ if ($action === 'cw_log') {
          ORDER BY l.id DESC LIMIT 50'
     )->fetchAll(PDO::FETCH_ASSOC);
     relationships_respond(200, ['ok' => true, 'rows' => $rows]);
+}
+
+// Cross-sell step notes, and the Recycle / Kill Opportunity actions --
+// added 2026-09-23 per Michael's request to add rep-entered notes per
+// step, a contact-selection-driven outreach flow, and a way to close out
+// a fully-worked opportunity (see relationships_checklist_steps() -- step
+// 7 is "Close-Out -- Re-Address in 180 Days"). All three actions below
+// share the same territory/eligibility guards as 'get'/'set' above.
+
+if ($action === 'notes_get') {
+    $customerId = (int) ($_GET['customer_id'] ?? 0);
+    $pillarId = (string) ($_GET['pillar_id'] ?? '');
+    $serviceId = (string) ($_GET['service_id'] ?? '');
+    if ($customerId <= 0 || $pillarId === '' || $serviceId === '') {
+        relationships_respond(400, ['ok' => false, 'error' => 'Missing customer_id/pillar_id/service_id.']);
+    }
+    relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
+
+    $stmt = $pdo->prepare(
+        'SELECT id, step_number, note_text, created_by_name, created_at FROM checklist_step_notes
+         WHERE customer_id = :c AND pillar_id = :p AND service_id = :s
+         ORDER BY created_at DESC, id DESC'
+    );
+    $stmt->execute([':c' => $customerId, ':p' => $pillarId, ':s' => $serviceId]);
+    relationships_respond(200, ['ok' => true, 'notes' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+}
+
+if ($action === 'notes_add') {
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        relationships_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
+    }
+    $data = relationships_read_json_body();
+    $customerId = (int) ($data['customer_id'] ?? 0);
+    $pillarId = (string) ($data['pillar_id'] ?? '');
+    $serviceId = (string) ($data['service_id'] ?? '');
+    $stepNumber = (int) ($data['step_number'] ?? 0);
+    $noteText = trim((string) ($data['note_text'] ?? ''));
+    $steps = relationships_checklist_steps();
+    if ($customerId <= 0 || $pillarId === '' || $serviceId === '' || !isset($steps[$stepNumber]) || $noteText === '') {
+        relationships_respond(400, ['ok' => false, 'error' => 'Missing or invalid note fields.']);
+    }
+    relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
+
+    $ins = $pdo->prepare(
+        'INSERT INTO checklist_step_notes (customer_id, pillar_id, service_id, step_number, note_text, created_by_user_id, created_by_name)
+         VALUES (:c, :p, :s, :step, :note, :uid, :uname)'
+    );
+    $ins->execute([
+        ':c' => $customerId, ':p' => $pillarId, ':s' => $serviceId, ':step' => $stepNumber,
+        ':note' => $noteText, ':uid' => $user['id'], ':uname' => $user['name'],
+    ]);
+    relationships_respond(200, ['ok' => true]);
+}
+
+if ($action === 'recycle') {
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        relationships_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
+    }
+    $data = relationships_read_json_body();
+    $customerId = (int) ($data['customer_id'] ?? 0);
+    $pillarId = (string) ($data['pillar_id'] ?? '');
+    $serviceId = (string) ($data['service_id'] ?? '');
+    if ($customerId <= 0 || $pillarId === '' || $serviceId === '') {
+        relationships_respond(400, ['ok' => false, 'error' => 'Missing customer_id/pillar_id/service_id.']);
+    }
+    relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
+    if (!relationships_is_cross_sell_eligible($pillarId, $serviceId)) {
+        relationships_respond(400, ['ok' => false, 'error' => 'This service is not tracked for cross-sell.']);
+    }
+
+    // Reset back to Step 1 -- delete-then-recompute, same idiom as every
+    // other reset in this app (is_peoplefirst, is_prospect_only, etc.).
+    // No automatic 180-day timer anywhere -- a rep does this manually once
+    // they judge the cycle has run its course, per Michael's own wording
+    // ("Recycle in 180 days") describing WHEN a rep should press it, not a
+    // scheduled job.
+    $del = $pdo->prepare('DELETE FROM checklist_progress WHERE customer_id = :c AND pillar_id = :p AND service_id = :s');
+    $del->execute([':c' => $customerId, ':p' => $pillarId, ':s' => $serviceId]);
+
+    // A quiet audit note, filed the same way a rep's own note would be --
+    // so "who recycled this and when" shows up right in the notes feed
+    // instead of needing a separate log table just for this one event.
+    $note = $pdo->prepare(
+        'INSERT INTO checklist_step_notes (customer_id, pillar_id, service_id, step_number, note_text, created_by_user_id, created_by_name)
+         VALUES (:c, :p, :s, 1, :note, :uid, :uname)'
+    );
+    $note->execute([
+        ':c' => $customerId, ':p' => $pillarId, ':s' => $serviceId,
+        ':note' => 'Recycled — restarting the 180-day outreach cycle at Step 1.',
+        ':uid' => $user['id'], ':uname' => $user['name'],
+    ]);
+
+    relationships_respond(200, ['ok' => true]);
+}
+
+if ($action === 'kill') {
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        relationships_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
+    }
+    $data = relationships_read_json_body();
+    $customerId = (int) ($data['customer_id'] ?? 0);
+    $pillarId = (string) ($data['pillar_id'] ?? '');
+    $serviceId = (string) ($data['service_id'] ?? '');
+    $killed = !empty($data['killed']);
+    if ($customerId <= 0 || $pillarId === '' || $serviceId === '') {
+        relationships_respond(400, ['ok' => false, 'error' => 'Missing customer_id/pillar_id/service_id.']);
+    }
+    relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
+    if (!relationships_is_cross_sell_eligible($pillarId, $serviceId)) {
+        relationships_respond(400, ['ok' => false, 'error' => 'This service is not tracked for cross-sell.']);
+    }
+
+    // Delete-then-insert, same as everywhere else in this file -- also
+    // doubles as the "un-kill" path: kill:false just leaves the row
+    // deleted. Reversible on purpose -- a rep marking something dead by
+    // mistake shouldn't need a database fix to undo it.
+    $del = $pdo->prepare('DELETE FROM cross_sell_killed WHERE customer_id = :c AND pillar_id = :p AND service_id = :s');
+    $del->execute([':c' => $customerId, ':p' => $pillarId, ':s' => $serviceId]);
+
+    if ($killed) {
+        $ins = $pdo->prepare(
+            'INSERT INTO cross_sell_killed (customer_id, pillar_id, service_id, killed_by_user_id, killed_by_name)
+             VALUES (:c, :p, :s, :uid, :uname)'
+        );
+        $ins->execute([':c' => $customerId, ':p' => $pillarId, ':s' => $serviceId, ':uid' => $user['id'], ':uname' => $user['name']]);
+    }
+
+    relationships_respond(200, ['ok' => true, 'killed' => $killed]);
 }
 
 if ($action === 'summary' || $action === 'queue') {
@@ -251,6 +399,16 @@ function relationships_missing_services_with_progress(PDO $pdo, ?array $allowedT
         $progressMap[$r['customer_id'] . '::' . $r['pillar_id'] . '::' . $r['service_id']] = (int) $r['completed_count'];
     }
 
+    // "Kill Opportunity" -- added 2026-09-23, see the 'kill' action above.
+    // A killed (customer, pillar, service) never appears in the Cross-Sell
+    // Report roster or its step-queue drill-down, same exclusion shape as
+    // activeSet just above (already has the service -- nothing to sell)
+    // and the voip_hosted_elsewhere skip below (won't market phones there).
+    $killedSet = [];
+    foreach ($pdo->query('SELECT customer_id, pillar_id, service_id FROM cross_sell_killed') as $r) {
+        $killedSet[$r['customer_id'] . '::' . $r['pillar_id'] . '::' . $r['service_id']] = true;
+    }
+
     $rows = [];
     foreach ($customers as $cust) {
         // Manufacturer-hosted voice platform (Zultys Hosted, etc.) -- an
@@ -269,6 +427,9 @@ function relationships_missing_services_with_progress(PDO $pdo, ?array $allowedT
                 $key = $cust['id'] . '::' . $pillarId . '::' . $serviceId;
                 if (isset($activeSet[$key])) {
                     continue; // customer already has this service -- nothing to cross-sell
+                }
+                if (isset($killedSet[$key])) {
+                    continue; // rep marked this opportunity dead -- see 'kill' action above
                 }
                 $completed = $progressMap[$key] ?? 0;
                 $rows[] = [

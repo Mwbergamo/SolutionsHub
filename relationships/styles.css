@@ -1544,6 +1544,8 @@ a { color: inherit; }
 
 .svc-action-btn.primary { background: #2f8fef; color: white; border: none; }
 .svc-action-btn.secondary { background: transparent; color: oklch(0.7 0.02 255); border: 1px solid oklch(0.34 0.02 255); }
+.svc-action-btn.danger { background: transparent; color: #f87171; border: 1px solid oklch(0.35 0.1 30); }
+.svc-action-btn.danger:hover { background: oklch(0.24 0.05 30); }
 
 .loading, .error-banner {
   margin-top: 40px;
@@ -1606,6 +1608,201 @@ a { color: inherit; }
   margin-top: 2px;
   font-size: 11px;
   color: #8fc3ff;
+}
+
+/* Cross-sell outreach: contact selection, step notes, Recycle/Kill --
+   added 2026-09-23, per Michael's request to script each cross-sell step
+   with a contact-driven email/call action and rep-entered notes. Reuses
+   .contact-card-dropdown* wholesale (those rules don't depend on
+   .contact-card as a parent) for .checklist-contact-dropdown, so this
+   only adds what's actually new. */
+
+.checklist-killed-note {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: oklch(0.24 0.05 30);
+  border: 1px solid oklch(0.32 0.08 30);
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: oklch(0.85 0.03 30);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.checklist-inline-link {
+  background: transparent;
+  border: none;
+  color: #8fc3ff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+}
+.checklist-inline-link:disabled { opacity: .6; cursor: default; }
+
+.checklist-contact-row { margin-top: 14px; }
+
+.checklist-contact-hint {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: oklch(0.55 0.015 255);
+}
+
+.checklist-notes-toggle-row { margin-top: 12px; }
+
+.checklist-notes-toggle {
+  background: transparent;
+  border: none;
+  color: oklch(0.65 0.02 255);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+.checklist-notes-toggle:hover { color: #8fc3ff; }
+
+.checklist-notes-layout {
+  margin-top: 10px;
+}
+.checklist-notes-layout.notes-open {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 700px) {
+  .checklist-notes-layout.notes-open { grid-template-columns: 1fr; }
+}
+
+.checklist-notes-panel {
+  background: oklch(0.16 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.checklist-notes-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.checklist-notes-empty {
+  font-size: 12px;
+  line-height: 1.5;
+  color: oklch(0.55 0.015 255);
+}
+
+.checklist-note-item {
+  padding-bottom: 10px;
+  border-bottom: 1px solid oklch(0.24 0.016 255);
+}
+.checklist-note-item:last-child { border-bottom: none; padding-bottom: 0; }
+
+.checklist-note-item-step {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  color: #8fc3ff;
+}
+
+.checklist-note-item-text {
+  margin-top: 3px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: oklch(0.85 0.006 255);
+  white-space: pre-wrap;
+}
+
+.checklist-note-item-meta {
+  margin-top: 4px;
+  font-size: 11px;
+  color: oklch(0.55 0.015 255);
+}
+
+.checklist-steps-col { min-width: 0; }
+
+.checklist-step-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+.checklist-step-row .checklist-step { flex: 1; min-width: 0; }
+
+.checklist-note-add-btn {
+  flex: none;
+  margin-top: 7px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid oklch(0.34 0.02 255);
+  color: oklch(0.65 0.02 255);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.checklist-note-add-btn:hover { border-color: #2f8fef; color: #8fc3ff; }
+
+.checklist-step-action {
+  display: inline-block;
+  margin: -4px 0 8px 29px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #8fc3ff;
+  text-decoration: none;
+}
+.checklist-step-action:hover { color: #b7d8ff; text-decoration: underline; }
+
+.checklist-note-form {
+  margin: 0 0 10px 29px;
+}
+
+.checklist-note-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: oklch(0.14 0.012 255);
+  border: 1px solid oklch(0.3 0.02 255);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 12.5px;
+  color: white;
+  resize: vertical;
+}
+.checklist-note-textarea:focus { outline: none; border-color: #2f8fef; }
+
+.checklist-note-form-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.checklist-closeout-row {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid oklch(0.3 0.02 255);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.checklist-closeout-label {
+  font-size: 12.5px;
+  color: oklch(0.7 0.02 255);
+}
+
+.checklist-closeout-actions {
+  display: flex;
+  gap: 8px;
 }
 
 /* Report / queue views */
