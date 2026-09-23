@@ -1258,6 +1258,25 @@
           </div>
         </sc-if>
 
+        <sc-if value="{{hasProjectGraphic}}" hint-placeholder-val="{{false}}">
+          <!-- Project Mode relationship graphic (2026-09-23) -- see
+               claude/solutions-creator-project-mode.md. Renders in this
+               same .summary-print-area block, so it appears both on this
+               live screen and in the Print Quote output, same pattern as
+               the Computer Configuration visual card. Deliberately NOT
+               added to the emailed quote/Send-to-Inside-Sales HTML --
+               those are separately-built HTML strings sent through email
+               clients that often strip embedded data: URI images
+               (Outlook in particular), so it would risk silently not
+               showing up for the recipient. -->
+          <div style="margin-top:26px;">
+            <div style="font-size:12px;font-weight:700;color:{{accentColor}};text-transform:uppercase;letter-spacing:.06em;">Project Overview</div>
+            <div style="margin-top:10px;background:var(--cbt-card-bg);border-radius:14px;padding:16px;">
+              <img src="{{projectGraphicDataUri}}" alt="Diagram of everything in this solution, grouped by service area" style="display:block;width:100%;height:auto;">
+            </div>
+          </div>
+        </sc-if>
+
         <sc-if value="{{hasSelections}}" hint-placeholder-val="{{false}}">
           <div style="margin-top:26px;font-size:12px;font-weight:700;color:{{accentColor}};text-transform:uppercase;letter-spacing:.06em;">Bill of Materials</div>
           <div style="margin-top:10px;">

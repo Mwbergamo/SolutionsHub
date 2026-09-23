@@ -1775,6 +1775,89 @@ class Component extends DCLogic {
   // Same walk as buildQuoteSections() above, but keeps every value structured
   // (instead of flattening straight to formatted text lines) so buildFullQuoteHtml()
   // can lay it out as a real table instead of regex-parsing bullet strings back apart.
+  // Project Mode relationship graphic (2026-09-23) -- see
+  // claude/solutions-creator-project-mode.md. v1 scope, confirmed with
+  // Michael: a clean grouped/clustered diagram of what's in the solution,
+  // NOT an attempt to infer literal wiring between specific products (that
+  // needs an explicit relationship map that doesn't exist in the catalog
+  // yet -- a deliberate v2 idea, not this pass). Deterministic layout (no
+  // physics/force simulation) so the same project always renders the same
+  // picture -- built from the same grouped data the Bill of Materials
+  // below it already uses, not a second data source. Returns a standalone
+  // SVG string; callers wrap it in a data: URI.
+  buildProjectGraphicSvg(groups) {
+    if (!groups || !groups.length) return '';
+    var PAD = 20, CLUSTER_GAP = 18, CANVAS_W = 820;
+    var PILL_H = 30, PILL_GAP = 8, ROW_GAP = 8, CLUSTER_PAD = 16, HEADER_H = 26, CLUSTER_MAX_W = 360;
+    function pillWidth(text) {
+      var w = Math.round(text.length * 6.6) + 26;
+      if (w < 76) w = 76;
+      if (w > 240) w = 240;
+      return w;
+    }
+    function truncateLabel(text, maxChars) {
+      if (!text) return '';
+      if (text.length <= maxChars) return text;
+      return text.slice(0, maxChars - 1) + '…';
+    }
+    var clusters = groups.map(function (g) {
+      var labels = (g.items || []).map(function (it) { return truncateLabel(it.serviceName, 28); });
+      var rows = [];
+      var curRow = [];
+      var curW = 0;
+      labels.forEach(function (label) {
+        var w = pillWidth(label);
+        if (curRow.length && curW + PILL_GAP + w > CLUSTER_MAX_W) {
+          rows.push(curRow);
+          curRow = [];
+          curW = 0;
+        }
+        curRow.push({ label: label, w: w });
+        curW += (curRow.length > 1 ? PILL_GAP : 0) + w;
+      });
+      if (curRow.length) rows.push(curRow);
+      var rowWidths = rows.map(function (r) {
+        return r.reduce(function (sum, p, i) { return sum + p.w + (i > 0 ? PILL_GAP : 0); }, 0);
+      }).concat([160]);
+      var clusterW = Math.max.apply(null, rowWidths) + CLUSTER_PAD * 2;
+      var clusterH = HEADER_H + rows.length * PILL_H + Math.max(0, rows.length - 1) * ROW_GAP + CLUSTER_PAD * 2;
+      return { pillarName: g.pillarName, rows: rows, w: clusterW, h: clusterH };
+    });
+    var x = PAD, y = PAD, rowH = 0;
+    var placed = [];
+    clusters.forEach(function (c) {
+      if (x !== PAD && x + c.w > CANVAS_W - PAD) {
+        x = PAD;
+        y += rowH + CLUSTER_GAP;
+        rowH = 0;
+      }
+      placed.push({ c: c, x: x, y: y });
+      x += c.w + CLUSTER_GAP;
+      rowH = Math.max(rowH, c.h);
+    });
+    var totalH = y + rowH + PAD;
+    var svg = [];
+    svg.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + CANVAS_W + '" height="' + totalH + '" viewBox="0 0 ' + CANVAS_W + ' ' + totalH + '" font-family="IBM Plex Sans, Arial, sans-serif">');
+    svg.push('<rect x="0" y="0" width="' + CANVAS_W + '" height="' + totalH + '" fill="#F7F8FA"/>');
+    placed.forEach(function (p) {
+      var c = p.c, cx = p.x, cy = p.y;
+      svg.push('<rect x="' + cx + '" y="' + cy + '" width="' + c.w + '" height="' + c.h + '" rx="14" fill="#FFFFFF" stroke="#D8DCE3" stroke-width="1.5"/>');
+      svg.push('<text x="' + (cx + CLUSTER_PAD) + '" y="' + (cy + 20) + '" font-size="13" font-weight="700" fill="#33394A">' + escapeHtml(c.pillarName) + '</text>');
+      var py = cy + HEADER_H + CLUSTER_PAD - 8;
+      c.rows.forEach(function (row) {
+        var px = cx + CLUSTER_PAD;
+        row.forEach(function (pill) {
+          svg.push('<rect x="' + px + '" y="' + py + '" width="' + pill.w + '" height="' + PILL_H + '" rx="999" fill="#FFFFFF" stroke="#D9A82E" stroke-width="1.75"/>');
+          svg.push('<text x="' + (px + pill.w / 2) + '" y="' + (py + PILL_H / 2 + 4) + '" font-size="11.5" font-weight="700" fill="#3A3320" text-anchor="middle">' + escapeHtml(pill.label) + '</text>');
+          px += pill.w + PILL_GAP;
+        });
+        py += PILL_H + ROW_GAP;
+      });
+    });
+    svg.push('</svg>');
+    return svg.join('');
+  }
+
   buildQuoteSectionsStructured() {
     var self = this;
     var selections = this.state.selections;
@@ -3761,6 +3844,7 @@ class Component extends DCLogic {
     }
 
     var summaryGroups = [];
+    var projectGraphicDataUri = '';
     var riskItems = [], uptimeItems = [], costItems = [];
     var scopeGrandTotal = 0;
     var scopeRateForTotal = this.state.scopeHourlyRate || 0;
@@ -3820,6 +3904,17 @@ class Component extends DCLogic {
           });
         }
       });
+      // Project Mode relationship graphic (2026-09-23) -- built from the
+      // same grouped data the Bill of Materials list above uses, not a
+      // second data source. See buildProjectGraphicSvg()'s docblock for
+      // v1 scope. btoa/encodeURIComponent round-trip keeps this UTF-8 safe
+      // (service names can contain non-ASCII characters).
+      if (summaryGroups.length) {
+        var projectGraphicSvg = this.buildProjectGraphicSvg(summaryGroups);
+        if (projectGraphicSvg && typeof btoa === 'function') {
+          projectGraphicDataUri = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(projectGraphicSvg)));
+        }
+      }
     }
 
     // Solution Summary gold reminders -- the same cross-sell nudges that
@@ -4169,6 +4264,8 @@ class Component extends DCLogic {
       hasSelections: selectionCount > 0,
       noSelections: selectionCount === 0,
       summaryGroups: summaryGroups,
+      hasProjectGraphic: !!projectGraphicDataUri,
+      projectGraphicDataUri: projectGraphicDataUri,
       hasSummaryReminders: hasSummaryReminders, summaryReminders: summaryReminders,
       hasScopeGrandTotal: hasScopeGrandTotal, scopeGrandTotalText: scopeGrandTotalText, scopeRateText: scopeRateText,
       onScopeRateDec: function () { self.incScopeRate(-5); }, onScopeRateInc: function () { self.incScopeRate(5); },
