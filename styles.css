@@ -418,14 +418,6 @@ body { overflow-x: hidden; }
   object-fit: contain;
   filter: drop-shadow(0 14px 26px rgba(0,0,0,.4));
 }
-@media (prefers-reduced-motion: reduce) {
-  .pf-pill { transition: none; }
-}
-@media (min-width: 1440px) {
-  .pf-panel { display: flex; }
-  .pf-figure-panel { display: flex; }
-}
-
 /* PeopleFirst illustration -- big center panel (2026-09-23, per Michael:
    the figure used to be a small 170px image squeezed into the same flex
    row as the pills, which pushed it out to .pf-panel's far edge (right:
@@ -442,7 +434,17 @@ body { overflow-x: hidden; }
    only fit one specific screen. Same desktop-only / fixed-to-viewport /
    sibling-of-.app-body treatment as .pf-panel, for the same reason (see
    the scroll-bug comment on .pf-panel above) -- this is a sibling of
-   .pf-panel in the markup, both still outside .app-body. */
+   .pf-panel in the markup, both still outside .app-body.
+
+   IMPORTANT (2026-09-23, self-correction): this full rule -- including
+   its base display:none -- must stay ABOVE the "@media (min-width:
+   1440px)" block below, same as .pf-panel's own rule does. A first pass
+   at this accidentally placed this rule's definition AFTER that media
+   query in the file; since a plain (non-media) rule always wins a
+   cascade tie against an earlier media-query rule regardless of which
+   one's condition is actually true, that ordering silently forced
+   display:none at every viewport width, no matter how wide -- the
+   figure never rendered at all, not just in the wrong spot. */
 .pf-figure-panel {
   display: none;
   position: fixed;
@@ -454,6 +456,13 @@ body { overflow-x: hidden; }
   justify-content: center;
   pointer-events: none;
   z-index: 5;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-pill { transition: none; }
+}
+@media (min-width: 1440px) {
+  .pf-panel { display: flex; }
+  .pf-figure-panel { display: flex; }
 }
 
 /* Project Mode tray (2026-09-23) -- see claude/solutions-creator-project-mode.md.
