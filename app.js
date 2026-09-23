@@ -1345,6 +1345,13 @@ class Component extends DCLogic {
     super(props);
     this.state = {
       theme: (typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme')) || 'dark',
+      // Project Mode (2026-09-23) -- a lens over the same global `selections`
+      // state below, not a separate cart -- see
+      // claude/solutions-creator-project-mode.md. projectMode just changes
+      // how browsing looks (gold highlight glow at every level) and shows
+      // the floating project tray; projectTrayOpen tracks whether that
+      // tray's expanded list is open.
+      projectMode: false, projectTrayOpen: false,
       view: 'overview', pillarId: null, serviceId: null, categoryId: null, selections: {}, returnView: 'overview', returnPillarId: null,
       searchQuery: '', voiceListening: false,
       managedIT: {
@@ -1552,6 +1559,33 @@ class Component extends DCLogic {
   openService(pillarId, serviceId) { this.setState({ view: 'service', pillarId: pillarId, serviceId: serviceId }); }
   openCategory(pillarId, serviceId, categoryId) { this.setState({ view: 'category', pillarId: pillarId, serviceId: serviceId, categoryId: categoryId }); }
   backToService() { this.setState({ view: 'service' }); }
+
+  // Project Mode (2026-09-23) -- see claude/solutions-creator-project-mode.md.
+  // Turning it on/off never touches selections/categoryProducts/etc; it
+  // only changes how tiles render (gold glow) and whether the project
+  // tray shows. Both are simple flips, safe to call from anywhere.
+  toggleProjectMode() {
+    var next = !this.state.projectMode;
+    this.setState({ projectMode: next, projectTrayOpen: next ? this.state.projectTrayOpen : false });
+  }
+  toggleProjectTray() { this.setState({ projectTrayOpen: !this.state.projectTrayOpen }); }
+
+  // Given a `selections` key (a bare serviceId for a single-toggle/option
+  // service or managed-it/vcio, or `serviceId::categoryId` for a category
+  // the rep configured and added), navigate to wherever that item is
+  // edited -- used by the project tray's "Configure" action. Doesn't try
+  // to route "back" to the tray afterward; the tray is a fixed element
+  // on every screen (see index.html), so it's always one tap away again.
+  focusProjectItem(key) {
+    var entry = this.state.selections[key];
+    if (!entry) return;
+    var parts = key.split('::');
+    var serviceId = parts[0];
+    var categoryId = parts.length > 1 ? parts[1] : null;
+    this.setState({ projectTrayOpen: false });
+    if (categoryId) { this.openCategory(entry.pillarId, serviceId, categoryId); }
+    else { this.openService(entry.pillarId, serviceId); }
+  }
 
   incCategoryProduct(categoryId, productId, delta) {
     var all = Object.assign({}, this.state.categoryProducts);
@@ -2754,6 +2788,33 @@ class Component extends DCLogic {
     var view = this.state.view;
     var selections = this.state.selections;
     var selectionCount = Object.keys(selections).length;
+    // Project Mode tray (2026-09-23) -- a lightweight grouped listing of
+    // every current selection, independent of which view is showing
+    // (unlike summaryGroups below, which only computes on the
+    // Summary/Checkout views). See claude/solutions-creator-project-mode.md.
+    var projectTrayGroups = [];
+    if (this.state.projectMode) {
+      var trayByPillar = {};
+      var trayOrder = [];
+      for (var ptKey in selections) {
+        var ptEntry = selections[ptKey];
+        if (!trayByPillar[ptEntry.pillarId]) { trayByPillar[ptEntry.pillarId] = []; trayOrder.push(ptEntry.pillarId); }
+        trayByPillar[ptEntry.pillarId].push({ key: ptKey, entry: ptEntry });
+      }
+      projectTrayGroups = trayOrder.map(function (pid) {
+        var pillarObj = self.findPillar(pid);
+        return {
+          pillarName: pillarObj ? pillarObj.name : pid,
+          items: trayByPillar[pid].map(function (row) {
+            return {
+              key: row.key, serviceName: row.entry.serviceName, optionLabel: row.entry.optionLabel,
+              onFocus: function () { self.focusProjectItem(row.key); },
+              onRemove: function () { self.removeSelection(row.key); }
+            };
+          })
+        };
+      });
+    }
 
     // Cross-sell reminder: EDR Anti-Virus / Patch Management are sold as
     // one-time hardware add-ons on the Computer/Server config screen, but
@@ -2880,14 +2941,24 @@ class Component extends DCLogic {
           tagline: p.tagline,
           services: p.services.map(function (s) {
             var svcCyberHighlighted = (s.id === 'cyber-security') && cyberSecFlag;
+            // Project Mode (2026-09-23): a service tile glows gold once
+            // anything under it (the service itself, or any of its
+            // categories) has been added -- selections keys are either
+            // the bare serviceId or `serviceId::categoryId`, so a prefix
+            // check over both forms covers every case.
+            var svcHasSelections = Object.keys(selections).some(function (k) {
+              return k === s.id || k.indexOf(s.id + '::') === 0;
+            });
+            var svcProjectGlow = self.state.projectMode && svcHasSelections;
+            var svcGlow = svcCyberHighlighted || svcProjectGlow;
             var svcCardStyle = 'background:oklch(0.98 0.006 255);border-radius:14px;padding:17px 20px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;' +
-              (svcCyberHighlighted ? CROSS_SELL_GLOW : 'border:2px solid transparent;');
+              (svcGlow ? CROSS_SELL_GLOW : 'border:2px solid transparent;');
             return {
               id: s.id, name: s.name, blurb: s.blurb,
               selected: !!selections[s.id],
               isCyberHighlighted: svcCyberHighlighted,
               cardStyle: svcCardStyle,
-              crossSellClass: svcCyberHighlighted ? 'cross-sell-glow' : '',
+              crossSellClass: svcGlow ? 'cross-sell-glow' : '',
               onClick: function () { self.openService(p.id, s.id); }
             };
           })
@@ -3219,6 +3290,13 @@ class Component extends DCLogic {
             isHighlighted = cat.crossSellFlag === 'computer' ? computerCyberFlag : serverCyberFlag;
             highlightBadgeText = '✦ EDR / Patch Mgmt selected — add here';
           }
+          // Project Mode (2026-09-23): glow gold once this exact category
+          // has been added to the solution, on top of whatever cross-sell
+          // reason (if any) already glows it -- doesn't touch
+          // highlightBadgeText, since a Project Mode glow isn't a
+          // cross-sell nudge and shouldn't claim to be one.
+          var pmCatAdded = self.state.projectMode && !!selections[catSvcForTiles.id + '::' + cat.id];
+          isHighlighted = isHighlighted || pmCatAdded;
           var cardStyle = 'width:340px;background:oklch(0.98 0.006 255);border-radius:16px;padding:20px 22px;cursor:pointer;' +
             (isHighlighted ? CROSS_SELL_GLOW : 'border:2px solid transparent;');
           return {
@@ -4006,6 +4084,18 @@ class Component extends DCLogic {
       isDarkTheme: this.state.theme !== 'light',
       onToggleTheme: function () { self.toggleTheme(); },
       themeToggleLabel: this.state.theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode',
+      projectMode: this.state.projectMode,
+      onToggleProjectMode: function () { self.toggleProjectMode(); },
+      projectModeLabel: this.state.projectMode ? 'Project Mode: On' : 'Project Mode',
+      projectTrayOpen: this.state.projectTrayOpen,
+      onToggleProjectTray: function () { self.toggleProjectTray(); },
+      projectTrayCount: selectionCount,
+      projectTrayHasItems: selectionCount > 0,
+      projectTrayGroups: projectTrayGroups,
+      onProjectReview: function () { self.setState({ projectTrayOpen: false }); self.openSummary(); },
+      projectModeToggleStyle: this.state.projectMode
+        ? ('display:flex;align-items:center;gap:8px;background:' + accentColor + ';color:white;border:2px solid ' + accentColor + ';font-size:13px;font-weight:700;padding:9px 18px;border-radius:999px;cursor:pointer;')
+        : 'display:flex;align-items:center;gap:8px;background:transparent;color:var(--cbt-text-on-dark-tertiary);border:2px solid var(--cbt-border-control);font-size:13px;font-weight:700;padding:9px 18px;border-radius:999px;cursor:pointer;',
       isOverview: view === 'overview',
       isSolutionsCreator: view === 'solutions-creator',
       isPillar: view === 'pillar',
@@ -4017,9 +4107,25 @@ class Component extends DCLogic {
       goOverview: function () { self.goOverview(); },
       goToSolutionsCreator: function () { self.goSolutionsCreator(); },
       itCyberSellFlag: cyberSecFlag,
-      itCrossSellClass: cyberSecFlag ? 'cross-sell-glow' : '',
+      itCrossSellClass: (cyberSecFlag || (this.state.projectMode && itCount > 0)) ? 'cross-sell-glow' : '',
       itCardStyle: 'width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
-        (cyberSecFlag ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
+        ((cyberSecFlag || (this.state.projectMode && itCount > 0)) ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
+      // Project Mode gold highlight (2026-09-23) for the other 4 pillar
+      // tiles -- IT above piggybacks on its pre-existing Cyber Security
+      // cross-sell glow; these 4 have no such glow today, so Project Mode
+      // is the only thing that ever lights them up.
+      dcCrossSellClass: (this.state.projectMode && dcCount > 0) ? 'cross-sell-glow' : '',
+      dcCardStyle: 'width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
+        ((this.state.projectMode && dcCount > 0) ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
+      voipCrossSellClass: (this.state.projectMode && voipCount > 0) ? 'cross-sell-glow' : '',
+      voipCardStyle: 'width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
+        ((this.state.projectMode && voipCount > 0) ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
+      cablingCrossSellClass: (this.state.projectMode && cablingCount > 0) ? 'cross-sell-glow' : '',
+      cablingCardStyle: 'width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
+        ((this.state.projectMode && cablingCount > 0) ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
+      securityCrossSellClass: (this.state.projectMode && securityCount > 0) ? 'cross-sell-glow' : '',
+      securityCardStyle: 'width:322px;height:206px;background:oklch(0.98 0.006 255);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;' +
+        ((this.state.projectMode && securityCount > 0) ? CROSS_SELL_GLOW : 'border:2px solid transparent;'),
       goToIT: function () { self.openPillar('it'); },
       goToDC: function () { self.openPillar('dc'); },
       goToVoIP: function () { self.openPillar('voip'); },

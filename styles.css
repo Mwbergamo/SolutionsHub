@@ -421,3 +421,145 @@ body { overflow-x: hidden; }
 @media (min-width: 1440px) {
   .pf-panel { display: flex; }
 }
+
+/* Project Mode tray (2026-09-23) -- see claude/solutions-creator-project-mode.md.
+   Fixed bottom-right, sibling of .app-body in the markup (same reasoning
+   as .pf-panel above) so it stays genuinely pinned to the viewport on
+   every screen while the rep browses across pillars. */
+.pm-tray {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+}
+.pm-tray-fab {
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  border: none;
+  background: oklch(0.55 0.14 265);
+  box-shadow: 0 10px 30px rgba(0,0,0,.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  padding: 0;
+}
+.pm-tray-fab-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: oklch(0.78 0.14 85);
+  color: oklch(0.2 0.05 85);
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+}
+.pm-tray-panel {
+  width: 320px;
+  max-height: 70vh;
+  background: var(--cbt-card-bg);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pm-tray-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.pm-tray-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--cbt-text-on-light-primary);
+}
+.pm-tray-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cbt-text-on-light-muted);
+}
+.pm-tray-list {
+  overflow-y: auto;
+  max-height: 46vh;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pm-tray-group-name {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: var(--cbt-text-on-light-muted);
+  margin-bottom: 6px;
+}
+.pm-tray-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--cbt-card-border);
+}
+.pm-tray-group .pm-tray-item:first-of-type {
+  border-top: none;
+}
+.pm-tray-item-text {
+  flex: 1;
+  cursor: pointer;
+  min-width: 0;
+}
+.pm-tray-item-service {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--cbt-text-on-light-primary);
+}
+.pm-tray-item-detail {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--cbt-text-on-light-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pm-tray-item-remove {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: none;
+  background: var(--cbt-card-border);
+  color: var(--cbt-text-on-dark-disabled);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1;
+}
+.pm-tray-review {
+  border: none;
+  border-radius: 999px;
+  padding: 11px 18px;
+  background: oklch(0.78 0.14 85);
+  color: oklch(0.2 0.05 85);
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+@media (max-width: 480px) {
+  .pm-tray { right: 16px; bottom: 16px; }
+  .pm-tray-panel { width: calc(100vw - 32px); }
+}
