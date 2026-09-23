@@ -397,18 +397,6 @@ var PILLARS = [
         methodology: "Client transition runs IT Assessment → Service Selection → Staff Onboarding → Asset Discovery → Deployment & Integration → Documentation — CodeBlue becomes your dedicated IT department, delivering internal support, external protection, and comprehensive business solutions.",
         outcome: ['uptime','risk','cost']
       },
-      { id: 'vcio', name: 'vCIO',
-        blurb: "A dedicated, experienced CIO at an affordable rate — strategic planning, collaborative auditing, and advocacy without a full-time hire.",
-        methodology: "Strategic Planning (3-year strategy, 1-year goals, quarterly review) → Collaborative Auditing (efficiency, security, compliance) → an Advocacy Model where CodeBlue goes to market on your behalf.",
-        outcome: ['cost','risk'],
-        vcioRate: 173.25,
-        vcioAreas: [
-          { title: 'Strategic Leadership', text: "Our fractional CIO model provides you with a highly experienced resource that can develop and execute an IT Strategy that supports and scales with your business." },
-          { title: 'Technology Planning', text: "Living documentation of your technology plan, processes, and metrics across all projects is standard and you will receive consistent updates to the progress made in your technology planning and engage in its success." },
-          { title: 'Project Management', text: "Your executive is armed with your budget, your desired outcome, and your future planning. The process is collaborative while simplifying the technology terminology into a clear value proposition. We are your voice in the technology marketplace, asking the hard questions that will ultimately deliver the right solution." },
-          { title: 'Compliance Management', text: "Compliance with necessary protocols is a required way of doing business today. Whether it is general Security, PCI, HIPAA or industry specific compliance requirements, our team can work with you to run an effective audit and develop necessary measures to gain compliance." }
-        ]
-      },
       { id: 'cyber-security', name: 'Cyber Security',
         blurb: "Comprehensive digital threat protection — endpoint security, cloud safety, and employee training.",
         methodology: "A three-phase framework: Discovery (network-wide exposure baseline) → Planning (a Written Information Security Plan, reviewed quarterly) → Remediation (risk evaluation from the network through the Dark Web).",
@@ -643,92 +631,6 @@ var PILLARS = [
             ] }
         ]
       },
-      { id: 'help-desk', name: 'Help Desk Support', blurb: "Live, local, friendly help with first-call resolution for Tier 1 and 2 issues — call-in, email, portal, or desktop agent.", methodology: "Multi-channel access with fully documented tickets — built on a philosophy of “radical hospitality,” including live call-in support most competitors have dropped.", outcome: ['uptime'],
-        presentation: {
-          eyebrow: 'Managed Services / Help Desk',
-          headline: 'Support.',
-          tagline: 'Live, local, friendly help — by phone, by portal, or in person.',
-          intro: "CodeBlue was founded on one idea: customers need friendly IT support. For more than two decades the team has treated every interaction — technical and personal — as one worth getting right, practicing what they call \"radical hospitality.\" With two physical locations in Virginia, walk-ins in the Richmond and Northern Neck area are genuinely welcome, not just tolerated.",
-          quote: "Service is a privilege, and something we take seriously.",
-          quoteAttribution: "CodeBlue Technology, Help Desk Support",
-          historyNote: "Each customer interaction is logged for quality and support history, so a technician picking up your ticket on visit three has the same context as the one who took the call on visit one.",
-          testimonialsNote: { text: '"What our customers think!" — a rotating set of customer testimonials runs live on the help desk page.', url: 'https://www.codebluetechnology.com/help-desk-support/' },
-          sections: [
-            { number: '01', title: 'Call, Click, Come By', type: 'cards',
-              cards: [
-                { title: 'Call', text: "Speak with a technician directly — first-call resolution, US-based, no script-reading.", lines: ['Richmond · (804) 521-7660', 'Warsaw · (804) 456-4500'] },
-                { title: 'Click', text: "Open a ticket by email or through the customer portal — routed straight to the queue.", lines: ['service@codebluetechnology.com', 'pay.codebluetechnology.com'] },
-                { title: 'Come By', text: "Two physical locations, and the team means it when they say they love to see customers.", lines: ['Richmond, VA', 'Northern Neck, VA (Warsaw)'] }
-              ] },
-            { number: '02', title: 'Communication Preferences', type: 'cards',
-              cards: [
-                { title: 'Call-In', text: "Real-time voice support for anything that can't wait on a reply." },
-                { title: 'Email', text: "Written requests land directly in the service queue." },
-                { title: 'Customer Portal', text: "Submit, track, and review tickets and history any time." },
-                { title: 'Desktop Support Agent', text: "An installed agent gives a technician a direct line to the machine." }
-              ] },
-            { number: '03', title: 'Issue Documentation', type: 'body',
-              body: [
-                "Every ticket keeps its history.",
-                "Interactions are documented for quality and continuity — what was reported, what was tried, what fixed it — so a repeat issue never starts from zero.",
-                "That history is visible to the customer through the portal, not locked in an internal system only CodeBlue can see."
-              ] },
-            { number: '04', title: 'Help Desk Benefits', type: 'cards',
-              cards: [
-                { title: 'Cost efficiency', text: "Outsourcing to a dedicated help desk trades unpredictable in-house overhead for a predictable, often lower cost — you're paying for outcomes, not headcount." },
-                { title: 'Access to expertise', text: "CodeBlue specializes in support — current tools, current best practices — rather than IT being one more hat a generalist wears part-time." },
-                { title: 'Scalability & flexibility', text: "The help desk scales with the business — pay for what's needed, when it's needed, without renegotiating headcount to match." }
-              ] },
-            { number: '05', title: 'Locations & Contact', type: 'contact',
-              contact: [
-                { label: 'Richmond', value: '(804) 521-7660' },
-                { label: 'Warsaw · Northern Neck', value: '(804) 456-4500' },
-                { label: 'Service', value: 'service@codebluetechnology.com' },
-                { label: 'Bill Pay', value: 'pay.codebluetechnology.com' }
-              ] },
-            { number: '06', title: 'Rate Sheet & Terms', type: 'rates',
-              rates: [
-                { rate: '$180/hr', terms: ['Onsite: 1-hour minimum, billed in 30-minute increments', 'Remote: 30-minute minimum, billed in 30-minute increments', 'After-hours emergency (before 8am / after 5pm): 2-hour minimum at 1.5× rate', 'Holidays: 2-hour minimum at 2× rate', 'Travel billed one-direction only, for distances of 20 miles or more'] },
-                { rate: '$173.25/hr', terms: ['Same service terms as the standard rate at left', 'Onsite: 1-hour minimum, 30-minute increments', 'Remote: 30-minute minimum, 30-minute increments', 'After-hours and holiday multipliers apply as above'] }
-              ],
-              note: "Payment Terms: per-hour work is invoiced upon completion; recurring services are charged to the active ACH or credit card on file. Full terms and conditions at codebluetechnology.com/legal." }
-          ]
-        } },
-      { id: 'onsite-support', name: 'On-Site Technical Support', blurb: "Hands-on IT assistance at your location — hardware, network troubleshooting, and infrastructure assessment.", methodology: "Scheduled visits with tailored case notes — technicians who physically inspect hardware and resolve issues on-site, building a closer working relationship over time.", outcome: ['uptime'],
-        presentation: {
-          eyebrow: 'IT Services / On-Site Technical Support',
-          headline: 'On-Site Technical Support',
-          tagline: 'Support, Solutions and Installations.',
-          intro: "Technicians can physically inspect and repair hardware, troubleshoot complex network problems, and ensure that all systems are functioning optimally in real time.",
-          quote: "On-site technical support offers significant advantages over remote-only services by providing immediate, hands-on assistance, which can lead to faster issue resolution and reduced downtime.",
-          quoteAttribution: "CodeBlue Technology",
-          historyNote: "This personalized approach not only enhances the overall effectiveness of the support but also fosters stronger relationships with the IT team, allowing for tailored solutions that better align with your business's unique needs and environment.",
-          sections: [
-            { number: '01', title: 'Business-Owner Benefits', type: 'cards',
-              cards: [
-                { title: 'Personalized and Immediate Support', text: "On-site support ensures that issues can be addressed promptly and effectively. Technicians can physically inspect hardware, resolve network issues, and provide hands-on assistance, leading to faster resolution times and minimizing downtime for your staff." },
-                { title: 'Enhanced Security and Compliance', text: "CodeBlue thoroughly assesses and secures your physical infrastructure, ensuring that all systems are compliant with industry regulations and best practices. This hands-on approach helps protect sensitive data and ensures your business meets all necessary security standards." },
-                { title: 'Strong Relationship and Tailored Solutions', text: "Regular on-site visits foster a closer working relationship between your staff and the IT support team, leading to a better understanding of your business's unique needs — and customized solutions that align with your specific goals and challenges." }
-              ] },
-            { number: '02', title: 'National Partnerships Across the USA', type: 'body',
-              body: [
-                "CodeBlue has an on-site resource near you! Our local reach expands out from our home office in Virginia — we have great partners in all 50 states who can be there for your installation, managed and assured by CodeBlue."
-              ] },
-            { number: '03', title: 'Locations & Contact', type: 'contact',
-              contact: [
-                { label: 'Richmond', value: '(804) 521-7660' },
-                { label: 'Warsaw · Northern Neck', value: '(804) 456-4500' },
-                { label: 'Service', value: 'service@codebluetechnology.com' },
-                { label: 'Request a Site Visit', value: 'service@codebluetechnology.com' }
-              ] },
-            { number: '04', title: 'Rate Sheet & Terms', type: 'rates',
-              rates: [
-                { rate: '$180/hr', terms: ['Onsite: 1-hour minimum, billed in 30-minute increments', 'Remote: 30-minute minimum, billed in 30-minute increments', 'After-hours emergency (before 8am / after 5pm): 2-hour minimum at 1.5× rate', 'Holidays: 2-hour minimum at 2× rate', 'Travel billed one-direction only, for distances of 20 miles or more'] },
-                { rate: '$173.25/hr', terms: ['Same service terms as the standard rate at left', 'Onsite: 1-hour minimum, 30-minute increments', 'Remote: 30-minute minimum, 30-minute increments', 'After-hours and holiday multipliers apply as above'] }
-              ],
-              note: "Payment Terms: per-hour work is invoiced upon completion; recurring services are charged to the active ACH or credit card on file. Full terms and conditions at codebluetechnology.com/legal." }
-          ]
-        } },
       { id: 'equipment-sales', name: 'Equipment Sales', blurb: "New computers, servers, and networking equipment from Microsoft, HP, Dell, Lenovo, and Apple — never used or reconditioned.", methodology: "Preparation (defect checks, best-practices setup) → Migration (data and settings transfer) → Installation — delivered as “a service company first.”", outcome: ['cost'],
         categories: [
           { id: 'es-computers', name: 'Computers', blurb: "Configure a new computer to spec — form factor, memory, CPU, brand, and add-ons — for the sales engineer to quote.", solutionHeading: 'Computer Purchase', pricingMode: 'parts',
