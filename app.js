@@ -1316,7 +1316,7 @@ var OPTIONAL_ADDONS = [
 // screen width -- Michael okayed changing the layout to fix the fit.
 var PEOPLEFIRST_PILLS = [
   { key: 'computer', label: 'Computer Support' },
-  { key: 'app', label: 'App Support' },
+  { key: 'app', label: 'Server Support' },
   { key: 'network', label: 'Networking Support' },
   { key: 'access', label: 'Access Control Support' },
   { key: 'printing', label: 'Printing Support' },
