@@ -854,9 +854,13 @@
       if (r.data && r.data.ok) {
         state.meetings = r.data.meetings;
         state.meetingsRoster = r.data.roster;
-        if (state.taskDraftAssignee === '' && r.data.roster.length) {
-          state.taskDraftAssignee = r.data.roster[0];
-        }
+        // Deliberately no default assignee here (2026-09-23, per Michael:
+        // "By default, the to-do should not show any rep" -- a rep must
+        // actively pick one from the blank-first dropdown, see
+        // taskAssigneeSelect's markup below). Used to default to
+        // r.data.roster[0] (Claire Hayden, first in the fixed roster) the
+        // moment meetings loaded; that's exactly the silent default
+        // Michael asked to remove.
         if (state.pendingTaskFocus) {
           state.openMeetingId = state.pendingTaskFocus.meetingId;
           focusTaskId = state.pendingTaskFocus.taskId;
@@ -3174,6 +3178,13 @@
         html += '<div class="task-add-form">' +
           '<input type="text" id="taskDescriptionInput" class="meeting-form-input" placeholder="Task description" value="' + escapeHtml(state.taskDraftDescription) + '" maxlength="500">' +
           '<select id="taskAssigneeSelect" class="meeting-form-select">' +
+            // Blank placeholder above the roster -- added 2026-09-23 per
+            // Michael: "create a blank choice for to-do assignments above
+            // Claire Hayden so that a rep has to choose an assignment for
+            // someone." Selected whenever nothing's been picked yet
+            // (state.taskDraftAssignee === ''), which is now always true
+            // when this form first opens -- see task-add-open above.
+            '<option value=""' + (state.taskDraftAssignee === '' ? ' selected' : '') + '>Select a rep\u2026</option>' +
             state.meetingsRoster.map(function (name) {
               return '<option value="' + escapeHtml(name) + '"' + (state.taskDraftAssignee === name ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
             }).join('') +
@@ -3849,7 +3860,13 @@
     } else if (action === 'task-add-open') {
       state.taskAddOpenForMeeting = parseInt(el.getAttribute('data-meeting'), 10);
       state.taskDraftDescription = '';
-      state.taskDraftAssignee = state.meetingsRoster[0] || '';
+      // Blank, not state.meetingsRoster[0] -- per Michael's "by default,
+      // the to-do should not show any rep," a rep has to actively choose
+      // an assignment for someone (see the blank placeholder option in
+      // the taskAssigneeSelect markup below, and saveTask()'s existing
+      // "pick who it's assigned to" validation, which now actually fires
+      // instead of always passing against the old Claire Hayden default).
+      state.taskDraftAssignee = '';
       state.taskDraftDueDate = '';
       state.meetingsError = null;
       render();
