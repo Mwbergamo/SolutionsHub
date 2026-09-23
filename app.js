@@ -4078,6 +4078,25 @@ class Component extends DCLogic {
     }
     var hasSummaryReminders = summaryReminders.length > 0;
 
+    // Project Mode "still to configure" checklist (2026-09-23, per
+    // Michael: starring a pillar/service/category should drop it into
+    // the project cart immediately, and wherever the rep reaches that
+    // cart -- including this Solution Summary screen, not just the
+    // floating tray -- it should read as a checklist of links back
+    // into the still-unfinished menus. Reuses the placeholder rows
+    // projectTrayGroups already computed above (same onFocus/onRemove
+    // handlers) rather than rebuilding anything -- just filters down to
+    // the ones that aren't real selections yet.
+    var summaryChecklistGroups = [];
+    var summaryChecklistCount = 0;
+    projectTrayGroups.forEach(function (grp) {
+      var placeholderItems = grp.items.filter(function (it) { return it.isPlaceholder; });
+      if (!placeholderItems.length) return;
+      summaryChecklistGroups.push({ pillarName: grp.pillarName, items: placeholderItems });
+      summaryChecklistCount += placeholderItems.length;
+    });
+    var hasSummaryChecklist = summaryChecklistCount > 0;
+
     var hasScopeGrandTotal = scopeGrandTotal > 0;
     var scopeGrandTotalText = '$' + scopeGrandTotal.toFixed(2);
     var scopeRateText = '$' + scopeRateForTotal + '/hr';
@@ -4377,8 +4396,11 @@ class Component extends DCLogic {
       openSummary: function () { self.openSummary(); },
       closeSummary: function () { self.closeSummary(); },
       hasSelections: selectionCount > 0,
-      noSelections: selectionCount === 0,
+      noSelections: selectionCount === 0 && !hasSummaryChecklist,
       summaryGroups: summaryGroups,
+      hasSummaryChecklist: hasSummaryChecklist,
+      summaryChecklistCount: summaryChecklistCount,
+      summaryChecklistGroups: summaryChecklistGroups,
       hasProjectGraphic: !!projectGraphicDataUri,
       projectGraphicDataUri: projectGraphicDataUri,
       hasSummaryReminders: hasSummaryReminders, summaryReminders: summaryReminders,

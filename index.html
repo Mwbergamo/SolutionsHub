@@ -1329,6 +1329,35 @@
           </div>
         </sc-if>
 
+        <!-- Project Mode "still to configure" checklist (2026-09-23) --
+             see claude/solutions-creator-project-mode.md. Same rows the
+             floating tray shows (reuses it.onFocus/it.onRemove), styled
+             to match this screen's existing Bill of Materials cards so a
+             rep who lands here straight from the header "Solution"
+             button -- not just the tray's "Review Project" button --
+             still sees everything they've starred, not "Nothing selected". -->
+        <sc-if value="{{hasSummaryChecklist}}" hint-placeholder-val="{{false}}">
+          <div style="margin-top:26px;">
+            <div style="font-size:12px;font-weight:700;color:{{accentColor}};text-transform:uppercase;letter-spacing:.06em;">Still to Configure <span style="font-weight:400;text-transform:none;color:var(--cbt-text-on-dark-muted);letter-spacing:normal;">— tap an item to jump in and finish it</span></div>
+            <div style="margin-top:10px;">
+              <sc-for list="{{summaryChecklistGroups}}" as="grp" hint-placeholder-count="2">
+                <div style="margin-bottom:6px;">
+                  <div style="font-size:11.5px;font-weight:700;color:var(--cbt-text-on-light-muted);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 7px;">{{grp.pillarName}}</div>
+                  <sc-for list="{{grp.items}}" as="it" hint-placeholder-count="2">
+                    <div style="background:var(--cbt-card-bg);border-radius:12px;padding:13px 16px;margin-bottom:7px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                      <div style="cursor:pointer;flex:1;min-width:0;" data-on-click="{{it.onFocus}}">
+                        <div style="font-weight:700;font-size:14px;color:var(--cbt-text-on-light-primary);">{{it.serviceName}}</div>
+                        <div style="font-size:12.5px;color:oklch(0.55 0.1 85);font-weight:600;margin-top:2px;">{{it.optionLabel}}</div>
+                      </div>
+                      <button data-on-click="{{it.onRemove}}" style="background:none;border:none;color:var(--cbt-text-on-dark-muted);font-size:12.5px;font-weight:600;cursor:pointer;padding:6px 8px;flex:0 0 auto;">Remove</button>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
         <sc-if value="{{hasSelections}}" hint-placeholder-val="{{false}}">
           <div style="margin-top:26px;font-size:12px;font-weight:700;color:{{accentColor}};text-transform:uppercase;letter-spacing:.06em;">Bill of Materials</div>
           <div style="margin-top:10px;">
