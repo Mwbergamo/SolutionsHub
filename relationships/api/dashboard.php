@@ -21,6 +21,7 @@
  * GET /relationships/api/dashboard.php?action=overview
  *   -> { ok: true,
  *        gauges: [ { key, label, value, format: 'count'|'trend', trend? }, ... ],
+ *        leaderboards: [ { key, label, entries: [ { name, count }, ... ] (0-3, ranked) }, ... ],
  *        customers: [ { id, name, is_peoplefirst, is_prospect_only,
  *                        billing_trend: { direction, percent },
  *                        ticket_count_ytd, ticket_trend: { direction, percent },
@@ -48,6 +49,18 @@
  * mock/seed customer) reads back direction: 'flat', percent: null -- the
  * frontend shows that as "not enough history yet" rather than a misleading
  * 0%/spike.
+ *
+ * leaderboards -- added 2026-09-23, per Michael: two small weekly rep
+ * leaderboards ("Top 3 reps based on closed tasks for the week" / "Top 3
+ * reps based on number of meetings created"), rendered by the frontend as
+ * their own pair of tiles alongside the gauges above (leaderboardsHtml()
+ * in app.js), with a gold star on whoever's #1. A separate top-level array
+ * from gauges rather than a new gauges `format`, since these carry a
+ * ranked list of {name, count} rather than one value -- see
+ * relationships_leaderboard_week_start_utc()'s comment below for exactly
+ * what "week" and "resets Sunday night" mean here. Entries are empty
+ * arrays, never null, when nobody's done anything yet this week -- the
+ * frontend shows a quiet "nobody yet" line rather than an empty tile.
  */
 
 declare(strict_types=1);
@@ -64,6 +77,48 @@ relationships_require_login($pdo);
 $allowedTerritories = relationships_allowed_territories($pdo);
 
 $action = $_GET['action'] ?? '';
+
+/**
+ * Start of the current rep-leaderboard week, as a UTC "Y-m-d H:i:s"
+ * string ready to compare directly against this app's stored
+ * created_at/completed_at columns (both SQLite datetime('now') -- always
+ * UTC). "Week" here is Monday 00:00:00 through Sunday 23:59:59, in
+ * America/New_York -- the same timezone every other rep-facing "now" in
+ * this app is computed in (see connectwise-activity-create.php,
+ * connectwise-meeting-activity.php, meetings.php) -- so per Michael's
+ * "reset the count on Sunday night of each week," the leaderboard rolls
+ * over to 0 the moment Monday begins Eastern time, not at UTC midnight.
+ *
+ * There's no actual reset job or stored "week" state anywhere -- this is
+ * computed fresh on every request and just used as a WHERE bound, so the
+ * leaderboard is automatically empty again once every row from last week
+ * has aged out of the window. Nothing to run on a schedule, nothing that
+ * can drift out of sync.
+ */
+function relationships_leaderboard_week_start_utc(): string
+{
+    $eastern = new DateTimeZone('America/New_York');
+    $now = new DateTimeImmutable('now', $eastern);
+    $isoDayOfWeek = (int) $now->format('N'); // 1 (Monday) .. 7 (Sunday)
+    $weekStart = $now->setTime(0, 0, 0)->modify('-' . ($isoDayOfWeek - 1) . ' days');
+    return $weekStart->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+}
+
+/**
+ * Shared shape for both leaderboards below -- ranked {name, count} rows,
+ * already sorted highest-first (ties broken alphabetically so the result
+ * is stable) and capped at the top 3.
+ */
+function relationships_leaderboard_rows(PDO $pdo, string $sql, array $params): array
+{
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $rows = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $rows[] = ['name' => (string) $r['name'], 'count' => (int) $r['n']];
+    }
+    return $rows;
+}
 
 if ($action === 'overview') {
     // Rep-based territory filtering (see territory-access.php) -- applied
@@ -143,9 +198,65 @@ if ($action === 'overview') {
         ['key' => 'active_contacts', 'label' => 'Active Contacts', 'value' => $totalContacts, 'format' => 'count'],
     ];
 
+    // Weekly rep leaderboards -- added 2026-09-23, per Michael. Each is
+    // territory-scoped the same way everything else on this page is (a
+    // restricted rep's leaderboard reflects only activity on customers in
+    // their own territories), via a join back to customers rather than a
+    // direct territory_name column on meeting_tasks/customer_meetings.
+    $weekStartUtc = relationships_leaderboard_week_start_utc();
+
+    // "Top 3 reps based on closed tasks for the week" -- credited to
+    // whoever actually checked the task off (completed_by_name), not
+    // necessarily who it was assigned to; completed_at is set once, on
+    // completion, by meetings.php's set_task_done action.
+    $closedTasksFilter = $allowedTerritories === null
+        ? ['sql' => '', 'params' => []]
+        : relationships_territory_filter_sql($allowedTerritories, 'c');
+    $closedTasksLeaders = relationships_leaderboard_rows(
+        $pdo,
+        "SELECT mt.completed_by_name AS name, COUNT(*) AS n
+         FROM meeting_tasks mt
+         JOIN customers c ON c.id = mt.customer_id
+         WHERE mt.completed_at IS NOT NULL AND mt.completed_at >= :weekStart
+               AND mt.completed_by_name IS NOT NULL AND mt.completed_by_name != ''
+               {$closedTasksFilter['sql']}
+         GROUP BY mt.completed_by_name
+         ORDER BY n DESC, mt.completed_by_name COLLATE NOCASE ASC
+         LIMIT 3",
+        array_merge([':weekStart' => $weekStartUtc], $closedTasksFilter['params'])
+    );
+
+    // "Top 3 reps based on number of meetings created" -- credited to
+    // whoever logged the meeting (logged_by_name), counted by created_at
+    // (when the meeting was LOGGED in this app, not the meeting's own
+    // meeting_date) so a meeting entered late still counts toward the
+    // week it was actually logged in, matching "meetings created."
+    $meetingsFilter = $allowedTerritories === null
+        ? ['sql' => '', 'params' => []]
+        : relationships_territory_filter_sql($allowedTerritories, 'c');
+    $meetingsLeaders = relationships_leaderboard_rows(
+        $pdo,
+        "SELECT cm.logged_by_name AS name, COUNT(*) AS n
+         FROM customer_meetings cm
+         JOIN customers c ON c.id = cm.customer_id
+         WHERE cm.created_at >= :weekStart
+               AND cm.logged_by_name IS NOT NULL AND cm.logged_by_name != ''
+               {$meetingsFilter['sql']}
+         GROUP BY cm.logged_by_name
+         ORDER BY n DESC, cm.logged_by_name COLLATE NOCASE ASC
+         LIMIT 3",
+        array_merge([':weekStart' => $weekStartUtc], $meetingsFilter['params'])
+    );
+
+    $leaderboards = [
+        ['key' => 'weekly_closed_tasks', 'label' => 'Closed Tasks This Week', 'entries' => $closedTasksLeaders],
+        ['key' => 'weekly_meetings_logged', 'label' => 'Meetings Logged This Week', 'entries' => $meetingsLeaders],
+    ];
+
     relationships_respond(200, [
         'ok' => true,
         'gauges' => $gauges,
+        'leaderboards' => $leaderboards,
         'customers' => $customers,
     ]);
 }

@@ -202,6 +202,77 @@ a { color: inherit; }
   padding: 5px 12px;
 }
 
+/* Weekly rep leaderboards -- added 2026-09-23, per Michael: "Top 3 reps
+   based on closed tasks for the week" / "Top 3 reps based on number of
+   meetings created," gold star on #1, "match size of the current pills."
+   .leaderboard-tile reuses .gauge-tile's own background/border/radius/
+   padding (added via a second class on the element, see leaderboardsHtml()
+   in app.js) so the visual language matches exactly; only the grid
+   wrapper and the internal ranked-list rows are new here. auto-fit (not
+   auto-fill) so the two tiles stretch to fill the row evenly -- "side by
+   side" -- rather than reserving room for a phantom third column, while
+   still stacking to one column on a narrow/mobile width same as
+   .gauges-grid above. */
+
+.leaderboard-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.leaderboard-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.leaderboard-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.leaderboard-star {
+  flex: none;
+  width: 16px;
+  font-size: 14px;
+  line-height: 1;
+  text-align: center;
+  color: #f5c518;
+}
+
+.leaderboard-rank-spacer {
+  flex: none;
+  width: 16px;
+}
+
+.leaderboard-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: oklch(0.9 0.006 255);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.leaderboard-count {
+  flex: none;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: white;
+}
+
+.leaderboard-empty {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: oklch(0.55 0.015 255);
+}
+
 /* Per-customer trend list -- 6-month Agreement Billing trend, Service
    Tickets YTD + trend, Active Contacts + trend, all from synced local
    data. Clicking a row opens that customer's account summary (reuses

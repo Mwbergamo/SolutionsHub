@@ -2481,7 +2481,7 @@
       return '<div class="loading">Loading dashboard…</div>';
     }
     if (state.overview) {
-      return gaugesHtml(state.overview.gauges || []) + customerOverviewListHtml(state.overview.customers || []);
+      return gaugesHtml(state.overview.gauges || []) + leaderboardsHtml(state.overview.leaderboards || []) + customerOverviewListHtml(state.overview.customers || []);
     }
     // Never loaded (still pending) or failed to load -- either way, fall
     // back to the original guidance rather than showing nothing. A load
@@ -2525,6 +2525,44 @@
           '<div class="gauge-value">' + (g.value == null ? '—' : g.value) + '</div>' +
         '</div>';
       }
+    });
+    html += '</div>';
+    return html;
+  }
+
+  // Weekly rep leaderboards -- added 2026-09-23, per Michael: "Top 3 reps
+  // based on closed tasks for the week" / "Top 3 reps based on number of
+  // meetings created," a gold star on whoever's #1, sized and styled like
+  // the gauge tiles above ("match size of the current pills") but in
+  // their own always-side-by-side pair rather than folded into the
+  // auto-fill gauges grid, since these two belong together as a set. See
+  // dashboard.php's relationships_leaderboard_week_start_utc() for
+  // exactly what "week" means and when it resets -- nothing client-side
+  // needs to know about that; this just renders whatever ranked list
+  // comes back, 0-3 entries.
+  function leaderboardsHtml(leaderboards) {
+    if (!leaderboards || !leaderboards.length) return '';
+    var html = '<div class="leaderboard-grid">';
+    leaderboards.forEach(function (lb) {
+      html += '<div class="gauge-tile leaderboard-tile">' +
+        '<div class="gauge-label">' + escapeHtml(lb.label) + '</div>';
+      var entries = lb.entries || [];
+      if (entries.length === 0) {
+        html += '<div class="leaderboard-empty">Nobody yet this week.</div>';
+      } else {
+        html += '<div class="leaderboard-list">';
+        entries.forEach(function (e, i) {
+          html += '<div class="leaderboard-row">' +
+            (i === 0
+              ? '<span class="leaderboard-star" title="This week\u2019s leader">\u2605</span>'
+              : '<span class="leaderboard-rank-spacer"></span>') +
+            '<span class="leaderboard-name">' + escapeHtml(e.name) + '</span>' +
+            '<span class="leaderboard-count">' + e.count + '</span>' +
+          '</div>';
+        });
+        html += '</div>';
+      }
+      html += '</div>';
     });
     html += '</div>';
     return html;
