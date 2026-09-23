@@ -468,6 +468,17 @@
           </sc-if>
 
           <sc-if value="{{isManagedIT}}" hint-placeholder-val="{{false}}">
+            <div class="pf-panel">
+              <div class="pf-pills">
+                <sc-for list="{{managedItVM.peopleFirstPills}}" as="pfp" hint-placeholder-count="7">
+                  <div class="{{pfp.pillClass}}">{{pfp.label}}</div>
+                </sc-for>
+              </div>
+              <img class="pf-figure" src="assets/peoplefirst-illustration.png" alt="" loading="lazy">
+            </div>
+          </sc-if>
+
+          <sc-if value="{{isManagedIT}}" hint-placeholder-val="{{false}}">
             <div style="margin-top:26px;">
               <div style="font-size:12.5px;font-weight:700;color:var(--cbt-text-on-dark-primary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">How is this sold?</div>
               <div style="display:flex;gap:12px;">

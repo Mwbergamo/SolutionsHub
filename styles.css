@@ -312,3 +312,72 @@ body { overflow-x: hidden; }
     animation: none;
   }
 }
+
+/* ============================================================
+   PeopleFirst Support illustration (Managed IT configurator)
+   Added 2026-09-23, per Michael -- a read-only visual readout of what the
+   device/add-on picker above has selected, next to a cropped version of
+   the "PeopleFirst Support" campaign photo he supplied (assets/
+   peoplefirst-illustration.png). Each pill starts dark/muted and lights
+   up in the same amber highlight used for badges elsewhere in the app
+   (see .cross-sell-glow above for the same oklch(0.78 0.14 85) token)
+   once its mapped device count or add-on toggle is greater than zero --
+   see app.js's pfActive / peopleFirstPills for the mapping. Order and
+   pairing (7 full-width rows, then 3 two-across rows) matches Michael's
+   mockup exactly.
+
+   Desktop-only by design, not just by convenience: the configurator
+   column above is already 846px from the left edge of the viewport
+   (56px view padding + 50px content margin + 740px content width), so
+   this panel only has room to sit beside it -- without overlapping --
+   once the viewport is wide enough. 1440px gives ~130px of clearance;
+   Michael confirmed hiding it below that (rather than stacking it under
+   the form) is fine, so it never shows on tablets or phones, only on
+   wide desktop/laptop screens.
+   ============================================================ */
+.pf-panel {
+  display: none;
+  position: fixed;
+  top: 130px;
+  right: 40px;
+  width: 420px;
+  align-items: center;
+  gap: 16px;
+  pointer-events: none;
+  z-index: 5;
+}
+.pf-pills {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.pf-pill {
+  border-radius: 999px;
+  padding: 13px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  color: var(--cbt-text-on-dark-muted);
+  background: var(--cbt-bg-control-3);
+  transition: background-color .45s ease, color .45s ease, box-shadow .45s ease;
+}
+.pf-pill--full { grid-column: 1 / -1; }
+.pf-pill--active {
+  color: var(--cbt-badge-amber-text);
+  background: var(--cbt-badge-amber-bg);
+  box-shadow: 0 0 0 3px oklch(0.78 0.14 85 / 0.3), 0 0 18px 2px oklch(0.78 0.14 85 / 0.25);
+}
+.pf-figure {
+  flex: 0 0 auto;
+  width: 175px;
+  display: block;
+  filter: drop-shadow(0 14px 26px rgba(0,0,0,.4));
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-pill { transition: none; }
+}
+@media (min-width: 1440px) {
+  .pf-panel { display: flex; }
+}

@@ -1301,6 +1301,31 @@ var OPTIONAL_ADDONS = [
     description: "Per Person support for Microsoft 365 Moves and Changes. Passwords, File Access, Email and App support included." }
 ];
 
+// PeopleFirst Support illustration (added 2026-09-23, per Michael) -- the
+// device/add-on picker above drives a read-only illustration panel showing
+// what the customer is (and isn't) getting, matching the marketing graphic
+// Michael supplied. Each pill lights up (the same amber/yellow used for
+// badges/highlights elsewhere in the app) once its mapped device count or
+// add-on toggle is greater than zero -- see the isManagedIT render block
+// for the active-state computation, and styles.css's .pf-pill rules for
+// the look. Order/pairing matches Michael's mockup exactly (7 full-width
+// rows, then 3 two-across rows).
+var PEOPLEFIRST_PILLS = [
+  { key: 'computer', label: 'Computer Support', full: true },
+  { key: 'app', label: 'App Support', full: true },
+  { key: 'network', label: 'Networking Support', full: true },
+  { key: 'access', label: 'Access Control Support', full: true },
+  { key: 'printing', label: 'Printing Support', full: true },
+  { key: 'mobile', label: 'Mobile Device Support', full: true },
+  { key: 'phone', label: 'Business Phone Support', full: true },
+  { key: 'cyber', label: 'Cyber Security Coverage', full: false },
+  { key: 'wsbackup', label: 'Data Backup for Computer', full: false },
+  { key: 'mfa', label: 'MFA/2FA Support', full: false },
+  { key: 'm365support', label: 'Microsoft 365 Support', full: false },
+  { key: 'm365backup', label: 'Microsoft 365 Backup', full: false },
+  { key: 'riskscan', label: 'Quarterly Risk Evaluation', full: false }
+];
+
 var FIREWALL_MODELS = [
   { sku: 'PE-T125', label: 'CBT125', rate: 99, image: 'assets/products/firewall-small.png', specText: '3,850,000 max connections · Small offices & retail · 480 Mbps VPN throughput' },
   { sku: 'PE-T145', label: 'CBT145', rate: 130, image: 'assets/products/firewall-small.png', specText: '3,850,000 max connections · Small-to-midsize offices · 680 Mbps VPN throughput' },
@@ -3026,6 +3051,29 @@ class Component extends DCLogic {
         ? ('$' + nums.supportMonthly.toFixed(2) + '/mo pool across ' + mi.members + ' member' + (mi.members === 1 ? '' : 's'))
         : (Math.round(nums.minutesTotal) + ' min/mo of support at $' + mi.hourlyRate + '/hr');
 
+      var pfActive = {
+        computer: (d.workstation || 0) > 0,
+        app: (d.server || 0) > 0,
+        network: (d.firewall || 0) > 0 || (d['switch'] || 0) > 0 || (d.wap || 0) > 0,
+        access: (d.camera || 0) > 0,
+        printing: (d.printer || 0) > 0,
+        mobile: (d.mdm || 0) > 0,
+        phone: (d.phone || 0) > 0,
+        cyber: (mi.addons.cyberSecPro || 0) > 0,
+        wsbackup: (mi.addons.veeamWsBackup || 0) > 0,
+        mfa: (mi.addons.duoMfa || 0) > 0,
+        m365support: (mi.addons.m365SupportPerson || 0) > 0,
+        m365backup: (mi.addons.m365Backup || 0) > 0,
+        riskscan: (mi.addons.riskScan || 0) > 0
+      };
+      var peopleFirstPills = PEOPLEFIRST_PILLS.map(function (p) {
+        var active = !!pfActive[p.key];
+        return {
+          key: p.key, label: p.label,
+          pillClass: 'pf-pill' + (p.full ? ' pf-pill--full' : '') + (active ? ' pf-pill--active' : '')
+        };
+      });
+
       managedItVM = {
         approachIsPeopleFirst: approachIsPF,
         approachIsAlaCarte: !approachIsPF,
@@ -3046,6 +3094,7 @@ class Component extends DCLogic {
         rateDec: function () { self.miIncRate(-10); },
         miFirewalls: miFirewalls,
         miAddons: miAddons,
+        peopleFirstPills: peopleFirstPills,
         miAlaCarteSoftwareRows: miAlaCarteSoftwareRows,
         securitySoftwareHint: approachIsPF
           ? 'SentinelOne, patch management, and remote access are already included per workstation and server.'
