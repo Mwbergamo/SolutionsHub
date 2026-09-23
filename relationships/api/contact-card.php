@@ -15,16 +15,26 @@
  * of which has ever carried these fields). Read-only; nothing here is
  * written back to SQLite or to ConnectWise.
  *
- * "Primary contact" reuses the exact same convention
- * connectwise-activity-create.php's relationships_checklist_first_contact_id()
- * already established for picking who gets a ConnectWise Activity on
- * checklist completion (confirmed again for this feature via
- * AskUserQuestion): the alphabetically-first-by-last-name synced contact
- * for that company. There's no actual "primary contact" flag anywhere in
- * this app's ConnectWise data -- this is a stand-in, same as it was there.
+ * Returns EVERY synced contact for the customer that has complete info on
+ * file -- a last name, an email, and a phone number -- rather than a
+ * single "primary" contact (2026-09-23 revision, per Michael: "show a
+ * drop down list where the new contact info is... filter out
+ * no-last-names, no phone number, no email address contacts"). The
+ * frontend renders this as a dropdown the rep picks from before tapping
+ * call/email -- see contactCardHtml() in app.js. Sorted the same
+ * alphabetical-by-last-name way connectwise-activity-create.php's
+ * relationships_checklist_first_contact_id() already orders contacts for
+ * its own (unrelated) "first contact" pick -- there's no actual "primary
+ * contact" flag anywhere in this app's ConnectWise data, so that ordering
+ * is the closest thing to a sensible default, now just applied to the
+ * whole list instead of only its first row.
+ *
  * Contact name + email come straight from the local `contacts` table
  * (already synced nightly, see connectwise-contacts-sync-core.php); only
- * the phone number is fetched live, since it's never been synced.
+ * the phone number is fetched live, since it's never been synced -- one
+ * live ConnectWise call PER locally-synced contact (capped at 25 -- see
+ * relationships_contact_card_contacts()) to determine both its phone
+ * number and whether it clears the "complete info" bar at all.
  *
  * IMPORTANT / NOT LIVE-VERIFIED: this build environment has no network
  * path to connect.codebluetechnology.com (same standing constraint noted
@@ -40,23 +50,25 @@
  *     relationships_cw_contacts_extract_phone() below -- see that
  *     function's own comment for the exact fallback order tried.
  * Both degrade gracefully rather than erroring the whole card: a missing
- * address field just isn't shown, and a failed/empty phone lookup leaves
- * the card's phone link off while name/email (locally synced, not part of
- * this guess) still show. Michael should check a real customer's card
- * against ConnectWise after deploy -- if the address or phone comes back
- * wrong or missing, tell me what the real field/type name is and this
- * can be corrected in one place.
+ * address field just isn't shown, and a contact whose live phone lookup
+ * comes back empty or failed is simply left out of the dropdown (same as
+ * a contact ConnectWise itself has no phone for -- this endpoint can't
+ * tell the two apart, and per Michael's filter, both should be excluded
+ * either way). Michael should check a real customer's card against
+ * ConnectWise after deploy -- if contacts with a real phone number are
+ * missing from the dropdown, tell me what the real communicationItems
+ * type name is and this can be corrected in one place.
  *
  * GET /relationships/api/contact-card.php?action=get&customer_id=123
  *   -> { ok: true, available: false }
  *      (mock/unsynced customer -- no real ConnectWise company to look up)
  *   -> { ok: true, available: true,
  *        address: { line1, line2, city, state, zip } | null,
- *        contact: { name, email, phone } | null }
- *      (address is null when ConnectWise returned nothing usable; contact
- *      is null when this customer has no synced contacts at all yet --
- *      contact.phone can itself be null even when contact isn't, when the
- *      live phone lookup came back empty or failed)
+ *        contacts: [ { id, name, email, phone }, ... ] }
+ *      (address is null when ConnectWise returned nothing usable;
+ *      contacts is [] when nobody synced for this customer clears the
+ *      complete-info bar -- id is the ConnectWise contact id, used as the
+ *      dropdown's selection key)
  *   -> 502 { ok: false, error }  (the Company address fetch itself failed
  *      -- a real ConnectWise/transport problem, not just a missing field)
  */
@@ -89,22 +101,25 @@ function relationships_contact_card_cw_id(PDO $pdo, int $customerId): ?string
 }
 
 /**
- * The "first synced contact, alphabetical by last name" convention --
- * same query connectwise-activity-create.php's
- * relationships_checklist_first_contact_id() uses, but returns the full
- * local row (name + email + the ConnectWise contact id) since the card
- * needs more than just the id.
+ * Every locally-synced contact for this customer, same alphabetical-by-
+ * last-name ordering connectwise-activity-create.php's
+ * relationships_checklist_first_contact_id() uses for its own single-pick
+ * -- here applied to the whole list, since the dropdown shows everyone
+ * who clears the "complete info" bar, not just one. Capped at 25 -- each
+ * row costs one live ConnectWise call below to resolve its phone number,
+ * and no real CodeBlue customer should ever have anywhere near that many
+ * synced contacts; the cap exists purely so a pathological one can't turn
+ * a dashboard open into dozens of sequential API round-trips.
  */
-function relationships_contact_card_primary_contact(PDO $pdo, int $customerId): ?array
+function relationships_contact_card_contacts(PDO $pdo, int $customerId): array
 {
     $stmt = $pdo->prepare(
         'SELECT connectwise_contact_id, first_name, last_name, email FROM contacts
          WHERE customer_id = :cid
-         ORDER BY last_name COLLATE NOCASE ASC, first_name COLLATE NOCASE ASC LIMIT 1'
+         ORDER BY last_name COLLATE NOCASE ASC, first_name COLLATE NOCASE ASC LIMIT 25'
     );
     $stmt->execute([':cid' => $customerId]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-    return $row !== false ? $row : null;
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
 /**
@@ -184,34 +199,49 @@ if ($action === 'get') {
         relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
     }
 
-    $contact = null;
-    $localContact = relationships_contact_card_primary_contact($pdo, $customerId);
-    if ($localContact !== null) {
-        $name = trim($localContact['first_name'] . ' ' . $localContact['last_name']);
-        $phone = null;
-        if (!empty($localContact['connectwise_contact_id'])) {
-            try {
-                $cwContact = relationships_cw_request('/company/contacts/' . rawurlencode((string) $localContact['connectwise_contact_id']), [
-                    'fields' => 'communicationItems',
-                ]);
-                $phone = relationships_cw_contacts_extract_phone($cwContact);
-            } catch (RelationshipsConnectWiseError $e) {
-                // Graceful degradation, per this integration's standing
-                // "save locally, log the ConnectWise failure" practice
-                // (here: "show what's local, log the live-fetch failure")
-                // -- name/email already came from the local sync, so
-                // still show those; just no tappable phone this time.
-                error_log('relationships contact-card: phone fetch failed for contact ' . $localContact['connectwise_contact_id'] . ': ' . $e->getMessage());
-            }
+    // Every synced contact that clears Michael's "complete info" bar --
+    // has a last name, an email (both already local), AND a phone number
+    // (only known once fetched live below). A contact missing any of the
+    // three -- including one whose live phone lookup comes back empty or
+    // fails -- is silently left off the list rather than shown with a
+    // blank field; this endpoint has no way to tell "ConnectWise has no
+    // phone for them" apart from "the live fetch failed", and either way
+    // Michael's filter says to exclude them.
+    $contacts = [];
+    foreach (relationships_contact_card_contacts($pdo, $customerId) as $localContact) {
+        $lastName = trim((string) ($localContact['last_name'] ?? ''));
+        $email = trim((string) ($localContact['email'] ?? ''));
+        if ($lastName === '' || $email === '' || empty($localContact['connectwise_contact_id'])) {
+            continue;
         }
-        $contact = [
+
+        $phone = null;
+        try {
+            $cwContact = relationships_cw_request('/company/contacts/' . rawurlencode((string) $localContact['connectwise_contact_id']), [
+                'fields' => 'communicationItems',
+            ]);
+            $phone = relationships_cw_contacts_extract_phone($cwContact);
+        } catch (RelationshipsConnectWiseError $e) {
+            // Graceful degradation, per this integration's standing "save
+            // locally, log the ConnectWise failure" practice (here: "skip
+            // this one contact, log the live-fetch failure") -- doesn't
+            // fail the whole card over one contact's phone lookup.
+            error_log('relationships contact-card: phone fetch failed for contact ' . $localContact['connectwise_contact_id'] . ': ' . $e->getMessage());
+        }
+        if ($phone === null) {
+            continue; // no phone on file (or the live lookup failed) -- excluded either way
+        }
+
+        $name = trim($localContact['first_name'] . ' ' . $localContact['last_name']);
+        $contacts[] = [
+            'id' => (string) $localContact['connectwise_contact_id'],
             'name' => $name !== '' ? $name : null,
-            'email' => $localContact['email'] !== null && $localContact['email'] !== '' ? $localContact['email'] : null,
+            'email' => $email,
             'phone' => $phone,
         ];
     }
 
-    relationships_respond(200, ['ok' => true, 'available' => true, 'address' => $address, 'contact' => $contact]);
+    relationships_respond(200, ['ok' => true, 'available' => true, 'address' => $address, 'contacts' => $contacts]);
 }
 
 relationships_respond(400, ['ok' => false, 'error' => 'Unknown action.']);

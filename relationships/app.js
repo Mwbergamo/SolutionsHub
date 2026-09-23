@@ -462,6 +462,15 @@
     state.contactCard = null;
     state.contactCardLoading = false;
     state.contactCardError = null;
+    // Dropdown open/closed, and which contact (by ConnectWise contact id,
+    // a string) is currently picked -- added 2026-09-23 per Michael:
+    // "show a drop down list where the new contact info is... When you
+    // select the contact in question, you can then tap on email or
+    // phone." Nothing is pre-selected -- the dropdown always starts
+    // closed with no contact chosen, even when there's only one to pick,
+    // so picking one is always a deliberate step.
+    state.contactCardOpen = false;
+    state.contactCardSelectedId = null;
     // Pending "log this as an OutGrow touch?" confirmation -- per
     // Michael's explicit choice (AskUserQuestion) that tapping call/email
     // must NOT log the touch immediately; it only opens the dialer/email
@@ -628,27 +637,56 @@
       '</div>';
     }
 
-    if (card.contact) {
-      html += '<div class="contact-card-person">';
-      if (card.contact.name) {
-        html += '<div class="contact-card-name">' + escapeHtml(card.contact.name) + '</div>';
+    var contacts = card.contacts || [];
+    html += '<div class="contact-card-person">';
+    if (contacts.length === 0) {
+      html += '<div class="contact-card-empty">No contacts with complete info on file.</div>';
+    } else {
+      var selected = null;
+      for (var ci = 0; ci < contacts.length; ci++) {
+        if (state.contactCardSelectedId && contacts[ci].id === state.contactCardSelectedId) {
+          selected = contacts[ci];
+          break;
+        }
       }
-      var links = '';
-      if (card.contact.phone) {
-        links += '<a class="contact-card-link" href="tel:' + escapeHtml(card.contact.phone) + '" data-action="contact-call">' +
+
+      // Dropdown -- added 2026-09-23 per Michael: "show a drop down list
+      // where the new contact info is... you should see the contacts
+      // name info, email info and phone info in the list. When you
+      // select the contact in question, you can then tap on email or
+      // phone." .contact-card-dropdown is the outside-click boundary
+      // onDocumentClick() checks to auto-close this, same pattern as the
+      // customer search box's .search-wrap.
+      html += '<div class="contact-card-dropdown">';
+      html += '<button type="button" class="contact-card-dropdown-toggle" data-action="contact-dropdown-toggle" aria-expanded="' + (state.contactCardOpen ? 'true' : 'false') + '">' +
+        '<span>' + (selected ? escapeHtml(selected.name || 'Contact') : 'Select a contact…') + '</span>' +
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="contact-card-dropdown-chevron"><polyline points="6 9 12 15 18 9"></polyline></svg>' +
+      '</button>';
+
+      if (state.contactCardOpen) {
+        html += '<div class="contact-card-dropdown-panel">';
+        contacts.forEach(function (c) {
+          var rowClass = 'contact-card-dropdown-row' + (selected && c.id === selected.id ? ' selected' : '');
+          html += '<div class="' + rowClass + '" data-action="contact-select" data-contact-id="' + escapeHtml(c.id) + '">' +
+            '<div class="contact-card-dropdown-name">' + escapeHtml(c.name || 'Contact') + '</div>' +
+            '<div class="contact-card-dropdown-meta">' + escapeHtml(c.email) + ' · ' + escapeHtml(c.phone) + '</div>' +
+          '</div>';
+        });
+        html += '</div>';
+      }
+      html += '</div>'; // .contact-card-dropdown
+
+      if (selected) {
+        var links = '<a class="contact-card-link" href="tel:' + escapeHtml(selected.phone) + '" data-action="contact-call">' +
           '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.362 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.338 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>' +
-          escapeHtml(card.contact.phone) + '</a>';
-      }
-      if (card.contact.email) {
-        links += '<a class="contact-card-link" href="mailto:' + escapeHtml(card.contact.email) + '" data-action="contact-email">' +
+          escapeHtml(selected.phone) + '</a>' +
+          '<a class="contact-card-link" href="mailto:' + escapeHtml(selected.email) + '" data-action="contact-email">' +
           '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>' +
-          escapeHtml(card.contact.email) + '</a>';
-      }
-      if (links) {
+          escapeHtml(selected.email) + '</a>';
         html += '<div class="contact-card-links">' + links + '</div>';
       }
-      html += '</div>';
     }
+    html += '</div>'; // .contact-card-person
 
     if (state.outgrowConfirm) {
       var confirmLabel = state.outgrowConfirm.source === 'call' ? 'Log this call as an OutGrow touch?' : 'Log this email as an OutGrow touch?';
@@ -3752,6 +3790,17 @@
     } else if (action === 'outgrow-history-toggle') {
       state.outgrowHistoryOpen = !state.outgrowHistoryOpen;
       render();
+    } else if (action === 'contact-dropdown-toggle') {
+      state.contactCardOpen = !state.contactCardOpen;
+      render();
+    } else if (action === 'contact-select') {
+      state.contactCardSelectedId = el.getAttribute('data-contact-id');
+      state.contactCardOpen = false;
+      // Switching contacts mid-confirm would log the touch against
+      // whichever one happens to be selected when "Yes" is tapped --
+      // clear any pending confirmation rather than let that happen.
+      state.outgrowConfirm = null;
+      render();
     } else if (action === 'contact-call') {
       // Doesn't preventDefault -- the <a href="tel:..."> still opens the
       // dialer as normal. This just surfaces the confirm banner alongside
@@ -3856,10 +3905,18 @@
 
   // Close the search dropdown on an outside click, without a rebind loop.
   function onDocumentClick(e) {
-    if (!state.resultsOpen) return;
-    if (e.target.closest('.search-wrap')) return;
-    state.resultsOpen = false;
-    render();
+    var changed = false;
+    if (state.resultsOpen && !e.target.closest('.search-wrap')) {
+      state.resultsOpen = false;
+      changed = true;
+    }
+    // Contact card dropdown -- added 2026-09-23, same outside-click-closes
+    // pattern as the customer search box above.
+    if (state.contactCardOpen && !e.target.closest('.contact-card-dropdown')) {
+      state.contactCardOpen = false;
+      changed = true;
+    }
+    if (changed) render();
   }
 
   // Bound once — root's contents are replaced on every render(), so these
