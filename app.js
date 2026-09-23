@@ -3070,11 +3070,28 @@ class Component extends DCLogic {
         m365backup: (mi.addons.m365Backup || 0) > 0,
         riskscan: (mi.addons.riskScan || 0) > 0
       };
+      // Rank active pills to the top, inactive to the bottom (each group
+      // keeps PEOPLEFIRST_PILLS's own order -- a stable partition, so a
+      // pill never jitters against others in the same active/inactive
+      // state), then position every pill with translateY(rank * step)
+      // instead of reordering the array itself. sc-for patches slots by
+      // INDEX (see runtime.js), not by identity, so reordering the array
+      // would just swap label/class text between the same fixed DOM
+      // nodes -- no visible movement. Keeping the array order fixed and
+      // animating each pill's own translateY via CSS transition (see
+      // .pf-pill in styles.css) is what makes them actually glide to
+      // their new spot when a selection changes, per Michael.
+      var PF_ROW_STEP = 47; // .pf-pill height (39px) + row gap (8px) -- keep in sync with styles.css
+      var pfOrder = PEOPLEFIRST_PILLS.filter(function (p) { return pfActive[p.key]; })
+        .concat(PEOPLEFIRST_PILLS.filter(function (p) { return !pfActive[p.key]; }));
+      var pfRankByKey = {};
+      pfOrder.forEach(function (p, i) { pfRankByKey[p.key] = i; });
       var peopleFirstPills = PEOPLEFIRST_PILLS.map(function (p) {
         var active = !!pfActive[p.key];
         return {
           key: p.key, label: p.label,
-          pillClass: 'pf-pill' + (active ? ' pf-pill--active cross-sell-glow' : '')
+          pillClass: 'pf-pill' + (active ? ' pf-pill--active cross-sell-glow' : ''),
+          pillStyle: 'transform:translateY(' + (pfRankByKey[p.key] * PF_ROW_STEP) + 'px);'
         };
       });
 
