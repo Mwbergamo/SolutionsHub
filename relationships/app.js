@@ -164,6 +164,11 @@
     // prospects, so there's nothing to conflict).
     overviewShowProspects: true,
     overviewPeopleFirstOnly: false,
+    // Front-page customer list is hidden by default (2026-09-23, per
+    // Michael: the front page is a team dashboard + global action items
+    // list, not a customer directory) -- clicking the Total Customers
+    // gauge tile toggles it. See gaugesHtml()/overviewHtml().
+    overviewListOpen: false,
 
     // Checklist data, keyed by "customerId::pillarId::serviceId". Each
     // value is: undefined (not fetched yet), 'error', or
@@ -2940,7 +2945,8 @@
       return '<div class="loading">Loading dashboard…</div>';
     }
     if (state.overview) {
-      return gaugesHtml(state.overview.gauges || []) + leaderboardsHtml(state.overview.leaderboards || []) + customerOverviewListHtml(state.overview.customers || []);
+      return gaugesHtml(state.overview.gauges || []) + leaderboardsHtml(state.overview.leaderboards || []) +
+        (state.overviewListOpen ? customerOverviewListHtml(state.overview.customers || []) : '');
     }
     // Never loaded (still pending) or failed to load -- either way, fall
     // back to the original guidance rather than showing nothing. A load
@@ -2978,6 +2984,14 @@
           '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
           '<div class="gauge-value-row">' + trendBadgeHtml(g.trend, 'lg') + '</div>' +
         '</div>';
+      } else if (g.key === 'total_customers') {
+        // Clickable: shows/hides the customer list (hidden by default).
+        html += '<button type="button" class="gauge-tile gauge-tile-clickable' + (state.overviewListOpen ? ' active' : '') + '" data-action="toggle-customer-list" ' +
+          'title="' + (state.overviewListOpen ? 'Hide the customer list' : 'Show the customer list') + '">' +
+          '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
+          '<div class="gauge-value">' + (g.value == null ? '—' : g.value) + '</div>' +
+          '<div class="gauge-hint">' + (state.overviewListOpen ? 'Hide list ▲' : 'View list ▼') + '</div>' +
+        '</button>';
       } else {
         html += '<div class="gauge-tile">' +
           '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
@@ -4560,6 +4574,9 @@
       } else {
         state.overviewSort.direction = state.overviewSort.direction === 'asc' ? 'desc' : 'asc';
       }
+      render();
+    } else if (action === 'toggle-customer-list') {
+      state.overviewListOpen = !state.overviewListOpen;
       render();
     } else if (action === 'toggle-overview-prospects') {
       state.overviewShowProspects = !state.overviewShowProspects;

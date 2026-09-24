@@ -177,6 +177,27 @@ a { color: inherit; }
   padding: 16px 18px;
 }
 
+.gauge-tile-clickable {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+
+.gauge-tile-clickable:hover,
+.gauge-tile-clickable.active {
+  border-color: oklch(0.55 0.12 255);
+  background: oklch(0.22 0.02 255);
+}
+
+.gauge-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: oklch(0.65 0.1 255);
+}
+
 .gauge-label {
   font-size: 10.5px;
   font-weight: 700;
