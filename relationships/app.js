@@ -169,6 +169,12 @@
     // Prospects tiles set it (prospects are their own group, not part of
     // Total Customers, per Michael 2026-09-23).
     overviewListMode: null,
+    // OutGrow-stale list sort (front-page "60+ Days Since Last OutGrow
+    // Touch" tile): 'asc' = earliest touch first (never-touched customers
+    // lead), 'desc' = most recent first. One-shot flag so the background
+    // ConnectWise date backfill is only requested once per page load.
+    outgrowSortDir: 'asc',
+    outgrowBackfillStarted: false,
 
     // Checklist data, keyed by "customerId::pillarId::serviceId". Each
     // value is: undefined (not fetched yet), 'error', or
@@ -466,6 +472,7 @@
       state.overviewLoading = false;
       if (r.data && r.data.ok) {
         state.overview = r.data;
+        maybeBackfillOutgrow(r.data);
       } else {
         state.overviewError = (r.data && r.data.error) || 'Could not load the dashboard overview.';
       }
@@ -475,6 +482,22 @@
       state.overviewError = 'Could not load the dashboard overview — check your connection.';
       render();
     });
+  }
+
+  // The "60+ Days Since Last OutGrow Touch" count is only right once every
+  // customer's ConnectWise-held date has been pulled in locally (see
+  // outgrow.php's 'backfill_all'). dashboard.php says when that's due
+  // (never run / 12h+ ago); this fires it once, quietly, then refreshes the
+  // numbers if it actually found anything. Failures are silent -- the
+  // server won't offer it again for 12 hours regardless.
+  function maybeBackfillOutgrow(overview) {
+    if (!overview.outgrow_backfill_stale || state.outgrowBackfillStarted) return;
+    state.outgrowBackfillStarted = true;
+    apiPost('api/outgrow.php?action=backfill_all', {}).then(function (r) {
+      if (r.data && r.data.ok && r.data.inserted > 0) {
+        loadOverview();
+      }
+    }).catch(function () { /* silent -- see above */ });
   }
 
   var searchDebounce = null;
@@ -2966,7 +2989,9 @@
     }
     if (state.overview) {
       return gaugesHtml(state.overview.gauges || []) + leaderboardsHtml(state.overview.leaderboards || []) +
-        (state.overviewListMode ? customerOverviewListHtml(state.overview.customers || []) : '');
+        (state.overviewListMode === 'outgrow'
+          ? outgrowStaleListHtml(state.overview.customers || [])
+          : (state.overviewListMode ? customerOverviewListHtml(state.overview.customers || []) : ''));
     }
     // Never loaded (still pending) or failed to load -- either way, fall
     // back to the original guidance rather than showing nothing. A load
@@ -3004,11 +3029,11 @@
           '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
           '<div class="gauge-value-row">' + trendBadgeHtml(g.trend, 'lg') + '</div>' +
         '</div>';
-      } else if (g.key === 'total_customers' || g.key === 'total_prospects') {
+      } else if (g.key === 'total_customers' || g.key === 'total_prospects' || g.key === 'outgrow_stale') {
         // Clickable: shows/hides that group's list (hidden by default).
-        var listMode = g.key === 'total_customers' ? 'customers' : 'prospects';
+        var listMode = g.key === 'total_customers' ? 'customers' : (g.key === 'total_prospects' ? 'prospects' : 'outgrow');
         var listOpen = state.overviewListMode === listMode;
-        html += '<button type="button" class="gauge-tile gauge-tile-clickable' + (listOpen ? ' active' : '') + '" data-action="toggle-overview-list" data-mode="' + listMode + '" ' +
+        html += '<button type="button" class="gauge-tile gauge-tile-clickable' + (g.key === 'outgrow_stale' ? ' gauge-tile-alert' : '') + (listOpen ? ' active' : '') + '" data-action="toggle-overview-list" data-mode="' + listMode + '" ' +
           'title="' + (listOpen ? 'Hide the list' : 'Show the list') + '">' +
           '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
           '<div class="gauge-value">' + (g.value == null ? '—' : g.value) + '</div>' +
@@ -3156,6 +3181,50 @@
         ' <span class="overview-filter-count">' + peopleFirstCount + '</span>' +
       '</button>' +
     '</div>';
+  }
+
+  // "60+ Days Since Last OutGrow Touch" list (front-page tile, 2026-09-23,
+  // per Michael): real customers (never prospects) with no published Last
+  // OutGrow Touch, or one 60+ days old -- the exact set the tile counts
+  // (dashboard.php's outgrow_days_since). Sortable by touch date,
+  // earliest -> latest by default; never-touched customers sort as the
+  // "earliest". Clicking a name opens that customer's dashboard via the
+  // same select-customer action every other list uses.
+  function outgrowStaleListHtml(customers) {
+    var stale = customers.filter(function (c) {
+      return !c.is_prospect_only && (c.outgrow_days_since == null || c.outgrow_days_since >= 60);
+    });
+    var dir = state.outgrowSortDir === 'desc' ? -1 : 1;
+    stale.sort(function (a, b) {
+      var av = a.last_outgrow_touch || '';
+      var bv = b.last_outgrow_touch || '';
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return a.name.localeCompare(b.name);
+    });
+    var arrow = state.outgrowSortDir === 'desc' ? ' ▼' : ' ▲';
+    var html = '<div class="overview-list-wrap">' +
+      '<div class="overview-list-header">' +
+        '<div class="overview-col-name"><span class="overview-col-sort">Customer</span></div>' +
+        '<div class="overview-col"><button class="overview-col-sort active" type="button" data-action="sort-outgrow" title="Flip between earliest-first and latest-first">Last OutGrow Touch' + arrow + '</button></div>' +
+        '<div class="overview-col"><span class="overview-col-sort">Days Since</span></div>' +
+        '<div class="overview-col"><span class="overview-col-sort">Last Touched By</span></div>' +
+      '</div>' +
+      '<div class="overview-list">';
+    if (!stale.length) {
+      html += '<div class="overview-list-empty">Every customer has had an OutGrow touch in the last 60 days.</div>';
+    }
+    stale.forEach(function (c) {
+      var badge = c.is_peoplefirst ? peopleFirstBadgeHtml() : '';
+      html += '<div class="overview-row" data-action="select-customer" data-id="' + c.id + '">' +
+        '<div class="overview-col-name"><span class="overview-name">' + escapeHtml(c.name) + '</span>' + badge + '</div>' +
+        '<div class="overview-col">' + (c.last_outgrow_touch ? escapeHtml(fmtOutgrowDate(c.last_outgrow_touch)) : '<span class="outgrow-none">None recorded</span>') + '</div>' +
+        '<div class="overview-col">' + (c.outgrow_days_since == null ? '<span class="overview-dash">—</span>' : c.outgrow_days_since + ' days') + '</div>' +
+        '<div class="overview-col">' + (c.last_outgrow_touch_by ? escapeHtml(c.last_outgrow_touch_by) : '<span class="overview-dash">—</span>') + '</div>' +
+      '</div>';
+    });
+    html += '</div></div>';
+    return html;
   }
 
   function customerOverviewListHtml(customers) {
@@ -4616,6 +4685,9 @@
       } else {
         state.overviewSort.direction = state.overviewSort.direction === 'asc' ? 'desc' : 'asc';
       }
+      render();
+    } else if (action === 'sort-outgrow') {
+      state.outgrowSortDir = state.outgrowSortDir === 'asc' ? 'desc' : 'asc';
       render();
     } else if (action === 'toggle-overview-list') {
       var mode = el.getAttribute('data-mode');

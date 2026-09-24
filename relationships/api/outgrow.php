@@ -179,6 +179,69 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     relationships_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
 }
 
+/**
+ * Bulk version of the one-time ConnectWise backfill above -- added
+ * 2026-09-23 for the front page's "60+ Days Since Last OutGrow Touch"
+ * metric. The per-customer backfill only runs when someone opens that
+ * customer's dashboard, so until every customer had been opened, any whose
+ * date only lives in ConnectWise would be miscounted as "never touched".
+ * This does it for everyone in one pass: a single paginated list of every
+ * ConnectWise Company's customFields, then a seed row (same
+ * 'connectwise_seed' source, same only-when-zero-history rule) for each
+ * local customer that has none yet. The attempt is stamped in cw_sync_meta
+ * FIRST so a slow/failed run can't be re-triggered on every page load --
+ * dashboard.php's outgrow_backfill_stale only asks again after 12 hours.
+ * app.js calls this in the background after the front page loads.
+ * -> { ok: true, inserted: N } or { ok: false, error } (502)
+ */
+if ($action === 'backfill_all') {
+    @set_time_limit(180);
+    $pdo->exec("INSERT OR REPLACE INTO cw_sync_meta (key, value) VALUES ('outgrow_backfill_at', datetime('now'))");
+
+    $needStmt = $pdo->query(
+        "SELECT c.id, c.connectwise_id FROM customers c
+         WHERE c.connectwise_id IS NOT NULL AND c.connectwise_id != '' AND c.connectwise_id NOT LIKE 'MOCK-%'
+           AND NOT EXISTS (SELECT 1 FROM outgrow_last_touch_history h WHERE h.customer_id = c.id)"
+    );
+    $need = $needStmt->fetchAll(PDO::FETCH_ASSOC);
+    if ($need === []) {
+        relationships_respond(200, ['ok' => true, 'inserted' => 0]);
+    }
+
+    try {
+        $companies = relationships_cw_list('/company/companies', '', ['id', 'customFields']);
+    } catch (Throwable $e) {
+        error_log('[relationships/outgrow] bulk backfill failed: ' . $e->getMessage());
+        relationships_respond(502, ['ok' => false, 'error' => 'Could not read Companies from ConnectWise.']);
+    }
+    $customFieldsByCwId = [];
+    foreach ($companies as $co) {
+        if (isset($co['id'])) {
+            $customFieldsByCwId[(string) $co['id']] = is_array($co['customFields'] ?? null) ? $co['customFields'] : [];
+        }
+    }
+
+    $insert = $pdo->prepare(
+        'INSERT INTO outgrow_last_touch_history (customer_id, touch_date, source, set_by_user_id, set_by_name, cw_push_status, cw_push_error)
+         VALUES (:cid, :date, \'connectwise_seed\', NULL, :by, NULL, NULL)'
+    );
+    $inserted = 0;
+    foreach ($need as $c) {
+        $fields = $customFieldsByCwId[(string) $c['connectwise_id']] ?? null;
+        if ($fields === null) {
+            continue;
+        }
+        $field = relationships_cw_find_custom_field($fields, RELATIONSHIPS_OUTGROW_CAPTION);
+        $date = $field !== null ? relationships_cw_outgrow_parse_date($field['value'] ?? null) : null;
+        if ($date === null) {
+            continue;
+        }
+        $insert->execute([':cid' => (int) $c['id'], ':date' => $date, ':by' => 'Synced from ConnectWise']);
+        $inserted++;
+    }
+    relationships_respond(200, ['ok' => true, 'inserted' => $inserted]);
+}
+
 if ($action === 'set') {
     $data = relationships_read_json_body();
     $customerId = (int) ($data['customer_id'] ?? 0);

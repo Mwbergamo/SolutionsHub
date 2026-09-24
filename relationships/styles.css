@@ -213,6 +213,16 @@ a { color: inherit; }
 }
 .risk-scan-cw-retry:disabled { opacity: .6; cursor: default; }
 
+/* Alert-styled gauge (60+ Days Since Last OutGrow Touch) -- red accent per
+   Michael's mock-up. */
+.gauge-tile-alert { border-color: oklch(0.5 0.16 27); }
+.gauge-tile-alert .gauge-label,
+.gauge-tile-alert .gauge-value { color: oklch(0.72 0.17 27); }
+.gauge-tile-alert:hover,
+.gauge-tile-alert.active { border-color: oklch(0.65 0.2 27); background: oklch(0.21 0.03 27); }
+.gauge-tile-alert .gauge-hint { color: oklch(0.72 0.14 27); }
+.outgrow-none { color: oklch(0.72 0.15 27); font-weight: 600; }
+
 .gauge-hint {
   margin-top: 6px;
   font-size: 11px;

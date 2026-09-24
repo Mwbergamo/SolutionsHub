@@ -136,6 +136,25 @@ if ($action === 'overview') {
     $customerStmt->execute($territoryFilter['params']);
     $customerRows = $customerStmt->fetchAll(PDO::FETCH_ASSOC);
 
+    // "60+ Days Since Last OutGrow Touch" metric -- added 2026-09-23, per
+    // Michael. A customer's CURRENT Last Touch is the newest row in
+    // outgrow_last_touch_history (same rule outgrow.php's 'get' uses --
+    // newest by id, not by date). Counts real customers only (prospects
+    // have their own tile/workflow): "stale" = no touch date at all, or
+    // one 60+ days before today (America/New_York, like every other
+    // rep-facing "today" in this app).
+    $outgrowLatest = [];
+    foreach ($pdo->query(
+        'SELECT h.customer_id, h.touch_date, h.set_by_name
+         FROM outgrow_last_touch_history h
+         JOIN (SELECT customer_id, MAX(id) AS mid FROM outgrow_last_touch_history GROUP BY customer_id) m ON m.mid = h.id'
+    )->fetchAll(PDO::FETCH_ASSOC) as $o) {
+        $outgrowLatest[(int) $o['customer_id']] = $o;
+    }
+    $easternTz = new DateTimeZone('America/New_York');
+    $todayEastern = new DateTimeImmutable('today', $easternTz);
+    $outgrowStaleCount = 0;
+
     $customers = [];
     $totalContacts = 0;
     $totalProspects = 0;
@@ -144,6 +163,21 @@ if ($action === 'overview') {
         $isProspect = (bool) $r['is_prospect_only'];
         if ($isProspect) {
             $totalProspects++;
+        }
+
+        $lastTouch = $outgrowLatest[$customerId]['touch_date'] ?? null;
+        $outgrowDaysSince = null;
+        if ($lastTouch !== null) {
+            $touchDay = DateTimeImmutable::createFromFormat('!Y-m-d', $lastTouch, $easternTz);
+            if ($touchDay !== false) {
+                $diff = $touchDay->diff($todayEastern);
+                $outgrowDaysSince = $diff->invert ? -((int) $diff->days) : (int) $diff->days;
+            } else {
+                $lastTouch = null; // unparseable stored value -- treat as no published touch
+            }
+        }
+        if (!$isProspect && ($outgrowDaysSince === null || $outgrowDaysSince >= 60)) {
+            $outgrowStaleCount++;
         }
         // ticket_count_ytd stays per-customer (feeds the customer list's
         // "Tickets YTD" column and each customer's own dashboard) -- only
@@ -163,6 +197,9 @@ if ($action === 'overview') {
             'name' => $r['name'],
             'is_peoplefirst' => (bool) $r['is_peoplefirst'],
             'is_prospect_only' => $isProspect,
+            'last_outgrow_touch' => $lastTouch,
+            'last_outgrow_touch_by' => $lastTouch !== null ? ($outgrowLatest[$customerId]['set_by_name'] ?? null) : null,
+            'outgrow_days_since' => $outgrowDaysSince,
             'billing_trend' => $billingTrend,
             'ticket_count_ytd' => $ticketYtd,
             'ticket_trend' => $ticketTrend,
@@ -199,7 +236,17 @@ if ($action === 'overview') {
         ['key' => 'total_prospects', 'label' => 'Total Prospects', 'value' => $totalProspects, 'format' => 'count'],
         ['key' => 'portfolio_billing_trend', 'label' => 'Portfolio Billing Trend', 'value' => null, 'format' => 'trend', 'trend' => $portfolioBillingTrend],
         ['key' => 'active_contacts', 'label' => 'Active Contacts', 'value' => $totalContacts, 'format' => 'count'],
+        ['key' => 'outgrow_stale', 'label' => '60+ Days Since Last OutGrow Touch', 'value' => $outgrowStaleCount, 'format' => 'count'],
     ];
+
+    // Whether the bulk ConnectWise backfill of existing OutGrow dates (see
+    // outgrow.php's 'backfill_all') is due -- never run, or last attempted
+    // 12+ hours ago. Without it, customers whose date only exists in
+    // ConnectWise (backfilled lazily, one customer at a time, when their
+    // dashboard is opened) would wrongly count as "no published touch".
+    $backfillAt = $pdo->query("SELECT value FROM cw_sync_meta WHERE key = 'outgrow_backfill_at'")->fetchColumn();
+    $backfillStale = $backfillAt === false || $backfillAt === null
+        || (time() - (int) strtotime((string) $backfillAt . ' UTC')) > 12 * 3600;
 
     // Weekly rep leaderboards -- added 2026-09-23, per Michael. Each is
     // territory-scoped the same way everything else on this page is (a
@@ -261,6 +308,7 @@ if ($action === 'overview') {
         'gauges' => $gauges,
         'leaderboards' => $leaderboards,
         'customers' => $customers,
+        'outgrow_backfill_stale' => $backfillStale,
     ]);
 }
 
