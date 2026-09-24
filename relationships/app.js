@@ -2806,6 +2806,13 @@
       p.loaded = true;
       if (r.data && r.data.ok) {
         applyProspectPayload(r.data);
+        if (r.data.running_search_id) {
+          // A search started earlier is still going -- pick it back up.
+          p.searching = true;
+          p.searchStartedAt = p.searchStartedAt || Date.now();
+          pfStartElapsedTimer();
+          pollProspectSearch(r.data.running_search_id, 0);
+        }
       } else {
         p.error = (r.data && r.data.error) || 'Could not load Prospecting.';
       }
@@ -2831,6 +2838,48 @@
     }, 1000);
   }
 
+  // The search runs in the background on the server (it can take several
+  // minutes): this starts it, then polls search_status every few seconds.
+  // pollProspectSearch() is also what resumes a search that was still
+  // running when the page was reloaded (see loadProspecting()).
+  var pfPollTimer = null;
+  function pfStopPolling() {
+    if (pfPollTimer) { clearTimeout(pfPollTimer); pfPollTimer = null; }
+  }
+
+  function pollProspectSearch(searchId, failures) {
+    var p = state.prospecting;
+    pfStopPolling();
+    pfPollTimer = setTimeout(function () {
+      apiGet('api/prospecting.php?action=search_status&search_id=' + encodeURIComponent(searchId)).then(function (r) {
+        if (r.data && r.data.ok && r.data.status === 'running') {
+          pollProspectSearch(searchId, 0);
+          return;
+        }
+        pfStopElapsedTimer();
+        p.searching = false;
+        if (r.data && r.data.ok && r.data.status === 'done') {
+          applyProspectPayload(r.data);
+        } else if (r.data && r.data.ok && r.data.status === 'failed') {
+          p.error = 'The search could not finish: ' + (r.data.error || 'unknown error') + ' You can try again.';
+        } else {
+          p.error = (r.data && r.data.error) || 'Lost track of the search. Reopen Prospecting in a minute to see the results.';
+        }
+        render();
+      }).catch(function () {
+        // A dropped poll isn't a failed search -- keep trying a few times.
+        if ((failures || 0) < 5) {
+          pollProspectSearch(searchId, (failures || 0) + 1);
+          return;
+        }
+        pfStopElapsedTimer();
+        p.searching = false;
+        p.error = 'Lost the connection while the search was running. Reopen Prospecting in a minute to see the results.';
+        render();
+      });
+    }, 4000);
+  }
+
   function runProspectSearch() {
     var p = state.prospecting;
     if (p.searching) return;
@@ -2844,18 +2893,18 @@
       location: p.form.location,
       radius_miles: parseInt(p.form.radius, 10) || 150
     }).then(function (r) {
+      if (r.data && r.data.ok && r.data.status === 'running') {
+        pollProspectSearch(r.data.search_id, 0);
+        return;
+      }
       pfStopElapsedTimer();
       p.searching = false;
-      if (r.data && r.data.ok) {
-        applyProspectPayload(r.data);
-      } else {
-        p.error = (r.data && r.data.error) || 'The search did not finish. Please try again.';
-      }
+      p.error = (r.data && r.data.error) || 'The search did not start. Please try again.';
       render();
     }).catch(function () {
       pfStopElapsedTimer();
       p.searching = false;
-      p.error = 'The connection dropped or the search timed out. It may still finish on the server — reopen Prospecting in a minute to see the results.';
+      p.error = 'Could not start the search — check your connection and try again.';
       render();
     });
   }
@@ -3163,7 +3212,7 @@
         (p.searching ? 'Researching… <span id="pfElapsed">0:00</span>' : 'Prospect') + '</button>' +
     '</div>';
     if (p.searching) {
-      html += '<div class="pf-progress">Searching the public web for target-market businesses, checking for duplicates and locating them. This usually takes 1–3 minutes — you can leave this page open; results are saved either way.</div>';
+      html += '<div class="pf-progress">Searching the public web for target-market businesses, checking for duplicates and locating them. This can take a few minutes — you can leave this page and come back; the search keeps running and the results will be saved.</div>';
     } else if (!p.configured) {
       html += '<div class="error-banner">Prospecting isn’t set up yet — the research service key (relationships/api/anthropic-config.php) hasn’t been added on the server.</div>';
     } else if (p.remainingToday != null) {

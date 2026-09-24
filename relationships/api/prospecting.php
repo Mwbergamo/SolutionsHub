@@ -21,8 +21,15 @@
  *   doesn't lose results), plus what the search form needs.
  *
  * POST ?action=search { industry, location?, radius_miles? }
- *   -> same shape as 'latest' for the NEW search. Takes roughly 1-3
- *   minutes (web research). Counts against the rep's daily cap.
+ *   -> { ok, status: 'running', search_id } IMMEDIATELY; the research keeps
+ *   running server-side (a run can take several minutes -- far too long to
+ *   hold a browser request open; the first synchronous version timed out).
+ *   Counts against the rep's daily cap.
+ *
+ * GET  ?action=search_status&search_id=N
+ *   -> { ok, status: 'running' | 'failed' | 'done', error?, + the same
+ *   fields as 'latest' once done }. The UI polls this every few seconds;
+ *   'latest' also reports a still-running search so a page reload resumes.
  *
  * POST ?action=profile { candidate_id }
  *   -> { ok, candidate } -- runs the profile agent for one candidate (about
@@ -57,8 +64,41 @@ require_once __DIR__ . '/connectwise-prospect-create.php';
 
 $pdo = relationships_db();
 $user = relationships_require_login($pdo);
+// Nothing below writes to the session, and searches/profiles run for
+// minutes: release PHP's session file lock now, or every other request
+// this rep's browser makes (including the status polling) would queue
+// behind this one.
+if (session_status() === PHP_SESSION_ACTIVE) {
+    session_write_close();
+}
 
 $action = $_GET['action'] ?? '';
+
+/**
+ * Sends the JSON response NOW and lets the script keep running in the
+ * background (fastcgi_finish_request() on PHP-FPM; the Connection: close /
+ * Content-Length / flush trick otherwise), for work that outlives any
+ * sensible browser request.
+ */
+function relationships_prospect_respond_and_continue(array $payload): void
+{
+    ignore_user_abort(true);
+    @set_time_limit(900);
+    $json = (string) json_encode($payload);
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+    header('Content-Type: application/json; charset=utf-8');
+    header('Connection: close');
+    header('Content-Length: ' . strlen($json));
+    http_response_code(200);
+    echo $json;
+    if (function_exists('fastcgi_finish_request')) {
+        fastcgi_finish_request();
+    } else {
+        flush();
+    }
+}
 
 /** Discovery runs this rep has started today (Eastern). */
 function relationships_prospect_runs_today(PDO $pdo, int $userId): int
@@ -126,10 +166,42 @@ if ($action === 'latest') {
     $search = $stmt->fetch(PDO::FETCH_ASSOC);
 
     $payload = ['ok' => true] + relationships_prospect_status_fields($pdo, $user);
+    $payload['running_search_id'] = relationships_prospect_running_search_id($pdo, (int) $user['id']);
     if ($search === false) {
         relationships_respond(200, $payload + ['search' => null, 'candidates' => [], 'skipped' => []]);
     }
     relationships_respond(200, $payload + relationships_prospect_search_payload($pdo, $search));
+}
+
+/** This rep's still-running search id (started within the last 15 minutes), or null. Older ones are marked failed. */
+function relationships_prospect_running_search_id(PDO $pdo, int $userId): ?int
+{
+    $pdo->prepare(
+        "UPDATE prospect_searches SET status = 'failed', error = 'The search timed out on the server.', completed_at = datetime('now')
+         WHERE user_id = :u AND status = 'running' AND created_at < datetime('now', '-15 minutes')"
+    )->execute([':u' => $userId]);
+    $stmt = $pdo->prepare("SELECT id FROM prospect_searches WHERE user_id = :u AND status = 'running' ORDER BY id DESC LIMIT 1");
+    $stmt->execute([':u' => $userId]);
+    $id = $stmt->fetchColumn();
+    return $id === false ? null : (int) $id;
+}
+
+if ($action === 'search_status') {
+    $searchId = (int) ($_GET['search_id'] ?? 0);
+    relationships_prospect_running_search_id($pdo, (int) $user['id']); // expire stale ones first
+    $stmt = $pdo->prepare('SELECT * FROM prospect_searches WHERE id = :id AND user_id = :u');
+    $stmt->execute([':id' => $searchId, ':u' => $user['id']]);
+    $search = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($search === false) {
+        relationships_respond(404, ['ok' => false, 'error' => 'That search no longer exists.']);
+    }
+    if ($search['status'] === 'running') {
+        relationships_respond(200, ['ok' => true, 'status' => 'running', 'search_id' => $searchId]);
+    }
+    if ($search['status'] === 'failed') {
+        relationships_respond(200, ['ok' => true, 'status' => 'failed', 'search_id' => $searchId, 'error' => (string) $search['error']]);
+    }
+    relationships_respond(200, ['ok' => true, 'status' => 'done', 'search_id' => $searchId] + relationships_prospect_status_fields($pdo, $user) + relationships_prospect_search_payload($pdo, $search));
 }
 
 if ($action === 'my_claims') {
@@ -229,18 +301,37 @@ if ($action === 'search') {
         relationships_respond(429, ['ok' => false, 'error' => "You've used all $cap Prospect searches for today. Try again tomorrow."]);
     }
 
-    // Keep going (and save the results) even if the rep closes the tab --
-    // a run takes minutes and costs real money.
-    ignore_user_abort(true);
+    // One search at a time per rep (a second click while one is running
+    // would just burn money).
+    $alreadyRunning = relationships_prospect_running_search_id($pdo, (int) $user['id']);
+    if ($alreadyRunning !== null) {
+        relationships_respond(200, ['ok' => true, 'status' => 'running', 'search_id' => $alreadyRunning]);
+    }
 
     $pdo->prepare('INSERT INTO prospect_searches (user_id, user_name, industry, location_text, radius_miles, status) VALUES (:u, :n, :i, :l, :r, \'running\')')
         ->execute([':u' => $user['id'], ':n' => $user['name'], ':i' => $industry, ':l' => $location, ':r' => $radius]);
     $searchId = (int) $pdo->lastInsertId();
 
-    $fail = static function (string $message, int $code = 502) use ($pdo, $searchId): never {
+    // Answer the browser now; the research runs on in the background and
+    // the UI polls ?action=search_status. Results are saved either way,
+    // even if the rep closes the tab.
+    relationships_prospect_respond_and_continue(['ok' => true, 'status' => 'running', 'search_id' => $searchId]);
+
+    // Safety net: if anything below dies unexpectedly (fatal, uncaught
+    // exception), don't leave the search 'running' for the UI to wait on.
+    register_shutdown_function(static function () use ($pdo, $searchId): void {
+        try {
+            $pdo->prepare("UPDATE prospect_searches SET status = 'failed', error = 'The search stopped unexpectedly.', completed_at = datetime('now') WHERE id = :id AND status = 'running'")
+                ->execute([':id' => $searchId]);
+        } catch (Throwable $e) {
+            // nothing more we can do
+        }
+    });
+
+    $fail = static function (string $message) use ($pdo, $searchId): never {
         $pdo->prepare("UPDATE prospect_searches SET status = 'failed', error = :e, completed_at = datetime('now') WHERE id = :id")
             ->execute([':e' => mb_substr($message, 0, 500), ':id' => $searchId]);
-        relationships_respond($code, ['ok' => false, 'error' => $message]);
+        exit;
     };
 
     // Names this rep has already been shown (recent, any search) so a
@@ -257,7 +348,10 @@ if ($action === 'search') {
         $run = relationships_prospect_run_agent(
             relationships_prospect_system_prompt(),
             relationships_prospect_discovery_prompt($industry, $location, $radius, array_map('strval', $exclude)),
-            max(1, (int) ($config['max_web_searches'] ?? 8))
+            max(1, (int) ($config['max_web_searches'] ?? 6)),
+            0,      // no web fetch in discovery -- profile reads the site
+            'low',
+            8000
         );
     } catch (Throwable $e) {
         error_log('[relationships/prospecting] discovery failed for search ' . $searchId . ': ' . $e->getMessage());
@@ -347,11 +441,7 @@ if ($action === 'search') {
         "UPDATE prospect_searches SET status = 'done', tokens_in = :ti, tokens_out = :to, web_searches = :ws, completed_at = datetime('now') WHERE id = :id"
     )->execute([':ti' => $run['tokens_in'], ':to' => $run['tokens_out'], ':ws' => $run['searches'], ':id' => $searchId]);
 
-    $searchStmt = $pdo->prepare('SELECT * FROM prospect_searches WHERE id = :id');
-    $searchStmt->execute([':id' => $searchId]);
-    $search = $searchStmt->fetch(PDO::FETCH_ASSOC);
-
-    relationships_respond(200, ['ok' => true] + relationships_prospect_status_fields($pdo, $user) + relationships_prospect_search_payload($pdo, $search));
+    exit; // the browser already has its answer; it picks results up via search_status
 }
 
 if ($action === 'profile') {
@@ -377,7 +467,11 @@ if ($action === 'profile') {
         $run = relationships_prospect_run_agent(
             relationships_prospect_system_prompt(),
             relationships_prospect_profile_prompt($cand, implode("\n", $catalogLines)),
-            max(1, (int) ($config['max_web_searches_profile'] ?? 5))
+            max(1, (int) ($config['max_web_searches_profile'] ?? 4)),
+            4,
+            'medium',
+            6000,
+            280
         );
     } catch (Throwable $e) {
         error_log('[relationships/prospecting] profile failed for candidate ' . $cand['id'] . ': ' . $e->getMessage());

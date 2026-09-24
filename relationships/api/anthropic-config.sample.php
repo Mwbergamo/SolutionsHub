@@ -23,8 +23,8 @@ return [
     // Upper bound on web searches per discovery run / per profile run.
     // Web search is billed per search on top of tokens, and each search
     // adds tokens, so this is the main per-run cost dial.
-    'max_web_searches' => 8,
-    'max_web_searches_profile' => 5,
+    'max_web_searches' => 6,
+    'max_web_searches_profile' => 4,
 
     // How many discovery runs ("Prospect" commands) one rep may start per
     // day (Eastern). Profiles and claims don't count against this.

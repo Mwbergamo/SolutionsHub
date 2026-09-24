@@ -131,20 +131,38 @@ function relationships_anthropic_messages(array $body, int $timeoutSeconds = 240
 }
 
 /**
- * Runs one agent task to completion: sends the prompt with web search +
- * web fetch enabled, resumes on stop_reason "pause_turn" (the server-side
- * tool loop hit its per-request iteration limit -- resend the assistant
- * turn as-is, with NO extra user message), and returns
+ * Runs one agent task to completion: sends the prompt with web search (and,
+ * when $maxFetches > 0, web fetch) enabled, resumes on stop_reason
+ * "pause_turn" (the server-side tool loop hit its per-request iteration
+ * limit -- resend the assistant turn as-is, with NO extra user message), and
+ * returns
  *   [ 'text' => final assistant text, 'tokens_in' => int, 'tokens_out' => int, 'searches' => int ].
+ *
+ * SPEED (2026-09-23, after a live 240 s cURL timeout on the first search):
+ * discovery uses the BASIC web_search_20250305 tool (the newer
+ * web_search_20260209 "dynamic filtering" variant runs code between
+ * searches, which is more token-efficient but noticeably slower), no
+ * web_fetch, low effort and a small output cap; the profile run adds
+ * web_fetch to read the company's own site. The non-streaming request
+ * returns nothing until the whole run is done, so $timeoutSeconds must
+ * comfortably exceed the run -- callers run this in the background (see
+ * prospecting.php's search action), not inside a browser request.
  */
-function relationships_prospect_run_agent(string $system, string $userPrompt, int $maxSearches, int $maxFetches = 6): array
-{
+function relationships_prospect_run_agent(
+    string $system,
+    string $userPrompt,
+    int $maxSearches,
+    int $maxFetches = 0,
+    string $effort = 'low',
+    int $maxTokens = 8000,
+    int $timeoutSeconds = 420
+): array {
     $config = relationships_anthropic_config();
-    @set_time_limit(285);
+    @set_time_limit($timeoutSeconds + 120);
 
     $tools = [
         [
-            'type' => 'web_search_20260209',
+            'type' => 'web_search_20250305',
             'name' => 'web_search',
             'max_uses' => max(1, $maxSearches),
             'user_location' => [
@@ -155,12 +173,14 @@ function relationships_prospect_run_agent(string $system, string $userPrompt, in
                 'timezone' => 'America/New_York',
             ],
         ],
-        [
+    ];
+    if ($maxFetches > 0) {
+        $tools[] = [
             'type' => 'web_fetch_20260209',
             'name' => 'web_fetch',
-            'max_uses' => max(1, $maxFetches),
-        ],
-    ];
+            'max_uses' => $maxFetches,
+        ];
+    }
 
     $messages = [['role' => 'user', 'content' => $userPrompt]];
     $tokensIn = 0;
@@ -170,12 +190,12 @@ function relationships_prospect_run_agent(string $system, string $userPrompt, in
     for ($attempt = 0; $attempt < 4; $attempt++) { // first call + up to 3 pause_turn continuations
         $resp = relationships_anthropic_messages([
             'model' => (string) ($config['model'] ?? 'claude-sonnet-5'),
-            'max_tokens' => 16000,
+            'max_tokens' => $maxTokens,
             'system' => $system,
             'tools' => $tools,
-            'output_config' => ['effort' => 'medium'],
+            'output_config' => ['effort' => $effort],
             'messages' => $messages,
-        ]);
+        ], $timeoutSeconds);
 
         $usage = is_array($resp['usage'] ?? null) ? $resp['usage'] : [];
         $tokensIn += (int) ($usage['input_tokens'] ?? 0);
@@ -248,7 +268,7 @@ function relationships_prospect_discovery_prompt(string $industry, string $locat
     $industries = implode(', ', RELATIONSHIPS_PROSPECT_INDUSTRIES);
 
     return <<<PROMPT
-Find 10 businesses that fit CodeBlue's target market.
+Find 8 to 10 businesses that fit CodeBlue's target market. Be efficient: run only as many searches as you need, and stop searching as soon as you have 8-10 solid candidates.
 
 Industry: {$industryLine}
 Location: within {$radiusMiles} miles of {$location}
