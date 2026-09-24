@@ -76,6 +76,26 @@
  *   { id } -> { ok: true, scan: {...} }
  *   Reopens it (clears reviewed_at/reviewed_by_name) -- for an accidental
  *   click, same reversibility as the cross-sell Kill Opportunity toggle.
+ *
+ * POST /relationships/api/risk-scans.php?action=assign
+ *   { id } -> { ok: true, scan: {...} }
+ *   Added 2026-09-24 per Michael: "reps [need] the ability to assign the
+ *   tasks to themselves. This will take it out of the general list and
+ *   put it in their list." Self-claim only -- always assigns to the
+ *   signed-in user, never to anyone else, and only the caller's own
+ *   identity is ever written. 409 if someone else already claimed it
+ *   first; assigning it to yourself again is a harmless no-op. The Global
+ *   To-Do Checklist (meetings.php's 'global' action) reads
+ *   assigned_to_user_id to split alerts into the unassigned pool
+ *   (risk_scan_alerts) vs. the assigned-but-not-yet-reviewed list
+ *   (risk_scan_assigned, which names who has it).
+ *
+ * POST /relationships/api/risk-scans.php?action=unassign
+ *   { id } -> { ok: true, scan: {...} }
+ *   Releases it back to the general/unassigned pool. Any signed-in user
+ *   can release it, not only whoever claimed it -- same "anyone can
+ *   toggle it back" reversibility as unmark_reviewed/un-kill above (e.g.
+ *   the assignee is out and someone else needs to free it up).
  */
 
 declare(strict_types=1);
@@ -108,6 +128,9 @@ function relationships_risk_scan_row(array $r): array
         'uploaded_at' => $r['uploaded_at'],
         'reviewed_at' => $r['reviewed_at'],
         'reviewed_by_name' => $r['reviewed_by_name'],
+        'assigned_to_user_id' => isset($r['assigned_to_user_id']) ? (int) $r['assigned_to_user_id'] : null,
+        'assigned_to_name' => $r['assigned_to_name'] ?? null,
+        'assigned_at' => $r['assigned_at'] ?? null,
         'cw_upload_status' => $r['cw_upload_status'] ?? null,
         'cw_upload_error' => $r['cw_upload_error'] ?? null,
     ];
@@ -347,6 +370,39 @@ if ($action === 'mark_reviewed' || $action === 'unmark_reviewed') {
             ->execute([':uid' => $user['id'], ':uname' => $user['name'], ':id' => $id]);
     } else {
         $pdo->prepare('UPDATE risk_scans SET reviewed_at = NULL, reviewed_by_user_id = NULL, reviewed_by_name = NULL WHERE id = :id')
+            ->execute([':id' => $id]);
+    }
+
+    $outStmt = $pdo->prepare('SELECT * FROM risk_scans WHERE id = :id');
+    $outStmt->execute([':id' => $id]);
+    relationships_respond(200, ['ok' => true, 'scan' => relationships_risk_scan_row($outStmt->fetch(PDO::FETCH_ASSOC))]);
+}
+
+if ($action === 'assign' || $action === 'unassign') {
+    $data = relationships_read_json_body();
+    $id = (int) ($data['id'] ?? 0);
+    if ($id <= 0) {
+        relationships_respond(400, ['ok' => false, 'error' => 'Missing/invalid id.']);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM risk_scans WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    $scan = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($scan === false) {
+        relationships_respond(404, ['ok' => false, 'error' => 'Scan not found.']);
+    }
+    relationships_require_customer_in_scope($pdo, $allowedTerritories, (int) $scan['customer_id']);
+
+    if ($action === 'assign') {
+        $currentlyAssignedTo = $scan['assigned_to_user_id'] ?? null;
+        if ($currentlyAssignedTo !== null && (int) $currentlyAssignedTo !== (int) $user['id']) {
+            relationships_respond(409, ['ok' => false, 'error' => 'Already assigned to ' . ($scan['assigned_to_name'] ?? 'someone else') . '.']);
+        }
+        // Assigning it to yourself again (already yours) is a harmless
+        // no-op -- still re-stamps assigned_at, which is fine.
+        $pdo->prepare("UPDATE risk_scans SET assigned_to_user_id = :uid, assigned_to_name = :uname, assigned_at = datetime('now') WHERE id = :id")
+            ->execute([':uid' => $user['id'], ':uname' => $user['name'], ':id' => $id]);
+    } else {
+        $pdo->prepare('UPDATE risk_scans SET assigned_to_user_id = NULL, assigned_to_name = NULL, assigned_at = NULL WHERE id = :id')
             ->execute([':id' => $id]);
     }
 

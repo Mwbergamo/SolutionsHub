@@ -718,6 +718,19 @@ function relationships_migrate(PDO $pdo): void
     relationships_add_column_if_missing($pdo, 'risk_scans', 'cw_upload_error', 'TEXT');
     relationships_add_column_if_missing($pdo, 'risk_scans', 'cw_uploaded_at', 'TEXT');
 
+    // Self-assignment -- added 2026-09-24 per Michael: a rep can claim an
+    // open risk-scan alert so it comes out of the shared/unassigned pool
+    // and shows under their own name (risk-scans.php's 'assign'/'unassign'
+    // actions). Deliberately NOT validated against relationships_todo_roster()
+    // (catalog.php) the way meeting_tasks.assigned_to_name is -- this is a
+    // literal "assign to myself" action open to any signed-in user, same
+    // permission model as uploading/reviewing a scan, not a pick-one-of-7
+    // assignment. assigned_to_user_id/name NULL = still in the general
+    // (unassigned) pool.
+    relationships_add_column_if_missing($pdo, 'risk_scans', 'assigned_to_user_id', 'INTEGER REFERENCES crc_users(id)');
+    relationships_add_column_if_missing($pdo, 'risk_scans', 'assigned_to_name', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'risk_scans', 'assigned_at', 'TEXT');
+
     // ---- Prospecting (prospecting.php / prospecting-agent.php) -- added
     // 2026-09-23 per Michael: a rep issues a "Prospect" command, a research
     // agent searches the public web, and the rep claims a candidate as a

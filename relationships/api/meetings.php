@@ -81,16 +81,27 @@
  *                capped at 300 rows total),
  *     risk_scan_alerts: [ { id, customer_id, customer_name, original_filename,
  *                uploaded_by_name, uploaded_at }, ... ] (added 2026-09-23,
- *                per Michael -- open (reviewed_at IS NULL) risk_scans rows,
+ *                per Michael -- open (reviewed_at IS NULL) AND still
+ *                UNASSIGNED (assigned_to_user_id IS NULL) risk_scans rows,
  *                see risk-scans.php's file header for why these are their
  *                own table rather than meeting_tasks rows: a real to-do
  *                needs a meeting + one of the 7 fixed roster names, so
  *                there's no way to represent a genuinely UNASSIGNED to-do
  *                there. Newest upload first, capped at 100. Rendered in
  *                the same Global To-Do Checklist panel as `tasks` above,
- *                but not folded into it or the roster counts -- these
- *                aren't assigned to anyone until a rep clicks
- *                mark_reviewed.) }
+ *                but not folded into it or the roster counts.),
+ *     risk_scan_assigned: [ { id, customer_id, customer_name,
+ *                original_filename, uploaded_by_name, uploaded_at,
+ *                assigned_to_name, assigned_at }, ... ] (added 2026-09-24,
+ *                per Michael: "reps [need] the ability to assign the
+ *                tasks to themselves. This will take it out of the
+ *                general list and put it in their list... still show in
+ *                the global list under the general list, but show who
+ *                it's assigned to." Open (reviewed_at IS NULL) AND
+ *                assigned (assigned_to_user_id IS NOT NULL) -- everything
+ *                risk_scan_alerts excludes once claimed. Newest
+ *                assignment first, capped at 100. See risk-scans.php's
+ *                'assign'/'unassign' actions.) }
  *
  * GET  /relationships/api/meetings.php?action=rep_todos&assigned_to_name=Claire+Hayden
  *   Added 2026-09-16 per Michael: "coordinators [click] on their names in
@@ -106,7 +117,17 @@
  *     recent_completed_tasks: [ same shape, completed_at set ] (the 10
  *                most recently completed, newest first -- per Michael,
  *                AskUserQuestion: "show the last 10 finished to-do's only
- *                before they start disappearing") }
+ *                before they start disappearing"),
+ *     risk_scans: [ { id, customer_id, customer_name, original_filename,
+ *                uploaded_by_name, uploaded_at, assigned_at }, ... ]
+ *                (added 2026-09-24 -- risk-scan alerts THIS name has
+ *                claimed via risk-scans.php's 'assign' action, still
+ *                open (not yet reviewed). Matched by name, not validated
+ *                against the roster the way meeting_tasks assignment is
+ *                -- a claim isn't restricted to the 7 fixed names, see
+ *                db.php's migration comment, so this is included
+ *                regardless of whether it happens to line up with one.
+ *                Newest claim first.) }
  */
 
 declare(strict_types=1);
@@ -356,7 +377,7 @@ if ($action === 'global') {
         "SELECT r.id, r.customer_id, c.name AS customer_name, r.original_filename, r.uploaded_by_name, r.uploaded_at
          FROM risk_scans r
          JOIN customers c ON c.id = r.customer_id
-         WHERE r.reviewed_at IS NULL {$territoryFilter['sql']}
+         WHERE r.reviewed_at IS NULL AND r.assigned_to_user_id IS NULL {$territoryFilter['sql']}
          ORDER BY r.uploaded_at DESC
          LIMIT 100"
     );
@@ -371,6 +392,30 @@ if ($action === 'global') {
             'uploaded_at' => $r['uploaded_at'],
         ];
     }, $riskScanStmt->fetchAll(PDO::FETCH_ASSOC));
+
+    // Claimed but not yet reviewed -- added 2026-09-24, see the docblock
+    // above. Same shape as risk_scan_alerts plus who claimed it.
+    $riskScanAssignedStmt = $pdo->prepare(
+        "SELECT r.id, r.customer_id, c.name AS customer_name, r.original_filename, r.uploaded_by_name, r.uploaded_at, r.assigned_to_name, r.assigned_at
+         FROM risk_scans r
+         JOIN customers c ON c.id = r.customer_id
+         WHERE r.reviewed_at IS NULL AND r.assigned_to_user_id IS NOT NULL {$territoryFilter['sql']}
+         ORDER BY r.assigned_at DESC
+         LIMIT 100"
+    );
+    $riskScanAssignedStmt->execute($territoryFilter['params']);
+    $riskScanAssigned = array_map(static function (array $r): array {
+        return [
+            'id' => (int) $r['id'],
+            'customer_id' => (int) $r['customer_id'],
+            'customer_name' => $r['customer_name'],
+            'original_filename' => $r['original_filename'],
+            'uploaded_by_name' => $r['uploaded_by_name'],
+            'uploaded_at' => $r['uploaded_at'],
+            'assigned_to_name' => $r['assigned_to_name'],
+            'assigned_at' => $r['assigned_at'],
+        ];
+    }, $riskScanAssignedStmt->fetchAll(PDO::FETCH_ASSOC));
 
     // Prospects nearing (or past) their 90-day deadline -- warn only, per
     // Michael (2026-09-23): nothing changes in ConnectWise automatically;
@@ -399,7 +444,7 @@ if ($action === 'global') {
         }
     }
 
-    relationships_respond(200, ['ok' => true, 'roster' => $roster, 'counts' => $counts, 'tasks' => $tasks, 'risk_scan_alerts' => $riskScanAlerts, 'prospect_alerts' => $prospectAlerts]);
+    relationships_respond(200, ['ok' => true, 'roster' => $roster, 'counts' => $counts, 'tasks' => $tasks, 'risk_scan_alerts' => $riskScanAlerts, 'risk_scan_assigned' => $riskScanAssigned, 'prospect_alerts' => $prospectAlerts]);
 }
 
 if ($action === 'rep_todos') {
@@ -450,12 +495,36 @@ if ($action === 'rep_todos') {
     $doneStmt->execute([':name' => $repName] + $territoryFilter['params']);
     $recentCompleted = array_map('relationships_cross_customer_task_row', $doneStmt->fetchAll(PDO::FETCH_ASSOC));
 
+    // This rep's claimed-but-not-reviewed risk scans -- added 2026-09-24,
+    // see the docblock above. Matched by assigned_to_name, same territory
+    // filter as everything else here.
+    $repRiskScanStmt = $pdo->prepare(
+        "SELECT r.id, r.customer_id, c.name AS customer_name, r.original_filename, r.uploaded_by_name, r.uploaded_at, r.assigned_at
+         FROM risk_scans r
+         JOIN customers c ON c.id = r.customer_id
+         WHERE r.assigned_to_name = :name AND r.reviewed_at IS NULL {$territoryFilter['sql']}
+         ORDER BY r.assigned_at DESC"
+    );
+    $repRiskScanStmt->execute([':name' => $repName] + $territoryFilter['params']);
+    $repRiskScans = array_map(static function (array $r): array {
+        return [
+            'id' => (int) $r['id'],
+            'customer_id' => (int) $r['customer_id'],
+            'customer_name' => $r['customer_name'],
+            'original_filename' => $r['original_filename'],
+            'uploaded_by_name' => $r['uploaded_by_name'],
+            'uploaded_at' => $r['uploaded_at'],
+            'assigned_at' => $r['assigned_at'],
+        ];
+    }, $repRiskScanStmt->fetchAll(PDO::FETCH_ASSOC));
+
     relationships_respond(200, [
         'ok' => true,
         'roster' => $roster,
         'rep_name' => $repName,
         'open_tasks' => $openTasks,
         'recent_completed_tasks' => $recentCompleted,
+        'risk_scans' => $repRiskScans,
     ]);
 }
 

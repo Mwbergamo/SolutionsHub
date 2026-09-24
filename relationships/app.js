@@ -1123,6 +1123,25 @@
     });
   }
 
+  function setRiskScanAssigned(scanId, assigned) {
+    state.riskScanTogglingId = scanId;
+    render();
+    apiPost('api/risk-scans.php?action=' + (assigned ? 'assign' : 'unassign'), { id: scanId }).then(function (r) {
+      state.riskScanTogglingId = null;
+      if (r.data && r.data.ok && state.riskScans) {
+        var updated = r.data.scan;
+        state.riskScans = state.riskScans.map(function (s) { return s.id === updated.id ? updated : s; });
+      } else {
+        state.riskScansError = (r.data && r.data.error) || 'Could not update that scan.';
+      }
+      render();
+    }).catch(function () {
+      state.riskScanTogglingId = null;
+      state.riskScansError = 'Could not update that scan — check your connection and try again.';
+      render();
+    });
+  }
+
   function openCustomerAtRiskScan(customerId, scanId) {
     state.view = 'dashboard';
     state.pendingRiskScanFocus = { scanId: scanId };
@@ -4344,11 +4363,15 @@
 
   function riskScanItemHtml(scan) {
     var isReviewed = !!scan.reviewed_at;
+    var isAssigned = !!scan.assigned_to_name;
     var isToggling = state.riskScanTogglingId === scan.id;
     return '<div class="risk-scan-item' + (isReviewed ? ' reviewed' : '') + '" data-riskscan-row="' + scan.id + '">' +
       '<div class="risk-scan-item-main">' +
         '<div class="risk-scan-item-name">' + escapeHtml(scan.original_filename) + '</div>' +
         '<div class="risk-scan-item-meta">' + fmtFileSize(scan.size_bytes) + ' · uploaded by ' + escapeHtml(scan.uploaded_by_name) + ' · ' + escapeHtml(fmtTimestamp(scan.uploaded_at)) + '</div>' +
+        (isAssigned && !isReviewed
+          ? '<div class="risk-scan-item-assigned-meta">Assigned to ' + escapeHtml(scan.assigned_to_name) + '</div>'
+          : '') +
         (isReviewed
           ? '<div class="risk-scan-item-reviewed-meta">✓ Reviewed by ' + escapeHtml(scan.reviewed_by_name) + ' — ' + escapeHtml(fmtTimestamp(scan.reviewed_at)) + '</div>'
           : '') +
@@ -4356,6 +4379,11 @@
       '</div>' +
       '<div class="risk-scan-item-actions">' +
         '<a class="risk-scan-download-btn" href="api/risk-scans.php?action=download&id=' + scan.id + '">Download</a>' +
+        (!isReviewed
+          ? '<button class="risk-scan-review-btn" type="button" data-action="' + (isAssigned ? 'riskscan-unassign' : 'riskscan-assign') + '" data-scan="' + scan.id + '" ' + (isToggling ? 'disabled' : '') + '>' +
+              (isToggling ? '…' : (isAssigned ? 'Unassign' : 'Assign to Me')) +
+            '</button>'
+          : '') +
         '<button class="risk-scan-review-btn" type="button" data-action="' + (isReviewed ? 'riskscan-unmark-reviewed' : 'riskscan-mark-reviewed') + '" data-scan="' + scan.id + '" ' + (isToggling ? 'disabled' : '') + '>' +
           (isToggling ? '…' : (isReviewed ? 'Reopen' : 'Mark Reviewed')) +
         '</button>' +
@@ -4618,6 +4646,25 @@
       html += '</div></div>';
     }
 
+    // Claimed but not yet reviewed -- added 2026-09-24 per Michael: stays
+    // visible in this same panel (below the unassigned pool above) once a
+    // rep assigns it to themselves, now naming who has it.
+    if (g.risk_scan_assigned && g.risk_scan_assigned.length) {
+      html += '<div class="global-riskscan-section">';
+      html += '<div class="global-riskscan-title">Risk Scans In Progress (' + g.risk_scan_assigned.length + ')</div>';
+      html += '<div class="global-todo-list">';
+      g.risk_scan_assigned.forEach(function (a) {
+        html += '<div class="global-todo-item riskscan-alert" data-action="open-customer-riskscan" data-customer="' + a.customer_id + '" data-scan="' + a.id + '">' +
+          '<div class="global-todo-item-main">' +
+            '<div class="global-todo-item-desc">' + escapeHtml(a.original_filename) + '</div>' +
+            '<div class="global-todo-item-meta">' + escapeHtml(a.customer_name) + ' · uploaded by ' + escapeHtml(a.uploaded_by_name) + ' · ' + escapeHtml(fmtTimestamp(a.uploaded_at)) + '</div>' +
+          '</div>' +
+          '<div class="global-todo-item-go">Assigned to ' + escapeHtml(a.assigned_to_name) + '</div>' +
+        '</div>';
+      });
+      html += '</div></div>';
+    }
+
     if (g.prospect_alerts && g.prospect_alerts.length) {
       html += '<div class="global-riskscan-section">';
       html += '<div class="global-riskscan-title">Prospects Nearing 90 Days (' + g.prospect_alerts.length + ')</div>';
@@ -4689,30 +4736,53 @@
     var recentCompleted = d.recent_completed_tasks || [];
     var openWithDate = openTasks.filter(function (t) { return !!t.due_date; });
     var openNoDate = openTasks.filter(function (t) { return !t.due_date; });
+    var riskScans = d.risk_scans || [];
 
     html += '<div class="rep-todos-layout">';
     html += '<div class="rep-todos-calendar-col">' + repTodosCalendarHtml(openWithDate, recentCompleted) + '</div>';
-    html += '<div class="rep-todos-list-col">' +
-      repTodosListSectionHtml('Unscheduled', openNoDate, 'No unscheduled to-dos — everything open has a due date.') +
-      repTodosListSectionHtml('Recently completed', recentCompleted, 'Nothing completed yet.') +
-    '</div>';
+    html += '<div class="rep-todos-list-col">';
+    // Risk scans this rep has claimed (added 2026-09-24) -- only shown
+    // when there's something to show, since most reps won't have any.
+    if (riskScans.length) {
+      html += repTodosListSectionHtml('Risk scans assigned to you', riskScans, '', repRiskScanItemHtml);
+    }
+    html += repTodosListSectionHtml('Unscheduled', openNoDate, 'No unscheduled to-dos — everything open has a due date.') +
+      repTodosListSectionHtml('Recently completed', recentCompleted, 'Nothing completed yet.');
+    html += '</div>';
     html += '</div>';
 
     return html;
   }
 
-  function repTodosListSectionHtml(title, tasks, emptyMessage) {
+  // itemFn defaults to repTodoItemHtml (meeting to-dos); the risk-scans
+  // section above passes repRiskScanItemHtml instead -- same list markup,
+  // different row shape.
+  function repTodosListSectionHtml(title, tasks, emptyMessage, itemFn) {
+    itemFn = itemFn || repTodoItemHtml;
     var html = '<div class="rep-todos-section">';
     html += '<div class="roster-title">' + escapeHtml(title) + '</div>';
     if (!tasks || tasks.length === 0) {
       html += '<div class="roster-empty">' + escapeHtml(emptyMessage) + '</div>';
     } else {
       html += '<div class="global-todo-list">';
-      tasks.forEach(function (t) { html += repTodoItemHtml(t); });
+      tasks.forEach(function (t) { html += itemFn(t); });
       html += '</div>';
     }
     html += '</div>';
     return html;
+  }
+
+  // Same markup as a global-todo-item (click -> open that customer's risk
+  // scan) -- read-only here; Download/Unassign/Mark Reviewed live on the
+  // customer's own dashboard once you click through.
+  function repRiskScanItemHtml(a) {
+    return '<div class="global-todo-item riskscan-alert" data-action="open-customer-riskscan" data-customer="' + a.customer_id + '" data-scan="' + a.id + '">' +
+      '<div class="global-todo-item-main">' +
+        '<div class="global-todo-item-desc">' + escapeHtml(a.original_filename) + '</div>' +
+        '<div class="global-todo-item-meta">' + escapeHtml(a.customer_name) + ' · uploaded by ' + escapeHtml(a.uploaded_by_name) + ' · ' + escapeHtml(fmtTimestamp(a.uploaded_at)) + '</div>' +
+      '</div>' +
+      '<div class="global-todo-item-go">Open →</div>' +
+    '</div>';
   }
 
   // Same markup/behavior as a global-todo-item (click -> open that
@@ -5474,6 +5544,10 @@
       setRiskScanReviewed(parseInt(el.getAttribute('data-scan'), 10), true);
     } else if (action === 'riskscan-unmark-reviewed') {
       setRiskScanReviewed(parseInt(el.getAttribute('data-scan'), 10), false);
+    } else if (action === 'riskscan-assign') {
+      setRiskScanAssigned(parseInt(el.getAttribute('data-scan'), 10), true);
+    } else if (action === 'riskscan-unassign') {
+      setRiskScanAssigned(parseInt(el.getAttribute('data-scan'), 10), false);
     } else if (action === 'show-rep-todos') {
       var repName = el.getAttribute('data-rep');
       var today = new Date();

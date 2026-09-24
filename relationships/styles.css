@@ -735,6 +735,12 @@ a { color: inherit; }
   color: oklch(0.55 0.18 145);
 }
 
+.risk-scan-item-assigned-meta {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: oklch(0.78 0.15 85);
+}
+
 .risk-scan-item-actions {
   display: flex;
   align-items: center;
