@@ -2511,12 +2511,9 @@ a { color: inherit; }
 
 .rep-todos-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  grid-template-columns: 1fr;
   gap: 24px;
   align-items: start;
-}
-@media (max-width: 900px) {
-  .rep-todos-layout { grid-template-columns: 1fr; }
 }
 
 .rep-todos-calendar-col, .rep-todos-list-col {
