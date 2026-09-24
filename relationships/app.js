@@ -176,6 +176,22 @@
     outgrowSortDir: 'asc',
     outgrowBackfillStarted: false,
 
+    // Prospecting view (api/prospecting.php, added 2026-09-23) -- see
+    // prospectingHtml() below.
+    prospecting: {
+      tab: 'search', // 'search' | 'mine'
+      loaded: false, loading: false, error: null,
+      configured: true, industries: [], dailyCap: null, remainingToday: null,
+      form: { industry: 'Any', location: 'Richmond, VA', radius: 150 },
+      searching: false, searchStartedAt: 0,
+      search: null, candidates: [], skipped: [],
+      filterTier: 'all', filterIndustry: 'all', filterLocation: '',
+      selectedId: null, draft: null,
+      profileLoading: false, profileError: null,
+      saving: false, claiming: false, claimError: null, claimResult: null,
+      claims: null, claimsLoading: false, claimsScope: 'mine'
+    },
+
     // Checklist data, keyed by "customerId::pillarId::serviceId". Each
     // value is: undefined (not fetched yet), 'error', or
     // { steps: [...7 step objects...], killed: bool } from
@@ -2552,6 +2568,7 @@
           '<nav class="topbar-nav">' +
             '<button class="nav-btn ' + (state.view === 'dashboard' ? 'active' : '') + '" type="button" data-action="show-dashboard">Dashboard</button>' +
             '<button class="nav-btn ' + (state.view === 'report' || state.view === 'queue' ? 'active' : '') + '" type="button" data-action="show-report">Cross-Sell Report</button>' +
+            '<button class="nav-btn ' + (state.view === 'prospecting' ? 'active' : '') + '" type="button" data-action="show-prospecting">Prospecting</button>' +
             '<button class="nav-btn ' + (state.view === 'sync' ? 'active' : '') + '" type="button" data-action="show-sync">ConnectWise Sync</button>' +
             (state.user.is_territory_admin
               ? '<button class="nav-btn ' + (state.view === 'territory-admin' ? 'active' : '') + '" type="button" data-action="show-territory-admin">Territory Admin</button>'
@@ -2578,6 +2595,9 @@
     }
     if (state.view === 'pf-queue') {
       return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + pfQueueHtml();
+    }
+    if (state.view === 'prospecting') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + prospectingHtml();
     }
     if (state.view === 'sync') {
       return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + syncHtml();
@@ -2741,6 +2761,535 @@
     });
     html += '</div>';
     return html;
+  }
+
+  // ---- Prospecting (api/prospecting.php) -- added 2026-09-23, per Michael ---
+  // A rep issues a "Prospect" command, a research agent finds 5-8 target-
+  // market businesses, the rep opens one for a profile and claims it as a
+  // ConnectWise Prospect (90-day clock). See api/prospecting.php and
+  // prospecting-agent.php for the server side and what the agent can see.
+
+  function safeUrl(u) {
+    return (typeof u === 'string' && /^https?:\/\//i.test(u)) ? u : '';
+  }
+
+  function pfLink(label, url) {
+    var href = safeUrl(url);
+    return href
+      ? '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(label) + '</a>'
+      : escapeHtml(label);
+  }
+
+  function applyProspectPayload(d) {
+    var p = state.prospecting;
+    p.configured = d.configured !== false;
+    p.industries = d.industries || p.industries || [];
+    p.dailyCap = d.daily_cap;
+    p.remainingToday = d.remaining_today;
+    p.search = d.search || null;
+    p.candidates = d.candidates || [];
+    p.skipped = d.skipped || [];
+    p.selectedId = null;
+    p.draft = null;
+    p.claimError = null;
+    p.profileError = null;
+  }
+
+  function loadProspecting() {
+    var p = state.prospecting;
+    if (p.loading) return;
+    p.loading = true;
+    p.error = null;
+    render();
+    apiGet('api/prospecting.php?action=latest').then(function (r) {
+      p.loading = false;
+      p.loaded = true;
+      if (r.data && r.data.ok) {
+        applyProspectPayload(r.data);
+      } else {
+        p.error = (r.data && r.data.error) || 'Could not load Prospecting.';
+      }
+      render();
+    }).catch(function () {
+      p.loading = false;
+      p.error = 'Could not load Prospecting — check your connection and try again.';
+      render();
+    });
+  }
+
+  var pfElapsedTimer = null;
+  function pfStopElapsedTimer() {
+    if (pfElapsedTimer) { clearInterval(pfElapsedTimer); pfElapsedTimer = null; }
+  }
+  function pfStartElapsedTimer() {
+    pfStopElapsedTimer();
+    pfElapsedTimer = setInterval(function () {
+      var el = document.getElementById('pfElapsed');
+      if (!el) return;
+      var s = Math.floor((Date.now() - state.prospecting.searchStartedAt) / 1000);
+      el.textContent = Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
+    }, 1000);
+  }
+
+  function runProspectSearch() {
+    var p = state.prospecting;
+    if (p.searching) return;
+    p.searching = true;
+    p.error = null;
+    p.searchStartedAt = Date.now();
+    render();
+    pfStartElapsedTimer();
+    apiPost('api/prospecting.php?action=search', {
+      industry: p.form.industry,
+      location: p.form.location,
+      radius_miles: parseInt(p.form.radius, 10) || 150
+    }).then(function (r) {
+      pfStopElapsedTimer();
+      p.searching = false;
+      if (r.data && r.data.ok) {
+        applyProspectPayload(r.data);
+      } else {
+        p.error = (r.data && r.data.error) || 'The search did not finish. Please try again.';
+      }
+      render();
+    }).catch(function () {
+      pfStopElapsedTimer();
+      p.searching = false;
+      p.error = 'The connection dropped or the search timed out. It may still finish on the server — reopen Prospecting in a minute to see the results.';
+      render();
+    });
+  }
+
+  function findProspect(id) {
+    var list = state.prospecting.candidates;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === id) return list[i];
+    }
+    return null;
+  }
+
+  function prospectDraftFrom(c) {
+    return {
+      website: c.website || '',
+      phone: c.phone || '',
+      address_line1: c.address_line1 || '',
+      city: c.city || '',
+      state: c.state || '',
+      zip: c.zip || '',
+      contact_first_name: c.contact.first_name || '',
+      contact_last_name: c.contact.last_name || '',
+      contact_title: c.contact.title || '',
+      contact_email: c.contact.email || '',
+      contact_phone: c.contact.phone || ''
+    };
+  }
+
+  function selectProspect(id) {
+    var c = findProspect(id);
+    var p = state.prospecting;
+    p.selectedId = id;
+    p.draft = c ? prospectDraftFrom(c) : null;
+    p.claimError = null;
+    p.profileError = null;
+    render();
+  }
+
+  function replaceProspect(updated) {
+    var p = state.prospecting;
+    p.candidates = p.candidates.map(function (c) { return c.id === updated.id ? updated : c; });
+  }
+
+  function saveProspectDraft(then) {
+    var p = state.prospecting;
+    var c = findProspect(p.selectedId);
+    if (!c || !p.draft) return;
+    p.saving = true;
+    p.claimError = null;
+    render();
+    var body = { candidate_id: c.id };
+    Object.keys(p.draft).forEach(function (k) { body[k] = p.draft[k]; });
+    apiPost('api/prospecting.php?action=update_candidate', body).then(function (r) {
+      p.saving = false;
+      if (r.data && r.data.ok) {
+        replaceProspect(r.data.candidate);
+        p.draft = prospectDraftFrom(r.data.candidate);
+        if (then) { then(r.data.candidate); return; }
+      } else {
+        p.claimError = (r.data && r.data.error) || 'Could not save those details.';
+      }
+      render();
+    }).catch(function () {
+      p.saving = false;
+      p.claimError = 'Could not save — check your connection and try again.';
+      render();
+    });
+  }
+
+  function buildProspectProfile() {
+    var p = state.prospecting;
+    var c = findProspect(p.selectedId);
+    if (!c || p.profileLoading) return;
+    p.profileLoading = true;
+    p.profileError = null;
+    render();
+    apiPost('api/prospecting.php?action=profile', { candidate_id: c.id }).then(function (r) {
+      p.profileLoading = false;
+      if (r.data && r.data.ok) {
+        replaceProspect(r.data.candidate);
+        p.draft = prospectDraftFrom(r.data.candidate);
+      } else {
+        p.profileError = (r.data && r.data.error) || 'Could not build the profile. Please try again.';
+      }
+      render();
+    }).catch(function () {
+      p.profileLoading = false;
+      p.profileError = 'The profile took too long or the connection dropped — please try again.';
+      render();
+    });
+  }
+
+  function pfMissingForClaim(c, d) {
+    var m = [];
+    if (!c.name) m.push('business name');
+    if (!(d.contact_first_name || '').trim()) m.push('contact first name');
+    if (!(d.contact_last_name || '').trim()) m.push('contact last name');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test((d.contact_email || '').trim())) m.push('contact email');
+    if (!(d.contact_phone || '').trim() && !(d.phone || '').trim()) m.push('phone number');
+    return m;
+  }
+
+  function claimProspect() {
+    var p = state.prospecting;
+    var c = findProspect(p.selectedId);
+    if (!c || p.claiming) return;
+    var missing = pfMissingForClaim(c, p.draft || {});
+    if (missing.length) {
+      p.claimError = 'Before claiming, fill in: ' + missing.join(', ') + '.';
+      render();
+      return;
+    }
+    // Save whatever the rep typed first, then claim.
+    saveProspectDraft(function (saved) {
+      p.claiming = true;
+      p.claimError = null;
+      render();
+      apiPost('api/prospecting.php?action=claim', { candidate_id: saved.id }).then(function (r) {
+        p.claiming = false;
+        if (r.data && r.data.ok) {
+          saved.claimed_customer_id = r.data.customer_id;
+          replaceProspect(saved);
+          p.claimResult = { id: saved.id, customerId: r.data.customer_id, warnings: r.data.warnings || [] };
+          p.claims = null; // refresh My Prospects next time it's opened
+          state.overview = null; // front-page counts changed
+        } else {
+          p.claimError = (r.data && r.data.error) || 'Could not add this prospect to ConnectWise.';
+        }
+        render();
+      }).catch(function () {
+        p.claiming = false;
+        p.claimError = 'The connection dropped while claiming. Check My Prospects before trying again so it isn’t created twice.';
+        render();
+      });
+    });
+  }
+
+  function loadProspectClaims() {
+    var p = state.prospecting;
+    if (p.claimsLoading) return;
+    p.claimsLoading = true;
+    render();
+    apiGet('api/prospecting.php?action=my_claims').then(function (r) {
+      p.claimsLoading = false;
+      if (r.data && r.data.ok) {
+        p.claims = r.data.claims || [];
+      } else {
+        p.error = (r.data && r.data.error) || 'Could not load claimed prospects.';
+      }
+      render();
+    }).catch(function () {
+      p.claimsLoading = false;
+      p.error = 'Could not load claimed prospects — check your connection.';
+      render();
+    });
+  }
+
+  function filteredProspects() {
+    var p = state.prospecting;
+    var loc = (p.filterLocation || '').trim().toLowerCase();
+    return p.candidates.filter(function (c) {
+      if (p.filterTier === 'High' && c.tier !== 'High') return false;
+      if (p.filterTier === 'Medium' && c.tier !== 'High' && c.tier !== 'Medium') return false;
+      if (p.filterIndustry !== 'all' && c.industry !== p.filterIndustry) return false;
+      if (loc) {
+        var hay = ((c.city || '') + ' ' + (c.state || '') + ' ' + (c.zip || '')).toLowerCase();
+        if (hay.indexOf(loc) === -1) return false;
+      }
+      return true;
+    });
+  }
+
+  function pfChipHtml(ok, okText, missingText) {
+    return ok
+      ? '<span class="pf-chip ok">✓ ' + escapeHtml(okText) + '</span>'
+      : '<span class="pf-chip missing">' + escapeHtml(missingText) + '</span>';
+  }
+
+  function prospectCardHtml(c) {
+    var p = state.prospecting;
+    var contactName = ((c.contact.first_name || '') + ' ' + (c.contact.last_name || '')).trim();
+    var emp = c.employee_low != null || c.employee_high != null
+      ? (c.employee_low != null && c.employee_high != null && c.employee_low !== c.employee_high
+          ? c.employee_low + '–' + c.employee_high : (c.employee_low != null ? c.employee_low : c.employee_high)) + ' employees (est.)'
+      : 'Size unknown';
+    var place = [c.city, c.state].filter(Boolean).join(', ');
+    return '<div class="pf-card' + (p.selectedId === c.id ? ' selected' : '') + (c.claimed_customer_id ? ' claimed' : '') + '" data-action="prospect-select" data-id="' + c.id + '">' +
+      '<div class="pf-card-top">' +
+        '<div class="pf-card-name">' + escapeHtml(c.name) + '</div>' +
+        '<span class="pf-tier pf-tier-' + escapeHtml(c.tier) + '" title="Confidence score ' + c.confidence + '/100">' + escapeHtml(c.tier) + ' · ' + c.confidence + '</span>' +
+      '</div>' +
+      '<div class="pf-card-meta">' + escapeHtml(c.industry || 'Industry unknown') + ' · ' + escapeHtml(place || 'Location unknown') +
+        (c.distance_mi != null ? ' · ' + Math.round(c.distance_mi) + ' mi from Richmond' : '') + '</div>' +
+      '<div class="pf-card-meta">' + escapeHtml(emp) + '</div>' +
+      '<div class="pf-card-contact">' + (contactName ? escapeHtml(contactName) + (c.contact.title ? ', ' + escapeHtml(c.contact.title) : '') : '<span class="pf-chip missing">no contact found</span>') + '</div>' +
+      '<div class="pf-chips">' +
+        pfChipHtml(!!c.contact.email, 'email', 'missing email') +
+        pfChipHtml(!!(c.contact.phone || c.phone), 'phone', 'missing phone') +
+        (c.claimed_customer_id ? '<span class="pf-chip claimed">Claimed</span>' : '') +
+      '</div>' +
+    '</div>';
+  }
+
+  function pfInput(field, label, type) {
+    var d = state.prospecting.draft || {};
+    return '<label class="pf-field"><span>' + escapeHtml(label) + '</span>' +
+      '<input type="' + (type || 'text') + '" data-pf="draft.' + field + '" value="' + escapeHtml(d[field] || '') + '"></label>';
+  }
+
+  function prospectDetailHtml(c) {
+    var p = state.prospecting;
+    var prof = c.profile;
+    var html = '<div class="pf-detail">';
+    html += '<div class="pf-detail-head"><div>' +
+      '<div class="pf-detail-name">' + escapeHtml(c.name) + '</div>' +
+      '<div class="pf-detail-sub">' + escapeHtml(c.industry || '') + (safeUrl(c.website) ? ' · ' + pfLink(c.website.replace(/^https?:\/\//i, ''), c.website) : '') + '</div>' +
+    '</div><button type="button" class="pf-close" data-action="prospect-close" aria-label="Close">×</button></div>';
+
+    html += '<div class="pf-chips">' +
+      '<span class="pf-tier pf-tier-' + escapeHtml(c.tier) + '">' + escapeHtml(c.tier) + ' confidence · ' + c.confidence + '/100</span>' +
+      (c.missing || []).map(function (m) { return '<span class="pf-chip missing">missing: ' + escapeHtml(m) + '</span>'; }).join('') +
+    '</div>';
+
+    if (c.summary) html += '<p class="pf-text">' + escapeHtml(c.summary) + '</p>';
+    if (c.employee_evidence) {
+      html += '<p class="pf-note">Size: ' + escapeHtml(c.employee_evidence) + (safeUrl(c.employee_source_url) ? ' — ' + pfLink('source', c.employee_source_url) : '') + '</p>';
+    }
+
+    // ---- Profile (bio, contact background, recommendations) ----
+    if (prof) {
+      html += '<div class="pf-section-title">Business profile</div>';
+      if (prof.business_summary) html += '<p class="pf-text">' + escapeHtml(prof.business_summary) + '</p>';
+      if (prof.primary_contact && prof.primary_contact.background) {
+        html += '<div class="pf-section-title">Primary contact</div><p class="pf-text">' + escapeHtml(prof.primary_contact.background) +
+          (safeUrl(prof.primary_contact.profile_url) ? ' ' + pfLink('Public profile →', prof.primary_contact.profile_url) : '') + '</p>';
+      } else if (prof.primary_contact && safeUrl(prof.primary_contact.profile_url)) {
+        html += '<div class="pf-section-title">Primary contact</div><p class="pf-text">' + pfLink('Public profile →', prof.primary_contact.profile_url) + '</p>';
+      }
+      if (prof.recommendations && prof.recommendations.length) {
+        html += '<div class="pf-section-title">Recommended CodeBlue services</div><ul class="pf-list">';
+        prof.recommendations.forEach(function (r) {
+          html += '<li><strong>' + escapeHtml(r.service || '') + '</strong> <span class="pf-muted">(' + escapeHtml(r.pillar || '') + ')</span> — ' + escapeHtml(r.why || '') + '</li>';
+        });
+        html += '</ul>';
+      }
+      if (prof.talking_points && prof.talking_points.length) {
+        html += '<div class="pf-section-title">Conversation openers</div><ul class="pf-list">' +
+          prof.talking_points.map(function (t) { return '<li>' + escapeHtml(t) + '</li>'; }).join('') + '</ul>';
+      }
+      if (prof.sources && prof.sources.length) {
+        html += '<div class="pf-sources">Sources: ' + prof.sources.slice(0, 6).map(function (u, i) { return pfLink(String(i + 1), u); }).join(' · ') + '</div>';
+      }
+    } else {
+      html += '<button type="button" class="pf-btn secondary" data-action="prospect-build-profile"' + (p.profileLoading ? ' disabled' : '') + '>' +
+        (p.profileLoading ? 'Researching this company… (about a minute)' : 'Build full profile & recommendations') + '</button>';
+      if (p.profileError) html += '<div class="error-banner">' + escapeHtml(p.profileError) + '</div>';
+    }
+
+    // ---- Editable details (fill in anything the search couldn't find) ----
+    html += '<div class="pf-section-title">Contact &amp; company details</div>' +
+      '<div class="pf-grid2">' +
+        pfInput('contact_first_name', 'Contact first name') + pfInput('contact_last_name', 'Contact last name') +
+        pfInput('contact_title', 'Title') + pfInput('contact_email', 'Contact email', 'email') +
+        pfInput('contact_phone', 'Contact phone', 'tel') + pfInput('phone', 'Company phone', 'tel') +
+        pfInput('website', 'Website') + pfInput('address_line1', 'Street address') +
+        pfInput('city', 'City') + pfInput('state', 'State') + pfInput('zip', 'ZIP') +
+      '</div>';
+    var srcBits = [];
+    if (safeUrl(c.contact.name_source_url)) srcBits.push(pfLink('name found here', c.contact.name_source_url));
+    if (safeUrl(c.contact.email_source_url)) srcBits.push(pfLink('email found here', c.contact.email_source_url));
+    if (safeUrl(c.contact.phone_source_url)) srcBits.push(pfLink('phone found here', c.contact.phone_source_url));
+    if (srcBits.length) html += '<div class="pf-sources">' + srcBits.join(' · ') + '</div>';
+
+    // ---- Claim ----
+    if (c.claimed_customer_id) {
+      html += '<div class="pf-claimed-box">✓ Claimed as a Prospect. ' +
+        '<button type="button" class="pf-btn primary" data-action="prospect-open-customer" data-id="' + c.claimed_customer_id + '">Open in Relationships →</button></div>';
+      if (p.claimResult && p.claimResult.id === c.id && p.claimResult.warnings.length) {
+        html += '<div class="pf-note">Note: ' + p.claimResult.warnings.map(escapeHtml).join(' ') + '</div>';
+      }
+    } else {
+      html += '<div class="pf-claim">' +
+        '<p class="pf-note">Claiming creates this company in ConnectWise as a <strong>Prospect</strong> in your territory with this contact, assigned to you, and starts your 90-day clock. Every service starts unworked.</p>' +
+        '<button type="button" class="pf-btn primary" data-action="prospect-claim"' + (p.claiming || p.saving ? ' disabled' : '') + '>' +
+          (p.claiming ? 'Adding to ConnectWise…' : (p.saving ? 'Saving…' : 'Claim as Prospect')) + '</button>' +
+        '<button type="button" class="pf-btn secondary" data-action="prospect-save"' + (p.claiming || p.saving ? ' disabled' : '') + '>Save details</button>' +
+      '</div>';
+      if (p.claimError) html += '<div class="error-banner">' + escapeHtml(p.claimError) + '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function prospectSearchFormHtml() {
+    var p = state.prospecting;
+    var industries = ['Any'].concat(p.industries || []);
+    var opts = industries.map(function (i) {
+      return '<option value="' + escapeHtml(i) + '"' + (p.form.industry === i ? ' selected' : '') + '>' + escapeHtml(i === 'Any' ? 'Any target industry' : i) + '</option>';
+    }).join('');
+    var html = '<div class="pf-search">' +
+      '<label class="pf-field"><span>Industry</span><select data-pf="form.industry"' + (p.searching ? ' disabled' : '') + '>' + opts + '</select></label>' +
+      '<label class="pf-field"><span>Location</span><input type="text" data-pf="form.location" value="' + escapeHtml(p.form.location) + '" placeholder="City or ZIP"' + (p.searching ? ' disabled' : '') + '></label>' +
+      '<label class="pf-field pf-field-sm"><span>Radius (mi)</span><input type="number" min="10" max="150" data-pf="form.radius" value="' + escapeHtml(p.form.radius) + '"' + (p.searching ? ' disabled' : '') + '></label>' +
+      '<button type="button" class="pf-btn primary pf-go" data-action="prospect-run"' + (p.searching || !p.configured || p.remainingToday === 0 ? ' disabled' : '') + '>' +
+        (p.searching ? 'Researching… <span id="pfElapsed">0:00</span>' : 'Prospect') + '</button>' +
+    '</div>';
+    if (p.searching) {
+      html += '<div class="pf-progress">Searching the public web for target-market businesses, checking for duplicates and locating them. This usually takes 1–3 minutes — you can leave this page open; results are saved either way.</div>';
+    } else if (!p.configured) {
+      html += '<div class="error-banner">Prospecting isn’t set up yet — the research service key (relationships/api/anthropic-config.php) hasn’t been added on the server.</div>';
+    } else if (p.remainingToday != null) {
+      html += '<div class="pf-hint">' + p.remainingToday + ' of ' + p.dailyCap + ' Prospect searches left today. Searches use only public web information — emails and phones are shown only when found on a public page, and can be edited before you claim.</div>';
+    }
+    return html;
+  }
+
+  function prospectResultsHtml() {
+    var p = state.prospecting;
+    var html = '';
+    if (!p.search) {
+      return '<div class="empty-state">Pick an industry and location, then press <strong>Prospect</strong> to find businesses in CodeBlue’s target market.</div>';
+    }
+    var list = filteredProspects();
+    var industries = ['all'];
+    p.candidates.forEach(function (c) { if (c.industry && industries.indexOf(c.industry) === -1) industries.push(c.industry); });
+    html += '<div class="pf-filters">' +
+      '<label class="pf-field pf-field-sm"><span>Confidence</span><select data-pf="filter.tier">' +
+        '<option value="all"' + (p.filterTier === 'all' ? ' selected' : '') + '>All</option>' +
+        '<option value="Medium"' + (p.filterTier === 'Medium' ? ' selected' : '') + '>Medium and up</option>' +
+        '<option value="High"' + (p.filterTier === 'High' ? ' selected' : '') + '>High only</option></select></label>' +
+      '<label class="pf-field pf-field-sm"><span>Industry</span><select data-pf="filter.industry">' +
+        industries.map(function (i) { return '<option value="' + escapeHtml(i) + '"' + (p.filterIndustry === i ? ' selected' : '') + '>' + escapeHtml(i === 'all' ? 'All' : i) + '</option>'; }).join('') + '</select></label>' +
+      '<label class="pf-field pf-field-sm"><span>City / ZIP</span><input type="text" data-pf="filter.location" value="' + escapeHtml(p.filterLocation || '') + '" placeholder="filter results"></label>' +
+    '</div>';
+    html += '<div class="pf-result-meta">' + escapeHtml(p.search.industry === 'Any' ? 'Any industry' : p.search.industry) + ' near ' + escapeHtml(p.search.location_text) +
+      ' — ' + list.length + ' shown, ranked by confidence' + (p.search.created_at ? ' · ' + escapeHtml(fmtTimestamp(p.search.created_at)) : '') + '</div>';
+    if (!list.length) {
+      html += '<div class="empty-state">' + (p.candidates.length ? 'No results match those filters.' : 'That search didn’t turn up new businesses. Try another industry or location.') + '</div>';
+    } else {
+      html += '<div class="pf-cards">' + list.map(prospectCardHtml).join('') + '</div>';
+    }
+    if (p.skipped && p.skipped.length) {
+      html += '<div class="pf-skipped">Skipped ' + p.skipped.length + ' already known: ' +
+        p.skipped.map(function (s) { return escapeHtml(s.name); }).join(', ') + '</div>';
+    }
+    return html;
+  }
+
+  function daysLeftBadgeHtml(daysLeft) {
+    var cls = daysLeft < 0 ? 'over' : (daysLeft <= 7 ? 'red' : (daysLeft <= 30 ? 'amber' : 'green'));
+    var text = daysLeft < 0 ? (Math.abs(daysLeft) + ' days overdue') : (daysLeft + ' days left');
+    return '<span class="pf-days ' + cls + '">' + escapeHtml(text) + '</span>';
+  }
+
+  function prospectClaimsHtml() {
+    var p = state.prospecting;
+    if (p.claimsLoading && !p.claims) return '<div class="loading">Loading…</div>';
+    if (!p.claims) return '';
+    var rows = p.claims.filter(function (c) { return p.claimsScope === 'all' || c.is_mine; });
+    var html = '<div class="pf-filters"><label class="pf-field pf-field-sm"><span>Show</span><select data-pf="claimsScope">' +
+      '<option value="mine"' + (p.claimsScope === 'mine' ? ' selected' : '') + '>My prospects</option>' +
+      '<option value="all"' + (p.claimsScope === 'all' ? ' selected' : '') + '>Everyone’s</option></select></label></div>';
+    if (!rows.length) {
+      return html + '<div class="empty-state">No claimed prospects yet. Find one on the Find Prospects tab.</div>';
+    }
+    html += '<div class="pf-claims">';
+    rows.forEach(function (c) {
+      html += '<div class="pf-claim-row" data-action="prospect-open-customer" data-id="' + c.customer_id + '">' +
+        '<div class="pf-claim-name">' + escapeHtml(c.name) + '<div class="pf-card-meta">' + escapeHtml([c.city, c.state].filter(Boolean).join(', ')) +
+          ' · claimed by ' + escapeHtml(c.claimed_by_name) + ' · ' + escapeHtml(fmtTimestamp(c.claimed_at)) + '</div></div>' +
+        daysLeftBadgeHtml(c.days_left) +
+      '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function prospectingHtml() {
+    var p = state.prospecting;
+    var html = '<div class="view-header"><div class="view-title">Prospecting</div>' +
+      '<div class="view-sub">Find target-market businesses within 150 miles of Richmond, review a quick profile, and claim them as ConnectWise Prospects. You have 90 days to move each one forward.</div></div>';
+    html += '<div class="pf-tabs">' +
+      '<button type="button" class="pf-tab' + (p.tab === 'search' ? ' active' : '') + '" data-action="prospect-tab" data-tab="search">Find Prospects</button>' +
+      '<button type="button" class="pf-tab' + (p.tab === 'mine' ? ' active' : '') + '" data-action="prospect-tab" data-tab="mine">My Prospects</button>' +
+    '</div>';
+    if (p.error) html += '<div class="error-banner">' + escapeHtml(p.error) + '</div>';
+    if (p.loading && !p.loaded) return html + '<div class="loading">Loading…</div>';
+
+    if (p.tab === 'mine') return html + prospectClaimsHtml();
+
+    html += prospectSearchFormHtml();
+    var selected = p.selectedId != null ? findProspect(p.selectedId) : null;
+    html += '<div class="pf-layout' + (selected ? ' has-detail' : '') + '">' +
+      '<div class="pf-results">' + prospectResultsHtml() + '</div>' +
+      (selected ? '<div class="pf-detail-col">' + prospectDetailHtml(selected) + '</div>' : '') +
+    '</div>';
+    return html;
+  }
+
+  // Delegated input/change handling for the Prospecting view. Fields carry
+  // data-pf="<group>.<field>". Typing only updates state (no re-render, so
+  // focus isn't lost); selects re-render since they change what's shown.
+  function onProspectInput(ev) {
+    var el = ev.target;
+    var key = el.getAttribute && el.getAttribute('data-pf');
+    if (!key) return;
+    var p = state.prospecting;
+    var isSelect = el.tagName === 'SELECT';
+    if (ev.type === 'input' && isSelect) return;
+    if (ev.type === 'change' && !isSelect) return;
+    var val = el.value;
+    if (key.indexOf('draft.') === 0) {
+      if (!p.draft) p.draft = {};
+      p.draft[key.slice(6)] = val;
+    } else if (key.indexOf('form.') === 0) {
+      p.form[key.slice(5)] = val;
+    } else if (key === 'filter.tier') {
+      p.filterTier = val;
+    } else if (key === 'filter.industry') {
+      p.filterIndustry = val;
+    } else if (key === 'filter.location') {
+      p.filterLocation = val;
+      return; // re-rendered on blur/enter via change below
+    } else if (key === 'claimsScope') {
+      p.claimsScope = val;
+    }
+    if (isSelect) render();
+  }
+
+  function onProspectFilterCommit(ev) {
+    var el = ev.target;
+    if (el.getAttribute && el.getAttribute('data-pf') === 'filter.location' && ev.type === 'change') {
+      render();
+    }
   }
 
   function syncHtml() {
@@ -4561,6 +5110,33 @@
       render();
       if (!state.selectedCustomer && !state.overview) loadOverview();
       if (!state.selectedCustomer) loadGlobalTodos();
+    } else if (action === 'show-prospecting') {
+      state.view = 'prospecting';
+      state.error = null;
+      render();
+      if (!state.prospecting.loaded) loadProspecting();
+      if (state.prospecting.tab === 'mine' && !state.prospecting.claims) loadProspectClaims();
+    } else if (action === 'prospect-run') {
+      runProspectSearch();
+    } else if (action === 'prospect-select') {
+      selectProspect(parseInt(el.getAttribute('data-id'), 10));
+    } else if (action === 'prospect-close') {
+      state.prospecting.selectedId = null;
+      state.prospecting.draft = null;
+      render();
+    } else if (action === 'prospect-build-profile') {
+      buildProspectProfile();
+    } else if (action === 'prospect-save') {
+      saveProspectDraft();
+    } else if (action === 'prospect-claim') {
+      claimProspect();
+    } else if (action === 'prospect-open-customer') {
+      state.view = 'dashboard';
+      selectCustomer(el.getAttribute('data-id'));
+    } else if (action === 'prospect-tab') {
+      state.prospecting.tab = el.getAttribute('data-tab') === 'mine' ? 'mine' : 'search';
+      render();
+      if (state.prospecting.tab === 'mine' && !state.prospecting.claims) loadProspectClaims();
     } else if (action === 'show-sync') {
       state.view = 'sync';
       state.error = null;
@@ -4880,6 +5456,9 @@
   // Bound once — root's contents are replaced on every render(), so these
   // rely on event delegation rather than being rebound each time.
   root.addEventListener('click', onRootClick);
+  root.addEventListener('input', onProspectInput);
+  root.addEventListener('change', onProspectInput);
+  root.addEventListener('change', onProspectFilterCommit);
   document.addEventListener('click', onDocumentClick);
 
   boot();
