@@ -679,7 +679,7 @@ if ($action === 'claim') {
         relationships_respond(502, ['ok' => false, 'error' => 'Could not reach ConnectWise to set this up: ' . mb_substr($e->getMessage(), 0, 300)]);
     }
     if ($statusId === null) {
-        relationships_respond(422, ['ok' => false, 'error' => 'ConnectWise has no Company Status named "Prospect". Add it (Setup Tables → Company Statuses) and try again.']);
+        relationships_respond(422, ['ok' => false, 'error' => 'Could not find a ConnectWise Company Status named "Prospect". Confirm it exists (Setup Tables → Company Statuses) with exactly that name; if it does, the lookup itself failed on this ConnectWise instance — the server error log lines starting "[relationships/prospecting]" show why.']);
     }
     if ($memberId === null) {
         relationships_respond(422, ['ok' => false, 'error' => 'Could not find your ConnectWise member record (looked for ' . $user['email'] . ' and the name "' . $user['name'] . '"). Ask an admin to check your ConnectWise member email.']);

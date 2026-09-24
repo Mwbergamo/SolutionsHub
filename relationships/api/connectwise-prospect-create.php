@@ -73,10 +73,60 @@ function relationships_cw_find_id_by_name(string $path, string $name, bool $like
     return null;
 }
 
-/** ConnectWise Company Status id for a status literally named $name (e.g. "Prospect"), or null. */
+/**
+ * ConnectWise Company Status id for a status literally named $name (e.g.
+ * "Prospect"), or null (never throws; each failed attempt is logged).
+ *
+ * FIXED 2026-09-23 after a live 404: this instance has NO /company/statuses
+ * endpoint ("The endpoint does not exist" -- the rate sheet app hit the same
+ * wall resolving "Credit Hold", see ratesheet_cw_resolve_status_id_by_name()).
+ * ConnectWise's real path for Company Statuses is nested under companies, so
+ * it's tried first; then the approach that IS proven on this instance -- read
+ * the status off a Company that's already on it via the working
+ * /company/companies endpoint (only works once at least one company is on
+ * "Prospect"); then the old guess last. Every reference-endpoint row is
+ * checked client-side against the requested name (some ConnectWise endpoints
+ * silently ignore an unsupported `conditions` filter and return their first
+ * page, which would otherwise resolve to whatever status sorts first).
+ */
 function relationships_cw_resolve_company_status(string $name): ?int
 {
-    return relationships_cw_find_id_by_name('/company/statuses', $name);
+    $wanted = strtolower(trim($name));
+
+    // Attempt 1 + 3: reference endpoints, exact (case-insensitive) name match.
+    foreach (['/company/companies/statuses', '/company/statuses'] as $path) {
+        try {
+            $escaped = relationships_cw_condition_escape_value($name);
+            $rows = relationships_cw_request($path, ['conditions' => 'name like "%' . $escaped . '%"', 'fields' => 'id,name', 'pageSize' => '200']);
+            foreach ($rows as $row) {
+                if (is_array($row) && is_int($row['id'] ?? null) && strtolower(trim((string) ($row['name'] ?? ''))) === $wanted) {
+                    return (int) $row['id'];
+                }
+            }
+            error_log('[relationships/prospecting] ' . $path . ' responded but no status named "' . $name . '" was among ' . count($rows) . ' row(s).');
+        } catch (Throwable $e) {
+            error_log('[relationships/prospecting] status lookup via ' . $path . ' failed: ' . $e->getMessage());
+        }
+        if ($path === '/company/companies/statuses') {
+            // Attempt 2 sits between the two reference paths: the proven
+            // /company/companies endpoint, reading status off a company
+            // that's already on it.
+            try {
+                $escaped = relationships_cw_condition_escape_value($name);
+                $rows = relationships_cw_request('/company/companies', ['conditions' => 'status/name = "' . $escaped . '"', 'fields' => 'id,status', 'pageSize' => '5']);
+                foreach ($rows as $row) {
+                    $st = is_array($row) ? ($row['status'] ?? null) : null;
+                    if (is_array($st) && is_int($st['id'] ?? null) && strtolower(trim((string) ($st['name'] ?? ''))) === $wanted) {
+                        return (int) $st['id'];
+                    }
+                }
+                error_log('[relationships/prospecting] no company is currently on a status named "' . $name . '" (nested status search).');
+            } catch (Throwable $e) {
+                error_log('[relationships/prospecting] nested status search failed: ' . $e->getMessage());
+            }
+        }
+    }
+    return null;
 }
 
 /**
