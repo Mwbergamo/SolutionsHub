@@ -4126,6 +4126,11 @@
       html += peopleFirstFieldsHtml(detail.customer);
     } else if (detail.customer.is_prospect_only) {
       html += '<div class="prospect-note">Prospect — a ConnectWise company with no active CodeBlue services yet. Every pillar below is a cross-sell opportunity.</div>';
+      var pclaim = detail.customer.prospect_claim;
+      if (pclaim) {
+        html += '<div class="prospect-claim-note">Claimed by ' + escapeHtml(pclaim.claimed_by_name) + ' on ' + escapeHtml(fmtTimestamp(pclaim.claimed_at)) +
+          ' \u2014 90 days to move this account forward: ' + daysLeftBadgeHtml(pclaim.days_left) + '</div>';
+      }
     }
 
     html += riskScansPanelHtml(detail.customer.id);
@@ -4559,6 +4564,22 @@
             '<div class="global-todo-item-meta">' + escapeHtml(a.customer_name) + ' · uploaded by ' + escapeHtml(a.uploaded_by_name) + ' · ' + escapeHtml(fmtTimestamp(a.uploaded_at)) + '</div>' +
           '</div>' +
           '<div class="global-todo-item-go">Unassigned — Open →</div>' +
+        '</div>';
+      });
+      html += '</div></div>';
+    }
+
+    if (g.prospect_alerts && g.prospect_alerts.length) {
+      html += '<div class="global-riskscan-section">';
+      html += '<div class="global-riskscan-title">Prospects Nearing 90 Days (' + g.prospect_alerts.length + ')</div>';
+      html += '<div class="global-todo-list">';
+      g.prospect_alerts.forEach(function (a) {
+        html += '<div class="global-todo-item riskscan-alert" data-action="prospect-open-customer" data-id="' + a.customer_id + '">' +
+          '<div class="global-todo-item-main">' +
+            '<div class="global-todo-item-desc">' + escapeHtml(a.customer_name) + '</div>' +
+            '<div class="global-todo-item-meta">Claimed by ' + escapeHtml(a.claimed_by_name) + '</div>' +
+          '</div>' +
+          '<div class="global-todo-item-go">' + daysLeftBadgeHtml(a.days_left) + '</div>' +
         '</div>';
       });
       html += '</div></div>';

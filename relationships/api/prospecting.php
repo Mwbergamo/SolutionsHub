@@ -132,13 +132,6 @@ if ($action === 'latest') {
     relationships_respond(200, $payload + relationships_prospect_search_payload($pdo, $search));
 }
 
-/** Whole days until a claim's deadline (negative = overdue). */
-function relationships_prospect_days_left(string $deadlineUtc): int
-{
-    $diff = strtotime($deadlineUtc . ' UTC') - time();
-    return $diff >= 0 ? (int) ceil($diff / 86400) : -((int) ceil(-$diff / 86400));
-}
-
 if ($action === 'my_claims') {
     $rows = $pdo->query(
         "SELECT pc.customer_id, pc.claimed_by_user_id, pc.claimed_by_name, pc.claimed_at, pc.deadline_at, c.name,
@@ -146,7 +139,7 @@ if ($action === 'my_claims') {
          FROM prospect_claims pc
          JOIN customers c ON c.id = pc.customer_id
          LEFT JOIN prospect_candidates pcand ON pcand.id = pc.candidate_id
-         WHERE pc.status = 'active'
+         WHERE pc.status = 'active' AND c.is_prospect_only = 1
          ORDER BY pc.deadline_at ASC"
     )->fetchAll(PDO::FETCH_ASSOC);
     $claims = [];

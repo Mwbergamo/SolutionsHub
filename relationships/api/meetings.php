@@ -113,6 +113,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/territory-access.php';
+require_once __DIR__ . '/prospecting-core.php';
 require_once __DIR__ . '/connectwise-meeting-activity.php';
 require_once __DIR__ . '/task-email.php';
 
@@ -371,7 +372,34 @@ if ($action === 'global') {
         ];
     }, $riskScanStmt->fetchAll(PDO::FETCH_ASSOC));
 
-    relationships_respond(200, ['ok' => true, 'roster' => $roster, 'counts' => $counts, 'tasks' => $tasks, 'risk_scan_alerts' => $riskScanAlerts]);
+    // Prospects nearing (or past) their 90-day deadline -- warn only, per
+    // Michael (2026-09-23): nothing changes in ConnectWise automatically;
+    // the Sales Manager decides. Same territory filter as above; only
+    // still-active claims on companies that are still prospects.
+    $prospectStmt = $pdo->prepare(
+        "SELECT pc.customer_id, c.name AS customer_name, pc.claimed_by_name, pc.deadline_at
+         FROM prospect_claims pc
+         JOIN customers c ON c.id = pc.customer_id
+         WHERE pc.status = 'active' AND c.is_prospect_only = 1 {$territoryFilter['sql']}
+         ORDER BY pc.deadline_at ASC
+         LIMIT 100"
+    );
+    $prospectStmt->execute($territoryFilter['params']);
+    $prospectAlerts = [];
+    foreach ($prospectStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $daysLeft = relationships_prospect_days_left((string) $r['deadline_at']);
+        if ($daysLeft <= 14) {
+            $prospectAlerts[] = [
+                'customer_id' => (int) $r['customer_id'],
+                'customer_name' => $r['customer_name'],
+                'claimed_by_name' => $r['claimed_by_name'],
+                'deadline_at' => $r['deadline_at'],
+                'days_left' => $daysLeft,
+            ];
+        }
+    }
+
+    relationships_respond(200, ['ok' => true, 'roster' => $roster, 'counts' => $counts, 'tasks' => $tasks, 'risk_scan_alerts' => $riskScanAlerts, 'prospect_alerts' => $prospectAlerts]);
 }
 
 if ($action === 'rep_todos') {

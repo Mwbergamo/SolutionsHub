@@ -424,3 +424,32 @@ function relationships_prospect_today_start_utc(): string
     $start = (new DateTimeImmutable('now', $eastern))->setTime(0, 0, 0);
     return $start->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
 }
+
+/** Whole days until a claim's deadline (negative = overdue). */
+function relationships_prospect_days_left(string $deadlineUtc): int
+{
+    $diff = strtotime($deadlineUtc . ' UTC') - time();
+    return $diff >= 0 ? (int) ceil($diff / 86400) : -((int) ceil(-$diff / 86400));
+}
+
+/**
+ * The ACTIVE 90-day prospect claim for a customer (or null): who claimed it,
+ * when, the deadline and days left. A claim stops being 'active' when
+ * ConnectWise Sync sees the company's Status is no longer "Prospect"
+ * (the Sales Manager promoted it) -- see the prospect sync's start().
+ */
+function relationships_prospect_claim_for_customer(PDO $pdo, int $customerId): ?array
+{
+    $stmt = $pdo->prepare("SELECT claimed_by_name, claimed_at, deadline_at FROM prospect_claims WHERE customer_id = :id AND status = 'active'");
+    $stmt->execute([':id' => $customerId]);
+    $r = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($r === false) {
+        return null;
+    }
+    return [
+        'claimed_by_name' => $r['claimed_by_name'],
+        'claimed_at' => $r['claimed_at'],
+        'deadline_at' => $r['deadline_at'],
+        'days_left' => relationships_prospect_days_left((string) $r['deadline_at']),
+    ];
+}

@@ -116,6 +116,11 @@ function relationships_cw_prospect_sync_start(PDO $pdo): array
          VALUES (:cwid, :name, \'pending\')'
     );
 
+    // Prospecting's 90-day claims (prospecting.php): a claimed company whose
+    // ConnectWise Status is no longer "Prospect" has been promoted by the
+    // Sales Manager -- close the claim so its countdown/alerts stop.
+    $markPromoted = $pdo->prepare("UPDATE prospect_claims SET status = 'promoted' WHERE cw_company_id = :cwid AND status = 'active'");
+
     $total = 0;
     foreach ($companies as $c) {
         if (!isset($c['id'], $c['name'])) {
@@ -123,6 +128,10 @@ function relationships_cw_prospect_sync_start(PDO $pdo): array
         }
         if (relationships_cw_prospect_is_vendor($c)) {
             continue;
+        }
+        $statusName = is_array($c['status'] ?? null) ? (string) ($c['status']['name'] ?? '') : '';
+        if ($statusName !== '' && strcasecmp($statusName, 'Prospect') !== 0) {
+            $markPromoted->execute([':cwid' => (string) $c['id']]);
         }
         $insert->execute([':cwid' => (string) $c['id'], ':name' => (string) $c['name']]);
         $total++;

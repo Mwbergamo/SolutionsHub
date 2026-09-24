@@ -68,6 +68,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/territory-access.php';
+require_once __DIR__ . '/prospecting-core.php';
 
 $pdo = relationships_db();
 relationships_require_login($pdo);
@@ -236,6 +237,9 @@ if ($action === 'detail') {
             'voip_hosted_elsewhere' => $voipHostedElsewhere,
             'voip_hosted_agreement_name' => $customer['voip_hosted_agreement_name'],
             'is_prospect_only' => (bool) $customer['is_prospect_only'],
+            // Prospecting's 90-day claim (null unless claimed via Prospecting
+            // and not yet promoted) -- see prospecting-core.php.
+            'prospect_claim' => (bool) $customer['is_prospect_only'] ? relationships_prospect_claim_for_customer($pdo, (int) $customer['id']) : null,
         ],
         'pillars' => $pillars,
     ]);

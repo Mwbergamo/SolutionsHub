@@ -2762,3 +2762,5 @@ a { color: inherit; }
   .pf-layout.has-detail { grid-template-columns: 1fr; }
   .pf-grid2 { grid-template-columns: 1fr; }
 }
+
+.prospect-claim-note { margin: 8px 0 14px; font-size: 13px; color: oklch(0.8 0.01 255); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
