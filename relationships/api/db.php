@@ -706,6 +706,17 @@ function relationships_migrate(PDO $pdo): void
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_risk_scans_customer ON risk_scans(customer_id, uploaded_at DESC)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_risk_scans_open ON risk_scans(reviewed_at, uploaded_at DESC)');
+
+    // ConnectWise attachment tracking -- added 2026-09-23 per Michael: every
+    // risk scan must ALSO be saved to the customer's Documents/attachments
+    // in ConnectWise (risk-scans.php's relationships_risk_scan_push_to_cw()).
+    // cw_upload_status: 'uploaded' | 'failed' | 'skipped' (no ConnectWise
+    // company to attach to, e.g. a mock customer) | NULL (rows uploaded
+    // before this existed -- treated as needing a push, see retry action).
+    relationships_add_column_if_missing($pdo, 'risk_scans', 'cw_upload_status', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'risk_scans', 'cw_document_id', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'risk_scans', 'cw_upload_error', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'risk_scans', 'cw_uploaded_at', 'TEXT');
 }
 
 /**

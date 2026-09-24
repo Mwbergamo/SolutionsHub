@@ -137,6 +137,79 @@ function relationships_cw_request(string $path, array $query = [], string $metho
 }
 
 /**
+ * Attaches a local file to a ConnectWise record via POST /system/documents
+ * (multipart/form-data) -- added 2026-09-23 for risk-scans.php, so an
+ * uploaded risk scan also lands in the customer's Documents/attachments
+ * tab in ConnectWise. $recordType is ConnectWise's own record-type name
+ * ("Company" here); $recordId the numeric id. The file is streamed from
+ * disk via CURLFile (never read into memory -- these zips can be hundreds
+ * of MB), with a long timeout to match. Returns the created document
+ * (its 'id' is what callers store). Throws RelationshipsConnectWiseError
+ * on any transport failure or non-2xx response, same as
+ * relationships_cw_request().
+ *
+ * NOT exercised against the live instance from this build environment (no
+ * local ConnectWise credentials) -- the field names below (recordType,
+ * recordId, title, file) are ConnectWise's documented multipart contract
+ * for this endpoint, but confirm on the first real upload.
+ */
+function relationships_cw_upload_document(string $recordType, string $recordId, string $title, string $filePath, string $fileName, string $description = ''): array
+{
+    if (!is_file($filePath)) {
+        throw new RelationshipsConnectWiseError('Local file to upload is missing: ' . $filePath);
+    }
+    $config = relationships_cw_config();
+    $url = rtrim((string) $config['base_url'], '/') . '/v4_6_release/apis/3.0/system/documents';
+
+    $authString = $config['company_id'] . '+' . $config['public_key'] . ':' . $config['private_key'];
+    $headers = [
+        'Authorization: Basic ' . base64_encode($authString),
+        'clientId: ' . $config['client_id'],
+        'Accept: application/json',
+    ];
+
+    $fields = [
+        'recordType' => $recordType,
+        'recordId' => $recordId,
+        'title' => $title,
+        'file' => new CURLFile($filePath, 'application/zip', $fileName),
+    ];
+    if ($description !== '') {
+        $fields['description'] = $description;
+    }
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $fields,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_TIMEOUT => 240,
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+    ]);
+    $body = curl_exec($ch);
+    $errNo = curl_errno($ch);
+    $errStr = curl_error($ch);
+    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($errNo !== 0) {
+        throw new RelationshipsConnectWiseError("ConnectWise document upload failed (cURL error $errNo): $errStr");
+    }
+    if ($status < 200 || $status >= 300) {
+        $snippet = is_string($body) ? substr($body, 0, 1500) : '';
+        throw new RelationshipsConnectWiseError("ConnectWise document upload returned HTTP $status — $snippet");
+    }
+    $decoded = json_decode((string) $body, true);
+    if (!is_array($decoded) || !isset($decoded['id'])) {
+        throw new RelationshipsConnectWiseError('ConnectWise document upload succeeded but returned no document id.');
+    }
+    return $decoded;
+}
+
+/**
  * Pages through a ConnectWise list endpoint (agreements, additions, etc.)
  * and returns every row as a single flat array. $conditions is a raw
  * ConnectWise "conditions" query string, e.g. "type/id=65 and

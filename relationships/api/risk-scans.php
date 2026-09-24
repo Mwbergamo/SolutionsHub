@@ -49,6 +49,19 @@
  *   for a non-PeopleFirst customer still saves and still alerts, it just
  *   has no quarterly-tracker field to update.
  *
+ * ConnectWise attachment (added 2026-09-23, per Michael): every upload is
+ * ALSO attached to the customer's ConnectWise Company as a Document
+ * (relationships_cw_upload_document(), POST /system/documents), right
+ * after the local save. The local copy + review alert never depend on it:
+ * if ConnectWise is down/rejects the file, the scan is still saved and the
+ * row is marked cw_upload_status='failed' with the reason, the panel shows
+ * a "Retry" button, and 'retry_cw_upload' re-attempts it. Customers with no
+ * ConnectWise company (mock data) are 'skipped'. The 1-year purge only
+ * removes the local copy; the ConnectWise document is left alone.
+ *
+ * POST /relationships/api/risk-scans.php?action=retry_cw_upload
+ *   { id } -> { ok: true, scan: {...} } (scan.cw_upload_status says how it went)
+ *
  * GET  /relationships/api/risk-scans.php?action=download&id=5
  *   Streams the zip (Content-Disposition: attachment; original filename).
  *   Does NOT mark the scan reviewed -- see mark_reviewed below.
@@ -69,6 +82,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/territory-access.php';
+require_once __DIR__ . '/connectwise.php';
 
 $pdo = relationships_db();
 $user = relationships_require_login($pdo);
@@ -94,7 +108,52 @@ function relationships_risk_scan_row(array $r): array
         'uploaded_at' => $r['uploaded_at'],
         'reviewed_at' => $r['reviewed_at'],
         'reviewed_by_name' => $r['reviewed_by_name'],
+        'cw_upload_status' => $r['cw_upload_status'] ?? null,
+        'cw_upload_error' => $r['cw_upload_error'] ?? null,
     ];
+}
+
+/**
+ * Attaches one saved risk scan to its customer's ConnectWise Company as a
+ * Document and records the outcome on the row. Never throws -- the local
+ * upload has already succeeded and must not be undone by a ConnectWise
+ * problem; the outcome lives in cw_upload_status/cw_upload_error instead.
+ */
+function relationships_risk_scan_push_to_cw(PDO $pdo, array $scan): void
+{
+    $custStmt = $pdo->prepare('SELECT name, connectwise_id, is_mock FROM customers WHERE id = :id');
+    $custStmt->execute([':id' => $scan['customer_id']]);
+    $customer = $custStmt->fetch(PDO::FETCH_ASSOC);
+
+    $set = static function (string $status, ?string $docId, ?string $error) use ($pdo, $scan): void {
+        $pdo->prepare(
+            "UPDATE risk_scans SET cw_upload_status = :s, cw_document_id = :d, cw_upload_error = :e,
+                cw_uploaded_at = CASE WHEN :s2 = 'uploaded' THEN datetime('now') ELSE cw_uploaded_at END
+             WHERE id = :id"
+        )->execute([':s' => $status, ':s2' => $status, ':d' => $docId, ':e' => $error, ':id' => $scan['id']]);
+    };
+
+    if ($customer === false || (int) ($customer['is_mock'] ?? 0) === 1 || trim((string) ($customer['connectwise_id'] ?? '')) === '') {
+        $set('skipped', null, 'This customer has no ConnectWise company to attach to.');
+        return;
+    }
+
+    $path = relationships_risk_scan_dir((int) $scan['customer_id']) . '/' . $scan['stored_filename'];
+    @set_time_limit(280);
+    try {
+        $doc = relationships_cw_upload_document(
+            'Company',
+            (string) $customer['connectwise_id'],
+            (string) $scan['original_filename'],
+            $path,
+            (string) $scan['original_filename'],
+            'Risk scan uploaded via Relationships by ' . $scan['uploaded_by_name']
+        );
+        $set('uploaded', (string) $doc['id'], null);
+    } catch (Throwable $e) {
+        error_log('[relationships/risk-scans] ConnectWise attach failed for scan ' . $scan['id'] . ': ' . $e->getMessage());
+        $set('failed', null, mb_substr($e->getMessage(), 0, 500));
+    }
 }
 
 function relationships_risk_scan_dir(int $customerId): string
@@ -122,7 +181,7 @@ if ($action === 'list') {
     relationships_require_customer_in_scope($pdo, $allowedTerritories, $customerId);
 
     $stmt = $pdo->prepare(
-        'SELECT id, customer_id, original_filename, size_bytes, uploaded_by_name, uploaded_at, reviewed_at, reviewed_by_name
+        'SELECT id, customer_id, original_filename, size_bytes, uploaded_by_name, uploaded_at, reviewed_at, reviewed_by_name, cw_upload_status, cw_upload_error
          FROM risk_scans WHERE customer_id = :cid ORDER BY uploaded_at DESC'
     );
     $stmt->execute([':cid' => $customerId]);
@@ -219,6 +278,12 @@ if ($action === 'upload') {
     ]);
     $scanId = (int) $pdo->lastInsertId();
 
+    // Attach to the customer's ConnectWise Company too (never throws; the
+    // outcome is stored on the row and returned below).
+    $newScanStmt = $pdo->prepare('SELECT * FROM risk_scans WHERE id = :id');
+    $newScanStmt->execute([':id' => $scanId]);
+    relationships_risk_scan_push_to_cw($pdo, $newScanStmt->fetch(PDO::FETCH_ASSOC));
+
     // Also stamp the existing PeopleFirst quarterly tracker, same as
     // peoplefirst.php's 'log' action, but ONLY for an actual PeopleFirst
     // customer -- AskUserQuestion, 2026-09-23, confirmed uploading should
@@ -238,6 +303,29 @@ if ($action === 'upload') {
     $scan = relationships_risk_scan_row($scanStmt->fetch(PDO::FETCH_ASSOC));
 
     relationships_respond(200, ['ok' => true, 'scan' => $scan, 'customer' => $customerOut]);
+}
+
+if ($action === 'retry_cw_upload') {
+    $data = relationships_read_json_body();
+    $id = (int) ($data['id'] ?? 0);
+    if ($id <= 0) {
+        relationships_respond(400, ['ok' => false, 'error' => 'Missing/invalid id.']);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM risk_scans WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    $scan = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($scan === false) {
+        relationships_respond(404, ['ok' => false, 'error' => 'Scan not found.']);
+    }
+    relationships_require_customer_in_scope($pdo, $allowedTerritories, (int) $scan['customer_id']);
+    if (($scan['cw_upload_status'] ?? null) === 'uploaded') {
+        relationships_respond(200, ['ok' => true, 'scan' => relationships_risk_scan_row($scan)]);
+    }
+
+    relationships_risk_scan_push_to_cw($pdo, $scan);
+
+    $stmt->execute([':id' => $id]);
+    relationships_respond(200, ['ok' => true, 'scan' => relationships_risk_scan_row($stmt->fetch(PDO::FETCH_ASSOC))]);
 }
 
 if ($action === 'mark_reviewed' || $action === 'unmark_reviewed') {

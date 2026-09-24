@@ -328,6 +328,7 @@
     riskScanDraftFile: null, // File object chosen but not yet uploaded, or null
     riskScanUploading: false,
     riskScanTogglingId: null, // scan id currently mid mark/unmark-reviewed (button disabled while true)
+    riskScanRetryingId: null, // scan id currently mid ConnectWise re-attach (button disabled while true)
     // Deep-link target set by openCustomerAtRiskScan() (Global To-Do panel
     // -> a specific customer's risk-scan alert) -- same pattern as
     // pendingTaskFocus above, consumed once inside loadRiskScans().
@@ -1041,6 +1042,25 @@
     }).catch(function () {
       state.riskScanUploading = false;
       state.riskScansError = 'Could not upload that file \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  function retryRiskScanCw(scanId) {
+    state.riskScanRetryingId = scanId;
+    render();
+    apiPost('api/risk-scans.php?action=retry_cw_upload', { id: scanId }).then(function (r) {
+      state.riskScanRetryingId = null;
+      if (r.data && r.data.ok && state.riskScans) {
+        var updated = r.data.scan;
+        state.riskScans = state.riskScans.map(function (s) { return s.id === updated.id ? updated : s; });
+      } else {
+        state.riskScansError = (r.data && r.data.error) || 'Could not retry the ConnectWise attachment.';
+      }
+      render();
+    }).catch(function () {
+      state.riskScanRetryingId = null;
+      state.riskScansError = 'Could not retry the ConnectWise attachment \u2014 check your connection and try again.';
       render();
     });
   }
@@ -3628,6 +3648,28 @@
     return html;
   }
 
+  // ConnectWise attachment status line (risk-scans.php's
+  // relationships_risk_scan_push_to_cw()) -- every scan is also supposed
+  // to land in the customer's ConnectWise Documents, so anything other
+  // than 'uploaded' is called out, with a Retry for failed/never-attempted.
+  function riskScanCwStatusHtml(scan) {
+    var st = scan.cw_upload_status;
+    if (st === 'uploaded') {
+      return '<div class="risk-scan-cw-status ok">✓ Saved to ConnectWise attachments</div>';
+    }
+    if (st === 'skipped') {
+      return '<div class="risk-scan-cw-status muted">Not attached in ConnectWise — no ConnectWise company for this customer.</div>';
+    }
+    var retrying = state.riskScanRetryingId === scan.id;
+    var msg = st === 'failed'
+      ? 'ConnectWise attachment failed' + (scan.cw_upload_error ? ': ' + escapeHtml(scan.cw_upload_error) : '.')
+      : 'Not yet saved to ConnectWise attachments.';
+    return '<div class="risk-scan-cw-status bad">' + msg +
+      ' <button class="risk-scan-cw-retry" type="button" data-action="riskscan-retry-cw" data-scan="' + scan.id + '" ' + (retrying ? 'disabled' : '') + '>' +
+        (retrying ? 'Retrying…' : 'Retry') +
+      '</button></div>';
+  }
+
   function riskScanItemHtml(scan) {
     var isReviewed = !!scan.reviewed_at;
     var isToggling = state.riskScanTogglingId === scan.id;
@@ -3638,6 +3680,7 @@
         (isReviewed
           ? '<div class="risk-scan-item-reviewed-meta">✓ Reviewed by ' + escapeHtml(scan.reviewed_by_name) + ' — ' + escapeHtml(fmtTimestamp(scan.reviewed_at)) + '</div>'
           : '') +
+        riskScanCwStatusHtml(scan) +
       '</div>' +
       '<div class="risk-scan-item-actions">' +
         '<a class="risk-scan-download-btn" href="api/risk-scans.php?action=download&id=' + scan.id + '">Download</a>' +
@@ -4707,6 +4750,8 @@
       );
     } else if (action === 'riskscan-upload') {
       uploadRiskScan(parseInt(el.getAttribute('data-customer'), 10));
+    } else if (action === 'riskscan-retry-cw') {
+      retryRiskScanCw(parseInt(el.getAttribute('data-scan'), 10));
     } else if (action === 'riskscan-mark-reviewed') {
       setRiskScanReviewed(parseInt(el.getAttribute('data-scan'), 10), true);
     } else if (action === 'riskscan-unmark-reviewed') {
