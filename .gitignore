@@ -52,3 +52,8 @@ Thumbs.db
 # part of the app's source, and has held stray credential-file copies
 # before (2026-09-14). Never commit it.
 /Claude outputs/
+
+# Anthropic API key for the Prospecting research agent -- copy
+# relationships/api/anthropic-config.sample.php to anthropic-config.php on
+# the server and fill it in there.
+/relationships/api/anthropic-config.php

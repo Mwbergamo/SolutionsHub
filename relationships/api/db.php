@@ -717,6 +717,100 @@ function relationships_migrate(PDO $pdo): void
     relationships_add_column_if_missing($pdo, 'risk_scans', 'cw_document_id', 'TEXT');
     relationships_add_column_if_missing($pdo, 'risk_scans', 'cw_upload_error', 'TEXT');
     relationships_add_column_if_missing($pdo, 'risk_scans', 'cw_uploaded_at', 'TEXT');
+
+    // ---- Prospecting (prospecting.php / prospecting-agent.php) -- added
+    // 2026-09-23 per Michael: a rep issues a "Prospect" command, a research
+    // agent searches the public web, and the rep claims a candidate as a
+    // ConnectWise Prospect with a 90-day clock.
+    //   prospect_searches   one row per "Prospect" command (also the audit/
+    //                       cost log: tokens + web searches used).
+    //   prospect_candidates the 5-8 (plus skipped duplicate) businesses a
+    //                       search found, with every contact field carrying
+    //                       the URL it was found on, a deterministic
+    //                       confidence score, and the later profile JSON.
+    //   prospect_claims     one row per claimed prospect: who claimed it and
+    //                       the 90-day deadline (warn-only -- nothing
+    //                       changes automatically at day 90).
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS prospect_searches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER REFERENCES crc_users(id),
+            user_name TEXT NOT NULL,
+            industry TEXT,
+            location_text TEXT,
+            center_lat REAL,
+            center_lng REAL,
+            radius_miles INTEGER NOT NULL DEFAULT 150,
+            status TEXT NOT NULL DEFAULT 'running',
+            error TEXT,
+            tokens_in INTEGER NOT NULL DEFAULT 0,
+            tokens_out INTEGER NOT NULL DEFAULT 0,
+            web_searches INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            completed_at TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_prospect_searches_user ON prospect_searches(user_id, created_at DESC)');
+
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS prospect_candidates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            search_id INTEGER NOT NULL REFERENCES prospect_searches(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            website TEXT,
+            address_line1 TEXT,
+            city TEXT,
+            state TEXT,
+            zip TEXT,
+            phone TEXT,
+            industry TEXT,
+            employee_low INTEGER,
+            employee_high INTEGER,
+            employee_evidence TEXT,
+            employee_source_url TEXT,
+            summary TEXT,
+            contact_first_name TEXT,
+            contact_last_name TEXT,
+            contact_title TEXT,
+            contact_email TEXT,
+            contact_phone TEXT,
+            contact_profile_url TEXT,
+            contact_name_source_url TEXT,
+            contact_email_source_url TEXT,
+            contact_phone_source_url TEXT,
+            source_urls_json TEXT,
+            lat REAL,
+            lng REAL,
+            distance_mi REAL,
+            confidence INTEGER NOT NULL DEFAULT 0,
+            confidence_tier TEXT NOT NULL DEFAULT 'Low',
+            missing_json TEXT,
+            dup_of TEXT,
+            profile_json TEXT,
+            profile_at TEXT,
+            claimed_customer_id INTEGER REFERENCES customers(id),
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_prospect_candidates_search ON prospect_candidates(search_id, confidence DESC)');
+
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS prospect_claims (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL UNIQUE REFERENCES customers(id) ON DELETE CASCADE,
+            candidate_id INTEGER REFERENCES prospect_candidates(id),
+            claimed_by_user_id INTEGER REFERENCES crc_users(id),
+            claimed_by_name TEXT NOT NULL,
+            claimed_by_email TEXT,
+            cw_member_id INTEGER,
+            cw_company_id TEXT,
+            cw_contact_id TEXT,
+            claimed_at TEXT NOT NULL DEFAULT (datetime('now')),
+            deadline_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active'
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_prospect_claims_deadline ON prospect_claims(status, deadline_at)');
 }
 
 /**
