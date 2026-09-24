@@ -154,21 +154,21 @@
     // Purely a display concern -- re-sorts state.overview.customers on
     // every render rather than mutating the fetched data.
     overviewSort: { column: 'name', direction: 'asc' },
-    // Customer-list filters (added 2026-09-15 per Michael) -- both are
-    // purely client-side display filters over the same state.overview.
-    // customers array dashboard.php already returns is_prospect_only /
-    // is_peoplefirst for; see filteredOverviewCustomers(). overviewShowProspects
-    // defaults true (nothing hidden until the CRC turns it off);
-    // overviewPeopleFirstOnly defaults false and, when on, takes
-    // precedence over the prospects toggle (PeopleFirst members are never
-    // prospects, so there's nothing to conflict).
-    overviewShowProspects: true,
+    // Customer-list filter (added 2026-09-15 per Michael) -- a purely
+    // client-side display filter over the same state.overview.customers
+    // array dashboard.php already returns is_peoplefirst for; see
+    // filteredOverviewCustomers(). (The old Prospects on/off toggle was
+    // removed 2026-09-23: prospects now have their own tile and list.)
     overviewPeopleFirstOnly: false,
     // Front-page customer list is hidden by default (2026-09-23, per
     // Michael: the front page is a team dashboard + global action items
     // list, not a customer directory) -- clicking the Total Customers
     // gauge tile toggles it. See gaugesHtml()/overviewHtml().
-    overviewListOpen: false,
+    // overviewListMode: null (hidden) | 'customers' | 'prospects' -- which
+    // group the front-page list shows; the Total Customers / Total
+    // Prospects tiles set it (prospects are their own group, not part of
+    // Total Customers, per Michael 2026-09-23).
+    overviewListMode: null,
 
     // Checklist data, keyed by "customerId::pillarId::serviceId". Each
     // value is: undefined (not fetched yet), 'error', or
@@ -2946,7 +2946,7 @@
     }
     if (state.overview) {
       return gaugesHtml(state.overview.gauges || []) + leaderboardsHtml(state.overview.leaderboards || []) +
-        (state.overviewListOpen ? customerOverviewListHtml(state.overview.customers || []) : '');
+        (state.overviewListMode ? customerOverviewListHtml(state.overview.customers || []) : '');
     }
     // Never loaded (still pending) or failed to load -- either way, fall
     // back to the original guidance rather than showing nothing. A load
@@ -2984,13 +2984,15 @@
           '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
           '<div class="gauge-value-row">' + trendBadgeHtml(g.trend, 'lg') + '</div>' +
         '</div>';
-      } else if (g.key === 'total_customers') {
-        // Clickable: shows/hides the customer list (hidden by default).
-        html += '<button type="button" class="gauge-tile gauge-tile-clickable' + (state.overviewListOpen ? ' active' : '') + '" data-action="toggle-customer-list" ' +
-          'title="' + (state.overviewListOpen ? 'Hide the customer list' : 'Show the customer list') + '">' +
+      } else if (g.key === 'total_customers' || g.key === 'total_prospects') {
+        // Clickable: shows/hides that group's list (hidden by default).
+        var listMode = g.key === 'total_customers' ? 'customers' : 'prospects';
+        var listOpen = state.overviewListMode === listMode;
+        html += '<button type="button" class="gauge-tile gauge-tile-clickable' + (listOpen ? ' active' : '') + '" data-action="toggle-overview-list" data-mode="' + listMode + '" ' +
+          'title="' + (listOpen ? 'Hide the list' : 'Show the list') + '">' +
           '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
           '<div class="gauge-value">' + (g.value == null ? '—' : g.value) + '</div>' +
-          '<div class="gauge-hint">' + (state.overviewListOpen ? 'Hide list ▲' : 'View list ▼') + '</div>' +
+          '<div class="gauge-hint">' + (listOpen ? 'Hide list ▲' : 'View list ▼') + '</div>' +
         '</button>';
       } else {
         html += '<div class="gauge-tile">' +
@@ -3108,29 +3110,26 @@
   // when both are somehow set, since a PeopleFirst company is never also
   // a prospect.
   function filteredOverviewCustomers(customers) {
+    if (state.overviewListMode === 'prospects') {
+      return customers.filter(function (c) { return c.is_prospect_only; });
+    }
+    var customersOnly = customers.filter(function (c) { return !c.is_prospect_only; });
     if (state.overviewPeopleFirstOnly) {
-      return customers.filter(function (c) { return c.is_peoplefirst; });
+      return customersOnly.filter(function (c) { return c.is_peoplefirst; });
     }
-    if (!state.overviewShowProspects) {
-      return customers.filter(function (c) { return !c.is_prospect_only; });
-    }
-    return customers;
+    return customersOnly;
   }
 
   // Toolbar of filter toggle buttons shown above the list header. Counts
   // are always computed off the *unfiltered* customers array so a hidden
   // group's count doesn't disappear along with its rows.
   function overviewFilterBarHtml(customers) {
-    var prospectCount = customers.filter(function (c) { return c.is_prospect_only; }).length;
+    // Prospects have their own tile/list now, so the only filter left is
+    // PeopleFirst Only -- which only makes sense in the customers list.
+    if (state.overviewListMode === 'prospects') return '';
     var peopleFirstCount = customers.filter(function (c) { return c.is_peoplefirst; }).length;
-    var prospectsShown = !!state.overviewShowProspects;
     var pfOnly = !!state.overviewPeopleFirstOnly;
     return '<div class="overview-filter-bar">' +
-      '<button class="overview-filter-btn prospects' + (prospectsShown ? ' active' : '') + '" type="button" ' +
-        'data-action="toggle-overview-prospects" title="' + (prospectsShown ? 'Hide Prospect companies from this list' : 'Show Prospect companies in this list') + '">' +
-        '◇ ' + (prospectsShown ? 'Prospects Shown' : 'Prospects Hidden') +
-        ' <span class="overview-filter-count">' + prospectCount + '</span>' +
-      '</button>' +
       '<button class="overview-filter-btn peoplefirst' + (pfOnly ? ' active' : '') + '" type="button" ' +
         'data-action="toggle-overview-peoplefirst" title="Show only PeopleFirst member companies">' +
         '★ PeopleFirst Only' +
@@ -3153,7 +3152,7 @@
       '</div>' +
       '<div class="overview-list">';
     if (!sorted.length) {
-      html += '<div class="overview-list-empty">No customers match the current filter.</div>';
+      html += '<div class="overview-list-empty">' + (state.overviewListMode === 'prospects' ? 'No prospects.' : 'No customers match the current filter.') + '</div>';
     }
     sorted.forEach(function (c) {
       var badge = c.is_peoplefirst ? peopleFirstBadgeHtml() : (c.is_prospect_only ? prospectBadgeHtml() : '');
@@ -4575,11 +4574,9 @@
         state.overviewSort.direction = state.overviewSort.direction === 'asc' ? 'desc' : 'asc';
       }
       render();
-    } else if (action === 'toggle-customer-list') {
-      state.overviewListOpen = !state.overviewListOpen;
-      render();
-    } else if (action === 'toggle-overview-prospects') {
-      state.overviewShowProspects = !state.overviewShowProspects;
+    } else if (action === 'toggle-overview-list') {
+      var mode = el.getAttribute('data-mode');
+      state.overviewListMode = state.overviewListMode === mode ? null : mode;
       render();
     } else if (action === 'toggle-overview-peoplefirst') {
       state.overviewPeopleFirstOnly = !state.overviewPeopleFirstOnly;

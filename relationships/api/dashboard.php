@@ -189,7 +189,10 @@ if ($action === 'overview') {
     $portfolioByMonth = $portfolioStmt->fetchAll(PDO::FETCH_KEY_PAIR);
     $portfolioBillingTrend = relationships_cw_activity_billing_series_from_totals($portfolioByMonth, 6)['trend'];
 
-    $totalCustomers = count($customerRows);
+    // Prospects are their own group (Total Prospects tile), not part of
+    // Total Customers -- 2026-09-23, per Michael, to set up a separate
+    // prospect workflow.
+    $totalCustomers = count($customerRows) - $totalProspects;
 
     $gauges = [
         ['key' => 'total_customers', 'label' => 'Total Customers', 'value' => $totalCustomers, 'format' => 'count'],
