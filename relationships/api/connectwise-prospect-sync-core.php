@@ -42,7 +42,13 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/connectwise.php';
 
-const RELATIONSHIPS_CW_PROSPECT_STATUSES = ['Active', 'Delinquent', 'Special Info'];
+// 'Prospect' added 2026-09-23: Prospecting's "Claim as Prospect"
+// (prospecting.php) creates companies with Company Status "Prospect" (the
+// Sales Manager later promotes them to Active). start() below resets
+// is_prospect_only for every row and re-sets it from this list, so without
+// 'Prospect' here every claimed prospect would silently lose its prospect
+// flag on the next ConnectWise Sync.
+const RELATIONSHIPS_CW_PROSPECT_STATUSES = ['Active', 'Delinquent', 'Special Info', 'Prospect'];
 
 /**
  * `(status/name='Active' or status/name='Delinquent' or status/name='Special Info')`

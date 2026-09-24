@@ -23,12 +23,37 @@
  * POST ?action=search { industry, location?, radius_miles? }
  *   -> same shape as 'latest' for the NEW search. Takes roughly 1-3
  *   minutes (web research). Counts against the rep's daily cap.
+ *
+ * POST ?action=profile { candidate_id }
+ *   -> { ok, candidate } -- runs the profile agent for one candidate (about
+ *   a minute): business summary, primary-contact background, CodeBlue
+ *   service recommendations (validated against the real catalog), and any
+ *   contact details it newly found (never overwrites what's already there).
+ *
+ * POST ?action=update_candidate { candidate_id, website?, phone?, address_line1?,
+ *      city?, state?, zip?, contact_first_name?, contact_last_name?,
+ *      contact_title?, contact_email?, contact_phone? }
+ *   -> { ok, candidate } -- the rep fills in what the search couldn't find.
+ *   Rep-entered email/phone/name count as sourced ("rep-entered").
+ *
+ * POST ?action=claim { candidate_id }
+ *   -> { ok, customer_id, warnings[] } -- creates the Company (Status
+ *   "Prospect", the rep's territory), its primary Contact and the Team
+ *   assignment in ConnectWise, then the local customer row (prospect) and
+ *   the 90-day claim. See connectwise-prospect-create.php.
+ *
+ * GET  ?action=my_claims
+ *   -> { ok, claims: [{customer_id, name, city, state, claimed_by_name,
+ *        claimed_at, deadline_at, days_left, is_mine}] } (everyone's,
+ *        soonest deadline first; days_left < 0 = overdue).
  */
 
 declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/prospecting-core.php';
+require_once __DIR__ . '/catalog.php';
+require_once __DIR__ . '/connectwise-prospect-create.php';
 
 $pdo = relationships_db();
 $user = relationships_require_login($pdo);
@@ -107,8 +132,83 @@ if ($action === 'latest') {
     relationships_respond(200, $payload + relationships_prospect_search_payload($pdo, $search));
 }
 
+/** Whole days until a claim's deadline (negative = overdue). */
+function relationships_prospect_days_left(string $deadlineUtc): int
+{
+    $diff = strtotime($deadlineUtc . ' UTC') - time();
+    return $diff >= 0 ? (int) ceil($diff / 86400) : -((int) ceil(-$diff / 86400));
+}
+
+if ($action === 'my_claims') {
+    $rows = $pdo->query(
+        "SELECT pc.customer_id, pc.claimed_by_user_id, pc.claimed_by_name, pc.claimed_at, pc.deadline_at, c.name,
+                pcand.city, pcand.state
+         FROM prospect_claims pc
+         JOIN customers c ON c.id = pc.customer_id
+         LEFT JOIN prospect_candidates pcand ON pcand.id = pc.candidate_id
+         WHERE pc.status = 'active'
+         ORDER BY pc.deadline_at ASC"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $claims = [];
+    foreach ($rows as $r) {
+        $claims[] = [
+            'customer_id' => (int) $r['customer_id'],
+            'name' => $r['name'],
+            'city' => $r['city'],
+            'state' => $r['state'],
+            'claimed_by_name' => $r['claimed_by_name'],
+            'claimed_at' => $r['claimed_at'],
+            'deadline_at' => $r['deadline_at'],
+            'days_left' => relationships_prospect_days_left((string) $r['deadline_at']),
+            'is_mine' => (int) $r['claimed_by_user_id'] === (int) $user['id'],
+        ];
+    }
+    relationships_respond(200, ['ok' => true, 'claims' => $claims]);
+}
+
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     relationships_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
+}
+
+/** Loads a candidate, 404s if missing and 403s if it belongs to another rep's search. */
+function relationships_prospect_load_candidate(PDO $pdo, int $id, array $user): array
+{
+    $stmt = $pdo->prepare(
+        'SELECT c.*, s.user_id AS owner_user_id FROM prospect_candidates c JOIN prospect_searches s ON s.id = c.search_id WHERE c.id = :id'
+    );
+    $stmt->execute([':id' => $id]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($row === false) {
+        relationships_respond(404, ['ok' => false, 'error' => 'That prospect result no longer exists.']);
+    }
+    if ((int) $row['owner_user_id'] !== (int) $user['id']) {
+        relationships_respond(403, ['ok' => false, 'error' => 'That result belongs to another rep\'s search.']);
+    }
+    return $row;
+}
+
+/** Recomputes confidence/tier/missing for a stored candidate from its current column values. */
+function relationships_prospect_rescore(PDO $pdo, int $id): array
+{
+    $stmt = $pdo->prepare('SELECT * FROM prospect_candidates WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    $distance = $row['distance_mi'] !== null ? (float) $row['distance_mi'] : null;
+    [$score, $tier, $missing] = relationships_prospect_score([
+        'employee_low' => $row['employee_low'] !== null ? (int) $row['employee_low'] : null,
+        'employee_high' => $row['employee_high'] !== null ? (int) $row['employee_high'] : null,
+        'industry' => $row['industry'],
+        'contact_first_name' => $row['contact_first_name'],
+        'contact_last_name' => $row['contact_last_name'],
+        'contact_email' => $row['contact_email'],
+        'contact_email_source_url' => $row['contact_email_source_url'],
+        'contact_phone' => $row['contact_phone'],
+        'phone' => $row['phone'],
+    ], $distance);
+    $pdo->prepare('UPDATE prospect_candidates SET confidence = :c, confidence_tier = :t, missing_json = :m WHERE id = :id')
+        ->execute([':c' => $score, ':t' => $tier, ':m' => json_encode($missing), ':id' => $id]);
+    $stmt->execute([':id' => $id]);
+    return $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
 if ($action === 'search') {
@@ -259,6 +359,305 @@ if ($action === 'search') {
     $search = $searchStmt->fetch(PDO::FETCH_ASSOC);
 
     relationships_respond(200, ['ok' => true] + relationships_prospect_status_fields($pdo, $user) + relationships_prospect_search_payload($pdo, $search));
+}
+
+if ($action === 'profile') {
+    $data = relationships_read_json_body();
+    $cand = relationships_prospect_load_candidate($pdo, (int) ($data['candidate_id'] ?? 0), $user);
+    [$configured] = relationships_prospect_settings();
+    if (!$configured) {
+        relationships_respond(503, ['ok' => false, 'error' => 'Prospecting is not set up yet: the research service API key is missing on the server.']);
+    }
+    ignore_user_abort(true);
+
+    $catalogLines = [];
+    $catalogIndex = []; // lowercase service name => [pillar name, service name]
+    foreach (relationships_catalog() as $pillar) {
+        $catalogLines[] = '- ' . $pillar['name'] . ': ' . implode('; ', array_values($pillar['services']));
+        foreach ($pillar['services'] as $svcName) {
+            $catalogIndex[mb_strtolower((string) $svcName)] = [(string) $pillar['name'], (string) $svcName];
+        }
+    }
+
+    try {
+        $config = relationships_anthropic_config();
+        $run = relationships_prospect_run_agent(
+            relationships_prospect_system_prompt(),
+            relationships_prospect_profile_prompt($cand, implode("\n", $catalogLines)),
+            max(1, (int) ($config['max_web_searches_profile'] ?? 5))
+        );
+    } catch (Throwable $e) {
+        error_log('[relationships/prospecting] profile failed for candidate ' . $cand['id'] . ': ' . $e->getMessage());
+        relationships_respond(502, ['ok' => false, 'error' => 'The research agent could not finish: ' . $e->getMessage()]);
+    }
+    @set_time_limit(60);
+
+    $parsed = relationships_prospect_extract_json($run['text']);
+    if ($parsed === null) {
+        error_log('[relationships/prospecting] unparseable profile output for candidate ' . $cand['id'] . ': ' . mb_substr($run['text'], 0, 500));
+        relationships_respond(502, ['ok' => false, 'error' => 'The research agent returned results in an unexpected format. Please try again.']);
+    }
+
+    $pc = is_array($parsed['primary_contact'] ?? null) ? $parsed['primary_contact'] : [];
+    $profContact = [
+        'first_name' => relationships_prospect_str($pc['first_name'] ?? null, 60),
+        'last_name' => relationships_prospect_str($pc['last_name'] ?? null, 60),
+        'title' => relationships_prospect_str($pc['title'] ?? null, 100),
+        'email' => relationships_prospect_email($pc['email'] ?? null),
+        'phone' => relationships_prospect_str($pc['phone'] ?? null, 40),
+        'profile_url' => relationships_prospect_url($pc['profile_url'] ?? null),
+        'background' => relationships_prospect_str($pc['background'] ?? null, 500),
+        'name_source_url' => relationships_prospect_url($pc['name_source_url'] ?? null),
+        'email_source_url' => relationships_prospect_url($pc['email_source_url'] ?? null),
+        'phone_source_url' => relationships_prospect_url($pc['phone_source_url'] ?? null),
+    ];
+
+    $recs = [];
+    foreach ((array) ($parsed['recommendations'] ?? []) as $rec) {
+        if (!is_array($rec)) {
+            continue;
+        }
+        $svcKey = mb_strtolower(trim((string) ($rec['service'] ?? '')));
+        if (!isset($catalogIndex[$svcKey]) || count($recs) >= 5) {
+            continue; // only real CodeBlue services
+        }
+        $recs[] = ['pillar' => $catalogIndex[$svcKey][0], 'service' => $catalogIndex[$svcKey][1], 'why' => relationships_prospect_str($rec['why'] ?? null, 300) ?? ''];
+    }
+
+    $points = [];
+    foreach ((array) ($parsed['talking_points'] ?? []) as $tp) {
+        $t = relationships_prospect_str($tp, 240);
+        if ($t !== null && count($points) < 4) {
+            $points[] = $t;
+        }
+    }
+    $sources = [];
+    foreach ((array) ($parsed['sources'] ?? []) as $u) {
+        $u = relationships_prospect_url($u);
+        if ($u !== null && count($sources) < 8) {
+            $sources[$u] = $u;
+        }
+    }
+
+    $profile = [
+        'business_summary' => relationships_prospect_str($parsed['business_summary'] ?? null, 900),
+        'employee_note' => relationships_prospect_str($parsed['employee_note'] ?? null, 300),
+        'primary_contact' => $profContact,
+        'recommendations' => $recs,
+        'talking_points' => $points,
+        'sources' => array_values($sources),
+    ];
+
+    // Fill contact gaps from what the profile found -- never overwrite
+    // anything already on the candidate (including rep-entered values).
+    $fill = [];
+    $map = [
+        'contact_first_name' => 'first_name', 'contact_last_name' => 'last_name', 'contact_title' => 'title',
+        'contact_email' => 'email', 'contact_phone' => 'phone', 'contact_profile_url' => 'profile_url',
+    ];
+    foreach ($map as $col => $key) {
+        if (($cand[$col] ?? '') === '' && $profContact[$key] !== null) {
+            $fill[$col] = $profContact[$key];
+        }
+    }
+    $srcMap = ['contact_name_source_url' => 'name_source_url', 'contact_email_source_url' => 'email_source_url', 'contact_phone_source_url' => 'phone_source_url'];
+    foreach ($srcMap as $col => $key) {
+        if (($cand[$col] ?? '') === '' && $profContact[$key] !== null) {
+            $fill[$col] = $profContact[$key];
+        }
+    }
+    if (($cand['summary'] ?? '') === '' && $profile['business_summary'] !== null) {
+        $fill['summary'] = mb_substr((string) $profile['business_summary'], 0, 600);
+    }
+
+    $sets = ['profile_json = :profile_json', "profile_at = datetime('now')"];
+    $params = [':profile_json' => json_encode($profile), ':id' => $cand['id']];
+    foreach ($fill as $col => $val) {
+        $sets[] = "$col = :f_$col";
+        $params[":f_$col"] = $val;
+    }
+    $pdo->prepare('UPDATE prospect_candidates SET ' . implode(', ', $sets) . ' WHERE id = :id')->execute($params);
+    $pdo->prepare('UPDATE prospect_searches SET tokens_in = tokens_in + :ti, tokens_out = tokens_out + :to, web_searches = web_searches + :ws WHERE id = :sid')
+        ->execute([':ti' => $run['tokens_in'], ':to' => $run['tokens_out'], ':ws' => $run['searches'], ':sid' => $cand['search_id']]);
+
+    $row = relationships_prospect_rescore($pdo, (int) $cand['id']);
+    relationships_respond(200, ['ok' => true, 'candidate' => relationships_prospect_candidate_out($row)]);
+}
+
+if ($action === 'update_candidate') {
+    $data = relationships_read_json_body();
+    $cand = relationships_prospect_load_candidate($pdo, (int) ($data['candidate_id'] ?? 0), $user);
+    if ($cand['claimed_customer_id'] !== null) {
+        relationships_respond(409, ['ok' => false, 'error' => 'This prospect has already been claimed.']);
+    }
+
+    $new = [];
+    $textFields = [
+        'phone' => 40, 'address_line1' => 160, 'city' => 80, 'state' => 30, 'zip' => 15,
+        'contact_first_name' => 60, 'contact_last_name' => 60, 'contact_title' => 100, 'contact_phone' => 40,
+    ];
+    foreach ($textFields as $field => $max) {
+        if (array_key_exists($field, $data)) {
+            $new[$field] = relationships_prospect_str($data[$field], $max);
+        }
+    }
+    if (array_key_exists('website', $data)) {
+        $raw = trim((string) $data['website']);
+        $url = relationships_prospect_url($raw);
+        if ($raw !== '' && $url === null) {
+            relationships_respond(400, ['ok' => false, 'error' => 'That website address doesn\'t look valid.']);
+        }
+        $new['website'] = $url;
+    }
+    if (array_key_exists('contact_email', $data)) {
+        $raw = trim((string) $data['contact_email']);
+        $email = relationships_prospect_email($raw);
+        if ($raw !== '' && $email === null) {
+            relationships_respond(400, ['ok' => false, 'error' => 'Enter a valid email address.']);
+        }
+        $new['contact_email'] = $email;
+    }
+
+    // Anything the rep changed is "sourced" by the rep from here on.
+    $sourceFor = ['contact_email' => 'contact_email_source_url', 'contact_phone' => 'contact_phone_source_url'];
+    foreach ($sourceFor as $field => $srcCol) {
+        if (array_key_exists($field, $new) && $new[$field] !== ($cand[$field] ?: null)) {
+            $new[$srcCol] = $new[$field] !== null ? 'rep-entered' : null;
+        }
+    }
+    foreach (['contact_first_name', 'contact_last_name'] as $field) {
+        if (array_key_exists($field, $new) && $new[$field] !== ($cand[$field] ?: null) && $new[$field] !== null) {
+            $new['contact_name_source_url'] = 'rep-entered';
+        }
+    }
+
+    // Re-geocode if the location changed.
+    $addrChanged = false;
+    foreach (['address_line1', 'city', 'state', 'zip'] as $field) {
+        if (array_key_exists($field, $new) && $new[$field] !== ($cand[$field] ?: null)) {
+            $addrChanged = true;
+        }
+    }
+    if ($addrChanged) {
+        $merged = array_merge($cand, $new);
+        [$lat, $lng, $miles] = relationships_prospect_locate($merged);
+        $new['lat'] = $lat;
+        $new['lng'] = $lng;
+        $new['distance_mi'] = $miles;
+    }
+
+    if ($new !== []) {
+        $sets = [];
+        $params = [':id' => $cand['id']];
+        foreach ($new as $col => $val) {
+            $sets[] = "$col = :v_$col";
+            $params[":v_$col"] = $val;
+        }
+        $pdo->prepare('UPDATE prospect_candidates SET ' . implode(', ', $sets) . ' WHERE id = :id')->execute($params);
+    }
+    $row = relationships_prospect_rescore($pdo, (int) $cand['id']);
+    relationships_respond(200, ['ok' => true, 'candidate' => relationships_prospect_candidate_out($row)]);
+}
+
+if ($action === 'claim') {
+    $data = relationships_read_json_body();
+    $cand = relationships_prospect_load_candidate($pdo, (int) ($data['candidate_id'] ?? 0), $user);
+    if ($cand['claimed_customer_id'] !== null) {
+        relationships_respond(409, ['ok' => false, 'error' => 'This prospect has already been claimed.']);
+    }
+
+    // Required by Michael: business name + primary contact + phone + email.
+    $missing = [];
+    if (trim((string) $cand['name']) === '') $missing[] = 'business name';
+    if (trim((string) $cand['contact_first_name']) === '') $missing[] = 'contact first name';
+    if (trim((string) $cand['contact_last_name']) === '') $missing[] = 'contact last name';
+    if (relationships_prospect_email($cand['contact_email']) === null) $missing[] = 'contact email';
+    $phone = trim((string) ($cand['contact_phone'] ?: $cand['phone']));
+    if ($phone === '') $missing[] = 'phone number';
+    if ($missing !== []) {
+        relationships_respond(400, ['ok' => false, 'error' => 'Before claiming, fill in: ' . implode(', ', $missing) . '.']);
+    }
+
+    ignore_user_abort(true);
+    @set_time_limit(120);
+
+    // Everything ConnectWise needs is resolved BEFORE anything is written,
+    // so a missing Prospect status / member record can't leave a half-made company.
+    try {
+        relationships_cw_config();
+        $statusId = relationships_cw_resolve_company_status('Prospect');
+        $memberId = relationships_cw_resolve_member_id((string) $user['email'], (string) $user['name']);
+    } catch (Throwable $e) {
+        error_log('[relationships/prospecting] claim pre-checks failed: ' . $e->getMessage());
+        relationships_respond(502, ['ok' => false, 'error' => 'Could not reach ConnectWise to set this up: ' . mb_substr($e->getMessage(), 0, 300)]);
+    }
+    if ($statusId === null) {
+        relationships_respond(422, ['ok' => false, 'error' => 'ConnectWise has no Company Status named "Prospect". Add it (Setup Tables → Company Statuses) and try again.']);
+    }
+    if ($memberId === null) {
+        relationships_respond(422, ['ok' => false, 'error' => 'Could not find your ConnectWise member record (looked for ' . $user['email'] . ' and the name "' . $user['name'] . '"). Ask an admin to check your ConnectWise member email.']);
+    }
+    [$territoryId, $territoryName] = relationships_cw_resolve_rep_territory($pdo, (string) $user['email'], (string) $user['name']);
+
+    // Last duplicate check right before writing (the search-time check can be stale).
+    $localDup = relationships_prospect_local_dup(relationships_prospect_local_names($pdo), (string) $cand['name']);
+    if ($localDup !== null) {
+        relationships_respond(409, ['ok' => false, 'error' => 'Already a CodeBlue customer/prospect: ' . $localDup . '.']);
+    }
+    $cwDup = relationships_prospect_cw_dup((string) $cand['name']);
+    if ($cwDup !== null) {
+        relationships_respond(409, ['ok' => false, 'error' => 'Already in ConnectWise: ' . $cwDup . '.']);
+    }
+
+    try {
+        $company = relationships_cw_create_prospect_company([
+            'name' => $cand['name'], 'address_line1' => $cand['address_line1'],
+            'city' => $cand['city'], 'state' => $cand['state'], 'zip' => $cand['zip'],
+        ], $statusId, $territoryId);
+    } catch (Throwable $e) {
+        error_log('[relationships/prospecting] company create failed: ' . $e->getMessage());
+        relationships_respond(502, ['ok' => false, 'error' => 'ConnectWise rejected the new company: ' . mb_substr($e->getMessage(), 0, 400)]);
+    }
+    $companyId = (int) $company['id'];
+
+    // From here on the company EXISTS in ConnectWise, so record it locally
+    // immediately -- any later hiccup becomes a warning, never an orphan.
+    $pdo->prepare(
+        'INSERT INTO customers (connectwise_id, name, is_mock, is_prospect_only, territory_name) VALUES (:cw, :name, 0, 1, :terr)'
+    )->execute([':cw' => (string) $companyId, ':name' => $cand['name'], ':terr' => $territoryName]);
+    $customerId = (int) $pdo->lastInsertId();
+    $pdo->prepare(
+        "INSERT INTO prospect_claims (customer_id, candidate_id, claimed_by_user_id, claimed_by_name, claimed_by_email, cw_member_id, cw_company_id, deadline_at)
+         VALUES (:cid, :cand, :uid, :uname, :uemail, :mid, :cwid, datetime('now', '+90 days'))"
+    )->execute([
+        ':cid' => $customerId, ':cand' => $cand['id'], ':uid' => $user['id'], ':uname' => $user['name'],
+        ':uemail' => $user['email'], ':mid' => $memberId, ':cwid' => (string) $companyId,
+    ]);
+    $pdo->prepare('UPDATE prospect_candidates SET claimed_customer_id = :cid WHERE id = :id')
+        ->execute([':cid' => $customerId, ':id' => $cand['id']]);
+
+    $warnings = [];
+    try {
+        relationships_cw_set_prospect_company_extras($companyId, $phone, $cand['website']);
+    } catch (Throwable $e) {
+        error_log('[relationships/prospecting] company phone/website failed for ' . $companyId . ': ' . $e->getMessage());
+        $warnings[] = 'The company phone/website could not be saved in ConnectWise — please add them there.';
+    }
+    try {
+        [$contact, $contactWarnings] = relationships_cw_create_prospect_contact(
+            $companyId, (string) $cand['contact_first_name'], (string) $cand['contact_last_name'],
+            $cand['contact_title'], (string) $cand['contact_email'], $phone
+        );
+        $warnings = array_merge($warnings, $contactWarnings);
+        $pdo->prepare('UPDATE prospect_claims SET cw_contact_id = :c WHERE customer_id = :cid')
+            ->execute([':c' => (string) $contact['id'], ':cid' => $customerId]);
+    } catch (Throwable $e) {
+        error_log('[relationships/prospecting] contact create failed for company ' . $companyId . ': ' . $e->getMessage());
+        $warnings[] = 'The company was created but its primary contact could not be added — please add ' . $cand['contact_first_name'] . ' ' . $cand['contact_last_name'] . ' in ConnectWise.';
+    }
+    $warnings = array_merge($warnings, relationships_cw_assign_prospect_team($companyId, $memberId));
+
+    relationships_respond(200, ['ok' => true, 'customer_id' => $customerId, 'warnings' => $warnings]);
 }
 
 relationships_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
