@@ -1251,6 +1251,15 @@
             formstackTab.close();
           }
         }
+        // Also refresh the per-coordinator view's own data (added
+        // 2026-09-24 per Michael: reps can now check a to-do off directly
+        // from their Open To-Dos list, not just from the customer
+        // dashboard) -- state.repTodosData is a separate piece of state
+        // from state.meetings, so it needs its own reload. Same "reload
+        // after mutate" idiom used elsewhere (checklist recycle/kill).
+        if (state.view === 'rep-todos' && state.repTodosName) {
+          loadRepTodos(state.repTodosName);
+        }
       } else if (formstackTab) {
         formstackTab.close();
       }
@@ -4717,7 +4726,7 @@
     var html = '<div class="view-header">' +
       '<button class="back-link" type="button" data-action="rep-todos-back">← Back to Dashboard</button>' +
       '<div class="view-title">' + escapeHtml(name) + '’s To-Dos</div>' +
-      '<div class="view-sub">Open and recently completed meeting to-dos assigned to ' + escapeHtml(name) + '. Click one to open that customer and complete it there.</div>' +
+      '<div class="view-sub">Every open to-do assigned to ' + escapeHtml(name) + ', with the ones scheduled shown on the calendar too. Check one off here, or click it to open that customer.</div>' +
     '</div>';
 
     if (state.repTodosError) {
@@ -4735,7 +4744,6 @@
     var openTasks = d.open_tasks || [];
     var recentCompleted = d.recent_completed_tasks || [];
     var openWithDate = openTasks.filter(function (t) { return !!t.due_date; });
-    var openNoDate = openTasks.filter(function (t) { return !t.due_date; });
     var riskScans = d.risk_scans || [];
 
     html += '<div class="rep-todos-layout">';
@@ -4746,7 +4754,13 @@
     if (riskScans.length) {
       html += repTodosListSectionHtml('Risk scans assigned to you', riskScans, '', repRiskScanItemHtml);
     }
-    html += repTodosListSectionHtml('Unscheduled', openNoDate, 'No unscheduled to-dos — everything open has a due date.') +
+    // All open to-dos, scheduled or not (added 2026-09-24 per Michael:
+    // "a list view of all open to-do's with creation date, customer
+    // name... allows the rep to check them off to completion") --
+    // previously this only listed the undated ones, since the dated ones
+    // already showed on the calendar above; now it's the full backlog,
+    // same order the server returns (due date first, then oldest-created).
+    html += repTodosListSectionHtml('Open To-Dos', openTasks, 'No open to-dos — everything is caught up.') +
       repTodosListSectionHtml('Recently completed', recentCompleted, 'Nothing completed yet.');
     html += '</div>';
     html += '</div>';
@@ -4786,16 +4800,29 @@
   }
 
   // Same markup/behavior as a global-todo-item (click -> open that
-  // customer's task) with a due-date badge appended when the task has one.
+  // customer's task) with a due-date badge appended when the task has one,
+  // plus its creation date and an inline checkbox (added 2026-09-24 per
+  // Michael: "a list view of all open to-do's with creation date,
+  // customer name and allows the rep to click on the to-do and takes them
+  // to the customer. It also allows them to check them off to
+  // completion.") -- the checkbox carries its own data-action, so
+  // clicking it (Element.closest('[data-action]') matches the checkbox
+  // itself first) toggles completion in place instead of navigating to
+  // the customer; clicking anywhere else in the row still opens the
+  // customer's task the way it always has.
   function repTodoItemHtml(t) {
     var isDone = !!t.completed_at;
+    var toggling = state.taskTogglingId === t.id;
     var dueBadge = t.due_date
       ? ' <span class="rep-todo-item-due">Due ' + escapeHtml(fmtOutgrowDate(t.due_date)) + '</span>'
       : '';
+    var createdMeta = t.created_at ? ' · created ' + escapeHtml(fmtTimestamp(t.created_at)) : '';
     return '<div class="global-todo-item' + (isDone ? ' done' : '') + '" data-action="open-customer-task" data-customer="' + t.customer_id + '" data-meeting="' + t.meeting_id + '" data-task="' + t.id + '">' +
+      '<input type="checkbox" class="rep-todo-item-check" ' + (isDone ? 'checked' : '') + (toggling ? ' disabled' : '') +
+        ' data-action="task-toggle-done" data-task="' + t.id + '" data-completed="' + (isDone ? '1' : '0') + '" aria-label="Mark to-do complete">' +
       '<div class="global-todo-item-main">' +
         '<div class="global-todo-item-desc">' + escapeHtml(t.description) + dueBadge + '</div>' +
-        '<div class="global-todo-item-meta">' + escapeHtml(t.customer_name) + ' · “' + escapeHtml(t.meeting_subject) + '”</div>' +
+        '<div class="global-todo-item-meta">' + escapeHtml(t.customer_name) + ' · “' + escapeHtml(t.meeting_subject) + '”' + createdMeta + '</div>' +
       '</div>' +
       (isDone
         ? '<div class="global-todo-item-done-meta">✓ ' + escapeHtml(t.completed_by_name) + ' — ' + escapeHtml(fmtTimestamp(t.completed_at)) + '</div>'
