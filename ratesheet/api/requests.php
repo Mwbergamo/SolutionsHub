@@ -39,6 +39,29 @@
  *   dialog before this is ever called. Does NOT touch ratesheet_users
  *   (real rep logins, not test data).
  *   -> { ok: true, deleted: <int> }
+ *
+ * POST /ratesheet/api/requests.php?action=retry
+ *   { id: <int> }
+ *   Added 2026-09-25, per Michael: "can we make a feature for
+ *   resubmission in the All Rate Sheets screen? it would just try to
+ *   create the company again in ConnectWise if it fails on initial
+ *   submission." Only a row whose status is 'failed' can be retried
+ *   (same admin/own-rows visibility rule as list/detail). Re-attempts
+ *   ConnectWise Company + Contact creation from the row's OWN already-
+ *   saved fields -- no new customer input, no re-validation, and
+ *   deliberately does NOT touch signature_data/signed_at/ip_address
+ *   (those record the customer's original, already-valid signature; a
+ *   staff retry is not a new one) or first_name/last_name/etc (nothing
+ *   about the submission itself changed, only the ConnectWise attempt is
+ *   being redone). See ratesheet_create_cw_account_and_notify() in
+ *   submit-core.php -- the exact same ConnectWise-create + Credit-Hold +
+ *   verify + notification-email logic the original signup path uses,
+ *   extracted so this and ratesheet_process_signup_submission() share it
+ *   rather than keeping two copies.
+ *   -> { ok: true } on success (same shape as a normal submit) or
+ *      { ok: false, error: <string> } (502) on another ConnectWise
+ *      failure -- fail_reason is updated on the row either way so the
+ *      next view/retry shows the latest error.
  */
 
 declare(strict_types=1);
@@ -46,6 +69,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/connectwise.php';
 require_once __DIR__ . '/altpay.php';
+require_once __DIR__ . '/submit-core.php'; // ratesheet_create_cw_account_and_notify() -- shared with public.php/walkin.php, see its docblock
 
 ratesheet_install_error_handlers();
 
@@ -300,6 +324,85 @@ if ($action === 'list') {
 
     $rows = array_map(fn (array $r) => ratesheet_request_row($r, true, $statusNames), $allRows);
     ratesheet_respond(200, ['ok' => true, 'requests' => $rows]);
+}
+
+if ($action === 'retry') {
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        ratesheet_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
+    }
+    $body = ratesheet_read_json_body();
+    $id = isset($body['id']) ? (int) $body['id'] : 0;
+    if ($id <= 0) {
+        ratesheet_respond(400, ['ok' => false, 'error' => 'Missing id.']);
+    }
+    $stmt = $pdo->prepare('SELECT * FROM rate_sheet_requests WHERE id = :id');
+    $stmt->execute([':id' => $id]);
+    $r = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($r === false) {
+        ratesheet_respond(404, ['ok' => false, 'error' => 'Rate sheet not found.']);
+    }
+    if (!ratesheet_is_admin($user) && strtolower((string) $r['rep_email']) !== strtolower((string) $user['email'])) {
+        ratesheet_respond(403, ['ok' => false, 'error' => 'You do not have access to this rate sheet.']);
+    }
+    if ($r['status'] !== 'failed') {
+        ratesheet_respond(409, ['ok' => false, 'error' => 'Only a failed rate sheet can be retried.']);
+    }
+
+    $companyName = $r['account_kind'] === 'Commercial'
+        ? (string) $r['business_name']
+        : trim((string) $r['first_name'] . ' ' . (string) $r['last_name']);
+
+    // Unlike the original submit path's closure (see submit-core.php),
+    // this one leaves everything about the customer's original signature
+    // alone -- first_name/last_name/business_name/customer_email/phone/
+    // address/city/state/zip/payment_method/want_copy_of_signup/
+    // invoices_emailed/agreed_to_terms/signature_data/signed_at/
+    // ip_address/submitted_at are all already correct on this row from
+    // when the customer actually signed. A retry only updates the
+    // ConnectWise outcome.
+    $retrySaveSubmission = function (
+        string $status,
+        ?string $failReason,
+        ?int $cwCompanyId,
+        ?int $cwContactId,
+        ?string $creditHoldStatus
+    ) use ($pdo, $r): void {
+        $stmt = $pdo->prepare(
+            'UPDATE rate_sheet_requests SET
+                status = :status, fail_reason = :fail_reason,
+                cw_company_id = :cw_company_id, cw_contact_id = :cw_contact_id,
+                credit_hold_status = :credit_hold_status
+             WHERE id = :id'
+        );
+        $stmt->execute([
+            ':status' => $status,
+            ':fail_reason' => $failReason,
+            ':cw_company_id' => $cwCompanyId,
+            ':cw_contact_id' => $cwContactId,
+            ':credit_hold_status' => $creditHoldStatus,
+            ':id' => $r['id'],
+        ]);
+    };
+
+    ratesheet_create_cw_account_and_notify(
+        $pdo,
+        $r,
+        $companyName,
+        (string) $r['first_name'],
+        (string) $r['last_name'],
+        (string) ($r['business_name'] ?? ''),
+        (string) $r['customer_email'],
+        (string) $r['phone'],
+        (string) $r['address_line1'],
+        (string) ($r['address_line2'] ?? ''),
+        (string) $r['city'],
+        (string) $r['state'],
+        (string) $r['zip'],
+        (string) $r['payment_method'],
+        (bool) $r['want_copy_of_signup'],
+        (bool) $r['invoices_emailed'],
+        $retrySaveSubmission
+    );
 }
 
 /**

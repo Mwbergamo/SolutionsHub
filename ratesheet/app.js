@@ -54,7 +54,17 @@
     requestsError: null,
 
     clearingTestData: false,
-    clearTestDataError: null
+    clearTestDataError: null,
+
+    // Added 2026-09-25 per Michael: "can we make a feature for
+    // resubmission in the All Rate Sheets screen? it would just try to
+    // create the company again in ConnectWise if it fails on initial
+    // submission." retryingId disables the clicked row's own button
+    // while its retry is in flight (and blocks a second click); retryErrors
+    // keeps each failed row's own latest retry error independently, keyed
+    // by request id, so retrying one row's error never clobbers another's.
+    retryingId: null,
+    retryErrors: {}
   };
 
   function e(s) {
@@ -147,6 +157,31 @@
     });
   }
 
+  // Re-attempts ConnectWise Company + Contact creation for a row whose
+  // initial submission failed (api/requests.php?action=retry -- see its
+  // docblock). Only ever called for a row the dashboard already shows as
+  // 'failed' (retryActionCell() only renders the button then), so no
+  // client-side status check is needed here beyond the in-flight guard.
+  function retryRequest(id) {
+    if (state.retryingId) return;
+    state.retryingId = id;
+    delete state.retryErrors[id];
+    render();
+    apiPost('api/requests.php?action=retry', { id: id }).then(function (r) {
+      state.retryingId = null;
+      if (r.data && r.data.ok) {
+        loadRequests(); // refresh so this row's status/color reflects the new outcome
+      } else {
+        state.retryErrors[id] = (r.data && r.data.error) || 'Could not retry this rate sheet.';
+        render();
+      }
+    }).catch(function () {
+      state.retryingId = null;
+      state.retryErrors[id] = 'Could not reach the server — check your connection and try again.';
+      render();
+    });
+  }
+
   function submitSendForm() {
     var f = state.sendForm;
     if (!f.prospect_email.trim() || !f.rep_name || !f.location || !f.account_kind) {
@@ -195,6 +230,19 @@
     var label = labels[paymentStatus] || 'Unknown';
     return '<span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:' + color + ';">' +
       '<span style="width:9px;height:9px;border-radius:999px;background:' + color + ';display:inline-block;"></span>' + label + '</span>';
+  }
+
+  // Added 2026-09-25 -- only a truly failed row (see submit-core.php's
+  // ratesheet_payment_status(): payment_status 'failed' comes ONLY from
+  // status === 'failed', never from 'hold_not_set', where a Company
+  // already exists and retrying would create a duplicate) gets a Retry
+  // button; every other row renders nothing here.
+  function retryActionCell(r) {
+    if (r.payment_status !== 'failed') return '';
+    var retrying = state.retryingId === r.id;
+    var err = state.retryErrors[r.id];
+    return '<button class="retry-btn" type="button" data-action="retry-request" data-id="' + r.id + '" ' + (retrying ? 'disabled' : '') + '>' + (retrying ? 'Retrying…' : 'Retry') + '</button>' +
+      (err ? '<span class="retry-btn-error">' + e(err) + '</span>' : '');
   }
 
   // Added 2026-09-22 per Michael's walk-in rate sheet request: a small
@@ -316,6 +364,7 @@
         '<td>' + e(r.location) + '</td>' +
         '<td>' + paymentMethodCell(r) + '</td>' +
         '<td>' + (r.invoices_emailed === null ? '—' : (r.invoices_emailed ? 'Yes' : 'No')) + '</td>' +
+        '<td>' + retryActionCell(r) + '</td>' +
         '</tr>';
     }).join('');
 
@@ -323,7 +372,7 @@
       clearTestDataButtonHtml() +
       '<div class="card">' +
       '  <table class="data-table">' +
-      '    <thead><tr><th></th><th>Prospect Email</th><th>Sent By</th><th>Time Sent</th><th>Type</th><th>Location</th><th>Payment Method</th><th>Invoices Emailed</th></tr></thead>' +
+      '    <thead><tr><th></th><th>Prospect Email</th><th>Sent By</th><th>Time Sent</th><th>Type</th><th>Location</th><th>Payment Method</th><th>Invoices Emailed</th><th>Actions</th></tr></thead>' +
       '    <tbody>' + body + '</tbody>' +
       '  </table>' +
       '  <div class="table-hint">Click a submitted or failed row to view the signed terms record.</div>' +
@@ -362,6 +411,8 @@
       window.open('receipt.html?id=' + encodeURIComponent(el.getAttribute('data-id')), '_blank');
     } else if (action === 'clear-test-data') {
       clearTestData();
+    } else if (action === 'retry-request') {
+      retryRequest(parseInt(el.getAttribute('data-id'), 10));
     }
   });
 

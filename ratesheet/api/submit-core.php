@@ -150,6 +150,49 @@ function ratesheet_process_signup_submission(PDO $pdo, array $row, array $input)
         ]);
     };
 
+    ratesheet_create_cw_account_and_notify(
+        $pdo, $row, $companyName, $firstName, $lastName, $businessName, $email, $phone,
+        $addr1, $addr2, $city, $state, $zip, $paymentMethod, $wantCopy, $invoicesEmailed,
+        $saveSubmission
+    );
+}
+
+/**
+ * Attempts the ConnectWise Company + Contact creation (with the Credit
+ * Hold follow-up/verification and the three notification emails) and
+ * responds -- extracted 2026-09-25 from ratesheet_process_signup_submission()
+ * so a failed row can be retried later without re-running validation or
+ * re-saving the customer's already-recorded signature/signed_at/
+ * ip_address (see requests.php's ?action=retry, added the same day per
+ * Michael: "can we make a feature for resubmission in the All Rate
+ * Sheets screen? it would just try to create the company again in
+ * ConnectWise if it fails on initial submission"). $saveSubmission is
+ * the caller's own closure -- the original submit path's closure
+ * re-saves every field (including signature/signed_at/ip_address,
+ * exactly as before this refactor); a retry's closure only touches
+ * status/fail_reason/cw_company_id/cw_contact_id/credit_hold_status,
+ * since nothing else about the original signature changed.
+ */
+function ratesheet_create_cw_account_and_notify(
+    PDO $pdo,
+    array $row,
+    string $companyName,
+    string $firstName,
+    string $lastName,
+    string $businessName,
+    string $email,
+    string $phone,
+    string $addr1,
+    string $addr2,
+    string $city,
+    string $state,
+    string $zip,
+    string $paymentMethod,
+    bool $wantCopy,
+    bool $invoicesEmailed,
+    Closure $saveSubmission
+): never
+{
     // Territory, per Sending Representative -- see
     // ratesheet_rep_territory_search_term()'s docblock in _util.php for
     // the full mapping and why this is a live ConnectWise name search
@@ -183,7 +226,7 @@ function ratesheet_process_signup_submission(PDO $pdo, array $row, array $input)
     } catch (Throwable $e) {
         error_log('[ratesheet/public] ConnectWise create failed for request ' . $row['id'] . ': ' . $e->getMessage());
         $saveSubmission('failed', $e->getMessage(), null, null, null);
-        ratesheet_respond(502, ['ok' => false, 'error' => 'We could not finish creating your account automatically, but your information was saved -- a CodeBlue Technology team member will finish setting up your account shortly.']);
+        ratesheet_respond(502, ['ok' => false, 'error' => 'We could not finish creating this account in ConnectWise automatically, but the information was saved and this can be retried once the issue is fixed.']);
     }
 
     // Explicitly enforce Credit Hold as its own follow-up step, per
