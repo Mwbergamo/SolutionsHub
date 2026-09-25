@@ -349,6 +349,59 @@ function ratesheet_cw_resolve_territory_id(string $searchTerm): int
 }
 
 /**
+ * Maps a customer-typed state into the 2-letter USPS code ConnectWise's
+ * Company.state field expects -- added 2026-09-25 (see
+ * ratesheet_cw_create_company()'s call to this for the real failure that
+ * prompted it). Strips periods and extra whitespace, then matches
+ * case-insensitively against either the 2-letter code itself or the
+ * full state name. Covers the 50 states, DC, and the US territories
+ * ConnectWise's own state list includes (Puerto Rico, the Virgin
+ * Islands, Guam, American Samoa, the Northern Mariana Islands) -- every
+ * customer this app has seen has been a US address. Anything this
+ * doesn't recognize (an actual typo, a non-US state) is returned
+ * trimmed but otherwise unchanged, so behavior for an unmapped value is
+ * exactly what it was before this existed -- ConnectWise's own
+ * validation is still the final word, this just clears the common cases.
+ */
+function ratesheet_normalize_state_for_cw(string $state): string
+{
+    $cleaned = trim(str_replace('.', '', $state));
+    if ($cleaned === '') {
+        return trim($state);
+    }
+    $key = strtoupper($cleaned);
+
+    static $states = [
+        'AL' => 'ALABAMA', 'AK' => 'ALASKA', 'AZ' => 'ARIZONA', 'AR' => 'ARKANSAS',
+        'CA' => 'CALIFORNIA', 'CO' => 'COLORADO', 'CT' => 'CONNECTICUT', 'DE' => 'DELAWARE',
+        'DC' => 'DISTRICT OF COLUMBIA', 'FL' => 'FLORIDA', 'GA' => 'GEORGIA', 'HI' => 'HAWAII',
+        'ID' => 'IDAHO', 'IL' => 'ILLINOIS', 'IN' => 'INDIANA', 'IA' => 'IOWA',
+        'KS' => 'KANSAS', 'KY' => 'KENTUCKY', 'LA' => 'LOUISIANA', 'ME' => 'MAINE',
+        'MD' => 'MARYLAND', 'MA' => 'MASSACHUSETTS', 'MI' => 'MICHIGAN', 'MN' => 'MINNESOTA',
+        'MS' => 'MISSISSIPPI', 'MO' => 'MISSOURI', 'MT' => 'MONTANA', 'NE' => 'NEBRASKA',
+        'NV' => 'NEVADA', 'NH' => 'NEW HAMPSHIRE', 'NJ' => 'NEW JERSEY', 'NM' => 'NEW MEXICO',
+        'NY' => 'NEW YORK', 'NC' => 'NORTH CAROLINA', 'ND' => 'NORTH DAKOTA', 'OH' => 'OHIO',
+        'OK' => 'OKLAHOMA', 'OR' => 'OREGON', 'PA' => 'PENNSYLVANIA', 'RI' => 'RHODE ISLAND',
+        'SC' => 'SOUTH CAROLINA', 'SD' => 'SOUTH DAKOTA', 'TN' => 'TENNESSEE', 'TX' => 'TEXAS',
+        'UT' => 'UTAH', 'VT' => 'VERMONT', 'VA' => 'VIRGINIA', 'WA' => 'WASHINGTON',
+        'WV' => 'WEST VIRGINIA', 'WI' => 'WISCONSIN', 'WY' => 'WYOMING',
+        'PR' => 'PUERTO RICO', 'VI' => 'VIRGIN ISLANDS', 'GU' => 'GUAM',
+        'AS' => 'AMERICAN SAMOA', 'MP' => 'NORTHERN MARIANA ISLANDS',
+    ];
+
+    if (isset($states[$key])) {
+        return $key;
+    }
+
+    $byName = array_flip($states);
+    if (isset($byName[$key])) {
+        return $byName[$key];
+    }
+
+    return trim($state);
+}
+
+/**
  * Creates the Company with its Billing Status set to $statusId (per
  * Michael, 2026-09-18: "Credit Hold" until Invoicing manually changes it
  * -- see this file's header and ratesheet_cw_resolve_status_id_by_name()
@@ -363,6 +416,17 @@ function ratesheet_cw_resolve_territory_id(string $searchTerm): int
  */
 function ratesheet_cw_create_company(string $name, string $addressLine1, string $addressLine2, string $city, string $state, string $zip, int $territoryId, int $statusId): array
 {
+    // Normalize the customer-typed state before it goes to ConnectWise --
+    // added 2026-09-25, after a real walk-in signup ("Bruce Baker") failed
+    // with ConnectWise's own "State Va. not found" error. The signup
+    // form's State field (signup.js and walk-in/app.js both) is free
+    // text, so "Va.", "va", "Virginia", etc. all need to land on the same
+    // "VA" ConnectWise's own state lookup recognizes -- only the value
+    // sent here is normalized; the customer's literal typed value is
+    // still what's saved to rate_sheet_requests.state and shown on the
+    // receipt/dashboard.
+    $state = ratesheet_normalize_state_for_cw($state);
+
     $today = gmdate('Y-m-d\T00:00:00\Z');
     // Terms Renewal Date = signup date + 365 days (1 year), per Michael
     // (2026-09-22): "I need them created with a Term Renewal Date of 1
