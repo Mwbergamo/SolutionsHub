@@ -69,6 +69,25 @@
  * ConnectWise round-trip: start() already has everything (id, name,
  * status) from the one /company/companies list call, so step() is pure DB
  * work and can safely use a larger batch size.
+ *
+ * NARROWED 2026-09-26, same day as the above, once Michael saw the actual
+ * effect of fetching EVERY non-Vendor company regardless of status: it was
+ * pulling in every permanently-inactive ConnectWise status too (anything
+ * ConnectWise has ever used that isn't Active/Delinquent/Special Info or
+ * Residential), each becoming its own zero-service "Prospect" customer row
+ * -- a big part of what was overwhelming the Contacts sync (every row in
+ * `customers` gets its own ConnectWise round-trip there). Per Michael:
+ * "Company Statuses of Credit Hold, Inactive, Inactive - Still Approved,
+ * Lead Pursuit and Prospect should be the ONLY company statuses considered
+ * for Sync to Relationships. Any others should be ignored until their
+ * status changes in ConnectWise." See RELATIONSHIPS_CW_PROSPECT_STATUSES
+ * and the new 'ignore' bucket in relationships_cw_classify_company_bucket()
+ * below -- a status outside that allowlist (and outside Active/Residential)
+ * now gets NO new customer row created for it, and an existing zero-service
+ * customer whose status moved out of the allowlist simply stops being
+ * flagged is_prospect_only (already reset to 0 for everyone at the top of
+ * start(), then only re-set for rows that still classify as 'prospect') --
+ * it drops out of the Prospects list without anything being deleted.
  */
 
 declare(strict_types=1);
@@ -105,11 +124,49 @@ function relationships_cw_status_matches(string $a, string $b): bool
 }
 
 /**
+ * The ONLY ConnectWise Company statuses that get imported into
+ * Relationships as a zero-service Prospect row -- Michael's own list,
+ * 2026-09-26, tightening the original catch-all-everything-else Prospect
+ * bucket once it started pulling in every permanently-inactive status
+ * ConnectWise has (see the NARROWED note in this file's header). Matched
+ * case-insensitively via relationships_cw_status_matches(), same as the
+ * Active/Residential sets above.
+ */
+const RELATIONSHIPS_CW_PROSPECT_STATUSES = [
+    'Credit Hold',
+    'Inactive',
+    'Inactive - Still Approved',
+    'Lead Pursuit',
+    'Prospect',
+];
+
+/**
+ * True if $statusName matches one of the allowlisted Prospect statuses
+ * above (case-insensitive, trimmed). Used by
+ * relationships_cw_classify_company_bucket() to decide 'prospect' vs the
+ * new 'ignore' bucket.
+ */
+function relationships_cw_prospect_status_allowed(string $statusName): bool
+{
+    foreach (RELATIONSHIPS_CW_PROSPECT_STATUSES as $allowed) {
+        if (relationships_cw_status_matches($statusName, $allowed)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
  * Classifies one company into exactly one of 'active' | 'prospect' |
- * 'residential', per the rules in this file's header. $hasRealAgreement
- * is whether this company already has any real customer_services rows
- * (an existing agreement-backed customer) -- irrelevant once Residential
- * is matched, since Residential wins regardless.
+ * 'residential' | 'ignore', per the rules in this file's header.
+ * $hasRealAgreement is whether this company already has any real
+ * customer_services rows (an existing agreement-backed customer) --
+ * irrelevant once Residential is matched, since Residential wins
+ * regardless, and irrelevant to 'ignore' too since $hasRealAgreement=true
+ * always resolves to 'active' before the allowlist check is ever reached.
+ * 'ignore' means: not Residential, no real agreement, not one of the
+ * Active-by-status names, and not in the new Prospect allowlist either --
+ * a permanently-inactive-looking status this sync now leaves alone.
  */
 function relationships_cw_classify_company_bucket(string $statusName, bool $hasRealAgreement): string
 {
@@ -124,7 +181,10 @@ function relationships_cw_classify_company_bucket(string $statusName, bool $hasR
             return 'active';
         }
     }
-    return 'prospect';
+    if (relationships_cw_prospect_status_allowed($statusName)) {
+        return 'prospect';
+    }
+    return 'ignore';
 }
 
 /**
@@ -273,13 +333,21 @@ function relationships_cw_prospect_sync_step(PDO $pdo, int $batchSize = 50): arr
                 }
             } else {
                 $bucket = relationships_cw_classify_company_bucket($statusName, false);
-                $insertNew->execute([
-                    ':cw' => $cwId,
-                    ':name' => $row['company_name'],
-                    ':status_name' => $statusName,
-                    ':is_prospect' => $bucket === 'prospect' ? 1 : 0,
-                    ':is_res' => $bucket === 'residential' ? 1 : 0,
-                ]);
+                if ($bucket !== 'ignore') {
+                    $insertNew->execute([
+                        ':cw' => $cwId,
+                        ':name' => $row['company_name'],
+                        ':status_name' => $statusName,
+                        ':is_prospect' => $bucket === 'prospect' ? 1 : 0,
+                        ':is_res' => $bucket === 'residential' ? 1 : 0,
+                    ]);
+                }
+                // else: no existing customer row, and this company's status
+                // isn't in the Prospect allowlist (nor Active/Residential) --
+                // deliberately create nothing, per the 2026-09-26 narrowing
+                // in this file's header. The queue row below is still marked
+                // done either way, so this company is simply left alone
+                // until its ConnectWise status changes.
             }
 
             $pdo->prepare("UPDATE cw_prospect_sync_queue SET status = 'done', processed_at = datetime('now'), error_message = NULL WHERE connectwise_id = :cw")
