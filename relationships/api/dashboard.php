@@ -182,6 +182,7 @@ if ($action === 'overview') {
     $totalContacts = 0;
     $totalProspects = 0;
     $totalResidential = 0;
+    $totalCustomers = 0;
     foreach ($customerRows as $r) {
         $customerId = (int) $r['id'];
         $isProspect = (bool) $r['is_prospect_only'];
@@ -191,6 +192,32 @@ if ($action === 'overview') {
         }
         if ($isResidential) {
             $totalResidential++;
+        }
+
+        // Duplicate-without-contacts filter -- added 2026-09-26 per Michael:
+        // "I want to filter out any duplicated customers. To filter out
+        // those duplicates, only take the customers that have one or more
+        // contacts. Any duplicates without contacts should be ignored."
+        // Scoped to the Total Customers bucket only, via the same
+        // !$isProspect && !$isResidential guard the outgrow-stale check
+        // below already uses -- a real Prospect or Residential company can
+        // legitimately have zero synced contacts (it may never have had a
+        // ConnectWise contact recorded) without being a duplicate, so this
+        // never touches those two buckets. `continue` here skips the row
+        // entirely: not counted in Total Customers, not counted toward
+        // Active Contacts (nothing to count), not included in the customer
+        // list returned to the frontend, and not counted toward the
+        // 60+-days outgrow-stale gauge below either. customers.php's own
+        // search/detail lookup is deliberately untouched by this -- a rep
+        // who already knows the company's name can still find and open it
+        // there; this filter only changes what shows up on the front-page
+        // dashboard.
+        $contactCount = $r['active_contact_count'] !== null ? (int) $r['active_contact_count'] : 0;
+        if (!$isProspect && !$isResidential && $contactCount === 0) {
+            continue;
+        }
+        if (!$isProspect && !$isResidential) {
+            $totalCustomers++;
         }
 
         $lastTouch = $outgrowLatest[$customerId]['touch_date'] ?? null;
@@ -213,7 +240,6 @@ if ($action === 'overview') {
         // 2026-09-16 per Michael: it wasn't showing a trustworthy number at
         // the aggregate level, and he only needs this data per-customer.
         $ticketYtd = $r['ticket_count_ytd'] !== null ? (int) $r['ticket_count_ytd'] : 0;
-        $contactCount = $r['active_contact_count'] !== null ? (int) $r['active_contact_count'] : 0;
         $totalContacts += $contactCount;
 
         $billingTrend = relationships_cw_billing_stored_series($pdo, $customerId)['trend'];
@@ -264,7 +290,14 @@ if ($action === 'overview') {
     // literally "Residential" (see connectwise-prospect-sync-core.php's
     // relationships_cw_classify_company_bucket() -- Residential wins over
     // an existing agreement too, per Michael's own answer when asked).
-    $totalCustomers = count($customerRows) - $totalProspects - $totalResidential;
+    //
+    // $totalCustomers itself is no longer this subtraction -- as of the
+    // 2026-09-26 duplicate-without-contacts filter above, a skipped
+    // (duplicate) row is present in $customerRows but counted in NONE of
+    // totalCustomers/totalProspects/totalResidential, so
+    // count($customerRows) - totalProspects - totalResidential would now
+    // overcount Total Customers by however many duplicates were filtered.
+    // It's a direct counter incremented in the loop above instead.
 
     $gauges = [
         ['key' => 'total_customers', 'label' => 'Total Customers', 'value' => $totalCustomers, 'format' => 'count'],
