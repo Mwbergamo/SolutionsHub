@@ -129,9 +129,32 @@ if ($action === 'overview') {
         ? ['sql' => '', 'params' => []]
         : relationships_territory_filter_sql($allowedTerritories, 'customers');
 
+    // No LIMIT here -- fixed 2026-09-26. This used to read "...ORDER BY
+    // name ASC LIMIT 500", harmless back when the whole `customers` table
+    // was real (agreement-backed) customers only. Once the Prospect
+    // Companies sync (connectwise-prospect-sync-core.php) started
+    // upserting every active/delinquent/special-info non-Vendor ConnectWise
+    // company as its own customer row -- by design, so every pillar/service
+    // can be marketed to them -- the real row count passed 500 and this
+    // query silently started truncating to the first 500 customers
+    // alphabetically. Every gauge below (Total Customers, Total Prospects,
+    // Active Contacts, 60+ Days outgrow-stale) is derived by looping over
+    // $customerRows in PHP, so all four silently went wrong together the
+    // moment that happened -- Michael saw Total Customers drop to 80 and
+    // a much lower PeopleFirst-among-real-customers count right after a
+    // "Run Sync Now" that had, correctly, just synced ~1,764 prospect
+    // companies for the first time. Nothing here calls ConnectWise live
+    // (see file header) -- it's a pure local-SQLite read plus a PHP loop,
+    // so there's no per-request network cost to removing the cap; the
+    // per-customer trend lookups later in this function (billing/ticket/
+    // contact) are each one indexed-by-customer_id local query too. If the
+    // full customer+prospect set ever grows large enough that this page
+    // becomes slow to load, the right fix is separate COUNT()/SUM()
+    // queries for the gauges (so they're correct regardless of list size)
+    // rather than reintroducing a LIMIT that silently drops real data.
     $customerStmt = $pdo->prepare(
         "SELECT id, name, is_peoplefirst, is_prospect_only, ticket_count_ytd, active_contact_count
-         FROM customers WHERE 1=1 {$territoryFilter['sql']} ORDER BY name ASC LIMIT 500"
+         FROM customers WHERE 1=1 {$territoryFilter['sql']} ORDER BY name ASC"
     );
     $customerStmt->execute($territoryFilter['params']);
     $customerRows = $customerStmt->fetchAll(PDO::FETCH_ASSOC);
