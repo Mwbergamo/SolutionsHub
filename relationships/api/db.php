@@ -102,6 +102,25 @@ function relationships_migrate(PDO $pdo): void
     // from an actual agreement) and connectwise-prospect-sync-core.php
     // (only ever sets it on a customer with zero customer_services rows).
     relationships_add_column_if_missing($pdo, 'customers', 'is_prospect_only', 'INTEGER NOT NULL DEFAULT 0');
+    // Company Status classification -- added 2026-09-26, per Michael:
+    // "Currently we call active customers anyone with an agreement. I need
+    // to expand that to include customers in the following statuses,
+    // leaving the rest to Prospects... I want to add another block for
+    // Residential customers." cw_status_name is the raw live ConnectWise
+    // Company status name (e.g. "Active", "Inactive-still approved",
+    // "Residential"), refreshed on every Company Status sync run --
+    // connectwise-prospect-sync-core.php's relationships_cw_classify_company_bucket()
+    // is the one place that decides Active vs Prospect vs Residential from
+    // it, and the front-page per-status toggle filters (app.js) read this
+    // column directly so a rep can slice by the exact live status rather
+    // than just the three-way bucket. is_residential mirrors
+    // is_prospect_only's existing pattern (a stored, reset-then-recomputed
+    // flag, not derived on every read) -- and, per Michael's explicit
+    // answer, wins over is_prospect_only/a real agreement: a company whose
+    // ConnectWise status is literally "Residential" always lands in the
+    // new Residential block, even if it also has real synced services.
+    relationships_add_column_if_missing($pdo, 'customers', 'cw_status_name', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'customers', 'is_residential', 'INTEGER NOT NULL DEFAULT 0');
     // 'monthly' (default) or 'annual' -- set by the Monthly Billing sync
     // (connectwise-billing-sync-core.php) when a customer's normal
     // trailing-6-month Agreement-invoice window comes back entirely $0 but
@@ -248,6 +267,11 @@ function relationships_migrate(PDO $pdo): void
         )
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_cw_prospect_sync_queue_status ON cw_prospect_sync_queue(status)');
+    // Carries the live ConnectWise Company status name from start() (one
+    // /company/companies list call) through to step() (pure DB work, no
+    // further ConnectWise round-trip) -- added 2026-09-26 alongside the
+    // customers.cw_status_name column above, same reasoning.
+    relationships_add_column_if_missing($pdo, 'cw_prospect_sync_queue', 'cw_status_name', "TEXT NOT NULL DEFAULT ''");
 
     // Front-page Primary Relationship Dashboard metrics -- added 2026-09-10
     // per Michael. Both the Service Ticket volume and Active Contact count

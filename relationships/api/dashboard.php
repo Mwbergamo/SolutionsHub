@@ -153,7 +153,7 @@ if ($action === 'overview') {
     // queries for the gauges (so they're correct regardless of list size)
     // rather than reintroducing a LIMIT that silently drops real data.
     $customerStmt = $pdo->prepare(
-        "SELECT id, name, is_peoplefirst, is_prospect_only, ticket_count_ytd, active_contact_count
+        "SELECT id, name, is_peoplefirst, is_prospect_only, is_residential, cw_status_name, ticket_count_ytd, active_contact_count
          FROM customers WHERE 1=1 {$territoryFilter['sql']} ORDER BY name ASC"
     );
     $customerStmt->execute($territoryFilter['params']);
@@ -181,11 +181,16 @@ if ($action === 'overview') {
     $customers = [];
     $totalContacts = 0;
     $totalProspects = 0;
+    $totalResidential = 0;
     foreach ($customerRows as $r) {
         $customerId = (int) $r['id'];
         $isProspect = (bool) $r['is_prospect_only'];
+        $isResidential = (bool) $r['is_residential'];
         if ($isProspect) {
             $totalProspects++;
+        }
+        if ($isResidential) {
+            $totalResidential++;
         }
 
         $lastTouch = $outgrowLatest[$customerId]['touch_date'] ?? null;
@@ -199,7 +204,7 @@ if ($action === 'overview') {
                 $lastTouch = null; // unparseable stored value -- treat as no published touch
             }
         }
-        if (!$isProspect && ($outgrowDaysSince === null || $outgrowDaysSince >= 60)) {
+        if (!$isProspect && !$isResidential && ($outgrowDaysSince === null || $outgrowDaysSince >= 60)) {
             $outgrowStaleCount++;
         }
         // ticket_count_ytd stays per-customer (feeds the customer list's
@@ -220,6 +225,8 @@ if ($action === 'overview') {
             'name' => $r['name'],
             'is_peoplefirst' => (bool) $r['is_peoplefirst'],
             'is_prospect_only' => $isProspect,
+            'is_residential' => $isResidential,
+            'cw_status_name' => $r['cw_status_name'],
             'last_outgrow_touch' => $lastTouch,
             'last_outgrow_touch_by' => $lastTouch !== null ? ($outgrowLatest[$customerId]['set_by_name'] ?? null) : null,
             'outgrow_days_since' => $outgrowDaysSince,
@@ -251,12 +258,18 @@ if ($action === 'overview') {
 
     // Prospects are their own group (Total Prospects tile), not part of
     // Total Customers -- 2026-09-23, per Michael, to set up a separate
-    // prospect workflow.
-    $totalCustomers = count($customerRows) - $totalProspects;
+    // prospect workflow. Residential is the same idea, added 2026-09-26,
+    // per Michael: "I want to add another block for Residential
+    // customers" -- companies whose live ConnectWise Company status is
+    // literally "Residential" (see connectwise-prospect-sync-core.php's
+    // relationships_cw_classify_company_bucket() -- Residential wins over
+    // an existing agreement too, per Michael's own answer when asked).
+    $totalCustomers = count($customerRows) - $totalProspects - $totalResidential;
 
     $gauges = [
         ['key' => 'total_customers', 'label' => 'Total Customers', 'value' => $totalCustomers, 'format' => 'count'],
         ['key' => 'total_prospects', 'label' => 'Total Prospects', 'value' => $totalProspects, 'format' => 'count'],
+        ['key' => 'total_residential', 'label' => 'Total Residential', 'value' => $totalResidential, 'format' => 'count'],
         ['key' => 'portfolio_billing_trend', 'label' => 'Portfolio Billing Trend', 'value' => null, 'format' => 'trend', 'trend' => $portfolioBillingTrend],
         ['key' => 'active_contacts', 'label' => 'Active Contacts', 'value' => $totalContacts, 'format' => 'count'],
         ['key' => 'outgrow_stale', 'label' => '60+ Days Since Last OutGrow Touch', 'value' => $outgrowStaleCount, 'format' => 'count'],

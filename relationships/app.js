@@ -164,11 +164,21 @@
     // Michael: the front page is a team dashboard + global action items
     // list, not a customer directory) -- clicking the Total Customers
     // gauge tile toggles it. See gaugesHtml()/overviewHtml().
-    // overviewListMode: null (hidden) | 'customers' | 'prospects' -- which
-    // group the front-page list shows; the Total Customers / Total
-    // Prospects tiles set it (prospects are their own group, not part of
-    // Total Customers, per Michael 2026-09-23).
+    // overviewListMode: null (hidden) | 'customers' | 'prospects' |
+    // 'residential' | 'outgrow' -- which group the front-page list shows;
+    // the Total Customers / Total Prospects / Total Residential / 60+ Days
+    // tiles set it (Prospects and Residential are their own groups, not
+    // part of Total Customers -- Residential added 2026-09-26 per
+    // Michael's "add another block for Residential customers").
     overviewListMode: null,
+    // Per-ConnectWise-status toggle chips shown above the Prospects list
+    // (added 2026-09-26, per Michael: "Reps should be able to toggle
+    // on/off each status to make their lists"). Map of cw_status_name ->
+    // false when a rep has hidden that status; absent/true means shown.
+    // Deliberately never persisted anywhere and reset every time the list
+    // is (re)opened (toggle-overview-list) -- Michael's own answer,
+    // "Resets every time," when asked whether this should persist per rep.
+    overviewStatusFilter: {},
     // OutGrow-stale list sort (front-page "60+ Days Since Last OutGrow
     // Touch" tile): 'asc' = earliest touch first (never-touched customers
     // lead), 'desc' = most recent first. One-shot flag so the background
@@ -3655,9 +3665,9 @@
           '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
           '<div class="gauge-value-row">' + trendBadgeHtml(g.trend, 'lg') + '</div>' +
         '</div>';
-      } else if (g.key === 'total_customers' || g.key === 'total_prospects' || g.key === 'outgrow_stale') {
+      } else if (g.key === 'total_customers' || g.key === 'total_prospects' || g.key === 'total_residential' || g.key === 'outgrow_stale') {
         // Clickable: shows/hides that group's list (hidden by default).
-        var listMode = g.key === 'total_customers' ? 'customers' : (g.key === 'total_prospects' ? 'prospects' : 'outgrow');
+        var listMode = g.key === 'total_customers' ? 'customers' : (g.key === 'total_prospects' ? 'prospects' : (g.key === 'total_residential' ? 'residential' : 'outgrow'));
         var listOpen = state.overviewListMode === listMode;
         html += '<button type="button" class="gauge-tile gauge-tile-clickable' + (g.key === 'outgrow_stale' ? ' gauge-tile-alert' : '') + (listOpen ? ' active' : '') + '" data-action="toggle-overview-list" data-mode="' + listMode + '" ' +
           'title="' + (listOpen ? 'Hide the list' : 'Show the list') + '">' +
@@ -3782,9 +3792,17 @@
   // a prospect.
   function filteredOverviewCustomers(customers) {
     if (state.overviewListMode === 'prospects') {
-      return customers.filter(function (c) { return c.is_prospect_only; });
+      var prospects = customers.filter(function (c) { return c.is_prospect_only; });
+      var filterMap = state.overviewStatusFilter || {};
+      return prospects.filter(function (c) {
+        var status = c.cw_status_name || '(no status)';
+        return filterMap[status] !== false;
+      });
     }
-    var customersOnly = customers.filter(function (c) { return !c.is_prospect_only; });
+    if (state.overviewListMode === 'residential') {
+      return customers.filter(function (c) { return c.is_residential; });
+    }
+    var customersOnly = customers.filter(function (c) { return !c.is_prospect_only && !c.is_residential; });
     if (state.overviewPeopleFirstOnly) {
       return customersOnly.filter(function (c) { return c.is_peoplefirst; });
     }
@@ -3795,9 +3813,34 @@
   // are always computed off the *unfiltered* customers array so a hidden
   // group's count doesn't disappear along with its rows.
   function overviewFilterBarHtml(customers) {
-    // Prospects have their own tile/list now, so the only filter left is
-    // PeopleFirst Only -- which only makes sense in the customers list.
-    if (state.overviewListMode === 'prospects') return '';
+    // Prospects have their own per-ConnectWise-status toggle chips instead
+    // of PeopleFirst Only -- added 2026-09-26, per Michael: "Reps should be
+    // able to toggle on/off each status to make their lists." Built from
+    // the *unfiltered* prospect set so a hidden status's chip (and count)
+    // never disappears just because it's currently toggled off.
+    if (state.overviewListMode === 'prospects') {
+      var prospects = customers.filter(function (c) { return c.is_prospect_only; });
+      var counts = {};
+      prospects.forEach(function (c) {
+        var status = c.cw_status_name || '(no status)';
+        counts[status] = (counts[status] || 0) + 1;
+      });
+      var statuses = Object.keys(counts).sort();
+      if (!statuses.length) return '';
+      var filterMap = state.overviewStatusFilter || {};
+      var chips = statuses.map(function (status) {
+        var on = filterMap[status] !== false;
+        return '<button class="overview-filter-btn status' + (on ? ' active' : '') + '" type="button" ' +
+          'data-action="toggle-overview-status" data-status="' + escapeHtml(status) + '" title="Show/hide ' + escapeHtml(status) + ' prospects">' +
+          escapeHtml(status) +
+          ' <span class="overview-filter-count">' + counts[status] + '</span>' +
+        '</button>';
+      }).join('');
+      return '<div class="overview-filter-bar">' + chips + '</div>';
+    }
+    // Residential has no filter bar of its own (2026-09-26) -- just the
+    // plain list, same as the customers list without PeopleFirst Only.
+    if (state.overviewListMode === 'residential') return '';
     var peopleFirstCount = customers.filter(function (c) { return c.is_peoplefirst; }).length;
     var pfOnly = !!state.overviewPeopleFirstOnly;
     return '<div class="overview-filter-bar">' +
@@ -3867,10 +3910,10 @@
       '</div>' +
       '<div class="overview-list">';
     if (!sorted.length) {
-      html += '<div class="overview-list-empty">' + (state.overviewListMode === 'prospects' ? 'No prospects.' : 'No customers match the current filter.') + '</div>';
+      html += '<div class="overview-list-empty">' + (state.overviewListMode === 'prospects' ? 'No prospects match the current filter.' : (state.overviewListMode === 'residential' ? 'No residential customers.' : 'No customers match the current filter.')) + '</div>';
     }
     sorted.forEach(function (c) {
-      var badge = c.is_peoplefirst ? peopleFirstBadgeHtml() : (c.is_prospect_only ? prospectBadgeHtml() : '');
+      var badge = c.is_peoplefirst ? peopleFirstBadgeHtml() : (c.is_prospect_only ? prospectBadgeHtml() : (c.is_residential ? residentialBadgeHtml() : ''));
       html += '<div class="overview-row" data-action="select-customer" data-id="' + c.id + '">' +
         '<div class="overview-col-name"><span class="overview-name">' + escapeHtml(c.name) + '</span>' + badge + '</div>' +
         '<div class="overview-col">' + (trendBadgeHtml(c.billing_trend) || '<span class="overview-dash">—</span>') + '</div>' +
@@ -3917,7 +3960,7 @@
         box += '<div class="search-empty">Searching…</div>';
       } else if (state.results.length) {
         state.results.forEach(function (c) {
-          var rowClass = c.is_peoplefirst ? ' peoplefirst' : (c.is_prospect_only ? ' prospect' : '');
+          var rowClass = c.is_peoplefirst ? ' peoplefirst' : (c.is_prospect_only ? ' prospect' : (c.is_residential ? ' residential' : ''));
           // matched_contact_name (customers.php's list action, added
           // 2026-09-10) is set when this result matched via a synced
           // ConnectWise Contact's name/email rather than the company name
@@ -3925,7 +3968,7 @@
           var viaHint = c.matched_contact_name ? '<span class="search-result-via">via ' + escapeHtml(c.matched_contact_name) + '</span>' : '';
           box += '<div class="search-result-row' + rowClass + '" data-action="select-customer" data-id="' + c.id + '">' +
             '<span>' + escapeHtml(c.name) + viaHint + '</span>' +
-            (c.is_peoplefirst ? peopleFirstBadgeHtml() : (c.is_prospect_only ? prospectBadgeHtml() : '')) +
+            (c.is_peoplefirst ? peopleFirstBadgeHtml() : (c.is_prospect_only ? prospectBadgeHtml() : (c.is_residential ? residentialBadgeHtml() : ''))) +
           '</div>';
         });
       } else {
@@ -3953,6 +3996,15 @@
   // add-ons.
   function prospectBadgeHtml() {
     return '<span class="prospect-badge" title="Prospect — a ConnectWise company with no active CodeBlue services yet. Full cross-sell opportunity.">◇ Prospect</span>';
+  }
+
+  // Residential: a ConnectWise Company whose live status is literally
+  // "Residential" -- added 2026-09-26, per Michael's own new block
+  // request. Residential wins over every other bucket, including an
+  // existing agreement (his own answer when asked directly), so this
+  // badge can appear even on a company with real customer_services rows.
+  function residentialBadgeHtml() {
+    return '<span class="residential-badge" title="Residential — ConnectWise Company status is Residential.">⌂ Residential</span>';
   }
 
   // Live ConnectWise ticket count + 6-month Agreement-invoice billing for
@@ -4183,11 +4235,11 @@
     var roster = missingRoster(detail);
     var html = '';
 
-    var headerClass = detail.customer.is_peoplefirst ? ' peoplefirst' : (detail.customer.is_prospect_only ? ' prospect' : '');
+    var headerClass = detail.customer.is_peoplefirst ? ' peoplefirst' : (detail.customer.is_prospect_only ? ' prospect' : (detail.customer.is_residential ? ' residential' : ''));
     html += '<div class="customer-header' + headerClass + '">' +
       '<div class="customer-header-left">' +
         '<div class="customer-name">' + escapeHtml(detail.customer.name) + '</div>' +
-        (detail.customer.is_peoplefirst ? peopleFirstBadgeHtml() : (detail.customer.is_prospect_only ? prospectBadgeHtml() : '')) +
+        (detail.customer.is_peoplefirst ? peopleFirstBadgeHtml() : (detail.customer.is_prospect_only ? prospectBadgeHtml() : (detail.customer.is_residential ? residentialBadgeHtml() : ''))) +
       '</div>' +
       '<div class="customer-header-right">' +
         '<button class="print-summary-btn" type="button" data-action="open-print-summary">Print Service Summary</button>' +
@@ -4208,6 +4260,12 @@
         html += '<div class="prospect-claim-note">Claimed by ' + escapeHtml(pclaim.claimed_by_name) + ' on ' + escapeHtml(fmtTimestamp(pclaim.claimed_at)) +
           ' \u2014 90 days to move this account forward: ' + daysLeftBadgeHtml(pclaim.days_left) + '</div>';
       }
+    } else if (detail.customer.is_residential) {
+      // Added 2026-09-26, per Michael's "add another block for Residential
+      // customers" request -- same note pattern as PeopleFirst/Prospect
+      // above, so every customer bucket gets a one-line explanation of
+      // what its badge means right on the dashboard.
+      html += '<div class="residential-note">Residential — ConnectWise Company status is Residential.</div>';
     }
 
     html += riskScansPanelHtml(detail.customer.id);
@@ -5435,9 +5493,20 @@
     } else if (action === 'toggle-overview-list') {
       var mode = el.getAttribute('data-mode');
       state.overviewListMode = state.overviewListMode === mode ? null : mode;
+      // Per-status Prospect filters never persist across list opens --
+      // 2026-09-26, per Michael's explicit "Resets every time" answer --
+      // so every status starts shown again each time a list is (re)opened.
+      state.overviewStatusFilter = {};
       render();
     } else if (action === 'toggle-overview-peoplefirst') {
       state.overviewPeopleFirstOnly = !state.overviewPeopleFirstOnly;
+      render();
+    } else if (action === 'toggle-overview-status') {
+      var status = el.getAttribute('data-status');
+      var filterMap = state.overviewStatusFilter || {};
+      var currentlyOn = filterMap[status] !== false;
+      filterMap[status] = currentlyOn ? false : true;
+      state.overviewStatusFilter = filterMap;
       render();
     } else if (action === 'open-print-summary') {
       state.printSummaryOpen = true;

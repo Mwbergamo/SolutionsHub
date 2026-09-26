@@ -143,6 +143,8 @@ a { color: inherit; }
 .search-result-row.peoplefirst:hover { background: oklch(0.91 0.06 85); }
 .search-result-row.prospect { background: oklch(0.93 0.045 300); }
 .search-result-row.prospect:hover { background: oklch(0.9 0.055 300); }
+.search-result-row.residential { background: oklch(0.93 0.05 40); }
+.search-result-row.residential:hover { background: oklch(0.9 0.06 40); }
 
 .search-empty {
   padding: 14px;
@@ -471,6 +473,16 @@ a { color: inherit; }
   color: oklch(0.78 0.15 85);
 }
 
+/* Per-ConnectWise-status toggle chips above the Prospects list (added
+   2026-09-26, per Michael: "Reps should be able to toggle on/off each
+   status to make their lists"). Same violet hue as .prospect-badge --
+   every one of these chips is filtering within the Prospects bucket. */
+.overview-filter-btn.status.active {
+  background: oklch(0.72 0.14 300 / 0.16);
+  border-color: oklch(0.72 0.14 300 / 0.55);
+  color: oklch(0.72 0.14 300);
+}
+
 .overview-list-empty {
   padding: 18px;
   text-align: center;
@@ -499,7 +511,8 @@ a { color: inherit; }
   color: oklch(0.5 0.02 255);
 }
 .search-result-row.peoplefirst .search-result-via,
-.search-result-row.prospect .search-result-via { color: oklch(0.35 0.02 255); }
+.search-result-row.prospect .search-result-via,
+.search-result-row.residential .search-result-via { color: oklch(0.35 0.02 255); }
 
 .customer-header {
   margin-top: 8px;
@@ -578,6 +591,39 @@ a { color: inherit; }
   color: oklch(0.72 0.14 300);
   background: oklch(0.72 0.14 300 / 0.12);
   border: 1px solid oklch(0.72 0.14 300 / 0.35);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+/* Residential indicator (search results + customer header) -- a
+   ConnectWise Company whose live status is literally "Residential" (see
+   connectwise-prospect-sync-core.php's
+   relationships_cw_classify_company_bucket()). Added 2026-09-26, per
+   Michael's "add another block for Residential customers" request -- a
+   fresh, unused hue so it stays visually distinct from PeopleFirst gold,
+   Prospect violet, and the hosted-elsewhere teal pillar tile. */
+
+.residential-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: oklch(0.75 0.13 40);
+  color: oklch(0.22 0.05 40);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.residential-note {
+  margin-top: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: oklch(0.75 0.13 40);
+  background: oklch(0.75 0.13 40 / 0.12);
+  border: 1px solid oklch(0.75 0.13 40 / 0.35);
   border-radius: 10px;
   padding: 10px 14px;
 }
