@@ -19,12 +19,12 @@
  */
 
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: oklch(0.15 0.028 255); }
-a { color: #2f8fef; }
-a:hover { color: #63aefc; }
-button { font-family: 'IBM Plex Sans', sans-serif; }
+html, body { margin: 0; height: 100%; background: var(--cbt-bg-page); }
+a { color: var(--cbt-brand-blue); }
+a:hover { color: var(--cbt-brand-blue-deep); }
+button { font-family: 'Libre Franklin', sans-serif; }
 ::-webkit-scrollbar { width: 10px; }
-::-webkit-scrollbar-thumb { background: oklch(0.32 0.03 255); border-radius: 8px; }
+::-webkit-scrollbar-thumb { background: var(--cbt-border-control); border-radius: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
 
@@ -137,38 +137,46 @@ body { overflow-x: hidden; }
    this step. */
 
 :root {
-  /* Dark chrome / canvas */
-  --cbt-bg-page: oklch(0.15 0.028 255);
-  --cbt-bg-header: oklch(0.12 0.026 255);
-  --cbt-bg-panel: oklch(0.19 0.03 255);
-  --cbt-bg-control: oklch(0.2 0.03 255);
-  --cbt-bg-control-2: oklch(0.22 0.03 255);
-  --cbt-bg-control-3: oklch(0.26 0.03 255);
-  --cbt-bg-control-4: oklch(0.28 0.03 255);
-  --cbt-bg-control-5: oklch(0.3 0.03 255);
-  --cbt-border-header: oklch(0.24 0.03 255);
-  --cbt-border-control: oklch(0.32 0.03 255);
+  /* Dark chrome / canvas -- retoned 2026-09-25 to match the new
+     staging.codebluetechnology.com site's navy/ink palette (fonts,
+     colors, accents pulled from the live site's :root custom properties
+     and computed styles). Same names/usage as before, new values. */
+  --cbt-bg-page: #0c1220;
+  --cbt-bg-header: #0a0f1c;
+  --cbt-bg-panel: #141b2c;
+  --cbt-bg-control: #1b2338;
+  --cbt-bg-control-2: #242d45;
+  --cbt-bg-control-3: #2c3550;
+  --cbt-bg-control-4: #333d58;
+  --cbt-bg-control-5: #3d4763;
+  --cbt-border-header: rgba(255, 255, 255, 0.1);
+  --cbt-border-control: #333d58;
 
-  /* Light "paper" cards (Overview tiles, search bar, product cards) */
+  /* Light "paper" cards (Overview tiles, search bar, product cards) --
+     unchanged; the new site is dark-only and gives no light-card
+     reference to retone against. */
   --cbt-card-bg: oklch(0.98 0.006 255);
   --cbt-card-bg-alt: oklch(0.97 0.006 255);
   --cbt-card-border: oklch(0.9 0.006 255);
   --cbt-card-border-strong: oklch(0.88 0.006 255);
 
   /* Text on dark chrome/panels */
-  --cbt-text-on-dark-primary: white;
-  --cbt-text-on-dark-secondary: oklch(0.7 0.02 255);
-  --cbt-text-on-dark-tertiary: oklch(0.6 0.02 255);
-  --cbt-text-on-dark-muted: oklch(0.55 0.02 255);
-  --cbt-text-on-dark-faint: oklch(0.5 0.02 255);
-  --cbt-text-on-dark-disabled: oklch(0.4 0.02 255);
+  --cbt-text-on-dark-primary: #eef0f5;
+  --cbt-text-on-dark-secondary: #c1c6d4;
+  --cbt-text-on-dark-tertiary: #a3a8ba;
+  --cbt-text-on-dark-muted: #848aa0;
+  --cbt-text-on-dark-faint: #6b7288;
+  --cbt-text-on-dark-disabled: #565e77;
 
-  /* Text on light cards */
+  /* Text on light cards -- unchanged, see note above */
   --cbt-text-on-light-primary: oklch(0.2 0.03 255);
   --cbt-text-on-light-secondary: oklch(0.45 0.02 255);
   --cbt-text-on-light-muted: oklch(0.58 0.02 255);
 
-  /* Status / accent (shared across themes for now) */
+  /* Status / accent (shared across themes for now) -- unchanged; these
+     are semantic (success/warning/danger/pillar-purple) rather than
+     brand-decorative, so they're left alone rather than force-fit to
+     the new site's palette. */
   --cbt-badge-amber-bg: oklch(0.78 0.14 85);
   --cbt-badge-amber-text: oklch(0.2 0.05 85);
   --cbt-warning-text: oklch(0.62 0.14 55);
@@ -180,6 +188,21 @@ body { overflow-x: hidden; }
   --cbt-note-bg: oklch(0.96 0.01 90);
   --cbt-note-label: oklch(0.5 0.05 80);
   --cbt-note-text: oklch(0.35 0.03 80);
+
+  /* Brand accent tokens -- pulled directly from the new website's
+     :root custom properties (--brand-blue/-green/-red and their
+     "deep"/"tint" variants). Not wired into any component yet; added
+     here so future work (buttons, links, highlights) has the real
+     brand colors available as tokens instead of one-off literals. */
+  --cbt-brand-blue: #4d7bd6;
+  --cbt-brand-blue-deep: #6f95e0;
+  --cbt-brand-blue-tint: rgba(77, 123, 214, 0.16);
+  --cbt-brand-green: #9dc22c;
+  --cbt-brand-green-deep: #b3d654;
+  --cbt-brand-green-tint: rgba(157, 194, 44, 0.14);
+  --cbt-brand-red: #d5636d;
+  --cbt-brand-red-deep: #e58891;
+  --cbt-brand-red-tint: rgba(213, 99, 109, 0.16);
 }
 
 /* Light theme -- draft values, not yet wired to a toggle (no code sets
@@ -483,7 +506,7 @@ body { overflow-x: hidden; }
   justify-content: space-between;
 }
 .pm-tray-title {
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: 'Jost', sans-serif;
   font-size: 16px;
   font-weight: 700;
   color: var(--cbt-text-on-light-primary);

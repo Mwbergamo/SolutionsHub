@@ -1893,7 +1893,7 @@ class Component extends DCLogic {
     });
     var totalH = y + rowH + PAD;
     var svg = [];
-    svg.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + CANVAS_W + '" height="' + totalH + '" viewBox="0 0 ' + CANVAS_W + ' ' + totalH + '" font-family="IBM Plex Sans, Arial, sans-serif">');
+    svg.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + CANVAS_W + '" height="' + totalH + '" viewBox="0 0 ' + CANVAS_W + ' ' + totalH + '" font-family="Libre Franklin, Arial, sans-serif">');
     svg.push('<rect x="0" y="0" width="' + CANVAS_W + '" height="' + totalH + '" fill="#F7F8FA"/>');
     placed.forEach(function (p) {
       var c = p.c, cx = p.x, cy = p.y;
@@ -2923,7 +2923,7 @@ class Component extends DCLogic {
 
   renderVals() {
     var self = this;
-    var accentColor = this.props.accentColor ?? '#2f8fef';
+    var accentColor = this.props.accentColor ?? '#4d7bd6';
     var view = this.state.view;
     var selections = this.state.selections;
     var selectionCount = Object.keys(selections).length;
@@ -3173,7 +3173,7 @@ class Component extends DCLogic {
               return {
                 id: opt.id, label: opt.label, detail: opt.detail, selected: isSelected,
                 cardStyle: 'width:340px;border-radius:16px;padding:20px 22px;cursor:pointer;' + (isSelected ? ('background:' + accentColor + ';') : 'background:oklch(0.98 0.006 255);'),
-                titleColor: isSelected ? '#ffffff' : 'oklch(0.2 0.03 255)',
+                titleColor: isSelected ? '#ffffff' : '#1b2338',
                 textColor: isSelected ? 'oklch(0.95 0.01 255)' : 'oklch(0.48 0.02 255)',
                 onClick: function () { self.selectOption(pillarObj.id, pillarObj.name, svc.id, svc.name, svc.outcome, opt.id, opt.label, opt.detail); }
               };
@@ -3222,7 +3222,7 @@ class Component extends DCLogic {
             singleAdded: added,
             singleButtonLabel: added ? 'Added to solution' : 'Add to solution',
             singleCardStyle: 'width:400px;border-radius:16px;padding:20px 22px;cursor:pointer;' + (added ? ('background:' + accentColor + ';') : 'background:oklch(0.98 0.006 255);'),
-            singleTitleColor: added ? '#ffffff' : 'oklch(0.2 0.03 255)',
+            singleTitleColor: added ? '#ffffff' : '#1b2338',
             onToggleSingle: function () { self.toggleSingle(pillarObj.id, pillarObj.name, svc.id, svc.name, svc.outcome, svc.blurb); }
           };
         }
@@ -3251,10 +3251,10 @@ class Component extends DCLogic {
         return {
           sku: fw.sku, label: fw.label, rate: '$' + fw.rate.toFixed(0) + '/mo', selected: selected,
           cardStyle: 'border-radius:12px;padding:14px 16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;' + (selected ? ('background:' + accentColor + ';') : 'background:oklch(0.98 0.006 255);'),
-          titleColor: selected ? '#ffffff' : 'oklch(0.2 0.03 255)',
-          rateColor: selected ? 'oklch(0.95 0.01 255)' : 'oklch(0.5 0.02 255)',
+          titleColor: selected ? '#ffffff' : '#1b2338',
+          rateColor: selected ? 'oklch(0.95 0.01 255)' : '#6b7288',
           hasSpecText: !!fw.specText, specText: fw.specText || '',
-          specColor: selected ? 'oklch(0.92 0.02 255)' : 'oklch(0.55 0.02 255)',
+          specColor: selected ? 'oklch(0.92 0.02 255)' : '#848aa0',
           hasImage: !!fw.image, image: fw.image || '',
           onImageClick: fw.image ? function (e) { if (e && e.stopPropagation) e.stopPropagation(); self.openImagePreview(fw.image, fw.label); } : null,
           onClick: function () { self.miSelectFirewall(fw.sku); }
@@ -3355,12 +3355,12 @@ class Component extends DCLogic {
         approachIsAlaCarte: !approachIsPF,
         setPeopleFirst: function () { self.miSetApproach('peoplefirst'); },
         setAlaCarte: function () { self.miSetApproach('alacarte'); },
-        peopleFirstStyle: 'flex:1;border-radius:14px;padding:16px 18px;cursor:pointer;' + (approachIsPF ? ('background:' + accentColor + ';') : 'background:oklch(0.19 0.03 255);border:1px solid oklch(0.3 0.03 255);'),
+        peopleFirstStyle: 'flex:1;border-radius:14px;padding:16px 18px;cursor:pointer;' + (approachIsPF ? ('background:' + accentColor + ';') : 'background:#141b2c;border:1px solid #3d4763;'),
         peopleFirstTitleColor: approachIsPF ? '#ffffff' : 'oklch(0.85 0.01 255)',
-        peopleFirstSubColor: approachIsPF ? 'oklch(0.95 0.01 255)' : 'oklch(0.55 0.02 255)',
-        alaCarteStyle: 'flex:1;border-radius:14px;padding:16px 18px;cursor:pointer;' + (!approachIsPF ? ('background:' + accentColor + ';') : 'background:oklch(0.19 0.03 255);border:1px solid oklch(0.3 0.03 255);'),
+        peopleFirstSubColor: approachIsPF ? 'oklch(0.95 0.01 255)' : '#848aa0',
+        alaCarteStyle: 'flex:1;border-radius:14px;padding:16px 18px;cursor:pointer;' + (!approachIsPF ? ('background:' + accentColor + ';') : 'background:#141b2c;border:1px solid #3d4763;'),
         alaCarteTitleColor: !approachIsPF ? '#ffffff' : 'oklch(0.85 0.01 255)',
-        alaCarteSubColor: !approachIsPF ? 'oklch(0.95 0.01 255)' : 'oklch(0.55 0.02 255)',
+        alaCarteSubColor: !approachIsPF ? 'oklch(0.95 0.01 255)' : '#848aa0',
         miDeviceRows: miDeviceRows,
         members: mi.members,
         membersInc: function () { self.miIncMembers(1); },
@@ -3389,8 +3389,8 @@ class Component extends DCLogic {
         discountDec: function () { self.miIncOnboardingDiscount(-1); },
         travelIsIncluded: mi.travelCoverage !== 'chargeable',
         travelIsChargeable: mi.travelCoverage === 'chargeable',
-        travelIncludedStyle: 'flex:1;border-radius:12px;padding:12px 16px;cursor:pointer;display:flex;align-items:center;gap:10px;' + (mi.travelCoverage !== 'chargeable' ? ('background:' + accentColor + ';') : 'background:oklch(0.19 0.03 255);border:1px solid oklch(0.3 0.03 255);'),
-        travelChargeableStyle: 'flex:1;border-radius:12px;padding:12px 16px;cursor:pointer;display:flex;align-items:center;gap:10px;' + (mi.travelCoverage === 'chargeable' ? ('background:' + accentColor + ';') : 'background:oklch(0.19 0.03 255);border:1px solid oklch(0.3 0.03 255);'),
+        travelIncludedStyle: 'flex:1;border-radius:12px;padding:12px 16px;cursor:pointer;display:flex;align-items:center;gap:10px;' + (mi.travelCoverage !== 'chargeable' ? ('background:' + accentColor + ';') : 'background:#141b2c;border:1px solid #3d4763;'),
+        travelChargeableStyle: 'flex:1;border-radius:12px;padding:12px 16px;cursor:pointer;display:flex;align-items:center;gap:10px;' + (mi.travelCoverage === 'chargeable' ? ('background:' + accentColor + ';') : 'background:#141b2c;border:1px solid #3d4763;'),
         setTravelIncluded: function () { self.miSetTravelCoverage('included'); },
         setTravelChargeable: function () { self.miSetTravelCoverage('chargeable'); },
         currentSpendText: (mi.currentMonthlySpend || 0) > 0 ? mi.currentMonthlySpend.toFixed(2) : '',
@@ -3634,13 +3634,13 @@ class Component extends DCLogic {
               // choice's photo — only wired (and only shown as tappable)
               // when that choice actually has an `image`.
               headingHasImage: !!headingImage,
-              headingStyle: 'font-size:11px;font-weight:700;color:oklch(0.5 0.02 255);text-transform:uppercase;letter-spacing:.04em;display:flex;align-items:center;gap:5px;' + (headingImage ? 'cursor:pointer;' : ''),
+              headingStyle: 'font-size:11px;font-weight:700;color:#6b7288;text-transform:uppercase;letter-spacing:.04em;display:flex;align-items:center;gap:5px;' + (headingImage ? 'cursor:pointer;' : ''),
               onHeadingClick: headingImage ? function () { self.openImagePreview(headingImage, chosenChoice.label); } : null,
               choices: (opt.choices || []).map(function (c) {
                 var isSelected = chosenId === c.id;
                 var shrink = shrinkUnselected && !isSelected;
                 var style = shrink
-                  ? 'border:none;border-radius:999px;padding:4px 9px;font-size:10px;font-weight:600;cursor:pointer;opacity:.5;background:oklch(0.93 0.004 255);color:oklch(0.55 0.02 255);'
+                  ? 'border:none;border-radius:999px;padding:4px 9px;font-size:10px;font-weight:600;cursor:pointer;opacity:.5;background:oklch(0.93 0.004 255);color:#848aa0;'
                   : ('border:none;border-radius:999px;padding:7px 14px;font-size:12.5px;font-weight:700;cursor:pointer;' + (isSelected ? ('background:' + accentColor + ';color:#ffffff;') : 'background:oklch(0.9 0.006 255);color:oklch(0.3 0.02 255);'));
                 return {
                   id: c.id, label: c.label, isSelected: isSelected,
