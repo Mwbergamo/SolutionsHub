@@ -84,32 +84,65 @@ function relationships_cw_request(string $path, array $query = [], string $metho
         $headers[] = 'Content-Type: application/json';
     }
 
-    $ch = curl_init($url);
-    $opts = [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER => $headers,
-        CURLOPT_TIMEOUT => 60,
-        CURLOPT_CONNECTTIMEOUT => 15,
-        CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_SSL_VERIFYHOST => 2,
-    ];
-    if ($method !== 'GET') {
-        $opts[CURLOPT_CUSTOMREQUEST] = $method;
-    }
-    if ($encodedBody !== null) {
-        $opts[CURLOPT_POSTFIELDS] = $encodedBody;
-    }
-    curl_setopt_array($ch, $opts);
-    $body = curl_exec($ch);
-    $errNo = curl_errno($ch);
-    $errStr = curl_error($ch);
-    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+    // Retry-with-backoff -- added 2026-09-26 per Michael (the Contacts sync
+    // was failing ~70% of its per-company calls at the volume this
+    // integration now runs at). GET ONLY: a transient failure on a
+    // POST/PUT/PATCH is ambiguous about whether ConnectWise already applied
+    // it server-side before the response was lost, and blindly retrying a
+    // write could create a duplicate record (see
+    // connectwise-activity-create.php's file header for how much care this
+    // integration already takes around writes) -- so every write still gets
+    // exactly one attempt, unchanged from before this fix. Only retried:
+    // a transport-level cURL error (no response reached us at all) or a
+    // ConnectWise 429 (rate limited) / 5xx (their own transient error) --
+    // never a 4xx, which means ConnectWise looked at the request and
+    // rejected it for a reason retrying can't fix.
+    $maxAttempts = $method === 'GET' ? 3 : 1;
+    $lastErrNo = 0;
+    $lastErrStr = '';
+    $lastStatus = 0;
+    $lastBody = '';
+    for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+        $ch = curl_init($url);
+        $opts = [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_TIMEOUT => 60,
+            CURLOPT_CONNECTTIMEOUT => 15,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+        ];
+        if ($method !== 'GET') {
+            $opts[CURLOPT_CUSTOMREQUEST] = $method;
+        }
+        if ($encodedBody !== null) {
+            $opts[CURLOPT_POSTFIELDS] = $encodedBody;
+        }
+        curl_setopt_array($ch, $opts);
+        $body = curl_exec($ch);
+        $errNo = curl_errno($ch);
+        $errStr = curl_error($ch);
+        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
 
-    if ($errNo !== 0) {
-        throw new RelationshipsConnectWiseError("ConnectWise request failed (cURL error $errNo): $errStr — $url");
+        $lastErrNo = $errNo;
+        $lastErrStr = $errStr;
+        $lastStatus = $status;
+        $lastBody = is_string($body) ? $body : '';
+
+        $transientTransportFailure = $errNo !== 0;
+        $transientHttpFailure = $errNo === 0 && ($status === 429 || ($status >= 500 && $status < 600));
+        if (($transientTransportFailure || $transientHttpFailure) && $attempt < $maxAttempts) {
+            usleep((int) (300000 * (2 ** ($attempt - 1)))); // 0.3s, then 0.6s
+            continue;
+        }
+        break;
     }
-    if ($status < 200 || $status >= 300) {
+
+    if ($lastErrNo !== 0) {
+        throw new RelationshipsConnectWiseError("ConnectWise request failed (cURL error $lastErrNo) after $attempt attempt(s): $lastErrStr — $url");
+    }
+    if ($lastStatus < 200 || $lastStatus >= 300) {
         // Widened from 500 to 3000 chars 2026-09-11 -- a real ConnectWise
         // 400 on POST /sales/activities came back with a multi-item
         // "errors" array (one entry per invalid/missing field), and the old
@@ -117,8 +150,8 @@ function relationships_cw_request(string $path, array $query = [], string $metho
         // the detail needed to diagnose the next field. 3000 chars comfortably
         // fits ConnectWise's typical validation-error bodies while still
         // bounding runaway/unexpected response sizes.
-        $snippet = is_string($body) ? substr($body, 0, 3000) : '';
-        throw new RelationshipsConnectWiseError("ConnectWise request returned HTTP $status for $url — $snippet");
+        $snippet = substr($lastBody, 0, 3000);
+        throw new RelationshipsConnectWiseError("ConnectWise request returned HTTP $lastStatus after $attempt attempt(s) for $url — $snippet");
     }
 
     // A successful write can legitimately return an empty body (204) or a
@@ -126,10 +159,10 @@ function relationships_cw_request(string $path, array $query = [], string $metho
     // list/count GET in this codebase returns -- normalize both to an array
     // so callers don't have to special-case is_array() vs is_object()-shaped
     // JSON themselves.
-    if ($body === '' || $body === false) {
+    if ($lastBody === '') {
         return [];
     }
-    $decoded = json_decode((string) $body, true);
+    $decoded = json_decode($lastBody, true);
     if (!is_array($decoded)) {
         throw new RelationshipsConnectWiseError("ConnectWise response was not valid JSON for $url");
     }
@@ -251,6 +284,24 @@ function relationships_cw_list(string $path, string $conditions, array $fields, 
         }
     }
     return $all;
+}
+
+/**
+ * Re-queues every 'error' row in a sync queue table back to 'pending' --
+ * added 2026-09-26 for the six sync stages' new "Retry Failed Only" action
+ * (sync.php). $table must be one of this codebase's own hardcoded queue
+ * table names (never derived from request input). Returns how many rows
+ * were re-queued. Deliberately does NOT touch 'done' rows or rebuild the
+ * queue from scratch -- only what already failed gets another attempt,
+ * which is now more likely to succeed on its own thanks to
+ * relationships_cw_request()'s retry-with-backoff above, and cheap even
+ * when it doesn't (no re-fetch/re-classify of everyone else).
+ */
+function relationships_cw_sync_requeue_errors(PDO $pdo, string $table): int
+{
+    $stmt = $pdo->prepare("UPDATE {$table} SET status = 'pending', error_message = NULL WHERE status = 'error'");
+    $stmt->execute();
+    return $stmt->rowCount();
 }
 
 /**

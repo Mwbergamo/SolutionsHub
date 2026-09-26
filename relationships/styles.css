@@ -2157,6 +2157,41 @@ a { color: inherit; }
 }
 .sync-progress-fill { height: 100%; background: #2f8fef; transition: width .2s ease; }
 
+.sync-stage-controls {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sync-stage-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid oklch(0.24 0.016 255);
+}
+.sync-stage-row:last-child { border-bottom: none; }
+
+.sync-stage-name { flex: 1; font-size: 12.5px; color: oklch(0.78 0.006 255); }
+
+.sync-stage-btn {
+  background: oklch(0.26 0.02 255);
+  border: 1px solid oklch(0.32 0.02 255);
+  color: oklch(0.85 0.006 255);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.sync-stage-btn:disabled { color: oklch(0.55 0.012 255); cursor: default; }
+
+.sync-stage-retry-btn {
+  border-color: oklch(0.5 0.16 30);
+  color: oklch(0.75 0.14 30);
+}
+
 .sync-result { margin-top: 14px; font-size: 12.5px; color: oklch(0.7 0.01 255); }
 
 .sync-errors-title { margin-top: 22px; font-size: 11.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: oklch(0.62 0.16 30); }

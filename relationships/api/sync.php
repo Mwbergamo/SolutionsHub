@@ -89,6 +89,24 @@
  * POST /relationships/api/sync.php?action=territory-start
  * POST /relationships/api/sync.php?action=territory-step
  *   Same shapes again.
+ *
+ * The *-retry-failed actions below (added 2026-09-26 per Michael, as part of
+ * the sync-reliability fix -- Contacts sync was failing ~70% of its calls at
+ * the volume this integration now runs at) exist for every stage above. Each
+ * re-queues just that stage's 'error' rows back to 'pending' -- cheap, since
+ * it does NOT rebuild the whole queue (no re-fetch/re-classify of every
+ * company/customer, only the ones that failed last time) -- and pairs with
+ * relationships_cw_request()'s new GET-only retry-with-backoff
+ * (connectwise.php), which already makes many of those failures less likely
+ * to recur on their own.
+ *
+ * POST /relationships/api/sync.php?action=retry-failed
+ * POST /relationships/api/sync.php?action=billing-retry-failed
+ * POST /relationships/api/sync.php?action=prospect-retry-failed
+ * POST /relationships/api/sync.php?action=ticket-history-retry-failed
+ * POST /relationships/api/sync.php?action=contacts-retry-failed
+ * POST /relationships/api/sync.php?action=territory-retry-failed
+ *   -> { ok: true, requeued: int }
  */
 
 declare(strict_types=1);
@@ -215,6 +233,11 @@ if ($action === 'step') {
     }
 }
 
+if ($action === 'retry-failed') {
+    $requeued = relationships_cw_sync_requeue_errors($pdo, 'cw_sync_queue');
+    relationships_respond(200, ['ok' => true, 'requeued' => $requeued]);
+}
+
 if ($action === 'billing-start') {
     try {
         $result = relationships_cw_billing_sync_start($pdo);
@@ -234,6 +257,11 @@ if ($action === 'billing-step') {
     } catch (RelationshipsConnectWiseError $e) {
         relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
     }
+}
+
+if ($action === 'billing-retry-failed') {
+    $requeued = relationships_cw_sync_requeue_errors($pdo, 'cw_billing_sync_queue');
+    relationships_respond(200, ['ok' => true, 'requeued' => $requeued]);
 }
 
 if ($action === 'prospect-start') {
@@ -257,6 +285,11 @@ if ($action === 'prospect-step') {
     }
 }
 
+if ($action === 'prospect-retry-failed') {
+    $requeued = relationships_cw_sync_requeue_errors($pdo, 'cw_prospect_sync_queue');
+    relationships_respond(200, ['ok' => true, 'requeued' => $requeued]);
+}
+
 if ($action === 'ticket-history-start') {
     try {
         $result = relationships_cw_ticket_history_sync_start($pdo);
@@ -276,6 +309,11 @@ if ($action === 'ticket-history-step') {
     } catch (RelationshipsConnectWiseError $e) {
         relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
     }
+}
+
+if ($action === 'ticket-history-retry-failed') {
+    $requeued = relationships_cw_sync_requeue_errors($pdo, 'cw_ticket_history_sync_queue');
+    relationships_respond(200, ['ok' => true, 'requeued' => $requeued]);
 }
 
 if ($action === 'contacts-start') {
@@ -299,6 +337,11 @@ if ($action === 'contacts-step') {
     }
 }
 
+if ($action === 'contacts-retry-failed') {
+    $requeued = relationships_cw_sync_requeue_errors($pdo, 'cw_contacts_sync_queue');
+    relationships_respond(200, ['ok' => true, 'requeued' => $requeued]);
+}
+
 if ($action === 'territory-start') {
     try {
         $result = relationships_cw_territory_sync_start($pdo);
@@ -318,6 +361,11 @@ if ($action === 'territory-step') {
     } catch (RelationshipsConnectWiseError $e) {
         relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
     }
+}
+
+if ($action === 'territory-retry-failed') {
+    $requeued = relationships_cw_sync_requeue_errors($pdo, 'cw_territory_sync_queue');
+    relationships_respond(200, ['ok' => true, 'requeued' => $requeued]);
 }
 
 relationships_respond(400, ['ok' => false, 'error' => 'Unknown action.']);

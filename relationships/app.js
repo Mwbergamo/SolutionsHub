@@ -1962,7 +1962,8 @@
   // Once the agreement queue is fully drained, runBillingSync() below picks
   // up automatically -- "Run Sync Now" does the same two-part sync the
   // nightly cron does, in one click.
-  function runFullSync() {
+  function runFullSync(chained) {
+    chained = chained !== false;
     state.syncRunning = true;
     state.syncDone = false;
     state.syncErrors = [];
@@ -1978,7 +1979,7 @@
       state.syncTotal = r.data.total;
       state.syncProcessed = 0;
       render();
-      stepSyncLoop();
+      stepSyncLoop(chained);
     }).catch(function () {
       state.syncRunning = false;
       state.error = 'Could not start the sync — check your connection and try again.';
@@ -1986,7 +1987,7 @@
     });
   }
 
-  function stepSyncLoop() {
+  function stepSyncLoop(chained) {
     apiPost('api/sync.php?action=step', { batch_size: 20 }).then(function (r) {
       if (!r.data || !r.data.ok) {
         state.syncRunning = false;
@@ -2003,10 +2004,12 @@
         state.syncRunning = false;
         state.syncDone = true;
         render();
-        runBillingSync();
+        if (chained) {
+          runBillingSync();
+        }
       } else {
         render();
-        stepSyncLoop();
+        stepSyncLoop(chained);
       }
     }).catch(function () {
       state.syncRunning = false;
@@ -2020,7 +2023,8 @@
   // (sync-errors-title/list, same pattern) but doesn't retroactively
   // un-succeed the agreement sync that already completed; they're
   // independent queues (see api/sync.php's file header).
-  function runBillingSync() {
+  function runBillingSync(chained) {
+    chained = chained !== false;
     state.billingSyncRunning = true;
     state.billingSyncDone = false;
     state.billingSyncErrors = [];
@@ -2035,7 +2039,7 @@
       state.billingSyncTotal = r.data.total;
       state.billingSyncProcessed = 0;
       render();
-      billingStepSyncLoop();
+      billingStepSyncLoop(chained);
     }).catch(function () {
       state.billingSyncRunning = false;
       state.error = 'Agreements synced, but the billing sync could not start — check your connection and try again.';
@@ -2043,7 +2047,7 @@
     });
   }
 
-  function billingStepSyncLoop() {
+  function billingStepSyncLoop(chained) {
     apiPost('api/sync.php?action=billing-step', { batch_size: 20 }).then(function (r) {
       if (!r.data || !r.data.ok) {
         state.billingSyncRunning = false;
@@ -2060,10 +2064,12 @@
         state.billingSyncRunning = false;
         state.billingSyncDone = true;
         render();
-        runProspectSync();
+        if (chained) {
+          runProspectSync();
+        }
       } else {
         render();
-        billingStepSyncLoop();
+        billingStepSyncLoop(chained);
       }
     }).catch(function () {
       state.billingSyncRunning = false;
@@ -2076,7 +2082,8 @@
   // billing as part of the same "Run Sync Now" click -- see api/sync.php's
   // file header. Independent queue: a failure here doesn't retroactively
   // un-succeed the agreement or billing sync that already completed.
-  function runProspectSync() {
+  function runProspectSync(chained) {
+    chained = chained !== false;
     state.prospectSyncRunning = true;
     state.prospectSyncDone = false;
     state.prospectSyncErrors = [];
@@ -2091,7 +2098,7 @@
       state.prospectSyncTotal = r.data.total;
       state.prospectSyncProcessed = 0;
       render();
-      prospectStepSyncLoop();
+      prospectStepSyncLoop(chained);
     }).catch(function () {
       state.prospectSyncRunning = false;
       state.error = 'Agreements and billing synced, but the prospect sync could not start — check your connection and try again.';
@@ -2099,7 +2106,7 @@
     });
   }
 
-  function prospectStepSyncLoop() {
+  function prospectStepSyncLoop(chained) {
     apiPost('api/sync.php?action=prospect-step', { batch_size: 50 }).then(function (r) {
       if (!r.data || !r.data.ok) {
         state.prospectSyncRunning = false;
@@ -2116,10 +2123,12 @@
         state.prospectSyncRunning = false;
         state.prospectSyncDone = true;
         render();
-        runTicketHistorySync();
+        if (chained) {
+          runTicketHistorySync();
+        }
       } else {
         render();
-        prospectStepSyncLoop();
+        prospectStepSyncLoop(chained);
       }
     }).catch(function () {
       state.prospectSyncRunning = false;
@@ -2132,7 +2141,8 @@
   // prospects as part of the same "Run Sync Now" click -- see
   // api/sync.php's file header. Independent queue: a failure here doesn't
   // retroactively un-succeed any sync that already completed.
-  function runTicketHistorySync() {
+  function runTicketHistorySync(chained) {
+    chained = chained !== false;
     state.ticketHistorySyncRunning = true;
     state.ticketHistorySyncDone = false;
     state.ticketHistorySyncErrors = [];
@@ -2147,7 +2157,7 @@
       state.ticketHistorySyncTotal = r.data.total;
       state.ticketHistorySyncProcessed = 0;
       render();
-      ticketHistoryStepSyncLoop();
+      ticketHistoryStepSyncLoop(chained);
     }).catch(function () {
       state.ticketHistorySyncRunning = false;
       state.error = 'The ticket history sync could not start — check your connection and try again.';
@@ -2155,7 +2165,7 @@
     });
   }
 
-  function ticketHistoryStepSyncLoop() {
+  function ticketHistoryStepSyncLoop(chained) {
     apiPost('api/sync.php?action=ticket-history-step', { batch_size: 50 }).then(function (r) {
       if (!r.data || !r.data.ok) {
         state.ticketHistorySyncRunning = false;
@@ -2172,10 +2182,12 @@
         state.ticketHistorySyncRunning = false;
         state.ticketHistorySyncDone = true;
         render();
-        runContactsSync();
+        if (chained) {
+          runContactsSync();
+        }
       } else {
         render();
-        ticketHistoryStepSyncLoop();
+        ticketHistoryStepSyncLoop(chained);
       }
     }).catch(function () {
       state.ticketHistorySyncRunning = false;
@@ -2187,7 +2199,8 @@
   // Same shape again, run last as part of "Run Sync Now" -- once this
   // finishes, the front-page overview is reloaded so its gauges/list
   // reflect the sync that just ran (see loadOverview()).
-  function runContactsSync() {
+  function runContactsSync(chained) {
+    chained = chained !== false;
     state.contactsSyncRunning = true;
     state.contactsSyncDone = false;
     state.contactsSyncErrors = [];
@@ -2202,7 +2215,7 @@
       state.contactsSyncTotal = r.data.total;
       state.contactsSyncProcessed = 0;
       render();
-      contactsStepSyncLoop();
+      contactsStepSyncLoop(chained);
     }).catch(function () {
       state.contactsSyncRunning = false;
       state.error = 'The contacts sync could not start — check your connection and try again.';
@@ -2210,7 +2223,7 @@
     });
   }
 
-  function contactsStepSyncLoop() {
+  function contactsStepSyncLoop(chained) {
     apiPost('api/sync.php?action=contacts-step', { batch_size: 50 }).then(function (r) {
       if (!r.data || !r.data.ok) {
         state.contactsSyncRunning = false;
@@ -2227,10 +2240,12 @@
         state.contactsSyncRunning = false;
         state.contactsSyncDone = true;
         render();
-        runTerritorySync();
+        if (chained) {
+          runTerritorySync();
+        }
       } else {
         render();
-        contactsStepSyncLoop();
+        contactsStepSyncLoop(chained);
       }
     }).catch(function () {
       state.contactsSyncRunning = false;
@@ -2243,7 +2258,8 @@
   // finishes, the front-page overview is reloaded so its gauges/list
   // reflect the sync that just ran (see loadOverview()), same as contacts
   // used to do directly before this stage was added.
-  function runTerritorySync() {
+  function runTerritorySync(chained) {
+    chained = chained !== false;
     state.territorySyncRunning = true;
     state.territorySyncDone = false;
     state.territorySyncErrors = [];
@@ -2258,7 +2274,7 @@
       state.territorySyncTotal = r.data.total;
       state.territorySyncProcessed = 0;
       render();
-      territoryStepSyncLoop();
+      territoryStepSyncLoop(chained);
     }).catch(function () {
       state.territorySyncRunning = false;
       state.error = 'The territory sync could not start — check your connection and try again.';
@@ -2266,7 +2282,7 @@
     });
   }
 
-  function territoryStepSyncLoop() {
+  function territoryStepSyncLoop(chained) {
     apiPost('api/sync.php?action=territory-step', { batch_size: 50 }).then(function (r) {
       if (!r.data || !r.data.ok) {
         state.territorySyncRunning = false;
@@ -2286,11 +2302,101 @@
         loadOverview();
       } else {
         render();
-        territoryStepSyncLoop();
+        territoryStepSyncLoop(chained);
       }
     }).catch(function () {
       state.territorySyncRunning = false;
       state.error = 'Territory sync failed partway through — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Per-stage lookup used by the Sync view's new "Run Only" and
+  // "Retry Failed" controls -- added 2026-09-26 per Michael's confirmed
+  // "Full plan" for the sync-reliability fix (Contacts sync was failing
+  // ~70% of its calls at the volume this integration now runs at).
+  // `run(false)` starts that one stage without chaining into the next --
+  // exactly what runFullSync()/runBillingSync()/etc already support via
+  // the new `chained` param above, just called directly instead of via
+  // the previous stage's completion. `step(false)` resumes that stage's
+  // existing queue (its already-set-up start()'s queue) without rebuilding
+  // it -- used by retrySyncFailed() below, which only re-queues the rows
+  // that failed and must NOT call action=start again (that would delete
+  // and rebuild the whole queue, re-fetching and re-classifying every
+  // company/customer from scratch, defeating the point of a cheap retry).
+  var SYNC_STAGE_MAP = {
+    agreements: {
+      run: function (chained) { runFullSync(chained); },
+      step: function (chained) { stepSyncLoop(chained); },
+      retryAction: 'retry-failed',
+      runningKey: 'syncRunning', doneKey: 'syncDone', errorsKey: 'syncErrors'
+    },
+    billing: {
+      run: function (chained) { runBillingSync(chained); },
+      step: function (chained) { billingStepSyncLoop(chained); },
+      retryAction: 'billing-retry-failed',
+      runningKey: 'billingSyncRunning', doneKey: 'billingSyncDone', errorsKey: 'billingSyncErrors'
+    },
+    prospects: {
+      run: function (chained) { runProspectSync(chained); },
+      step: function (chained) { prospectStepSyncLoop(chained); },
+      retryAction: 'prospect-retry-failed',
+      runningKey: 'prospectSyncRunning', doneKey: 'prospectSyncDone', errorsKey: 'prospectSyncErrors'
+    },
+    'ticket-history': {
+      run: function (chained) { runTicketHistorySync(chained); },
+      step: function (chained) { ticketHistoryStepSyncLoop(chained); },
+      retryAction: 'ticket-history-retry-failed',
+      runningKey: 'ticketHistorySyncRunning', doneKey: 'ticketHistorySyncDone', errorsKey: 'ticketHistorySyncErrors'
+    },
+    contacts: {
+      run: function (chained) { runContactsSync(chained); },
+      step: function (chained) { contactsStepSyncLoop(chained); },
+      retryAction: 'contacts-retry-failed',
+      runningKey: 'contactsSyncRunning', doneKey: 'contactsSyncDone', errorsKey: 'contactsSyncErrors'
+    },
+    territory: {
+      run: function (chained) { runTerritorySync(chained); },
+      step: function (chained) { territoryStepSyncLoop(chained); },
+      retryAction: 'territory-retry-failed',
+      runningKey: 'territorySyncRunning', doneKey: 'territorySyncDone', errorsKey: 'territorySyncErrors'
+    }
+  };
+
+  // Runs exactly one sync stage, standalone -- does not cascade into the
+  // next stage even once this one finishes.
+  function runStageOnly(stage) {
+    var cfg = SYNC_STAGE_MAP[stage];
+    if (cfg) {
+      cfg.run(false);
+    }
+  }
+
+  // Re-queues just this stage's failed rows (api/sync.php's *-retry-failed
+  // action -- cheap, doesn't touch anything that already succeeded) and,
+  // once that's confirmed, resumes that stage's step loop directly so the
+  // re-queued rows actually get processed now rather than just sitting
+  // pending again. Standalone (chained=false), same as "Run Only" -- a
+  // retry shouldn't cascade into the next stage either.
+  function retrySyncFailed(stage) {
+    var cfg = SYNC_STAGE_MAP[stage];
+    if (!cfg) {
+      return;
+    }
+    apiPost('api/sync.php?action=' + cfg.retryAction, {}).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.error = (r.data && r.data.error) || 'Could not retry the failed rows.';
+        render();
+        return;
+      }
+      state[cfg.runningKey] = true;
+      state[cfg.doneKey] = false;
+      state[cfg.errorsKey] = [];
+      state.error = null;
+      render();
+      cfg.step(false);
+    }).catch(function () {
+      state.error = 'Could not retry the failed rows — check your connection and try again.';
       render();
     });
   }
@@ -3417,6 +3523,32 @@
     }
 
     html += '<button class="sync-run-btn" type="button" data-action="run-sync"' + (running ? ' disabled' : '') + '>' + (running ? 'Syncing…' : 'Run Sync Now') + '</button>';
+
+    // Independent per-stage controls -- added 2026-09-26 per Michael's
+    // confirmed "Full plan" for the sync-reliability fix. api/sync.php has
+    // always supported every stage's start/step (and now retry-failed)
+    // independently; this is what actually exposes that in the UI, so a
+    // rep who only needs (say) Contacts re-synced doesn't have to sit
+    // through Agreements/Billing/Prospects/Ticket History again first.
+    var stageButtonDefs = [
+      { stage: 'agreements', label: 'Services (Agreements)', totals: state.syncTotals },
+      { stage: 'billing', label: 'Monthly Billing', totals: state.billingSyncTotals },
+      { stage: 'prospects', label: 'Prospect Companies', totals: state.prospectSyncTotals },
+      { stage: 'ticket-history', label: 'Ticket History', totals: state.ticketHistorySyncTotals },
+      { stage: 'contacts', label: 'Contacts', totals: state.contactsSyncTotals },
+      { stage: 'territory', label: 'Territories', totals: state.territorySyncTotals }
+    ];
+    html += '<div class="sync-stage-controls">';
+    stageButtonDefs.forEach(function (def) {
+      html += '<div class="sync-stage-row">' +
+        '<span class="sync-stage-name">' + escapeHtml(def.label) + '</span>' +
+        '<button class="sync-stage-btn" type="button" data-action="run-stage" data-stage="' + def.stage + '"' + (running ? ' disabled' : '') + '>Run Only</button>';
+      if (def.totals && def.totals.error) {
+        html += '<button class="sync-stage-btn sync-stage-retry-btn" type="button" data-action="retry-stage-failed" data-stage="' + def.stage + '"' + (running ? ' disabled' : '') + '>Retry Failed (' + def.totals.error + ')</button>';
+      }
+      html += '</div>';
+    });
+    html += '</div>';
 
     if (!running) {
       if (state.syncDone) {
@@ -5369,6 +5501,10 @@
       loadSyncStatus();
     } else if (action === 'run-sync') {
       runFullSync();
+    } else if (action === 'run-stage') {
+      runStageOnly(el.getAttribute('data-stage'));
+    } else if (action === 'retry-stage-failed') {
+      retrySyncFailed(el.getAttribute('data-stage'));
     } else if (action === 'show-territory-admin') {
       state.view = 'territory-admin';
       state.error = null;
