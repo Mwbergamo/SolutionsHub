@@ -100,6 +100,7 @@ function relationships_cw_billing_sync_step(PDO $pdo, int $batchSize = 20): arra
     );
     $deleteYears = $pdo->prepare('DELETE FROM customer_yearly_billing WHERE customer_id = :cid');
     $setCadence = $pdo->prepare('UPDATE customers SET billing_cadence = :cadence WHERE id = :cid');
+    $setRecentBilling = $pdo->prepare('UPDATE customers SET has_recent_billing = :v WHERE id = :cid');
 
     $processed = 0;
     $errors = [];
@@ -142,6 +143,11 @@ function relationships_cw_billing_sync_step(PDO $pdo, int $batchSize = 20): arra
                 $deleteYears->execute([':cid' => $customerId]);
             }
             $setCadence->execute([':cadence' => $cadence, ':cid' => $customerId]);
+
+            // See has_recent_billing's comment above $setRecentBilling's
+            // declaration for exactly what this approximates and why.
+            $hasRecentBilling = $monthlyTotal > 0.0 || $cadence === 'annual';
+            $setRecentBilling->execute([':v' => $hasRecentBilling ? 1 : 0, ':cid' => $customerId]);
 
             $pdo->prepare('UPDATE cw_billing_sync_queue SET status = \'done\', processed_at = datetime(\'now\'), error_message = NULL WHERE customer_id = :id')
                 ->execute([':id' => $customerId]);

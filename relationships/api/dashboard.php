@@ -153,7 +153,7 @@ if ($action === 'overview') {
     // queries for the gauges (so they're correct regardless of list size)
     // rather than reintroducing a LIMIT that silently drops real data.
     $customerStmt = $pdo->prepare(
-        "SELECT id, name, is_peoplefirst, is_prospect_only, is_residential, cw_status_name, ticket_count_ytd, active_contact_count
+        "SELECT id, name, is_peoplefirst, is_prospect_only, is_residential, cw_status_name, ticket_count_ytd, active_contact_count, has_recent_billing
          FROM customers WHERE 1=1 {$territoryFilter['sql']} ORDER BY name ASC"
     );
     $customerStmt->execute($territoryFilter['params']);
@@ -212,6 +212,7 @@ if ($action === 'overview') {
         // there; this filter only changes what shows up on the front-page
         // dashboard.
         $contactCount = $r['active_contact_count'] !== null ? (int) $r['active_contact_count'] : 0;
+        $hasRecentBilling = (bool) $r['has_recent_billing'];
         if (!$isProspect && !$isResidential && $contactCount === 0) {
             continue;
         }
@@ -230,7 +231,7 @@ if ($action === 'overview') {
                 $lastTouch = null; // unparseable stored value -- treat as no published touch
             }
         }
-        if (!$isProspect && !$isResidential && ($outgrowDaysSince === null || $outgrowDaysSince >= 60)) {
+        if (!$isProspect && !$isResidential && $hasRecentBilling && ($outgrowDaysSince === null || $outgrowDaysSince >= 60)) {
             $outgrowStaleCount++;
         }
         // ticket_count_ytd stays per-customer (feeds the customer list's
@@ -251,6 +252,7 @@ if ($action === 'overview') {
             'is_prospect_only' => $isProspect,
             'is_residential' => $isResidential,
             'cw_status_name' => $r['cw_status_name'],
+            'has_recent_billing' => $hasRecentBilling,
             'last_outgrow_touch' => $lastTouch,
             'last_outgrow_touch_by' => $lastTouch !== null ? ($outgrowLatest[$customerId]['set_by_name'] ?? null) : null,
             'outgrow_days_since' => $outgrowDaysSince,

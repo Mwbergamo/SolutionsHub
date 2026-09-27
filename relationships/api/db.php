@@ -135,6 +135,18 @@ function relationships_migrate(PDO $pdo): void
     // isn't stuck on a stale cadence forever.
     relationships_add_column_if_missing($pdo, 'customers', 'billing_cadence', "TEXT NOT NULL DEFAULT 'monthly'");
 
+    // Whether this customer has had any real Agreement-invoice billing
+    // within roughly the last 2-3 years -- added 2026-09-27, per Michael's
+    // request that the OutGrow 60+-days-stale list only ever include
+    // customers who've actually had billable service recently, "It's not
+    // a prospecting list." Set by the Monthly Billing sync
+    // (connectwise-billing-sync-core.php) from data that sync already
+    // fetches (the trailing-6-month total, or the existing 3-year
+    // annual-cadence check when that's $0) -- no new ConnectWise field or
+    // API call. Recomputed from scratch on every billing sync run, same
+    // pattern as billing_cadence directly above.
+    relationships_add_column_if_missing($pdo, 'customers', 'has_recent_billing', 'INTEGER NOT NULL DEFAULT 0');
+
     // One row per active ConnectWise agreement addition (mocked for now —
     // `source` distinguishes seeded sample rows from anything a future real
     // ConnectWise sync writes). pillar_id/service_id match SolutionsHub's

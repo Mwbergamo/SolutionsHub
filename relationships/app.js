@@ -3993,7 +3993,7 @@
   // same select-customer action every other list uses.
   function outgrowStaleListHtml(customers) {
     var stale = customers.filter(function (c) {
-      return !c.is_prospect_only && (c.outgrow_days_since == null || c.outgrow_days_since >= 60);
+      return !c.is_prospect_only && !c.is_residential && c.has_recent_billing && (c.outgrow_days_since == null || c.outgrow_days_since >= 60);
     });
     var dir = state.outgrowSortDir === 'desc' ? -1 : 1;
     stale.sort(function (a, b) {
