@@ -179,7 +179,6 @@ if ($action === 'overview') {
     $outgrowStaleCount = 0;
 
     $customers = [];
-    $totalContacts = 0;
     $totalProspects = 0;
     $totalResidential = 0;
     $totalCustomers = 0;
@@ -240,7 +239,6 @@ if ($action === 'overview') {
         // 2026-09-16 per Michael: it wasn't showing a trustworthy number at
         // the aggregate level, and he only needs this data per-customer.
         $ticketYtd = $r['ticket_count_ytd'] !== null ? (int) $r['ticket_count_ytd'] : 0;
-        $totalContacts += $contactCount;
 
         $billingTrend = relationships_cw_billing_stored_series($pdo, $customerId)['trend'];
         $ticketTrend = relationships_cw_ticket_history_trend($pdo, $customerId);
@@ -304,7 +302,6 @@ if ($action === 'overview') {
         ['key' => 'total_prospects', 'label' => 'Total Prospects', 'value' => $totalProspects, 'format' => 'count'],
         ['key' => 'total_residential', 'label' => 'Total Residential', 'value' => $totalResidential, 'format' => 'count'],
         ['key' => 'portfolio_billing_trend', 'label' => 'Portfolio Billing Trend', 'value' => null, 'format' => 'trend', 'trend' => $portfolioBillingTrend],
-        ['key' => 'active_contacts', 'label' => 'Active Contacts', 'value' => $totalContacts, 'format' => 'count'],
         ['key' => 'outgrow_stale', 'label' => '60+ Days Since Last OutGrow Touch', 'value' => $outgrowStaleCount, 'format' => 'count'],
     ];
 

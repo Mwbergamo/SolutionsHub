@@ -133,7 +133,6 @@ function relationships_cw_status_matches(string $a, string $b): bool
  * Active/Residential sets above.
  */
 const RELATIONSHIPS_CW_PROSPECT_STATUSES = [
-    'Credit Hold',
     'Inactive',
     'Inactive - Still Approved',
     'Lead Pursuit',
