@@ -22,6 +22,17 @@ class RelationshipsConnectWiseError extends RuntimeException
 {
 }
 
+/**
+ * How many customers' worth of ConnectWise ids get grouped into one
+ * ConnectWise API call by the Contacts/Ticket History/Monthly Billing
+ * sync stages -- added 2026-09-27. Chosen conservatively (URL length,
+ * blast radius if one chunk's call fails) rather than tuned against a
+ * real ConnectWise call at this batch size -- worth revisiting once a
+ * real "Run Sync Now" confirms the batching actually works (see
+ * relationships_cw_group_batch_rows() below).
+ */
+const RELATIONSHIPS_CW_SYNC_BATCH_SIZE = 25;
+
 function relationships_cw_config(): array
 {
     static $config = null;
@@ -284,6 +295,57 @@ function relationships_cw_list(string $path, string $conditions, array $fields, 
         }
     }
     return $all;
+}
+
+/**
+ * Groups a batched ConnectWise API response by a related-entity id field
+ * (e.g. each row's `company` -> `id`), for the "several customers per
+ * ConnectWise call" pattern added 2026-09-27 (see
+ * RELATIONSHIPS_CW_SYNC_BATCH_SIZE above). $relatedField is the top-level
+ * key ConnectWise nests the related object under (e.g. 'company') --
+ * NOT the condition field name, and not yet independently confirmed to
+ * come back in a batched (multi-company) response the same way it does
+ * in relationships_cw_activity_invoices_resolve()'s existing (single-
+ * entity-type) `id in (...)` batching.
+ *
+ * Defensive by design: if ConnectWise returned real rows (not just an
+ * empty result) but NONE of them could be matched back to one of the ids
+ * requested, that's exactly the failure mode this integration has been
+ * burned by before -- an unverified field/condition silently producing a
+ * real, non-erroring, WRONG result (see the board-name saga in
+ * claude/relationships-connectwise-sync.md) -- except here it would mean
+ * every customer in the batch looks like it has zero contacts/tickets/
+ * billing, silently, across the whole sync. Rather than risk that, this
+ * throws instead of quietly returning empty-for-everyone, so a wrong
+ * assumption shows up as a loud, per-chunk, retryable sync error instead
+ * of a quiet wrong zero.
+ */
+function relationships_cw_group_batch_rows(array $rows, array $requestedIds, string $relatedField): array
+{
+    $requested = array_flip(array_map('strval', $requestedIds));
+    $byId = [];
+    foreach ($requestedIds as $id) {
+        $byId[(string) $id] = [];
+    }
+
+    $attributed = 0;
+    foreach ($rows as $row) {
+        $related = $row[$relatedField] ?? null;
+        $relatedId = is_array($related) ? (string) ($related['id'] ?? '') : '';
+        if ($relatedId !== '' && isset($requested[$relatedId])) {
+            $byId[$relatedId][] = $row;
+            $attributed++;
+        }
+    }
+
+    if ($rows !== [] && $attributed === 0) {
+        throw new RelationshipsConnectWiseError(
+            'Batched fetch returned ' . count($rows) . " row(s) but none could be attributed to a " .
+            "requested id via the '$relatedField' field -- the related-id grouping assumption may be wrong."
+        );
+    }
+
+    return $byId;
 }
 
 /**

@@ -15,14 +15,19 @@
  * same fix, same shape.
  *
  * Same queue-based start()/step() shape as the Agreement, Billing, and
- * Prospect syncs, for the same Bluehost execution-time reason. One list
- * call per customer (relationships_cw_activity_ticket_sync_data()) covers
- * both the YTD count and the trailing-6-month trend, reusing the exact
- * same board condition and "Professional Services" definition as the live
- * query, and the exact same recent-3-vs-prior-3 trend math as Monthly
- * Billing (relationships_cw_activity_billing_series_from_totals() -- the
- * function name says "billing" but it only ever operates on a generic
- * {month: number} map, so it's reused here unchanged for ticket counts).
+ * Prospect syncs, for the same Bluehost execution-time reason. Originally
+ * one list call per customer (relationships_cw_activity_ticket_sync_data());
+ * batched 2026-09-27 (relationships_cw_activity_ticket_sync_data_batch(),
+ * connectwise-activity.php) to fix the sync-runtime/failure-rate problem
+ * this integration hit once the customer table grew past ~1,800 rows --
+ * see claude/relationships-connectwise-sync.md for the full write-up. Each
+ * call still covers both the YTD count and the trailing-6-month trend,
+ * reusing the exact same board condition and "Professional Services"
+ * definition as the live query, and the exact same recent-3-vs-prior-3
+ * trend math as Monthly Billing (relationships_cw_activity_billing_series_from_totals()
+ * -- the function name says "billing" but it only ever operates on a
+ * generic {month: number} map, so it's reused here unchanged for ticket
+ * counts).
  */
 
 declare(strict_types=1);
@@ -80,25 +85,49 @@ function relationships_cw_ticket_history_sync_step(PDO $pdo, int $batchSize = 20
          ON CONFLICT(customer_id, month) DO UPDATE SET count = excluded.count, synced_at = excluded.synced_at'
     );
     $updateYtd = $pdo->prepare('UPDATE customers SET ticket_count_ytd = :ytd WHERE id = :id');
+    $markDone = $pdo->prepare('UPDATE cw_ticket_history_sync_queue SET status = \'done\', processed_at = datetime(\'now\'), error_message = NULL WHERE customer_id = :id');
+    $markError = $pdo->prepare('UPDATE cw_ticket_history_sync_queue SET status = \'error\', processed_at = datetime(\'now\'), error_message = :msg WHERE customer_id = :id');
 
     $processed = 0;
     $errors = [];
-    foreach ($rows as $row) {
-        $customerId = (int) $row['customer_id'];
+
+    // Batched -- added 2026-09-27, see RELATIONSHIPS_CW_SYNC_BATCH_SIZE's
+    // comment in connectwise.php and the same note on the Billing sync's
+    // step() above: one ConnectWise call now covers up to
+    // RELATIONSHIPS_CW_SYNC_BATCH_SIZE customers instead of one call per
+    // customer. A whole chunk's call failing marks every customer in that
+    // chunk 'error' (individually retryable) rather than just one -- see
+    // relationships_cw_group_batch_rows() in connectwise.php for why that
+    // trade is preferable to a silent wrong result.
+    foreach (array_chunk($rows, RELATIONSHIPS_CW_SYNC_BATCH_SIZE) as $chunk) {
+        $cwIds = array_map(static fn (array $r): string => (string) $r['connectwise_id'], $chunk);
         try {
-            $data = relationships_cw_activity_ticket_sync_data((string) $row['connectwise_id']);
-            foreach ($data['by_month'] as $month => $count) {
-                $upsert->execute([':cid' => $customerId, ':month' => $month, ':count' => $count]);
-            }
-            $updateYtd->execute([':ytd' => $data['ytd_count'], ':id' => $customerId]);
-            $pdo->prepare('UPDATE cw_ticket_history_sync_queue SET status = \'done\', processed_at = datetime(\'now\'), error_message = NULL WHERE customer_id = :id')
-                ->execute([':id' => $customerId]);
+            $dataByCompany = relationships_cw_activity_ticket_sync_data_batch($cwIds);
         } catch (Throwable $e) {
-            $pdo->prepare('UPDATE cw_ticket_history_sync_queue SET status = \'error\', processed_at = datetime(\'now\'), error_message = :msg WHERE customer_id = :id')
-                ->execute([':id' => $customerId, ':msg' => substr($e->getMessage(), 0, 500)]);
-            $errors[] = ['customer_id' => $customerId, 'company_name' => $row['company_name'], 'error' => $e->getMessage()];
+            foreach ($chunk as $row) {
+                $markError->execute([':id' => (int) $row['customer_id'], ':msg' => substr($e->getMessage(), 0, 500)]);
+                $errors[] = ['customer_id' => (int) $row['customer_id'], 'company_name' => $row['company_name'], 'error' => $e->getMessage()];
+                $processed++;
+            }
+            continue;
         }
-        $processed++;
+
+        foreach ($chunk as $row) {
+            $customerId = (int) $row['customer_id'];
+            $cwId = (string) $row['connectwise_id'];
+            try {
+                $data = $dataByCompany[$cwId] ?? ['by_month' => [], 'ytd_count' => 0];
+                foreach ($data['by_month'] as $month => $count) {
+                    $upsert->execute([':cid' => $customerId, ':month' => $month, ':count' => $count]);
+                }
+                $updateYtd->execute([':ytd' => $data['ytd_count'], ':id' => $customerId]);
+                $markDone->execute([':id' => $customerId]);
+            } catch (Throwable $e) {
+                $markError->execute([':id' => $customerId, ':msg' => substr($e->getMessage(), 0, 500)]);
+                $errors[] = ['customer_id' => $customerId, 'company_name' => $row['company_name'], 'error' => $e->getMessage()];
+            }
+            $processed++;
+        }
     }
 
     $counts = $pdo->query('SELECT status, COUNT(*) AS n FROM cw_ticket_history_sync_queue GROUP BY status')->fetchAll(PDO::FETCH_KEY_PAIR);

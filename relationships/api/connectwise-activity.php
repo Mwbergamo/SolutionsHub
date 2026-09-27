@@ -423,6 +423,155 @@ function relationships_cw_activity_yearly_billing_series_from_totals(array $byYe
 }
 
 /**
+ * Batched counterpart to relationships_cw_activity_agreement_invoices()
+ * above -- added 2026-09-27, one /finance/invoices call covering every
+ * company in $cwCompanyIds at once instead of one call per company (see
+ * RELATIONSHIPS_CW_SYNC_BATCH_SIZE's comment in connectwise.php for why),
+ * grouped back by company id via relationships_cw_group_batch_rows().
+ *
+ * The condition style deliberately OR's plain equality
+ * ("(company/id=A or company/id=B or ...)") rather than ConnectWise's
+ * `in (...)` syntax. This integration has already been burned once by an
+ * unverified `in (...)` condition on a related field silently matching
+ * nothing (the board-name saga, fix 4b, in
+ * claude/relationships-connectwise-sync.md), while OR'd plain equality on
+ * a related field IS the one style that saga confirmed actually works
+ * against this ConnectWise instance -- just never before with a numeric
+ * id instead of a quoted string, and never before requesting the
+ * `company` field back for grouping. Still an assumption, not yet
+ * confirmed against a real batched call -- see relationships_cw_group_batch_rows()'s
+ * safety net above and the project doc for what to check on the first
+ * real "Run Sync Now" after this deploys.
+ */
+function relationships_cw_activity_agreement_invoices_batch(array $cwCompanyIds, DateTimeImmutable $start, ?DateTimeImmutable $end = null): array
+{
+    $companyClause = '(' . implode(' or ', array_map(
+        static fn ($id): string => 'company/id=' . (string) $id,
+        $cwCompanyIds
+    )) . ')';
+    $conditions = "$companyClause and date>=[" . $start->format('Y-m-d') . "T00:00:00Z]";
+    if ($end !== null) {
+        $conditions .= " and date<[" . $end->format('Y-m-d') . "T00:00:00Z]";
+    }
+    $rows = relationships_cw_list(
+        '/finance/invoices',
+        $conditions,
+        ['id', 'invoiceNumber', 'date', 'total', 'type', 'applyToType', 'applyToId', 'company'],
+        200
+    );
+
+    $agreementInvoices = [];
+    foreach ($rows as $r) {
+        $applyToType = (string) ($r['applyToType'] ?? '');
+        if (stripos($applyToType, 'agreement') === false) {
+            continue;
+        }
+        $agreementInvoices[] = $r;
+    }
+
+    return relationships_cw_group_batch_rows($agreementInvoices, $cwCompanyIds, 'company');
+}
+
+/**
+ * Batched counterpart to relationships_cw_activity_monthly_billing() --
+ * see relationships_cw_activity_agreement_invoices_batch() above for the
+ * batching approach and its open verification item.
+ */
+function relationships_cw_activity_monthly_billing_batch(array $cwCompanyIds, int $months = 6): array
+{
+    $start = new DateTimeImmutable('first day of -' . ($months - 1) . ' months 00:00:00');
+    $invoicesByCompany = relationships_cw_activity_agreement_invoices_batch($cwCompanyIds, $start);
+
+    $result = [];
+    foreach ($cwCompanyIds as $cid) {
+        $byMonth = [];
+        foreach ($invoicesByCompany[(string) $cid] ?? [] as $inv) {
+            $date = (string) ($inv['date'] ?? '');
+            if ($date === '') {
+                continue;
+            }
+            $key = substr($date, 0, 7); // "YYYY-MM"
+            $byMonth[$key] = ($byMonth[$key] ?? 0.0) + (float) ($inv['total'] ?? 0);
+        }
+        $result[(string) $cid] = relationships_cw_activity_billing_series_from_totals($byMonth, $months);
+    }
+    return $result;
+}
+
+/**
+ * Batched counterpart to relationships_cw_activity_yearly_billing() --
+ * see relationships_cw_activity_agreement_invoices_batch() above for the
+ * batching approach and its open verification item.
+ */
+function relationships_cw_activity_yearly_billing_batch(array $cwCompanyIds, int $years = 3): array
+{
+    $start = new DateTimeImmutable((((int) date('Y')) - ($years - 1)) . '-01-01 00:00:00');
+    $invoicesByCompany = relationships_cw_activity_agreement_invoices_batch($cwCompanyIds, $start);
+
+    $result = [];
+    foreach ($cwCompanyIds as $cid) {
+        $byYear = [];
+        foreach ($invoicesByCompany[(string) $cid] ?? [] as $inv) {
+            $date = (string) ($inv['date'] ?? '');
+            if ($date === '') {
+                continue;
+            }
+            $key = substr($date, 0, 4); // "YYYY"
+            $byYear[$key] = ($byYear[$key] ?? 0.0) + (float) ($inv['total'] ?? 0);
+        }
+        $result[(string) $cid] = relationships_cw_activity_yearly_billing_series_from_totals($byYear, $years);
+    }
+    return $result;
+}
+
+/**
+ * Batched counterpart to relationships_cw_activity_ticket_sync_data()
+ * above -- same batching approach and the same open verification item
+ * (relationships_cw_activity_agreement_invoices_batch()'s comment above),
+ * applied to /service/tickets instead of /finance/invoices.
+ */
+function relationships_cw_activity_ticket_sync_data_batch(array $cwCompanyIds, int $months = 6): array
+{
+    $yearStart = new DateTimeImmutable(date('Y') . '-01-01 00:00:00');
+    $monthsStart = new DateTimeImmutable('first day of -' . ($months - 1) . ' months 00:00:00');
+    $sinceStart = $yearStart < $monthsStart ? $yearStart : $monthsStart;
+
+    $companyClause = '(' . implode(' or ', array_map(
+        static fn ($id): string => 'company/id=' . (string) $id,
+        $cwCompanyIds
+    )) . ')';
+    $conditions = "$companyClause and " . relationships_cw_activity_board_condition()
+        . " and dateEntered>=[" . $sinceStart->format('Y-m-d') . "T00:00:00Z]";
+    $rows = relationships_cw_list('/service/tickets', $conditions, ['id', 'dateEntered', 'company'], 200);
+
+    $byCompanyRows = relationships_cw_group_batch_rows($rows, $cwCompanyIds, 'company');
+
+    $monthFloor = $monthsStart->format('Y-m');
+    $yearPrefix = date('Y') . '-';
+
+    $result = [];
+    foreach ($cwCompanyIds as $cid) {
+        $byMonth = [];
+        $ytdCount = 0;
+        foreach ($byCompanyRows[(string) $cid] ?? [] as $t) {
+            $date = (string) ($t['dateEntered'] ?? '');
+            if ($date === '') {
+                continue;
+            }
+            $key = substr($date, 0, 7); // "YYYY-MM"
+            if ($key >= $monthFloor) {
+                $byMonth[$key] = ($byMonth[$key] ?? 0) + 1;
+            }
+            if (str_starts_with($date, $yearPrefix)) {
+                $ytdCount++;
+            }
+        }
+        $result[(string) $cid] = ['by_month' => $byMonth, 'ytd_count' => $ytdCount];
+    }
+    return $result;
+}
+
+/**
  * Shared by relationships_cw_activity_invoices_for_month() and (added
  * 2026-09-15 for the annual-billing-cadence feature)
  * relationships_cw_activity_invoices_for_year(): resolves a list of raw

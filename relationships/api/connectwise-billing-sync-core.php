@@ -22,6 +22,16 @@
  * fixes this inherits automatically) covers a customer's whole 6-month
  * series in one shot.
  *
+ * 2026-09-27: batched -- see RELATIONSHIPS_CW_SYNC_BATCH_SIZE's comment in
+ * connectwise.php. This stage (like Ticket History and Contacts) was
+ * making one ConnectWise call per customer, sequentially; at this
+ * integration's current customer volume that was the real cause of a
+ * 2+ hour sync runtime and, for the Contacts stage specifically, a ~70%
+ * failure rate -- see claude/relationships-connectwise-sync.md for the
+ * full write-up. relationships_cw_activity_monthly_billing_batch()/
+ * relationships_cw_activity_yearly_billing_batch() (connectwise-activity.php)
+ * now cover up to RELATIONSHIPS_CW_SYNC_BATCH_SIZE customers per call.
+ *
  * 2026-09-15: gained annual-cadence detection, per Michael, after he
  * noticed Evolution Divorce & Family Law's Monthly Billing panel showing
  * $0 across all 6 months despite real Agreement invoices existing in
@@ -101,62 +111,96 @@ function relationships_cw_billing_sync_step(PDO $pdo, int $batchSize = 20): arra
     $deleteYears = $pdo->prepare('DELETE FROM customer_yearly_billing WHERE customer_id = :cid');
     $setCadence = $pdo->prepare('UPDATE customers SET billing_cadence = :cadence WHERE id = :cid');
     $setRecentBilling = $pdo->prepare('UPDATE customers SET has_recent_billing = :v WHERE id = :cid');
+    $markDone = $pdo->prepare('UPDATE cw_billing_sync_queue SET status = \'done\', processed_at = datetime(\'now\'), error_message = NULL WHERE customer_id = :id');
+    $markError = $pdo->prepare('UPDATE cw_billing_sync_queue SET status = \'error\', processed_at = datetime(\'now\'), error_message = :msg WHERE customer_id = :id');
 
     $processed = 0;
     $errors = [];
-    foreach ($rows as $row) {
-        $customerId = (int) $row['customer_id'];
-        try {
-            $billing = relationships_cw_activity_monthly_billing((string) $row['connectwise_id']);
-            foreach ($billing['series'] as $point) {
-                $upsertMonth->execute([':cid' => $customerId, ':month' => $point['month'], ':total' => $point['total']]);
-            }
 
-            // Annual-cadence detection (2026-09-15, per Michael -- see
-            // claude/relationships-annual-billing-cadence.md): only when
-            // the normal trailing-6-month window is entirely $0 does this
-            // do a second, wider (3-year) check, so the extra API call and
-            // execution-time cost stay off the sync for the majority of
-            // ordinary monthly-billed customers. "Genuinely no Agreement
-            // billing at all" and "billed annually, just not in the last 6
-            // months" both start out looking identical (all-$0 monthly
-            // series) -- this second check is what tells them apart.
+    // Batched -- added 2026-09-27, see RELATIONSHIPS_CW_SYNC_BATCH_SIZE's
+    // comment in connectwise.php: one ConnectWise call now covers up to
+    // RELATIONSHIPS_CW_SYNC_BATCH_SIZE customers instead of one call per
+    // customer (previously the dominant cost of this sync stage at this
+    // integration's current customer volume). A whole chunk's ConnectWise
+    // call failing (network error, wrong condition, etc.) marks every
+    // customer in that chunk 'error' rather than just one -- a wider
+    // blast radius than before, but each is still individually retryable
+    // via the existing "Retry Failed" button, and the alternative
+    // (silently succeeding with no data) is worse -- see
+    // relationships_cw_group_batch_rows() in connectwise.php.
+    foreach (array_chunk($rows, RELATIONSHIPS_CW_SYNC_BATCH_SIZE) as $chunk) {
+        $cwIds = array_map(static fn (array $r): string => (string) $r['connectwise_id'], $chunk);
+        try {
+            $billingByCompany = relationships_cw_activity_monthly_billing_batch($cwIds);
+        } catch (Throwable $e) {
+            foreach ($chunk as $row) {
+                $markError->execute([':id' => (int) $row['customer_id'], ':msg' => substr($e->getMessage(), 0, 500)]);
+                $errors[] = ['customer_id' => (int) $row['customer_id'], 'company_name' => $row['company_name'], 'error' => $e->getMessage()];
+                $processed++;
+            }
+            continue;
+        }
+
+        // Annual-cadence detection (2026-09-15, per Michael -- see
+        // claude/relationships-annual-billing-cadence.md), batched too:
+        // only the customers THIS chunk found at $0 for the trailing 6
+        // months get a second, wider 3-year lookup, and that lookup is
+        // itself one batched call for all of them, not one call each.
+        $zeroMonthlyIds = [];
+        foreach ($chunk as $row) {
+            $cwId = (string) $row['connectwise_id'];
+            $billing = $billingByCompany[$cwId] ?? ['series' => [], 'trend' => ['direction' => 'flat', 'percent' => null]];
             $monthlyTotal = array_sum(array_column($billing['series'], 'total'));
-            $cadence = 'monthly';
             if ($monthlyTotal <= 0.0) {
-                $yearly = relationships_cw_activity_yearly_billing((string) $row['connectwise_id'], 3);
-                $yearlyTotal = array_sum(array_column($yearly['series'], 'total'));
-                if ($yearlyTotal > 0.0) {
-                    $cadence = 'annual';
-                    $deleteYears->execute([':cid' => $customerId]);
-                    foreach ($yearly['series'] as $point) {
-                        $upsertYear->execute([':cid' => $customerId, ':year' => $point['year'], ':total' => $point['total']]);
+                $zeroMonthlyIds[] = $cwId;
+            }
+        }
+        $yearlyByCompany = $zeroMonthlyIds !== [] ? relationships_cw_activity_yearly_billing_batch($zeroMonthlyIds, 3) : [];
+
+        foreach ($chunk as $row) {
+            $customerId = (int) $row['customer_id'];
+            $cwId = (string) $row['connectwise_id'];
+            try {
+                $billing = $billingByCompany[$cwId] ?? ['series' => [], 'trend' => ['direction' => 'flat', 'percent' => null]];
+                foreach ($billing['series'] as $point) {
+                    $upsertMonth->execute([':cid' => $customerId, ':month' => $point['month'], ':total' => $point['total']]);
+                }
+
+                $monthlyTotal = array_sum(array_column($billing['series'], 'total'));
+                $cadence = 'monthly';
+                if ($monthlyTotal <= 0.0 && isset($yearlyByCompany[$cwId])) {
+                    $yearly = $yearlyByCompany[$cwId];
+                    $yearlyTotal = array_sum(array_column($yearly['series'], 'total'));
+                    if ($yearlyTotal > 0.0) {
+                        $cadence = 'annual';
+                        $deleteYears->execute([':cid' => $customerId]);
+                        foreach ($yearly['series'] as $point) {
+                            $upsertYear->execute([':cid' => $customerId, ':year' => $point['year'], ':total' => $point['total']]);
+                        }
                     }
                 }
-            }
-            if ($cadence === 'monthly') {
-                // Recomputed from scratch every run (same reasoning as
-                // is_peoplefirst/is_prospect_only in db.php) -- a customer
-                // that no longer qualifies as annual loses stale yearly
-                // rows too, rather than being stuck showing an old 3-year
-                // chart forever.
-                $deleteYears->execute([':cid' => $customerId]);
-            }
-            $setCadence->execute([':cadence' => $cadence, ':cid' => $customerId]);
+                if ($cadence === 'monthly') {
+                    // Recomputed from scratch every run (same reasoning as
+                    // is_peoplefirst/is_prospect_only in db.php) -- a
+                    // customer that no longer qualifies as annual loses
+                    // stale yearly rows too, rather than being stuck
+                    // showing an old 3-year chart forever.
+                    $deleteYears->execute([':cid' => $customerId]);
+                }
+                $setCadence->execute([':cadence' => $cadence, ':cid' => $customerId]);
 
-            // See has_recent_billing's comment above $setRecentBilling's
-            // declaration for exactly what this approximates and why.
-            $hasRecentBilling = $monthlyTotal > 0.0 || $cadence === 'annual';
-            $setRecentBilling->execute([':v' => $hasRecentBilling ? 1 : 0, ':cid' => $customerId]);
+                // See has_recent_billing's comment above $setRecentBilling's
+                // declaration for exactly what this approximates and why.
+                $hasRecentBilling = $monthlyTotal > 0.0 || $cadence === 'annual';
+                $setRecentBilling->execute([':v' => $hasRecentBilling ? 1 : 0, ':cid' => $customerId]);
 
-            $pdo->prepare('UPDATE cw_billing_sync_queue SET status = \'done\', processed_at = datetime(\'now\'), error_message = NULL WHERE customer_id = :id')
-                ->execute([':id' => $customerId]);
-        } catch (Throwable $e) {
-            $pdo->prepare('UPDATE cw_billing_sync_queue SET status = \'error\', processed_at = datetime(\'now\'), error_message = :msg WHERE customer_id = :id')
-                ->execute([':id' => $customerId, ':msg' => substr($e->getMessage(), 0, 500)]);
-            $errors[] = ['customer_id' => $customerId, 'company_name' => $row['company_name'], 'error' => $e->getMessage()];
+                $markDone->execute([':id' => $customerId]);
+            } catch (Throwable $e) {
+                $markError->execute([':id' => $customerId, ':msg' => substr($e->getMessage(), 0, 500)]);
+                $errors[] = ['customer_id' => $customerId, 'company_name' => $row['company_name'], 'error' => $e->getMessage()];
+            }
+            $processed++;
         }
-        $processed++;
     }
 
     $counts = $pdo->query('SELECT status, COUNT(*) AS n FROM cw_billing_sync_queue GROUP BY status')->fetchAll(PDO::FETCH_KEY_PAIR);

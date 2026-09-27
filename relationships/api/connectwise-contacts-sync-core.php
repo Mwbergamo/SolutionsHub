@@ -35,7 +35,11 @@
  * worth the same risk for the small cost of fetching a few extra rows.
  *
  * Same queue-based start()/step() shape as the Billing and Ticket History
- * syncs, keyed by customer. One /company/contacts call per customer.
+ * syncs, keyed by customer. Originally one /company/contacts call per
+ * customer; batched 2026-09-27 (relationships_cw_contacts_fetch_batch()
+ * below) to fix the ~70% failure rate and 2+ hour runtime this stage hit
+ * once the customer table grew past ~1,800 rows -- see
+ * claude/relationships-connectwise-sync.md for the full write-up.
  */
 
 declare(strict_types=1);
@@ -63,6 +67,31 @@ function relationships_cw_contacts_extract_email(array $contact): ?string
         }
     }
     return null;
+}
+
+/**
+ * Batched counterpart to a per-customer /company/contacts call -- added
+ * 2026-09-27, one call covering every company in $cwCompanyIds at once
+ * instead of one call per company (see RELATIONSHIPS_CW_SYNC_BATCH_SIZE's
+ * comment in connectwise.php for why, and the same class of function in
+ * connectwise-activity.php for the OR'd-equality condition style and its
+ * open verification item -- this file's version of the same assumption:
+ * requesting the `company` field back in a multi-company response and
+ * grouping by its `id`).
+ */
+function relationships_cw_contacts_fetch_batch(array $cwCompanyIds): array
+{
+    $companyClause = '(' . implode(' or ', array_map(
+        static fn ($id): string => 'company/id=' . (string) $id,
+        $cwCompanyIds
+    )) . ')';
+    $contacts = relationships_cw_list(
+        '/company/contacts',
+        $companyClause,
+        ['id', 'firstName', 'lastName', 'communicationItems', 'inactiveFlag', 'company'],
+        200
+    );
+    return relationships_cw_group_batch_rows($contacts, $cwCompanyIds, 'company');
 }
 
 /**
@@ -122,47 +151,66 @@ function relationships_cw_contacts_sync_step(PDO $pdo, int $batchSize = 20): arr
          ON CONFLICT(customer_id, month) DO UPDATE SET count = excluded.count, synced_at = excluded.synced_at'
     );
     $thisMonth = (new DateTimeImmutable('now'))->format('Y-m');
+    $markDone = $pdo->prepare('UPDATE cw_contacts_sync_queue SET status = \'done\', processed_at = datetime(\'now\'), error_message = NULL WHERE customer_id = :id');
+    $markError = $pdo->prepare('UPDATE cw_contacts_sync_queue SET status = \'error\', processed_at = datetime(\'now\'), error_message = :msg WHERE customer_id = :id');
 
     $processed = 0;
     $errors = [];
-    foreach ($rows as $row) {
-        $customerId = (int) $row['customer_id'];
+
+    // Batched -- added 2026-09-27, the actual fix for this stage's ~70%
+    // failure rate and 2+ hour runtime at this integration's current
+    // customer volume (see RELATIONSHIPS_CW_SYNC_BATCH_SIZE's comment in
+    // connectwise.php): one ConnectWise call now covers up to
+    // RELATIONSHIPS_CW_SYNC_BATCH_SIZE customers instead of one call per
+    // customer. A whole chunk's call failing marks every customer in that
+    // chunk 'error' (individually retryable) rather than just one -- see
+    // relationships_cw_group_batch_rows() in connectwise.php for why that
+    // trade is preferable to a silent wrong result.
+    foreach (array_chunk($rows, RELATIONSHIPS_CW_SYNC_BATCH_SIZE) as $chunk) {
+        $cwIds = array_map(static fn (array $r): string => (string) $r['connectwise_id'], $chunk);
         try {
-            $contacts = relationships_cw_list(
-                '/company/contacts',
-                "company/id=" . (string) $row['connectwise_id'],
-                ['id', 'firstName', 'lastName', 'communicationItems', 'inactiveFlag'],
-                200
-            );
-
-            $active = array_filter($contacts, static fn (array $c): bool => empty($c['inactiveFlag']));
-
-            $deleteExisting->execute([':id' => $customerId]);
-            foreach ($active as $c) {
-                if (!isset($c['id'])) {
-                    continue;
-                }
-                $insertContact->execute([
-                    ':customer_id' => $customerId,
-                    ':cwid' => (string) $c['id'],
-                    ':first' => (string) ($c['firstName'] ?? ''),
-                    ':last' => (string) ($c['lastName'] ?? ''),
-                    ':email' => relationships_cw_contacts_extract_email($c),
-                ]);
-            }
-
-            $count = count($active);
-            $updateCount->execute([':n' => $count, ':id' => $customerId]);
-            $upsertHistory->execute([':cid' => $customerId, ':month' => $thisMonth, ':count' => $count]);
-
-            $pdo->prepare('UPDATE cw_contacts_sync_queue SET status = \'done\', processed_at = datetime(\'now\'), error_message = NULL WHERE customer_id = :id')
-                ->execute([':id' => $customerId]);
+            $contactsByCompany = relationships_cw_contacts_fetch_batch($cwIds);
         } catch (Throwable $e) {
-            $pdo->prepare('UPDATE cw_contacts_sync_queue SET status = \'error\', processed_at = datetime(\'now\'), error_message = :msg WHERE customer_id = :id')
-                ->execute([':id' => $customerId, ':msg' => substr($e->getMessage(), 0, 500)]);
-            $errors[] = ['customer_id' => $customerId, 'company_name' => $row['company_name'], 'error' => $e->getMessage()];
+            foreach ($chunk as $row) {
+                $markError->execute([':id' => (int) $row['customer_id'], ':msg' => substr($e->getMessage(), 0, 500)]);
+                $errors[] = ['customer_id' => (int) $row['customer_id'], 'company_name' => $row['company_name'], 'error' => $e->getMessage()];
+                $processed++;
+            }
+            continue;
         }
-        $processed++;
+
+        foreach ($chunk as $row) {
+            $customerId = (int) $row['customer_id'];
+            $cwId = (string) $row['connectwise_id'];
+            try {
+                $contacts = $contactsByCompany[$cwId] ?? [];
+                $active = array_filter($contacts, static fn (array $c): bool => empty($c['inactiveFlag']));
+
+                $deleteExisting->execute([':id' => $customerId]);
+                foreach ($active as $c) {
+                    if (!isset($c['id'])) {
+                        continue;
+                    }
+                    $insertContact->execute([
+                        ':customer_id' => $customerId,
+                        ':cwid' => (string) $c['id'],
+                        ':first' => (string) ($c['firstName'] ?? ''),
+                        ':last' => (string) ($c['lastName'] ?? ''),
+                        ':email' => relationships_cw_contacts_extract_email($c),
+                    ]);
+                }
+
+                $count = count($active);
+                $updateCount->execute([':n' => $count, ':id' => $customerId]);
+                $upsertHistory->execute([':cid' => $customerId, ':month' => $thisMonth, ':count' => $count]);
+
+                $markDone->execute([':id' => $customerId]);
+            } catch (Throwable $e) {
+                $markError->execute([':id' => $customerId, ':msg' => substr($e->getMessage(), 0, 500)]);
+                $errors[] = ['customer_id' => $customerId, 'company_name' => $row['company_name'], 'error' => $e->getMessage()];
+            }
+            $processed++;
+        }
     }
 
     $counts = $pdo->query('SELECT status, COUNT(*) AS n FROM cw_contacts_sync_queue GROUP BY status')->fetchAll(PDO::FETCH_KEY_PAIR);
