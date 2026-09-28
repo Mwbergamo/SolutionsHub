@@ -818,6 +818,18 @@ a { color: inherit; }
 .risk-scan-review-btn:hover { border-color: #8fc3ff; color: #8fc3ff; }
 .risk-scan-review-btn:disabled { opacity: .5; cursor: default; }
 
+.risk-scan-assign-select {
+  background: oklch(0.98 0.006 255);
+  border: none;
+  border-radius: 7px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: oklch(0.2 0.03 255);
+  max-width: 160px;
+}
+.risk-scan-assign-select:disabled { opacity: .5; cursor: default; }
+
 /* PeopleFirst summary line atop the Cross-Sell Report */
 
 .peoplefirst-summary {

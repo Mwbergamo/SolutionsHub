@@ -361,6 +361,7 @@
     riskScanUploading: false,
     riskScanTogglingId: null, // scan id currently mid mark/unmark-reviewed (button disabled while true)
     riskScanRetryingId: null, // scan id currently mid ConnectWise re-attach (button disabled while true)
+    riskScanAssignDraft: {}, // scan id (string) -> roster name picked in that row's assign dropdown, not yet submitted
     // Deep-link target set by openCustomerAtRiskScan() (Global To-Do panel
     // -> a specific customer's risk-scan alert) -- same pattern as
     // pendingTaskFocus above, consumed once inside loadRiskScans().
@@ -1025,6 +1026,7 @@
     state.riskScanDraftFile = null;
     state.riskScanUploading = false;
     state.riskScanTogglingId = null;
+    state.riskScanAssignDraft = {};
     // pendingRiskScanFocus is deliberately NOT cleared here -- same reason
     // pendingTaskFocus isn't cleared in resetMeetingsState() above.
   }
@@ -1133,14 +1135,16 @@
     });
   }
 
-  function setRiskScanAssigned(scanId, assigned) {
+  function setRiskScanAssigned(scanId, assigned, assignedToName) {
     state.riskScanTogglingId = scanId;
     render();
-    apiPost('api/risk-scans.php?action=' + (assigned ? 'assign' : 'unassign'), { id: scanId }).then(function (r) {
+    var body = assigned ? { id: scanId, assigned_to_name: assignedToName } : { id: scanId };
+    apiPost('api/risk-scans.php?action=' + (assigned ? 'assign' : 'unassign'), body).then(function (r) {
       state.riskScanTogglingId = null;
       if (r.data && r.data.ok && state.riskScans) {
         var updated = r.data.scan;
         state.riskScans = state.riskScans.map(function (s) { return s.id === updated.id ? updated : s; });
+        delete state.riskScanAssignDraft[scanId];
       } else {
         state.riskScansError = (r.data && r.data.error) || 'Could not update that scan.';
       }
@@ -1150,6 +1154,22 @@
       state.riskScansError = 'Could not update that scan — check your connection and try again.';
       render();
     });
+  }
+
+  // Delegated 'change' handler for the per-row assign-to dropdowns in
+  // riskScanItemHtml() below -- there can be several unassigned scans (and
+  // so several selects) on screen at once, unlike the single Add Task
+  // form's taskAssigneeSelect, so this is bound once on root (see the
+  // 'Bound once' block near the end of this file) rather than looked up by
+  // a single element id after every render. Only tracks the pick so it
+  // survives a re-render (e.g. the 'pick a name first' validation error
+  // below) -- doesn't re-render itself, same as the plain <input> handlers
+  // elsewhere in this file.
+  function onRiskScanAssignSelectChange(ev) {
+    var el = ev.target;
+    var scanId = el.getAttribute && el.getAttribute('data-riskscan-assign-select');
+    if (!scanId) return;
+    state.riskScanAssignDraft[scanId] = el.value;
   }
 
   function openCustomerAtRiskScan(customerId, scanId) {
@@ -4579,9 +4599,23 @@
       '<div class="risk-scan-item-actions">' +
         '<a class="risk-scan-download-btn" href="api/risk-scans.php?action=download&id=' + scan.id + '">Download</a>' +
         (!isReviewed
-          ? '<button class="risk-scan-review-btn" type="button" data-action="' + (isAssigned ? 'riskscan-unassign' : 'riskscan-assign') + '" data-scan="' + scan.id + '" ' + (isToggling ? 'disabled' : '') + '>' +
-              (isToggling ? '…' : (isAssigned ? 'Unassign' : 'Assign to Me')) +
-            '</button>'
+          ? (isAssigned
+              ? '<button class="risk-scan-review-btn" type="button" data-action="riskscan-unassign" data-scan="' + scan.id + '" ' + (isToggling ? 'disabled' : '') + '>' +
+                  (isToggling ? '…' : 'Unassign') +
+                '</button>'
+              // Roster dropdown, per Michael (2026-09-29): "change 'Assign
+              // myself' to a list of Relationship Coordinators, just like
+              // we do with To-Do's" -- same state.meetingsRoster the Add
+              // Task form's taskAssigneeSelect already uses.
+              : '<select class="risk-scan-assign-select" data-riskscan-assign-select="' + scan.id + '" ' + (isToggling ? 'disabled' : '') + '>' +
+                  '<option value="">Assign to…</option>' +
+                  state.meetingsRoster.map(function (name) {
+                    return '<option value="' + escapeHtml(name) + '"' + (state.riskScanAssignDraft[scan.id] === name ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
+                  }).join('') +
+                '</select>' +
+                '<button class="risk-scan-review-btn" type="button" data-action="riskscan-assign" data-scan="' + scan.id + '" ' + (isToggling ? 'disabled' : '') + '>' +
+                  (isToggling ? '…' : 'Assign') +
+                '</button>')
           : '') +
         '<button class="risk-scan-review-btn" type="button" data-action="' + (isReviewed ? 'riskscan-unmark-reviewed' : 'riskscan-mark-reviewed') + '" data-scan="' + scan.id + '" ' + (isToggling ? 'disabled' : '') + '>' +
           (isToggling ? '…' : (isReviewed ? 'Reopen' : 'Mark Reviewed')) +
@@ -5777,7 +5811,14 @@
     } else if (action === 'riskscan-unmark-reviewed') {
       setRiskScanReviewed(parseInt(el.getAttribute('data-scan'), 10), false);
     } else if (action === 'riskscan-assign') {
-      setRiskScanAssigned(parseInt(el.getAttribute('data-scan'), 10), true);
+      var riskScanAssignId = parseInt(el.getAttribute('data-scan'), 10);
+      var riskScanAssignName = state.riskScanAssignDraft[riskScanAssignId];
+      if (!riskScanAssignName) {
+        state.riskScansError = 'Pick who to assign this scan to first.';
+        render();
+      } else {
+        setRiskScanAssigned(riskScanAssignId, true, riskScanAssignName);
+      }
     } else if (action === 'riskscan-unassign') {
       setRiskScanAssigned(parseInt(el.getAttribute('data-scan'), 10), false);
     } else if (action === 'show-rep-todos') {
@@ -5835,6 +5876,7 @@
   root.addEventListener('input', onProspectInput);
   root.addEventListener('change', onProspectInput);
   root.addEventListener('change', onProspectFilterCommit);
+  root.addEventListener('change', onRiskScanAssignSelectChange);
   document.addEventListener('click', onDocumentClick);
 
   boot();

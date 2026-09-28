@@ -372,12 +372,18 @@ if ($action === 'global') {
     // Risk-scan upload alerts -- added 2026-09-23, see risk-scans.php's
     // file header and the docblock above. Same territory filter as the
     // task query above (a restricted rep only ever sees alerts for their
-    // own customers), joined on customers the same way.
+    // own customers), joined on customers the same way. Split on
+    // assigned_to_name (not assigned_to_user_id) as of 2026-09-29 -- once
+    // assignment could name any of the 7 roster members rather than
+    // always the signed-in caller, assigned_to_user_id can legitimately
+    // be NULL for an assigned scan (that roster member just hasn't
+    // registered a Relationships login yet), which would have wrongly
+    // sent it back into the unassigned pool below.
     $riskScanStmt = $pdo->prepare(
         "SELECT r.id, r.customer_id, c.name AS customer_name, r.original_filename, r.uploaded_by_name, r.uploaded_at
          FROM risk_scans r
          JOIN customers c ON c.id = r.customer_id
-         WHERE r.reviewed_at IS NULL AND r.assigned_to_user_id IS NULL {$territoryFilter['sql']}
+         WHERE r.reviewed_at IS NULL AND r.assigned_to_name IS NULL {$territoryFilter['sql']}
          ORDER BY r.uploaded_at DESC
          LIMIT 100"
     );
@@ -399,7 +405,7 @@ if ($action === 'global') {
         "SELECT r.id, r.customer_id, c.name AS customer_name, r.original_filename, r.uploaded_by_name, r.uploaded_at, r.assigned_to_name, r.assigned_at
          FROM risk_scans r
          JOIN customers c ON c.id = r.customer_id
-         WHERE r.reviewed_at IS NULL AND r.assigned_to_user_id IS NOT NULL {$territoryFilter['sql']}
+         WHERE r.reviewed_at IS NULL AND r.assigned_to_name IS NOT NULL {$territoryFilter['sql']}
          ORDER BY r.assigned_at DESC
          LIMIT 100"
     );

@@ -78,15 +78,19 @@
  *   click, same reversibility as the cross-sell Kill Opportunity toggle.
  *
  * POST /relationships/api/risk-scans.php?action=assign
- *   { id } -> { ok: true, scan: {...} }
- *   Added 2026-09-24 per Michael: "reps [need] the ability to assign the
- *   tasks to themselves. This will take it out of the general list and
- *   put it in their list." Self-claim only -- always assigns to the
- *   signed-in user, never to anyone else, and only the caller's own
- *   identity is ever written. 409 if someone else already claimed it
- *   first; assigning it to yourself again is a harmless no-op. The Global
- *   To-Do Checklist (meetings.php's 'global' action) reads
- *   assigned_to_user_id to split alerts into the unassigned pool
+ *   { id, assigned_to_name } -> { ok: true, scan: {...} }
+ *   Added 2026-09-24 per Michael, originally self-claim only. CHANGED
+ *   2026-09-29, per Michael: "change 'Assign myself' to a list of
+ *   Relationship Coordinators, just like we do with To-Do's" -- now
+ *   assigns to any of the 7 fixed roster names
+ *   (relationships_todo_roster(), the same list/validation
+ *   meeting_tasks.assigned_to_name already uses), not only the signed-in
+ *   caller. assigned_to_name must exactly match one of those names. 409
+ *   if it's already assigned to a DIFFERENT name (unassign first to
+ *   reassign); assigning it to the same name again is a harmless no-op.
+ *   The Global To-Do Checklist (meetings.php's 'global' action) reads
+ *   assigned_to_name (not assigned_to_user_id -- see that file, changed
+ *   the same day, for why) to split alerts into the unassigned pool
  *   (risk_scan_alerts) vs. the assigned-but-not-yet-reviewed list
  *   (risk_scan_assigned, which names who has it).
  *
@@ -393,14 +397,36 @@ if ($action === 'assign' || $action === 'unassign') {
     relationships_require_customer_in_scope($pdo, $allowedTerritories, (int) $scan['customer_id']);
 
     if ($action === 'assign') {
-        $currentlyAssignedTo = $scan['assigned_to_user_id'] ?? null;
-        if ($currentlyAssignedTo !== null && (int) $currentlyAssignedTo !== (int) $user['id']) {
-            relationships_respond(409, ['ok' => false, 'error' => 'Already assigned to ' . ($scan['assigned_to_name'] ?? 'someone else') . '.']);
+        // 2026-09-29, per Michael: assign to any of the 7 fixed
+        // Relationship Coordinator names, the same roster/validation
+        // meeting_tasks.assigned_to_name already uses -- not always the
+        // signed-in caller any more (see this action's docblock above).
+        $assignedToName = trim((string) ($data['assigned_to_name'] ?? ''));
+        $roster = relationships_todo_roster();
+        if (!in_array($assignedToName, $roster, true)) {
+            relationships_respond(400, ['ok' => false, 'error' => 'assigned_to_name must be one of the roster names.']);
         }
-        // Assigning it to yourself again (already yours) is a harmless
-        // no-op -- still re-stamps assigned_at, which is fine.
+
+        $currentlyAssignedTo = $scan['assigned_to_name'] ?? null;
+        if ($currentlyAssignedTo !== null && $currentlyAssignedTo !== $assignedToName) {
+            relationships_respond(409, ['ok' => false, 'error' => 'Already assigned to ' . $currentlyAssignedTo . '.']);
+        }
+
+        // crc_users lookup -- LOCAL bookkeeping only, same reasoning as
+        // meeting_tasks.assigned_to_user_id (see meetings.php): null when
+        // that roster member hasn't registered a Relationships login yet.
+        // Nothing downstream requires it -- the Global To-Do Checklist's
+        // unassigned/assigned split reads assigned_to_name, not this
+        // column (see meetings.php's 'global' action, changed the same
+        // day for the same reason).
+        $assigneeUserStmt = $pdo->prepare('SELECT id FROM crc_users WHERE LOWER(name) = LOWER(:name) LIMIT 1');
+        $assigneeUserStmt->execute([':name' => $assignedToName]);
+        $assigneeUserId = $assigneeUserStmt->fetchColumn();
+
+        // Re-assigning to the same name again (already theirs) is a
+        // harmless no-op -- still re-stamps assigned_at, which is fine.
         $pdo->prepare("UPDATE risk_scans SET assigned_to_user_id = :uid, assigned_to_name = :uname, assigned_at = datetime('now') WHERE id = :id")
-            ->execute([':uid' => $user['id'], ':uname' => $user['name'], ':id' => $id]);
+            ->execute([':uid' => $assigneeUserId !== false ? (int) $assigneeUserId : null, ':uname' => $assignedToName, ':id' => $id]);
     } else {
         $pdo->prepare('UPDATE risk_scans SET assigned_to_user_id = NULL, assigned_to_name = NULL, assigned_at = NULL WHERE id = :id')
             ->execute([':id' => $id]);
