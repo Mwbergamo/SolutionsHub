@@ -8,6 +8,22 @@
 RewriteEngine On
 RewriteRule (^|/)\.git($|/) - [F,L]
 
+# Pass the Authorization header through to PHP -- added 2026-09-28 for the
+# Outlook add-in's bearer-token auth (relationships/api/_util.php's
+# relationships_bearer_user()). Bluehost's shared-hosting Apache/PHP setup
+# commonly strips the Authorization header before PHP ever sees it unless
+# told otherwise; this is the standard two-part fix (the RewriteRule covers
+# a mod_rewrite/CGI setup, CGIPassAuth covers Apache 2.4+ FastCGI/suexec).
+# UNVERIFIED against this specific Bluehost account -- if the add-in's
+# sign-in works but every subsequent bearer-authed call still 401s, check
+# this first (PHP's $_SERVER['HTTP_AUTHORIZATION'] and
+# ['REDIRECT_HTTP_AUTHORIZATION'] both empty is the tell), same "flag it
+# rather than guess" posture as this integration's ConnectWise field
+# assumptions elsewhere.
+RewriteCond %{HTTP:Authorization} ^(.+)
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
+CGIPassAuth On
+
 # Also block the mail/ config sample and any stray backup/editor files
 # from being served directly.
 <FilesMatch "(\.bak|\.swp|~)$">

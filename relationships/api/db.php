@@ -860,6 +860,55 @@ function relationships_migrate(PDO $pdo): void
         )
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_prospect_claims_deadline ON prospect_claims(status, deadline_at)');
+
+    // ---- Outlook Add-in ("Send to Relationships") -- added 2026-09-28 per
+    // Michael's decisions (see claude/relationships-outlook-addin-plan.md).
+    //
+    // addin_tokens: bearer tokens the Outlook task pane authenticates with.
+    // The task pane runs in its own sandboxed webview (WebView2/WKWebView/
+    // an Outlook-on-the-web iframe) and does not reliably share the site's
+    // PHP session cookie, so it signs in once per device via a real Entra
+    // OAuth dialog (auth/addin-login.php + auth/addin-callback.php) and is
+    // handed an opaque token instead of a cookie. Only the HASH is stored
+    // (same posture as a real password/API-key table) -- the raw token is
+    // shown to the task pane exactly once, at sign-in. revoked_at supports
+    // a future "sign out this device" action; NULL = still valid.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS addin_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            crc_user_id INTEGER NOT NULL REFERENCES crc_users(id) ON DELETE CASCADE,
+            email TEXT NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            last_used_at TEXT,
+            revoked_at TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_addin_tokens_user ON addin_tokens(crc_user_id)');
+
+    // customer_meetings gains a `source` so the dashboard can render
+    // add-in-originated meetings as their own "Email Actions Needed"
+    // section instead of mixing them into the ordinary logged-meetings
+    // list -- per Michael: match found or rep-selected match both attach
+    // the email to that company and it "should show in the company's
+    // dashboard Email Actions Needed, using the Subject line as the
+    // heading." This reuses the existing customer_meetings/meeting_tasks
+    // engine as-is (same add_task, same ConnectWise Activity creation, same
+    // Outgrow/Formstack action on to-do completion -- see meetings.php's
+    // set_task_done) rather than building a second, parallel table --
+    // 'email' rows are just meetings whose origin was an Outlook add-in
+    // click rather than a rep manually logging a meeting.
+    relationships_add_column_if_missing($pdo, 'customer_meetings', 'source', "TEXT NOT NULL DEFAULT 'manual'");
+    relationships_add_column_if_missing($pdo, 'customer_meetings', 'email_sender', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'customer_meetings', 'email_sender_name', 'TEXT');
+    // Outlook's item id for the source email -- used to dedupe a rep
+    // double-clicking "Send to Relationships" on the same email (a second
+    // click reuses the same Email Actions Needed entry instead of creating
+    // a duplicate). NULL for every ordinary manually-logged meeting, so the
+    // uniqueness below only ever constrains real add-in rows (SQLite
+    // treats NULLs as distinct in a UNIQUE index).
+    relationships_add_column_if_missing($pdo, 'customer_meetings', 'email_message_id', 'TEXT');
+    $pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_meetings_email_dedupe ON customer_meetings(customer_id, email_message_id)');
 }
 
 /**

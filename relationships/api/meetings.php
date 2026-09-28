@@ -137,10 +137,25 @@ require_once __DIR__ . '/territory-access.php';
 require_once __DIR__ . '/prospecting-core.php';
 require_once __DIR__ . '/connectwise-meeting-activity.php';
 require_once __DIR__ . '/task-email.php';
+require_once __DIR__ . '/meetings-shared.php';
 
 $pdo = relationships_db();
-$user = relationships_require_login($pdo);
-$allowedTerritories = relationships_allowed_territories($pdo);
+// relationships_require_login_or_bearer() (not plain relationships_require_login())
+// added 2026-09-28 -- this endpoint's list/add_task/set_task_done actions
+// are called directly by the Outlook add-in's task pane using its own
+// per-device bearer token (see _util.php's relationships_bearer_user()),
+// which cannot rely on this site's session cookie. A normal signed-in
+// browser session still works exactly as before -- bearer is only checked
+// first, as a fallback-free extra path, not a replacement.
+$user = relationships_require_login_or_bearer($pdo);
+// relationships_allowed_territories_for_email() (not the session-reading
+// relationships_allowed_territories()) -- added 2026-09-28 alongside bearer
+// auth above. A bearer-authed request has no PHP session, so the
+// session-reading helper would silently return "unrestricted" regardless
+// of the token holder's real territory assignment. This session-free
+// lookup keys off $user['email'] directly, so territory scoping applies
+// identically whether $user came from a cookie or a bearer token.
+$allowedTerritories = relationships_allowed_territories_for_email($pdo, (string) $user['email']);
 
 $action = $_GET['action'] ?? '';
 
@@ -148,15 +163,11 @@ $action = $_GET['action'] ?? '';
  * This customer's connectwise_id, or null for a mock/unsynced customer --
  * same "MOCK-%" convention every other file in this integration uses
  * (activity.php, outgrow.php, checklist.php's Activity trigger).
+ *
+ * Moved to meetings-shared.php (2026-09-28) so outlook-addin.php can reuse
+ * it without requiring this whole file -- kept required here for the rest
+ * of this file's call sites, unchanged otherwise.
  */
-function relationships_meetings_cw_id(PDO $pdo, int $customerId): ?string
-{
-    $stmt = $pdo->prepare('SELECT connectwise_id FROM customers WHERE id = :id');
-    $stmt->execute([':id' => $customerId]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-    $cwId = $row['connectwise_id'] ?? null;
-    return ($cwId === null || $cwId === '' || str_starts_with((string) $cwId, 'MOCK-')) ? null : (string) $cwId;
-}
 
 /** crc_users (id, email) for a name, matched case-insensitively -- null if nobody has registered under that name yet. */
 function relationships_meetings_user_by_name(PDO $pdo, string $name): ?array
@@ -187,19 +198,6 @@ function relationships_meeting_task_row(array $r): array
     ];
 }
 
-function relationships_meeting_row(array $m, array $tasks): array
-{
-    return [
-        'id' => (int) $m['id'],
-        'subject' => $m['subject'],
-        'meeting_date' => $m['meeting_date'],
-        'notes' => $m['notes'],
-        'logged_by_name' => $m['logged_by_name'],
-        'created_at' => $m['created_at'],
-        'cw_push' => ['status' => $m['cw_push_status'], 'error' => $m['cw_push_error']],
-        'tasks' => $tasks,
-    ];
-}
 
 /**
  * Shared row shape for the cross-customer task views ('global' and
@@ -299,7 +297,7 @@ if ($action === 'list') {
     relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
 
     $meetingStmt = $pdo->prepare(
-        'SELECT id, subject, meeting_date, notes, logged_by_name, created_at, cw_push_status, cw_push_error
+        'SELECT id, subject, meeting_date, notes, logged_by_name, created_at, cw_push_status, cw_push_error, source, email_sender, email_sender_name
          FROM customer_meetings WHERE customer_id = :id ORDER BY id DESC'
     );
     $meetingStmt->execute([':id' => $customerId]);
@@ -594,7 +592,7 @@ if ($action === 'create_meeting') {
     }
 
     $meetingStmt = $pdo->prepare(
-        'SELECT id, subject, meeting_date, notes, logged_by_name, created_at, cw_push_status, cw_push_error
+        'SELECT id, subject, meeting_date, notes, logged_by_name, created_at, cw_push_status, cw_push_error, source, email_sender, email_sender_name
          FROM customer_meetings WHERE id = :id'
     );
     $meetingStmt->execute([':id' => $meetingId]);
