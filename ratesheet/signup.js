@@ -309,7 +309,7 @@
       '    <p style="font-size:12px;color:#5A6472;line-height:1.5;margin-top:-4px;">Just let us know your preference for now — our Invoicing team will follow up separately to securely add your card or bank details.</p>' +
       '    <div class="method-row">' +
       '      <label class="method-option"><input type="radio" name="payment_method" value="card" ' + (f.payment_method === 'card' ? 'checked' : '') + ' data-radio="payment_method" />' +
-      '        <span>Credit Card<span class="method-note">Standard rate</span></span></label>' +
+      '        <span>Credit Card<span class="method-note">Transaction Fees applied</span></span></label>' +
       '      <label class="method-option"><input type="radio" name="payment_method" value="ach" ' + (f.payment_method === 'ach' ? 'checked' : '') + ' data-radio="payment_method" />' +
       '        <span>ACH (Bank Transfer)<span class="method-note">Save 3% on transactions</span></span></label>' +
       '    </div>' +
