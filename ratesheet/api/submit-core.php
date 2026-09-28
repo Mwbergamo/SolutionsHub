@@ -638,6 +638,7 @@ function ratesheet_invoicing_notice_html(array $s): string
         '<tr><td style="padding:16px 24px;font-size:13px;color:#33394A;line-height:1.7;">' .
         'A new customer has signed their CodeBlue Technology rate sheet and is ready to have a payment method added in Alternative Payments. Their ConnectWise Company was created on <strong>Credit Hold</strong> and should stay that way until this is done.<br><br>' .
         '<strong>Company:</strong> ' . $e($s['business_name'] !== '' ? $s['business_name'] : ($s['first_name'] . ' ' . $s['last_name'])) . ' (ConnectWise Company #' . (int) $s['cw_company_id'] . ')<br>' .
+        '<strong>Location:</strong> ' . $e($s['location']) . ' (confirms the hourly rate to code)<br>' .
         '<strong>Contact:</strong> ' . $e($s['first_name'] . ' ' . $s['last_name']) . ' — ' . $e($s['email']) . ' — ' . $e($s['phone']) . ' (ConnectWise Contact #' . (int) $s['cw_contact_id'] . ')<br>' .
         '<strong>Requested Payment Method:</strong> ' . $e($paymentLabel) . '<br><br>' .
         'Once the payment method is added in Alternative Payments, please also change this Company\'s Billing Status off Credit Hold in ConnectWise.' .
