@@ -403,7 +403,37 @@ function register_cw_create_company(
         $body['zip'] = $zip;
     }
 
-    $company = register_cw_request('/company/companies', [], 'POST', $body, 12, 4);
+    // ConnectWise's Company `identifier` (the "Company ID") must be
+    // unique across the whole instance -- added 2026-09-29 (ported from
+    // ratesheet_cw_create_company()'s identical fix, same day, after a
+    // real rate-sheet signup failed with {"code":"InvalidObject",
+    // "errors":[{"code":"ObjectExists","message":"Company ID already in
+    // use.","field":"identifier"}]} because another Company already had
+    // the exact same sanitized name -- the identical bug was always
+    // possible here too, same unguarded register_cw_sanitize_account_id()
+    // call, just not yet reported from this app). Rather than fail the
+    // whole create over a name collision (two different customers CAN
+    // share a name), retry with a disambiguating " 2", " 3", ... suffix
+    // on both `identifier` and `accountNumber` (kept in sync, same as the
+    // no-collision case above) up to 5 attempts total before giving up
+    // and rethrowing.
+    $companyAttempt = 1;
+    while (true) {
+        try {
+            $company = register_cw_request('/company/companies', [], 'POST', $body, 12, 4);
+            break;
+        } catch (RegisterConnectWiseError $e) {
+            if ($companyAttempt >= 5 || !$e->hasFieldError('identifier', 'ObjectExists')) {
+                throw $e;
+            }
+            $companyAttempt++;
+            $suffix = ' ' . $companyAttempt;
+            $disambiguated = register_cw_sanitize_account_id(($identifier ?? $name), 41 - mb_strlen($suffix)) . $suffix;
+            error_log('register_cw_create_company: identifier "' . $body['identifier'] . '" already in use -- retrying as "' . $disambiguated . '" (attempt ' . $companyAttempt . ').');
+            $body['identifier'] = $disambiguated;
+            $body['accountNumber'] = $disambiguated;
+        }
+    }
     $companyId = $company['id'] ?? null;
     if (!is_int($companyId)) {
         throw new RegisterConnectWiseError('ConnectWise did not return a new company id.');
