@@ -27,6 +27,40 @@ declare(strict_types=1);
 
 class RatesheetConnectWiseError extends RuntimeException
 {
+    // Decoded JSON error body, when ConnectWise's response was itself
+    // valid JSON (e.g. ['code'=>'InvalidObject','errors'=>[['code'=>
+    // 'ObjectExists','field'=>'identifier',...]]]). Null for a transport
+    // failure, a non-JSON body, or any error raised without one -- added
+    // 2026-09-29 so a caller can detect a specific field-level error
+    // (like a duplicate Company identifier, see
+    // ratesheet_cw_create_company() in submit-core.php) instead of
+    // string-matching this exception's message.
+    public ?array $responseBody;
+
+    public function __construct(string $message, ?array $responseBody = null)
+    {
+        parent::__construct($message);
+        $this->responseBody = $responseBody;
+    }
+
+    // True if ConnectWise's response body included a top-level `errors`
+    // entry matching this exact field + code, e.g.
+    // hasFieldError('identifier', 'ObjectExists') for a duplicate Company
+    // ID. ConnectWise's error shape for that case (confirmed live,
+    // 2026-09-29): {"code":"InvalidObject","errors":[{"code":"ObjectExists",
+    // "message":"Company ID already in use.","field":"identifier"}]}.
+    public function hasFieldError(string $field, string $code): bool
+    {
+        if ($this->responseBody === null) {
+            return false;
+        }
+        foreach ($this->responseBody['errors'] ?? [] as $err) {
+            if (($err['field'] ?? null) === $field && ($err['code'] ?? null) === $code) {
+                return true;
+            }
+        }
+        return false;
+    }
 }
 
 function ratesheet_cw_config(): array
@@ -114,7 +148,8 @@ function ratesheet_cw_request(
     }
     if ($status < 200 || $status >= 300) {
         $snippet = is_string($body) ? substr($body, 0, 3000) : '';
-        throw new RatesheetConnectWiseError("ConnectWise request returned HTTP $status for $url — $snippet");
+        $decodedError = is_string($body) ? json_decode($body, true) : null;
+        throw new RatesheetConnectWiseError("ConnectWise request returned HTTP $status for $url — $snippet", is_array($decodedError) ? $decodedError : null);
     }
 
     if ($body === '' || $body === false) {

@@ -500,7 +500,35 @@ function ratesheet_cw_create_company(string $name, string $addressLine1, string 
     if ($state !== '') $body['state'] = $state;
     if ($zip !== '') $body['zip'] = $zip;
 
-    $company = ratesheet_cw_request('/company/companies', [], 'POST', $body, 20, 8);
+    // ConnectWise's Company `identifier` (the "Company ID") must be
+    // unique across the whole instance -- added 2026-09-29, after a real
+    // signup failed with {"code":"InvalidObject","errors":[{"code":
+    // "ObjectExists","message":"Company ID already in use.",
+    // "field":"identifier"}]} because another Company already had the
+    // exact same sanitized name. Rather than fail the whole signup over a
+    // name collision (two different customers CAN share a name), retry
+    // with a disambiguating " 2", " 3", ... suffix on both `identifier`
+    // and `accountNumber` (kept in sync, same as the no-collision case
+    // above) up to 5 attempts total before giving up and rethrowing --
+    // which still lands the row on the existing RED "Failed"/retriable
+    // state exactly as before this existed.
+    $companyAttempt = 1;
+    while (true) {
+        try {
+            $company = ratesheet_cw_request('/company/companies', [], 'POST', $body, 20, 8);
+            break;
+        } catch (RatesheetConnectWiseError $e) {
+            if ($companyAttempt >= 5 || !$e->hasFieldError('identifier', 'ObjectExists')) {
+                throw $e;
+            }
+            $companyAttempt++;
+            $suffix = ' ' . $companyAttempt;
+            $disambiguated = ratesheet_cw_sanitize_account_id($name, 41 - mb_strlen($suffix)) . $suffix;
+            error_log('ratesheet_cw_create_company: identifier "' . $body['identifier'] . '" already in use -- retrying as "' . $disambiguated . '" (attempt ' . $companyAttempt . ').');
+            $body['identifier'] = $disambiguated;
+            $body['accountNumber'] = $disambiguated;
+        }
+    }
     $companyId = $company['id'] ?? null;
     if (!is_int($companyId)) {
         throw new RatesheetConnectWiseError('ConnectWise did not return a new company id.');
