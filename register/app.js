@@ -169,6 +169,17 @@
     // History) -- the receipt overlay shows whenever this is non-null.
     receipt: null,
 
+    // The just-sold contact's email, captured at the moment of a fresh
+    // checkout -- state.customer (where contactEmail normally lives) gets
+    // wiped by resetCustomerState() immediately after submitCheckout()
+    // succeeds, so this is the only place that email survives for the
+    // receipt's "Email Receipt" button. Always null for a receipt reopened
+    // from History (no email is stored on a past sale -- see
+    // saleToInvoice() below), so that button's "to" field is simply left
+    // blank rather than risk prefilling a stale, unrelated email from
+    // whatever the customer picker happened to hold at the time.
+    receiptContactEmail: null,
+
     history: null,
     historyLoading: false,
 
@@ -594,6 +605,7 @@
     apiGet('api/checkout.php?action=receipt&id=' + encodeURIComponent(saleId)).then(function (r) {
       if (r.data && r.data.ok) {
         state.receipt = r.data.sale;
+        state.receiptContactEmail = null;
       } else {
         state.error = (r.data && r.data.error) || 'Could not load that receipt.';
       }
@@ -1513,6 +1525,11 @@
         // default tax rate (a failed/unsynced live tax-code lookup) rather
         // than the customer's real assigned code -- see api/checkout.php.
         state.receipt.tax_warning = r.data.tax_warning || null;
+        // Captured here, before resetCustomerState() below wipes
+        // state.customer -- lets the receipt's "Email Receipt" button
+        // prefill the "to" field for a fresh sale (see receiptContactEmail
+        // in the state init above).
+        state.receiptContactEmail = state.customer.contactEmail || null;
         resetCustomerState();
         loadCatalogNow();
       } else {
@@ -2811,54 +2828,230 @@
     );
   }
 
-  // Formats the Company/Contact stored on a sale for the receipt/history --
-  // falls back to the old free-text customer_name for sales recorded
-  // before the 2026-09-14 ConnectWise Company/Contact checkout change.
-  function customerLineHtml(sale) {
+  // Raw (unescaped) Company/Contact text for a sale -- shared by both the
+  // HTML customerLineHtml() below and the plain-text email body in
+  // invoicePlainText(), so there's exactly one place that knows the
+  // fallback order (falls back to the old free-text customer_name for
+  // sales recorded before the 2026-09-14 ConnectWise Company/Contact
+  // checkout change).
+  function invoiceCustomerLineRaw(sale) {
     if (sale.cw_contact_name) {
-      return escapeHtml(sale.cw_contact_name) + (sale.cw_company_name ? ' — ' + escapeHtml(sale.cw_company_name) : '');
+      return sale.cw_contact_name + (sale.cw_company_name ? ' — ' + sale.cw_company_name : '');
     }
-    if (sale.cw_company_name) return escapeHtml(sale.cw_company_name);
-    if (sale.customer_name) return escapeHtml(sale.customer_name);
+    if (sale.cw_company_name) return sale.cw_company_name;
+    if (sale.customer_name) return sale.customer_name;
     return '';
+  }
+
+  function customerLineHtml(sale) {
+    return escapeHtml(invoiceCustomerLineRaw(sale));
+  }
+
+  // Converts a completed register sale into the generic "invoice" shape
+  // detailedInvoiceHtml()/invoicePlainText() below render -- a shared
+  // template so the Complete Sale receipt and (later) a service-ticket
+  // invoice both print/email the same way. A register sale never has
+  // labor lines (labor: []); everything else here is a straight read of
+  // what api/checkout.php's action=receipt already returns -- no backend
+  // change was needed for this, description/unit_price were already being
+  // stored per sale_item, just not shown.
+  function saleToInvoice(sale) {
+    return {
+      title: 'Retail Sale Receipt',
+      numberLabel: 'Sale #',
+      number: sale.id,
+      created_at: sale.created_at,
+      customerLine: invoiceCustomerLineRaw(sale),
+      repLabel: 'Rung up by',
+      repName: sale.cashier_name,
+      extraMeta: sale.cw_agreement_id
+        ? ['IT Services Agreement #' + sale.cw_agreement_id + (sale.cw_billing_cycle ? ' (' + sale.cw_billing_cycle.charAt(0).toUpperCase() + sale.cw_billing_cycle.slice(1) + ')' : '')]
+        : [],
+      items: sale.items.map(function (item) {
+        return {
+          description: item.description,
+          identifier: item.identifier,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          line_total: item.line_total
+        };
+      }),
+      labor: [],
+      subtotal: sale.subtotal,
+      taxLabel: 'Tax' + (sale.tax_code_identifier ? ' (' + sale.tax_code_identifier + (typeof sale.tax_rate === 'number' ? ' ' + (sale.tax_rate * 100).toFixed(1) + '%' : '') + ')' : ''),
+      taxAmount: sale.tax_amount,
+      total: sale.total,
+      paymentMethod: sale.payment_method,
+      paymentReference: sale.payment_reference,
+      note: sale.note,
+      footer: 'Thank you!'
+    };
+  }
+
+  // One product/service line -- description first (falling back to the
+  // short identifier when ConnectWise has no real description synced),
+  // then a compact Qty/Unit/Ext. figures line underneath. Stacked rather
+  // than a rigid column grid so a long ConnectWise description still
+  // reads cleanly at the receipt modal's narrow on-screen width.
+  function invoiceItemRowHtml(item) {
+    var desc = (item.description || '').trim() || item.identifier;
+    var showCode = (item.description || '').trim() && item.identifier && item.identifier !== desc;
+    return '<div class="invoice-item-row">' +
+      '<div class="invoice-item-desc">' + escapeHtml(desc) +
+        (showCode ? ' <span class="invoice-item-code">(' + escapeHtml(item.identifier) + ')</span>' : '') +
+      '</div>' +
+      '<div class="invoice-item-figures">' +
+        '<span>Qty ' + fmtQty(item.quantity) + '</span>' +
+        '<span>Unit ' + fmtMoney(item.unit_price) + '</span>' +
+        '<span>Ext. ' + fmtMoney(item.line_total) + '</span>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // One labor/time line -- same stacked shape as a product line above, but
+  // with hours and a Billable/Non-billable flag instead of qty/unit price.
+  // Not used by a register sale today (saleToInvoice() always passes an
+  // empty labor array) -- built now so a future ticket-invoice screen can
+  // feed this same template real labor lines without a new renderer.
+  function invoiceLaborRowHtml(labor) {
+    return '<div class="invoice-item-row">' +
+      '<div class="invoice-item-desc">' + escapeHtml(labor.description || 'Labor') +
+        (labor.techName ? ' <span class="invoice-item-code">— ' + escapeHtml(labor.techName) + '</span>' : '') +
+      '</div>' +
+      '<div class="invoice-item-figures">' +
+        '<span>' + fmtQty(labor.hours) + ' hr' + (labor.hours === 1 ? '' : 's') + '</span>' +
+        '<span>' + (labor.billable === false ? 'Non-billable' : 'Billable') + '</span>' +
+        '<span>' + fmtMoney(labor.line_total) + '</span>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // Shared detailed invoice/receipt body -- the printable/emailable
+  // content itself (header, itemized products, an optional Labor section,
+  // totals, payment, note). Used inside #printableReceipt below; a future
+  // ticket-invoice screen renders this same function against its own
+  // saleToInvoice()-shaped object (with real labor lines) rather than a
+  // separate template.
+  function detailedInvoiceHtml(invoice) {
+    var itemsHtml = invoice.items.length
+      ? '<div class="invoice-section-label">Items</div><div class="invoice-items">' +
+          invoice.items.map(invoiceItemRowHtml).join('') +
+        '</div>'
+      : '';
+    var laborHtml = (invoice.labor && invoice.labor.length)
+      ? '<div class="invoice-section-label">Labor</div><div class="invoice-items">' +
+          invoice.labor.map(invoiceLaborRowHtml).join('') +
+        '</div>'
+      : '';
+
+    return (
+      '<div class="receipt-header">' +
+        '<div class="receipt-brand">CodeBlue Technology</div>' +
+        '<div class="receipt-sub">' + escapeHtml(invoice.title) + '</div>' +
+        '<div class="receipt-meta">' + escapeHtml(invoice.numberLabel) + invoice.number + ' — ' + fmtTimestamp(invoice.created_at) + '</div>' +
+        '<div class="receipt-meta">' + escapeHtml(invoice.repLabel) + ' ' + escapeHtml(invoice.repName) + '</div>' +
+        (invoice.customerLine ? '<div class="receipt-meta">Customer: ' + escapeHtml(invoice.customerLine) + '</div>' : '') +
+        invoice.extraMeta.map(function (m) { return '<div class="receipt-meta">' + escapeHtml(m) + '</div>'; }).join('') +
+      '</div>' +
+      itemsHtml +
+      laborHtml +
+      '<div class="receipt-totals">' +
+        '<div class="receipt-line"><span>Subtotal</span><span>' + fmtMoney(invoice.subtotal) + '</span></div>' +
+        '<div class="receipt-line"><span>' + escapeHtml(invoice.taxLabel) + '</span><span>' + fmtMoney(invoice.taxAmount) + '</span></div>' +
+        '<div class="receipt-line total"><span>Total</span><span>' + fmtMoney(invoice.total) + '</span></div>' +
+        (invoice.paymentMethod ? '<div class="receipt-line"><span>Payment</span><span>' + escapeHtml(invoice.paymentMethod) + (invoice.paymentReference ? ' (' + escapeHtml(invoice.paymentReference) + ')' : '') + '</span></div>' : '') +
+      '</div>' +
+      (invoice.note ? '<div class="receipt-note">' + escapeHtml(invoice.note) + '</div>' : '') +
+      '<div class="receipt-footer">' + escapeHtml(invoice.footer || 'Thank you!') + '</div>'
+    );
+  }
+
+  // Plain-text rendering of the same invoice object, for the "Email
+  // Receipt" mailto: body -- a mailto: body is plain text with no table
+  // support, same flattening tradeoff already accepted for the
+  // Relationships app's cross-sell emails (see
+  // relationships-cross-sell-scripts.md's "Table flattened to plain text").
+  function invoicePlainText(invoice) {
+    var lines = [];
+    lines.push('CodeBlue Technology');
+    lines.push(invoice.title);
+    lines.push(invoice.numberLabel + invoice.number + ' -- ' + fmtTimestamp(invoice.created_at));
+    lines.push(invoice.repLabel + ' ' + invoice.repName);
+    if (invoice.customerLine) lines.push('Customer: ' + invoice.customerLine);
+    invoice.extraMeta.forEach(function (m) { lines.push(m); });
+    lines.push('');
+    if (invoice.items.length) {
+      lines.push('ITEMS');
+      invoice.items.forEach(function (item) {
+        var desc = (item.description || '').trim() || item.identifier;
+        lines.push(fmtQty(item.quantity) + ' x ' + desc + ' @ ' + fmtMoney(item.unit_price) + ' = ' + fmtMoney(item.line_total));
+      });
+      lines.push('');
+    }
+    if (invoice.labor && invoice.labor.length) {
+      lines.push('LABOR');
+      invoice.labor.forEach(function (labor) {
+        lines.push((labor.description || 'Labor') + (labor.techName ? ' -- ' + labor.techName : '') +
+          ': ' + fmtQty(labor.hours) + ' hr' + (labor.hours === 1 ? '' : 's') +
+          ' (' + (labor.billable === false ? 'Non-billable' : 'Billable') + ') = ' + fmtMoney(labor.line_total));
+      });
+      lines.push('');
+    }
+    lines.push('Subtotal: ' + fmtMoney(invoice.subtotal));
+    lines.push(invoice.taxLabel + ': ' + fmtMoney(invoice.taxAmount));
+    lines.push('Total: ' + fmtMoney(invoice.total));
+    if (invoice.paymentMethod) {
+      lines.push('Payment: ' + invoice.paymentMethod + (invoice.paymentReference ? ' (' + invoice.paymentReference + ')' : ''));
+    }
+    if (invoice.note) {
+      lines.push('');
+      lines.push(invoice.note);
+    }
+    lines.push('');
+    lines.push(invoice.footer || 'Thank you!');
+    return lines.join('\n');
+  }
+
+  // Raw mailto: URL for direct window.location.href navigation (not an
+  // HTML href="..." attribute, which would need escapeHtml() so the
+  // browser's HTML parser can un-escape it back into a real URL --
+  // assigning .href via JS never goes through that parser, so escaping
+  // here would corrupt the URL instead). Same reasoning as Relationships'
+  // identically-named crossSellMailtoUrl() -- register/app.js and
+  // relationships/app.js are separate self-contained sub-apps with no
+  // shared JS file, so this is its own small copy, not an import.
+  function registerMailtoUrl(email, subject, body) {
+    return 'mailto:' + (email || '') + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  }
+
+  // "Email Receipt" button handler -- opens a pre-filled mailto: draft in
+  // the rep's own Outlook (Michael's chosen pattern, same as the
+  // Relationships cross-sell checklist's Email action) rather than sending
+  // automatically. Prefills "to" with the contact's email when this is a
+  // receipt for the sale just completed (state.receiptContactEmail); left
+  // blank for a receipt reopened from History, since no email is stored on
+  // a past sale -- see viewPastReceipt() and the state init comment above.
+  function emailReceipt() {
+    if (!state.receipt) return;
+    var invoice = saleToInvoice(state.receipt);
+    var subject = invoice.title + ' ' + invoice.numberLabel + invoice.number + ' — CodeBlue Technology';
+    window.location.href = registerMailtoUrl(state.receiptContactEmail, subject, invoicePlainText(invoice));
   }
 
   function receiptOverlayHtml() {
     if (!state.receipt) return '';
     var r = state.receipt;
-    var itemsHtml = r.items.map(function (item) {
-      return '<div class="receipt-line">' +
-        '<span>' + fmtQty(item.quantity) + ' × ' + escapeHtml(item.identifier) + '</span>' +
-        '<span>' + fmtMoney(item.line_total) + '</span>' +
-      '</div>';
-    }).join('');
+    var invoiceHtml = detailedInvoiceHtml(saleToInvoice(r));
 
     return (
       '<div class="modal-backdrop" data-action="close-receipt-backdrop">' +
         '<div class="modal receipt-modal" data-stop-propagation="1">' +
-          '<div id="printableReceipt" class="receipt">' +
-            '<div class="receipt-header">' +
-              '<div class="receipt-brand">CodeBlue Technology</div>' +
-              '<div class="receipt-sub">Retail Sale Receipt</div>' +
-              '<div class="receipt-meta">Sale #' + r.id + ' — ' + fmtTimestamp(r.created_at) + '</div>' +
-              '<div class="receipt-meta">Rung up by ' + escapeHtml(r.cashier_name) + '</div>' +
-              (customerLineHtml(r) ? '<div class="receipt-meta">Customer: ' + customerLineHtml(r) + '</div>' : '') +
-              (r.cw_agreement_id ? '<div class="receipt-meta">IT Services Agreement #' + r.cw_agreement_id + (r.cw_billing_cycle ? ' (' + r.cw_billing_cycle.charAt(0).toUpperCase() + r.cw_billing_cycle.slice(1) + ')' : '') + '</div>' : '') +
-            '</div>' +
-            '<div class="receipt-items">' + itemsHtml + '</div>' +
-            '<div class="receipt-totals">' +
-              '<div class="receipt-line"><span>Subtotal</span><span>' + fmtMoney(r.subtotal) + '</span></div>' +
-              '<div class="receipt-line"><span>Tax' + (r.tax_code_identifier ? ' (' + escapeHtml(r.tax_code_identifier) + (typeof r.tax_rate === 'number' ? ' ' + (r.tax_rate * 100).toFixed(1) + '%' : '') + ')' : '') + '</span><span>' + fmtMoney(r.tax_amount) + '</span></div>' +
-              '<div class="receipt-line total"><span>Total</span><span>' + fmtMoney(r.total) + '</span></div>' +
-              '<div class="receipt-line"><span>Payment</span><span>' + escapeHtml(r.payment_method) + (r.payment_reference ? ' (' + escapeHtml(r.payment_reference) + ')' : '') + '</span></div>' +
-            '</div>' +
-            (r.note ? '<div class="receipt-note">' + escapeHtml(r.note) + '</div>' : '') +
-            '<div class="receipt-footer">Thank you!</div>' +
-          '</div>' +
+          '<div id="printableReceipt" class="receipt">' + invoiceHtml + '</div>' +
           (r.tax_warning ? '<div class="error-banner customer-warning no-print">' + escapeHtml(r.tax_warning) + '</div>' : '') +
           (r.agreement_warning ? '<div class="error-banner customer-warning no-print">' + escapeHtml(r.agreement_warning) + '</div>' : '') +
           '<div class="modal-actions no-print">' +
             '<button type="button" class="modal-cancel" data-action="close-receipt">Close</button>' +
+            '<button type="button" class="modal-secondary" data-action="email-receipt">Email Receipt</button>' +
             '<button type="button" class="modal-confirm" data-action="print-receipt">Print Receipt</button>' +
           '</div>' +
         '</div>' +
@@ -3190,8 +3383,9 @@
       else if (action === 'signup-tax-exempt-toggle') handler = function () { state.newCustomerSignup.taxExempt = !state.newCustomerSignup.taxExempt; render(); };
       else if (action === 'mark-tax-exempt') handler = markCustomerTaxExempt;
       else if (action === 'customer-new-company-tax-exempt-toggle') handler = function () { state.customerUi.newCompanyForm.tax_exempt = !state.customerUi.newCompanyForm.tax_exempt; render(); };
-      else if (action === 'close-receipt') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'card', payment_reference: '', note: '', billing_cycle: 'monthly' }; resetCustomerState(); render(); };
-      else if (action === 'close-receipt-backdrop') handler = function () { state.receipt = null; state.checkoutForm = { payment_method: 'card', payment_reference: '', note: '', billing_cycle: 'monthly' }; resetCustomerState(); render(); };
+      else if (action === 'close-receipt') handler = function () { state.receipt = null; state.receiptContactEmail = null; state.checkoutForm = { payment_method: 'card', payment_reference: '', note: '', billing_cycle: 'monthly' }; resetCustomerState(); render(); };
+      else if (action === 'close-receipt-backdrop') handler = function () { state.receipt = null; state.receiptContactEmail = null; state.checkoutForm = { payment_method: 'card', payment_reference: '', note: '', billing_cycle: 'monthly' }; resetCustomerState(); render(); };
+      else if (action === 'email-receipt') handler = emailReceipt;
       else if (action === 'print-receipt') handler = function () { window.print(); };
       else if (action === 'view-receipt') handler = function () { viewPastReceipt(el.dataset.id); };
       else if (action === 'returns-queue-filter') handler = function () { setReturnsQueueFilter(el.dataset.value); };
