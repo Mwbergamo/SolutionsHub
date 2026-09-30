@@ -1994,15 +1994,34 @@ a { color: inherit; }
 }
 .checklist-note-add-btn:hover { border-color: #2f8fef; color: #8fc3ff; }
 
-.checklist-step-action {
-  display: inline-block;
-  margin: -4px 0 8px 29px;
-  font-size: 12px;
-  font-weight: 700;
-  color: #8fc3ff;
-  text-decoration: none;
+.checklist-step-icon-btn {
+  flex: none;
+  margin-top: 7px;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid oklch(0.34 0.02 255);
+  color: oklch(0.65 0.02 255);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
 }
-.checklist-step-action:hover { color: #b7d8ff; text-decoration: underline; }
+.checklist-step-icon-btn:hover { border-color: #2f8fef; color: #8fc3ff; }
+/* Waiting on a contact pick -- set when a rep clicks the icon before one
+   is selected, cleared the instant they choose one (or back out). */
+.checklist-step-icon-btn.pending {
+  border-color: #2f8fef;
+  color: #2f8fef;
+  background: oklch(0.26 0.05 255);
+  animation: checklist-step-icon-pulse 1.4s ease-in-out infinite;
+}
+@keyframes checklist-step-icon-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(47,143,239,.45); }
+  50% { box-shadow: 0 0 0 4px rgba(47,143,239,0); }
+}
 
 .checklist-note-form {
   margin: 0 0 10px 29px;

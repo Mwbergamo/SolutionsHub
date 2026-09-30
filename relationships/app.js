@@ -236,6 +236,13 @@
     // deliberately no second contact fetch for this.
     checklistContactSelected: {},
     openChecklistContactDropdownKey: null,
+    // Set when a rep clicks a step's Email/Call icon before a contact is
+    // selected yet -- {key, step, type} -- so checklist-contact-select
+    // can fire the deferred action the instant a contact is picked,
+    // instead of the rep having to click the icon a second time. Added
+    // 2026-09-30: the icon now works even before a contact is chosen, not
+    // only once one already is (see checklistStepRowHtml()).
+    checklistPendingContactAction: null,
 
     // "customerId::pillarId::serviceId" currently mid Recycle/Kill/Unkill
     // request, so those buttons can show a saving state and can't
@@ -1748,8 +1755,45 @@
     return { subject: mergeFields(tpl.subject), body: mergeFields(lines.join('\n')) };
   }
 
-  function crossSellMailtoHref(email, subject, body) {
-    return 'mailto:' + escapeHtml(email) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  // Raw mailto: URL for *programmatic* navigation (window.location.href =
+  // ...) from the step icon buttons below -- distinct from an HTML
+  // href="..." attribute, which needs escapeHtml() so the browser's HTML
+  // parser can un-escape it back into a real URL. Assigning .href via JS
+  // never goes through that parser, so escaping here would corrupt the
+  // URL instead (a literal "&amp;" splitting subject from body). Added
+  // 2026-09-30 alongside the always-visible step icons below.
+  function crossSellMailtoUrl(email, subject, body) {
+    return 'mailto:' + email + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  }
+
+  // True when CROSS_SELL_SCRIPTS has real content for this pillar/service/
+  // step -- decides whether a step's Email icon is worth showing at all,
+  // independent of whether a contact happens to be selected yet.
+  function crossSellHasScript(pillarId, serviceId, stepNumber) {
+    var script = CROSS_SELL_SCRIPTS[pillarId + '::' + serviceId];
+    return !!(script && script[stepNumber]);
+  }
+
+  // Small inline icons for a step row's Email/Call buttons (feather-style,
+  // matching the dropdown chevron already used elsewhere in this file).
+  var CHECKLIST_ICON_EMAIL = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"></rect><path d="m22 7-10 7L2 7"></path></svg>';
+  var CHECKLIST_ICON_PHONE = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>';
+
+  // Fires the Email or Call action for a checklist step against a known
+  // contact -- called directly from the step icon's click when a contact
+  // is already selected, and again from checklist-contact-select below
+  // when the icon was clicked first and a contact still needed picking.
+  function fireChecklistContactAction(type, pillarId, serviceId, stepNumber, contact) {
+    if (!contact) return;
+    if (type === 'call') {
+      if (!contact.phone) return;
+      window.location.href = 'tel:' + contact.phone;
+      return;
+    }
+    if (!contact.email) return;
+    var email = crossSellEmailContent(pillarId, serviceId, stepNumber, contact);
+    if (!email) return;
+    window.location.href = crossSellMailtoUrl(contact.email, email.subject, email.body);
   }
 
   function loadChecklistNotes(customerId, pillarId, serviceId) {
@@ -5231,7 +5275,7 @@
         html += '<div class="contact-card-dropdown-panel">';
         contacts.forEach(function (c) {
           var rowClass = 'contact-card-dropdown-row' + (selectedContact && c.id === selectedContact.id ? ' selected' : '');
-          html += '<div class="' + rowClass + '" data-action="checklist-contact-select" data-checklist-key="' + key + '" data-contact-id="' + escapeHtml(c.id) + '">' +
+          html += '<div class="' + rowClass + '" data-action="checklist-contact-select" data-checklist-key="' + key + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '" data-contact-id="' + escapeHtml(c.id) + '">' +
             '<div class="contact-card-dropdown-name">' + escapeHtml(c.name || 'Contact') + '</div>' +
             '<div class="contact-card-dropdown-meta">' + escapeHtml(c.email) + ' · ' + escapeHtml(c.phone) + '</div>' +
           '</div>';
@@ -5281,7 +5325,7 @@
 
     html += '<div class="checklist-steps-col">';
     data.steps.forEach(function (step) {
-      html += checklistStepRowHtml(customerId, pillar, svc, step, selectedContact, key);
+      html += checklistStepRowHtml(customerId, pillar, svc, step, selectedContact, key, contacts.length > 0);
     });
     html += '</div>'; // .checklist-steps-col
 
@@ -5314,9 +5358,42 @@
   // Email/Call action for the scripted odd/even steps. Split out of
   // checklistHtml() above once that function started doing much more than
   // render a plain list.
-  function checklistStepRowHtml(customerId, pillar, svc, step, selectedContact, checklistKey) {
+  function checklistStepRowHtml(customerId, pillar, svc, step, selectedContact, checklistKey, hasContacts) {
     var stepKey = checklistKey + '::' + step.step_number;
     var draftOpen = state.checklistNoteDraftOpenKey === stepKey;
+
+    // Odd steps (1/3/5) are the scripted marketing-email steps; even steps
+    // (2/4/6) are always "Phone Call Follow-Up." The icon for either one
+    // shows as soon as there's a contact on file to eventually use -- it no
+    // longer waits for a contact to already be *selected* (added
+    // 2026-09-30, per Michael: reps were clicking the step row looking for
+    // the email action and marking the step done by mistake instead).
+    // Clicking the icon before a contact is picked opens the contact
+    // dropdown and remembers to fire once one is chosen -- see
+    // checklist-step-email/-call and checklist-contact-select below.
+    var isEmailStep = step.step_number === 1 || step.step_number === 3 || step.step_number === 5;
+    var isCallStep = step.step_number === 2 || step.step_number === 4 || step.step_number === 6;
+    var pendingHere = !!(state.checklistPendingContactAction &&
+      state.checklistPendingContactAction.key === checklistKey &&
+      state.checklistPendingContactAction.step === step.step_number);
+    var stepIconHtml = '';
+    if (hasContacts && isEmailStep && crossSellHasScript(pillar.id, svc.id, step.step_number)) {
+      var emailTitle = selectedContact ? ('Email ' + (selectedContact.name || 'contact')) : 'Pick a contact, then email';
+      stepIconHtml = '<button type="button" class="checklist-step-icon-btn' + (pendingHere ? ' pending' : '') + '"' +
+        ' title="' + escapeHtml(emailTitle) + '" aria-label="' + escapeHtml(emailTitle) + '"' +
+        ' data-action="checklist-step-email" data-checklist-key="' + checklistKey + '"' +
+        ' data-pillar="' + pillar.id + '" data-service="' + svc.id + '" data-step="' + step.step_number + '">' +
+        CHECKLIST_ICON_EMAIL +
+      '</button>';
+    } else if (hasContacts && isCallStep) {
+      var callTitle = selectedContact ? ('Call ' + (selectedContact.name || 'contact')) : 'Pick a contact, then call';
+      stepIconHtml = '<button type="button" class="checklist-step-icon-btn' + (pendingHere ? ' pending' : '') + '"' +
+        ' title="' + escapeHtml(callTitle) + '" aria-label="' + escapeHtml(callTitle) + '"' +
+        ' data-action="checklist-step-call" data-checklist-key="' + checklistKey + '"' +
+        ' data-pillar="' + pillar.id + '" data-service="' + svc.id + '" data-step="' + step.step_number + '">' +
+        CHECKLIST_ICON_PHONE +
+      '</button>';
+    }
 
     var html = '<div class="checklist-step-row">';
     html += '<label class="checklist-step ' + (step.completed ? 'done' : '') + '">' +
@@ -5330,28 +5407,9 @@
           : '') +
       '</div>' +
     '</label>';
+    html += stepIconHtml;
     html += '<button type="button" class="checklist-note-add-btn" title="Add a note on this step" data-action="checklist-note-open" data-checklist-key="' + checklistKey + '" data-step="' + step.step_number + '">+</button>';
     html += '</div>'; // .checklist-step-row
-
-    // Odd steps (1/3/5) are the scripted marketing-email steps; even steps
-    // (2/4/6) are always "Phone Call Follow-Up." Both need a contact
-    // selected first; Email additionally needs a script for this
-    // pillar/service (see CROSS_SELL_SCRIPTS -- only Cloud Voice System
-    // has one today).
-    var isEmailStep = step.step_number === 1 || step.step_number === 3 || step.step_number === 5;
-    var isCallStep = step.step_number === 2 || step.step_number === 4 || step.step_number === 6;
-    if (selectedContact && isEmailStep) {
-      var email = crossSellEmailContent(pillar.id, svc.id, step.step_number, selectedContact);
-      if (email) {
-        html += '<a class="checklist-step-action" href="' + crossSellMailtoHref(selectedContact.email, email.subject, email.body) + '" data-action="checklist-email-step">' +
-          'Email ' + escapeHtml(selectedContact.name || 'contact') + ' →' +
-        '</a>';
-      }
-    } else if (selectedContact && isCallStep) {
-      html += '<a class="checklist-step-action" href="tel:' + escapeHtml(selectedContact.phone) + '">' +
-        'Call ' + escapeHtml(selectedContact.name || 'contact') + ' — ' + escapeHtml(selectedContact.phone) + ' →' +
-      '</a>';
-    }
 
     if (draftOpen) {
       html += '<div class="checklist-note-form">' +
@@ -5592,14 +5650,49 @@
         el.getAttribute('data-customer'), el.getAttribute('data-pillar'), el.getAttribute('data-service'),
         el.getAttribute('data-service-name'), parseInt(el.getAttribute('data-step'), 10), !wasCompleted
       );
+    } else if (action === 'checklist-step-email' || action === 'checklist-step-call') {
+      var iceKey = el.getAttribute('data-checklist-key');
+      var iceType = action === 'checklist-step-email' ? 'email' : 'call';
+      var iceStep = parseInt(el.getAttribute('data-step'), 10);
+      var iceContacts = (state.contactCard && state.contactCard.contacts) || [];
+      var iceContactId = state.checklistContactSelected[iceKey] || null;
+      var iceContact = null;
+      for (var icei = 0; icei < iceContacts.length; icei++) {
+        if (iceContacts[icei].id === iceContactId) { iceContact = iceContacts[icei]; break; }
+      }
+      if (iceContact) {
+        fireChecklistContactAction(iceType, el.getAttribute('data-pillar'), el.getAttribute('data-service'), iceStep, iceContact);
+      } else {
+        // No contact picked for this checklist yet -- remember what the
+        // rep asked for, then open the same contact dropdown the row
+        // above already offers. checklist-contact-select below fires it
+        // the moment a contact is chosen.
+        state.checklistPendingContactAction = { key: iceKey, step: iceStep, type: iceType };
+        state.openChecklistContactDropdownKey = iceKey;
+        render();
+      }
     } else if (action === 'checklist-contact-dropdown-toggle') {
       var ccdKey = el.getAttribute('data-checklist-key');
       state.openChecklistContactDropdownKey = state.openChecklistContactDropdownKey === ccdKey ? null : ccdKey;
+      state.checklistPendingContactAction = null;
       render();
     } else if (action === 'checklist-contact-select') {
       var ccsKey = el.getAttribute('data-checklist-key');
-      state.checklistContactSelected[ccsKey] = el.getAttribute('data-contact-id');
+      var ccsContactId = el.getAttribute('data-contact-id');
+      state.checklistContactSelected[ccsKey] = ccsContactId;
       state.openChecklistContactDropdownKey = null;
+      var ccsPending = state.checklistPendingContactAction;
+      if (ccsPending && ccsPending.key === ccsKey) {
+        state.checklistPendingContactAction = null;
+        var ccsContacts = (state.contactCard && state.contactCard.contacts) || [];
+        var ccsContact = null;
+        for (var ccsi = 0; ccsi < ccsContacts.length; ccsi++) {
+          if (ccsContacts[ccsi].id === ccsContactId) { ccsContact = ccsContacts[ccsi]; break; }
+        }
+        if (ccsContact) {
+          fireChecklistContactAction(ccsPending.type, el.getAttribute('data-pillar'), el.getAttribute('data-service'), ccsPending.step, ccsContact);
+        }
+      }
       render();
     } else if (action === 'checklist-notes-toggle') {
       var cnCustId = state.selectedCustomer.customer.id;
@@ -5865,6 +5958,7 @@
     // more than one checklist's dropdown can exist on the page at once.
     if (state.openChecklistContactDropdownKey && !e.target.closest('.checklist-contact-dropdown')) {
       state.openChecklistContactDropdownKey = null;
+      state.checklistPendingContactAction = null;
       changed = true;
     }
     if (changed) render();
