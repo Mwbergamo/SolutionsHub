@@ -33,10 +33,23 @@
  *      rather than assumed absent).
  *
  * Gated behind relationships_require_login() like every other endpoint in
- * this app -- not public. Makes ZERO writes to ConnectWise. DELETE THIS
- * FILE once the real board names / date field / notes endpoint are
- * confirmed and the actual Projects module is built against them (same
- * lifecycle as cw-catalog-probe.php and the now-removed
+ * this app -- not public. Every action above this line is READ-ONLY.
+ *
+ * ONE EXCEPTION, added 2026-10-02 per Michael's explicit go-ahead
+ * (AskUserQuestion: "Test on project 1333 (MedRVA)"): probe-project-notes
+ * confirmed a real Project Notes resource at
+ * GET /project/projects/{id}/notes, with a "Comment" note type (id=2) --
+ * exactly what Michael's request needs. What's NOT confirmed is whether
+ * the create (POST) call can set WHO the note is attributed to, or
+ * whether ConnectWise always stamps `updatedBy` from the API key's own
+ * member identity (this integration authenticates as one shared API
+ * member, not per-coordinator -- see connectwise.php's file header). The
+ * only way to learn that is a real write, so probe-create-test-note (see
+ * below) does exactly ONE, clearly-labeled test POST, on project 1333,
+ * and nothing else in this file writes anything. DELETE THIS FILE once
+ * the real board names / date field / notes endpoint / note-authorship
+ * shape are all confirmed and the actual Projects module is built against
+ * them (same lifecycle as cw-catalog-probe.php and the now-removed
  * checklist.php?action=cw_date_probe).
  *
  * This build environment has no network path to
@@ -65,7 +78,22 @@
  * GET ?action=probe-ticket-notes&ticket_id=N
  *   -> candidate ticket-notes endpoint for a ticket id found via
  *      probe-project-notes above (confirms/refutes the "notes live on a
- *      project's ticket, not the project itself" possibility).
+ *      project's ticket, not the project itself" possibility). Moot as of
+ *      2026-10-02 -- probe-project-notes already found real notes
+ *      directly on the project, and /project/projects/{id}/tickets 404'd
+ *      -- but left in place since it's harmless and read-only.
+ * GET ?action=probe-create-test-note&project_id=1333&confirm=yes-create-test-note
+ *   -> THE ONE WRITE in this file. POSTs a single, clearly-labeled test
+ *      Comment note to real project 1333 (MedRVA Healthcare) and returns
+ *      ConnectWise's full created-record response -- looking for any
+ *      settable author/member field beyond what the GET list already
+ *      showed (id/projectId/text/type/flagged/updatedBy). Requires the
+ *      literal `confirm=yes-create-test-note` query param so this can't
+ *      fire by an accidental click; hardcoded to project_id 1333 (not a
+ *      free parameter) so it can't be pointed at an arbitrary project by
+ *      mistake. The created note's text says plainly that it's a safe-to-
+ *      delete automated test -- delete it from ConnectWise's UI afterward
+ *      if you don't want it to stay on that project.
  */
 
 declare(strict_types=1);
@@ -168,6 +196,55 @@ if ($action === 'probe-ticket-notes') {
     relationships_respond(200, ['ok' => true, 'probe' => $attempts]);
 }
 
+if ($action === 'probe-create-test-note') {
+    // Hardcoded, not read from $_GET -- this is the one write action in
+    // this file, and it must never be pointable at an arbitrary project
+    // id by accident. Michael explicitly approved testing on this real
+    // project (AskUserQuestion, 2026-10-02).
+    $projectId = 1333;
+
+    if (($_GET['confirm'] ?? '') !== 'yes-create-test-note') {
+        relationships_respond(400, [
+            'ok' => false,
+            'error' => 'This action writes a real note to ConnectWise project ' . $projectId .
+                '. Add &confirm=yes-create-test-note to the URL to proceed.',
+        ]);
+    }
+
+    $testText = '[CodeBlue Projects module -- automated API test, safe to delete] ' .
+        'Testing note creation via the API for the new Relationships Projects module. ' .
+        'Posted ' . gmdate('Y-m-d H:i') . ' UTC.';
+
+    // relationships_cw_probe_attempt() is GET-only; this action needs a
+    // real POST, so it's built directly here instead, same try/catch
+    // shape as every other probe attempt in this file.
+    try {
+        $created = relationships_cw_request(
+            "/project/projects/$projectId/notes",
+            [],
+            'POST',
+            ['text' => $testText, 'type' => ['id' => 2]]
+        );
+        relationships_respond(200, [
+            'ok' => true,
+            'probe' => [
+                'label' => "POST /project/projects/$projectId/notes (type=Comment)",
+                'ok' => true,
+                'result' => $created,
+            ],
+        ]);
+    } catch (Throwable $e) {
+        relationships_respond(200, [
+            'ok' => true,
+            'probe' => [
+                'label' => "POST /project/projects/$projectId/notes (type=Comment)",
+                'ok' => false,
+                'error' => $e->getMessage(),
+            ],
+        ]);
+    }
+}
+
 relationships_respond(400, [
     'ok' => false,
     'error' => 'Unknown action.',
@@ -177,5 +254,6 @@ relationships_respond(400, [
         'probe-project',
         'probe-project-notes',
         'probe-ticket-notes',
+        'probe-create-test-note',
     ],
 ]);
