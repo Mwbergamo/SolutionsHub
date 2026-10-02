@@ -415,7 +415,16 @@
     projectsNotesError: null,
     projectsNotesData: null, // [ { id, text, type_name, updated_by, last_updated }, ... ] for projectsNotesOpenId, once loaded
     projectsNoteDraftText: '',
-    projectsNoteSaving: false
+    projectsNoteSaving: false,
+
+    // Sort/filter over the already-loaded list -- added 2026-10-02 per
+    // Michael's follow-up request. Both are purely client-side (the list
+    // itself is always the same live fetch; this only changes what's
+    // shown/ordered from it). projectsStatusFilter: '' = default, hides
+    // is_closed projects; '__all__' = every project incl. closed; anything
+    // else is an exact status_name to show only that status.
+    projectsSortBy: 'start_date_desc', // 'start_date_desc' | 'start_date_asc' | 'company_asc' | 'company_desc'
+    projectsStatusFilter: ''
   };
 
   function escapeHtml(s) {
@@ -5630,6 +5639,20 @@
     state.projectsAssignDraft[projectId] = el.value;
   }
 
+  function onProjectStatusFilterChange(ev) {
+    var el = ev.target;
+    if (!el.hasAttribute || !el.hasAttribute('data-project-status-filter')) return;
+    state.projectsStatusFilter = el.value;
+    render();
+  }
+
+  function onProjectSortSelectChange(ev) {
+    var el = ev.target;
+    if (!el.hasAttribute || !el.hasAttribute('data-project-sort-select')) return;
+    state.projectsSortBy = el.value;
+    render();
+  }
+
   function toggleProjectChecklistStep(projectId, stepNumber, completed) {
     var key = projectId + '::' + stepNumber;
     state.projectsChecklistBusyKey = key;
@@ -5797,6 +5820,74 @@
     state.projectsNoteDraftText = el.value;
   }
 
+  // Distinct statuses seen across the whole loaded list (not just what's
+  // currently visible), so the Status filter always offers every status a
+  // project is actually in right now, closed ones included -- picking one
+  // by name always works even while the default filter is hiding it.
+  function projectStatusOptions() {
+    var seen = {};
+    var out = [];
+    (state.projectsData || []).forEach(function (p) {
+      if (!p.status_name || seen[p.status_name]) return;
+      seen[p.status_name] = true;
+      out.push({ name: p.status_name, is_closed: !!p.is_closed });
+    });
+    out.sort(function (a, b) { return a.name.localeCompare(b.name); });
+    return out;
+  }
+
+  // Filters + sorts the already-loaded list for display. Default hides
+  // is_closed projects per Michael's "closed projects should not show in
+  // the list by default" request; '__all__' or an exact status name
+  // overrides that. Purely a view-layer operation -- api/projects.php's
+  // ?action=list is still the single source of truth, fetched live.
+  function projectsVisibleList() {
+    var list = (state.projectsData || []).slice();
+    var filter = state.projectsStatusFilter || '';
+    if (filter === '__all__') {
+      // keep everything
+    } else if (filter) {
+      list = list.filter(function (p) { return p.status_name === filter; });
+    } else {
+      list = list.filter(function (p) { return !p.is_closed; });
+    }
+    var sortBy = state.projectsSortBy || 'start_date_desc';
+    list.sort(function (a, b) {
+      if (sortBy === 'company_asc') return (a.company_name || '').localeCompare(b.company_name || '');
+      if (sortBy === 'company_desc') return (b.company_name || '').localeCompare(a.company_name || '');
+      if (sortBy === 'start_date_asc') return (a.start_date || '').localeCompare(b.start_date || '');
+      return (b.start_date || '').localeCompare(a.start_date || ''); // start_date_desc (default)
+    });
+    return list;
+  }
+
+  function projectsToolbarHtml() {
+    var filter = state.projectsStatusFilter || '';
+    var sortBy = state.projectsSortBy || 'start_date_desc';
+    var statuses = projectStatusOptions();
+    var html = '<div class="projects-toolbar">';
+    html += '<label class="projects-toolbar-field">Status' +
+      '<select class="projects-filter-select" data-project-status-filter>' +
+        '<option value=""' + (filter === '' ? ' selected' : '') + '>Open projects</option>' +
+        '<option value="__all__"' + (filter === '__all__' ? ' selected' : '') + '>All projects (including closed)</option>' +
+        statuses.map(function (s) {
+          return '<option value="' + escapeHtml(s.name) + '"' + (filter === s.name ? ' selected' : '') + '>' +
+            escapeHtml(s.name) + (s.is_closed ? ' (closed)' : '') + '</option>';
+        }).join('') +
+      '</select>' +
+    '</label>';
+    html += '<label class="projects-toolbar-field">Sort by' +
+      '<select class="projects-sort-select" data-project-sort-select>' +
+        '<option value="start_date_desc"' + (sortBy === 'start_date_desc' ? ' selected' : '') + '>Start Date (newest first)</option>' +
+        '<option value="start_date_asc"' + (sortBy === 'start_date_asc' ? ' selected' : '') + '>Start Date (oldest first)</option>' +
+        '<option value="company_asc"' + (sortBy === 'company_asc' ? ' selected' : '') + '>Company Name (A–Z)</option>' +
+        '<option value="company_desc"' + (sortBy === 'company_desc' ? ' selected' : '') + '>Company Name (Z–A)</option>' +
+      '</select>' +
+    '</label>';
+    html += '</div>';
+    return html;
+  }
+
   function projectsHtml() {
     var html = '<div class="projects-view">';
     html += '<div class="view-header">' +
@@ -5808,9 +5899,15 @@
     } else if (!state.projectsData || !state.projectsData.length) {
       html += '<div class="projects-empty">No projects found.</div>';
     } else {
-      html += '<div class="projects-list">';
-      state.projectsData.forEach(function (p) { html += projectRowHtml(p); });
-      html += '</div>';
+      html += projectsToolbarHtml();
+      var visible = projectsVisibleList();
+      if (!visible.length) {
+        html += '<div class="projects-empty">No projects match this filter.</div>';
+      } else {
+        html += '<div class="projects-list">';
+        visible.forEach(function (p) { html += projectRowHtml(p); });
+        html += '</div>';
+      }
     }
     html += '</div>';
     return html;
@@ -5819,7 +5916,7 @@
   function projectRowHtml(p) {
     var isOpen = !!state.projectsOpenIds[p.id];
     var isAssigned = !!p.assigned_to_name;
-    var isToggling = state.projectsTogglingId === p.id;
+    var isToggling = String(state.projectsTogglingId) === String(p.id);
     var startDate = p.start_date ? fmtTimestamp(p.start_date).split(',')[0] : '—';
     var html = '<div class="project-item' + (isOpen ? ' open' : '') + '">';
     html += '<div class="project-item-main" data-action="toggle-project" data-project="' + p.id + '">' +
@@ -5881,7 +5978,7 @@
     if (step.hasKickoffDate) {
       var draftDate = state.projectsKickoffDraft[p.id];
       var currentDate = draftDate !== undefined ? draftDate : (p.kickoff_date || '');
-      var savingKickoff = state.projectsKickoffSavingId === p.id;
+      var savingKickoff = String(state.projectsKickoffSavingId) === String(p.id);
       html += '<div class="project-kickoff-row">' +
         '<label class="project-kickoff-label">Kickoff call date with Service</label>' +
         '<input type="date" class="project-kickoff-input" data-project-kickoff-input="' + p.id + '" value="' + escapeHtml(currentDate) + '" ' + (savingKickoff ? 'disabled' : '') + '>' +
@@ -5892,7 +5989,7 @@
   }
 
   function projectNotesPanelHtml(p) {
-    var isOpen = state.projectsNotesOpenId === p.id;
+    var isOpen = state.projectsNotesOpenId !== null && String(state.projectsNotesOpenId) === String(p.id);
     var html = '<div class="project-notes-toggle-row">' +
       '<button type="button" class="checklist-notes-toggle" data-action="project-notes-toggle" data-project="' + p.id + '">' +
         (isOpen ? 'Hide Notes' : 'Notes') +
@@ -6506,6 +6603,8 @@
   root.addEventListener('change', onProspectFilterCommit);
   root.addEventListener('change', onRiskScanAssignSelectChange);
   root.addEventListener('change', onProjectAssignSelectChange);
+  root.addEventListener('change', onProjectStatusFilterChange);
+  root.addEventListener('change', onProjectSortSelectChange);
   root.addEventListener('input', onProjectKickoffInputChange);
   root.addEventListener('change', onProjectKickoffInputChange);
   root.addEventListener('input', onProjectNoteTextareaInput);

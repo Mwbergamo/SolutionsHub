@@ -33,9 +33,15 @@
  *
  * GET  ?action=list
  *   -> { ok: true, projects: [ { id, company_name, name, status_name,
- *        board_id, board_name, start_date, contact_id, contact_name,
- *        assigned_to_name, checklist: { step_number: {completed_at,
- *        completed_by_name} }, kickoff_date }, ... ], roster: [name, ...] }
+ *        status_id, is_closed, board_id, board_name, start_date, contact_id,
+ *        contact_name, assigned_to_name, checklist: { step_number:
+ *        {completed_at, completed_by_name} }, kickoff_date }, ... ],
+ *        roster: [name, ...] }
+ *        Sorting and the "hide closed projects by default" status filter
+ *        (added 2026-10-02, see plan doc) both happen client-side over this
+ *        same already-loaded list -- is_closed (from the real ProjectStatus
+ *        entity's closedFlag, see relationships_projects_status_closed_map())
+ *        is what the frontend's default filter checks.
  * POST ?action=assign      { project_id, assigned_to_name }
  * POST ?action=unassign    { project_id }
  * POST ?action=checklist_toggle  { project_id, step_number, completed }
@@ -195,6 +201,33 @@ function relationships_projects_extract_phone(array $contact): ?string
     return null;
 }
 
+/**
+ * Added 2026-10-02 per Michael's follow-up: "By default, closed projects
+ * should not show in the list." A project's embedded `status` reference
+ * only reliably carries id/name (confirmed in the original live probe --
+ * see claude/relationships-projects-module-plan.md), not whether that
+ * status counts as closed, so this does one extra GET /project/statuses
+ * (the real ProjectStatus entity, which does carry `closedFlag`) and maps
+ * id -> closedFlag. Fails open: if this call errors for any reason, every
+ * status falls back to a plain name-contains-"closed" guess rather than
+ * losing the whole list over it.
+ */
+function relationships_projects_status_closed_map(): array
+{
+    try {
+        $statuses = relationships_cw_request('/project/statuses', ['pageSize' => '200']);
+    } catch (RelationshipsConnectWiseError $e) {
+        return [];
+    }
+    $out = [];
+    foreach ($statuses as $s) {
+        if (isset($s['id'])) {
+            $out[(int) $s['id']] = !empty($s['closedFlag']);
+        }
+    }
+    return $out;
+}
+
 if ($action === 'list') {
     try {
         $projects = relationships_cw_request('/project/projects', [
@@ -217,15 +250,23 @@ if ($action === 'list') {
     $assignments = relationships_projects_assignments_for($pdo, $ids);
     $checklist = relationships_projects_checklist_for($pdo, $ids);
     $kickoffDates = relationships_projects_kickoff_dates_for($pdo, $ids);
+    $statusClosedById = relationships_projects_status_closed_map();
 
     $out = [];
     foreach ($projects as $p) {
         $id = (int) ($p['id'] ?? 0);
+        $statusId = isset($p['status']['id']) ? (int) $p['status']['id'] : null;
+        $statusName = $p['status']['name'] ?? '';
+        $isClosed = $statusId !== null && isset($statusClosedById[$statusId])
+            ? $statusClosedById[$statusId]
+            : (stripos($statusName, 'closed') !== false);
         $out[] = [
             'id' => $id,
             'company_name' => $p['company']['name'] ?? '',
             'name' => $p['name'] ?? '',
-            'status_name' => $p['status']['name'] ?? '',
+            'status_name' => $statusName,
+            'status_id' => $statusId,
+            'is_closed' => $isClosed,
             'board_id' => $p['board']['id'] ?? null,
             'board_name' => $p['board']['name'] ?? '',
             'start_date' => $p['estimatedStart'] ?? null,
