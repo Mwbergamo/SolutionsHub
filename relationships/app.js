@@ -424,7 +424,13 @@
     // is_closed projects; '__all__' = every project incl. closed; anything
     // else is an exact status_name to show only that status.
     projectsSortBy: 'start_date_desc', // 'start_date_desc' | 'start_date_asc' | 'company_asc' | 'company_desc'
-    projectsStatusFilter: ''
+    projectsStatusFilter: '',
+
+    // My Projects / All Projects toggle (added 2026-10-02) -- scopes both
+    // the status-breakdown bar graph and the list below it to just this
+    // rep's own assigned projects. 'all' (the prior, only behavior) is the
+    // default so nothing changes unless a rep opts in.
+    projectsScope: 'all' // 'all' | 'mine'
   };
 
   function escapeHtml(s) {
@@ -5060,14 +5066,27 @@
     if (riskScans.length) {
       html += repTodosListSectionHtml('Risk scans assigned to you', riskScans, '', repRiskScanItemHtml);
     }
-    // All open to-dos, scheduled or not (added 2026-09-24 per Michael:
-    // "a list view of all open to-do's with creation date, customer
-    // name... allows the rep to check them off to completion") --
-    // previously this only listed the undated ones, since the dated ones
-    // already showed on the calendar above; now it's the full backlog,
-    // same order the server returns (due date first, then oldest-created).
-    html += repTodosListSectionHtml('Open To-Dos', openTasks, 'No open to-dos — everything is caught up.') +
-      repTodosListSectionHtml('Recently completed', recentCompleted, 'Nothing completed yet.');
+    // To-Dos + Projects side by side (added 2026-10-02 per Michael: "take
+    // the to-do's box and shrink it in half, and drop in a projects view
+    // ... gives them one screen to carry out their assignments") -- the
+    // to-do's lists (previously full width) now share a row with this
+    // rep's own assigned projects, so a coordinator can clear both their
+    // to-do list and their project checklist steps without leaving this
+    // screen.
+    html += '<div class="rep-todos-bottom-row">';
+    html += '<div class="rep-todos-todos-subcol">' +
+      // All open to-dos, scheduled or not (added 2026-09-24 per Michael:
+      // "a list view of all open to-do's with creation date, customer
+      // name... allows the rep to check them off to completion") --
+      // previously this only listed the undated ones, since the dated
+      // ones already showed on the calendar above; now it's the full
+      // backlog, same order the server returns (due date first, then
+      // oldest-created).
+      repTodosListSectionHtml('Open To-Dos', openTasks, 'No open to-dos — everything is caught up.') +
+      repTodosListSectionHtml('Recently completed', recentCompleted, 'Nothing completed yet.') +
+    '</div>';
+    html += '<div class="rep-todos-projects-subcol">' + repTodosProjectsHtml(name) + '</div>';
+    html += '</div>'; // .rep-todos-bottom-row
     html += '</div>';
     html += '</div>';
 
@@ -5195,6 +5214,57 @@
     }
     html += '</div>';
 
+    html += '</div>';
+    return html;
+  }
+
+  // This rep's own assigned-projects view within the rep-todos screen --
+  // added 2026-10-02 per Michael: "drop in a projects view. The view
+  // should list the assigned projects in the reps list and allow them to
+  // complete the listed steps in that project from that view." Reads from
+  // the SAME state.projectsData the main Projects nav button populates
+  // (loadProjects() is also called from the 'show-rep-todos' dispatch, see
+  // onRootClick) and reuses projectChecklistStepHtml() verbatim for the
+  // checklist rows, so checking a step off here and checking it off from
+  // the main Projects screen are the exact same call -- no separate
+  // "rep's view" copy of the project/checklist data to keep in sync.
+  function repTodosAssignedProjectsList(repName) {
+    return (state.projectsData || []).filter(function (p) { return p.assigned_to_name === repName; });
+  }
+
+  function repTodosProjectsHtml(repName) {
+    var html = '<div class="rep-todos-section rep-todos-projects-section">';
+    html += '<div class="roster-title">Assigned Projects</div>';
+    if (state.projectsError) {
+      html += '<div class="error-banner">' + escapeHtml(state.projectsError) + '</div>';
+    }
+    if (state.projectsLoading && !state.projectsData) {
+      html += '<div class="loading">Loading…</div>';
+      html += '</div>';
+      return html;
+    }
+    var list = repTodosAssignedProjectsList(repName);
+    if (!list.length) {
+      html += '<div class="roster-empty">No projects currently assigned to ' + escapeHtml(repName) + '.</div>';
+    } else {
+      html += '<div class="rep-todos-projects-list">';
+      list.forEach(function (p) { html += repTodosProjectCardHtml(p); });
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function repTodosProjectCardHtml(p) {
+    var html = '<div class="rep-todos-project-card">';
+    html += '<div class="rep-todos-project-card-head">' +
+      '<div class="rep-todos-project-card-company">' + escapeHtml(p.company_name) + '</div>' +
+      '<div class="rep-todos-project-card-name">' + escapeHtml(p.name) + '</div>' +
+      '<div class="rep-todos-project-card-status">' + escapeHtml(p.status_name) + '</div>' +
+    '</div>';
+    html += '<div class="project-checklist">';
+    PROJECTS_CHECKLIST_STEPS.forEach(function (step) { html += projectChecklistStepHtml(p, step); });
+    html += '</div>';
     html += '</div>';
     return html;
   }
@@ -5841,14 +5911,29 @@
     state.projectsNoteDraftText = el.value;
   }
 
-  // Distinct statuses seen across the whole loaded list (not just what's
-  // currently visible), so the Status filter always offers every status a
-  // project is actually in right now, closed ones included -- picking one
-  // by name always works even while the default filter is hiding it.
+  // My Projects / All Projects (added 2026-10-02 per Michael) -- 'mine'
+  // narrows to projects assigned (project_assignments, see api/projects.php)
+  // to the logged-in coordinator. Applied first, ahead of the status
+  // filter/graph and the sort, so every other Projects-view feature
+  // (the bar graph, the Status dropdown, the list itself) operates on
+  // whichever population is currently in scope.
+  function projectsScopedList() {
+    var list = (state.projectsData || []).slice();
+    if (state.projectsScope === 'mine') {
+      var myName = (state.user && state.user.name) || '';
+      list = list.filter(function (p) { return p.assigned_to_name === myName; });
+    }
+    return list;
+  }
+
+  // Distinct statuses within the current My/All scope, closed ones
+  // included -- backs both the Status dropdown and the bar graph below, so
+  // a status with zero projects in scope never shows up as an empty
+  // option/bar.
   function projectStatusOptions() {
     var seen = {};
     var out = [];
-    (state.projectsData || []).forEach(function (p) {
+    projectsScopedList().forEach(function (p) {
       if (!p.status_name || seen[p.status_name]) return;
       seen[p.status_name] = true;
       out.push({ name: p.status_name, is_closed: !!p.is_closed });
@@ -5857,13 +5942,28 @@
     return out;
   }
 
-  // Filters + sorts the already-loaded list for display. Default hides
+  // One row per status within the current My/All scope -- { name, count,
+  // is_closed } -- sorted most-projects-first, for projectsStatusGraphHtml().
+  function projectStatusCounts() {
+    var byName = {};
+    projectsScopedList().forEach(function (p) {
+      var name = p.status_name || '(no status)';
+      if (!byName[name]) byName[name] = { name: name, count: 0, is_closed: !!p.is_closed };
+      byName[name].count++;
+    });
+    return Object.keys(byName).map(function (k) { return byName[k]; })
+      .sort(function (a, b) { return b.count - a.count; });
+  }
+
+  // Filters + sorts the current My/All scope for display. Default hides
   // is_closed projects per Michael's "closed projects should not show in
   // the list by default" request; '__all__' or an exact status name
-  // overrides that. Purely a view-layer operation -- api/projects.php's
-  // ?action=list is still the single source of truth, fetched live.
+  // overrides that (set either from the Status dropdown or by clicking a
+  // bar in the graph -- both write the same state.projectsStatusFilter).
+  // Purely a view-layer operation -- api/projects.php's ?action=list is
+  // still the single source of truth, fetched live.
   function projectsVisibleList() {
-    var list = (state.projectsData || []).slice();
+    var list = projectsScopedList();
     var filter = state.projectsStatusFilter || '';
     if (filter === '__all__') {
       // keep everything
@@ -5880,6 +5980,47 @@
       return (b.start_date || '').localeCompare(a.start_date || ''); // start_date_desc (default)
     });
     return list;
+  }
+
+  // Bar graph of project counts by status, with the My Projects/All
+  // Projects toggle in its header -- added 2026-10-02 per Michael: "a
+  // visual bar graph... show how many projects are in each status...
+  // allow you click on the bar and see only those projects". Clicking a
+  // bar sets/clears state.projectsStatusFilter (same field the Status
+  // dropdown uses), so the bar graph and the dropdown always agree on
+  // which status, if any, is currently active.
+  function projectsStatusGraphHtml() {
+    var scope = state.projectsScope === 'mine' ? 'mine' : 'all';
+    var counts = projectStatusCounts();
+    var maxCount = counts.reduce(function (m, c) { return Math.max(m, c.count); }, 0);
+    var activeFilter = state.projectsStatusFilter || '';
+
+    var html = '<div class="projects-status-graph">';
+    html += '<div class="projects-status-graph-header">' +
+      '<div class="projects-status-graph-title">Projects by Status</div>' +
+      '<div class="projects-scope-toggle">' +
+        '<button type="button" class="projects-scope-btn' + (scope === 'mine' ? ' active' : '') + '" data-action="projects-scope-set" data-scope="mine">My Projects</button>' +
+        '<button type="button" class="projects-scope-btn' + (scope === 'all' ? ' active' : '') + '" data-action="projects-scope-set" data-scope="all">All Projects</button>' +
+      '</div>' +
+    '</div>';
+
+    if (!counts.length) {
+      html += '<div class="projects-empty">' + (scope === 'mine' ? 'No projects assigned to you.' : 'No projects found.') + '</div>';
+    } else {
+      html += '<div class="projects-status-graph-bars">';
+      counts.forEach(function (c) {
+        var pct = maxCount ? Math.round((c.count / maxCount) * 100) : 0;
+        var isActive = activeFilter === c.name;
+        html += '<button type="button" class="projects-status-bar-row' + (isActive ? ' active' : '') + '" data-action="project-status-bar-click" data-status-name="' + escapeHtml(c.name) + '">' +
+          '<div class="projects-status-bar-label">' + escapeHtml(c.name) + (c.is_closed ? ' (closed)' : '') + '</div>' +
+          '<div class="projects-status-bar-track"><div class="projects-status-bar-fill" style="width:' + pct + '%"></div></div>' +
+          '<div class="projects-status-bar-count">' + c.count + '</div>' +
+        '</button>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
   }
 
   function projectsToolbarHtml() {
@@ -5920,6 +6061,7 @@
     } else if (!state.projectsData || !state.projectsData.length) {
       html += '<div class="projects-empty">No projects found.</div>';
     } else {
+      html += projectsStatusGraphHtml();
       html += projectsToolbarHtml();
       var visible = projectsVisibleList();
       if (!visible.length) {
@@ -6243,6 +6385,13 @@
       toggleProjectNotes(el.getAttribute('data-project'));
     } else if (action === 'project-note-save') {
       submitProjectNote(el.getAttribute('data-project'));
+    } else if (action === 'project-status-bar-click') {
+      var barStatusName = el.getAttribute('data-status-name');
+      state.projectsStatusFilter = (state.projectsStatusFilter === barStatusName) ? '' : barStatusName;
+      render();
+    } else if (action === 'projects-scope-set') {
+      state.projectsScope = el.getAttribute('data-scope') === 'mine' ? 'mine' : 'all';
+      render();
     } else if (action === 'run-sync') {
       runFullSync();
     } else if (action === 'run-stage') {
@@ -6578,6 +6727,13 @@
       state.repTodosCalMonth = today.getMonth() + 1;
       render();
       loadRepTodos(repName);
+      // Added 2026-10-02 per Michael: the rep-todos screen now also shows
+      // this rep's assigned projects (see repTodosProjectsHtml()) -- same
+      // live-every-time-the-screen-opens fetch as the main Projects nav
+      // button, just scoped client-side to this rep's assignments once it
+      // loads into the same state.projectsData the Projects view itself
+      // uses, so a checklist step checked off here and there always agree.
+      loadProjects();
     } else if (action === 'rep-todos-back') {
       state.view = 'dashboard';
       state.error = null;
