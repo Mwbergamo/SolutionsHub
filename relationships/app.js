@@ -420,9 +420,9 @@
     // Sort/filter over the already-loaded list -- added 2026-10-02 per
     // Michael's follow-up request. Both are purely client-side (the list
     // itself is always the same live fetch; this only changes what's
-    // shown/ordered from it). projectsStatusFilter: '' = default, hides
-    // is_closed projects; '__all__' = every project incl. closed; anything
-    // else is an exact status_name to show only that status.
+    // shown/ordered from it). projectsStatusFilter: '' = every project
+    // (closed ones are already excluded server-side, see api/projects.php);
+    // anything else is an exact status_name to show only that status.
     projectsSortBy: 'start_date_desc', // 'start_date_desc' | 'start_date_asc' | 'company_asc' | 'company_desc'
     projectsStatusFilter: '',
 
@@ -5926,51 +5926,48 @@
     return list;
   }
 
-  // Distinct statuses within the current My/All scope, closed ones
-  // included -- backs both the Status dropdown and the bar graph below, so
-  // a status with zero projects in scope never shows up as an empty
-  // option/bar.
+  // Distinct statuses within the current My/All scope -- backs both the
+  // Status dropdown and the bar graph below, so a status with zero
+  // projects in scope never shows up as an empty option/bar. Closed
+  // projects are excluded server-side (api/projects.php) before this list
+  // is ever populated, so every status here is an open one.
   function projectStatusOptions() {
     var seen = {};
     var out = [];
     projectsScopedList().forEach(function (p) {
       if (!p.status_name || seen[p.status_name]) return;
       seen[p.status_name] = true;
-      out.push({ name: p.status_name, is_closed: !!p.is_closed });
+      out.push({ name: p.status_name });
     });
     out.sort(function (a, b) { return a.name.localeCompare(b.name); });
     return out;
   }
 
-  // One row per status within the current My/All scope -- { name, count,
-  // is_closed } -- sorted most-projects-first, for projectsStatusGraphHtml().
+  // One row per status within the current My/All scope -- { name, count }
+  // -- sorted most-projects-first, for projectsStatusGraphHtml().
   function projectStatusCounts() {
     var byName = {};
     projectsScopedList().forEach(function (p) {
       var name = p.status_name || '(no status)';
-      if (!byName[name]) byName[name] = { name: name, count: 0, is_closed: !!p.is_closed };
+      if (!byName[name]) byName[name] = { name: name, count: 0 };
       byName[name].count++;
     });
     return Object.keys(byName).map(function (k) { return byName[k]; })
       .sort(function (a, b) { return b.count - a.count; });
   }
 
-  // Filters + sorts the current My/All scope for display. Default hides
-  // is_closed projects per Michael's "closed projects should not show in
-  // the list by default" request; '__all__' or an exact status name
-  // overrides that (set either from the Status dropdown or by clicking a
-  // bar in the graph -- both write the same state.projectsStatusFilter).
-  // Purely a view-layer operation -- api/projects.php's ?action=list is
-  // still the single source of truth, fetched live.
+  // Filters + sorts the current My/All scope for display. The Status
+  // filter ('' = every open status, or an exact status name) is set either
+  // from the Status dropdown or by clicking a bar in the graph -- both
+  // write the same state.projectsStatusFilter. Purely a view-layer
+  // operation -- api/projects.php's ?action=list is still the single
+  // source of truth, fetched live, and closed projects never appear in it
+  // in the first place per Michael's "we don't need them in Relationships".
   function projectsVisibleList() {
     var list = projectsScopedList();
     var filter = state.projectsStatusFilter || '';
-    if (filter === '__all__') {
-      // keep everything
-    } else if (filter) {
+    if (filter) {
       list = list.filter(function (p) { return p.status_name === filter; });
-    } else {
-      list = list.filter(function (p) { return !p.is_closed; });
     }
     var sortBy = state.projectsSortBy || 'start_date_desc';
     list.sort(function (a, b) {
@@ -6012,7 +6009,7 @@
         var pct = maxCount ? Math.round((c.count / maxCount) * 100) : 0;
         var isActive = activeFilter === c.name;
         html += '<button type="button" class="projects-status-bar-row' + (isActive ? ' active' : '') + '" data-action="project-status-bar-click" data-status-name="' + escapeHtml(c.name) + '">' +
-          '<div class="projects-status-bar-label">' + escapeHtml(c.name) + (c.is_closed ? ' (closed)' : '') + '</div>' +
+          '<div class="projects-status-bar-label">' + escapeHtml(c.name) + '</div>' +
           '<div class="projects-status-bar-track"><div class="projects-status-bar-fill" style="width:' + pct + '%"></div></div>' +
           '<div class="projects-status-bar-count">' + c.count + '</div>' +
         '</button>';
@@ -6030,11 +6027,10 @@
     var html = '<div class="projects-toolbar">';
     html += '<label class="projects-toolbar-field">Status' +
       '<select class="projects-filter-select" data-project-status-filter>' +
-        '<option value=""' + (filter === '' ? ' selected' : '') + '>Open projects</option>' +
-        '<option value="__all__"' + (filter === '__all__' ? ' selected' : '') + '>All projects (including closed)</option>' +
+        '<option value=""' + (filter === '' ? ' selected' : '') + '>All statuses</option>' +
         statuses.map(function (s) {
           return '<option value="' + escapeHtml(s.name) + '"' + (filter === s.name ? ' selected' : '') + '>' +
-            escapeHtml(s.name) + (s.is_closed ? ' (closed)' : '') + '</option>';
+            escapeHtml(s.name) + '</option>';
         }).join('') +
       '</select>' +
     '</label>';

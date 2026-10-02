@@ -33,15 +33,17 @@
  *
  * GET  ?action=list
  *   -> { ok: true, projects: [ { id, company_name, name, status_name,
- *        status_id, is_closed, board_id, board_name, start_date, contact_id,
+ *        status_id, board_id, board_name, start_date, contact_id,
  *        contact_name, assigned_to_name, checklist: { step_number:
  *        {completed_at, completed_by_name} }, kickoff_date }, ... ],
  *        roster: [name, ...] }
- *        Sorting and the "hide closed projects by default" status filter
- *        (added 2026-10-02, see plan doc) both happen client-side over this
- *        same already-loaded list -- is_closed (from the real ProjectStatus
+ *        Closed projects are dropped from this response entirely (added
+ *        2026-10-02, per Michael: "exclude Closed projects, we don't need
+ *        them in Relationships") -- is_closed (from the real ProjectStatus
  *        entity's closedFlag, see relationships_projects_status_closed_map())
- *        is what the frontend's default filter checks.
+ *        is computed per project and then used only to filter the response;
+ *        it is not sent to the frontend since there's nothing left for it
+ *        to describe. Sorting is still client-side over this list.
  * POST ?action=assign      { project_id, assigned_to_name }
  * POST ?action=unassign    { project_id }
  * POST ?action=checklist_toggle  { project_id, step_number, completed }
@@ -260,13 +262,21 @@ if ($action === 'list') {
         $isClosed = $statusId !== null && isset($statusClosedById[$statusId])
             ? $statusClosedById[$statusId]
             : (stripos($statusName, 'closed') !== false);
+        // Added 2026-10-02 per Michael: "Can you exclude Closed projects?
+        // We don't need them in Relationships." Dropped here, server-side,
+        // rather than just hidden by a client-side default filter, so a
+        // closed project never reaches the frontend at all -- not in the
+        // list, not in the Status dropdown, not in the bar graph, and not
+        // in a rep's assigned-projects panel on their to-do screen.
+        if ($isClosed) {
+            continue;
+        }
         $out[] = [
             'id' => $id,
             'company_name' => $p['company']['name'] ?? '',
             'name' => $p['name'] ?? '',
             'status_name' => $statusName,
             'status_id' => $statusId,
-            'is_closed' => $isClosed,
             'board_id' => $p['board']['id'] ?? null,
             'board_name' => $p['board']['name'] ?? '',
             'start_date' => $p['estimatedStart'] ?? null,
