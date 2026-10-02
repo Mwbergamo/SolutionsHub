@@ -390,7 +390,32 @@
     repTodosData: null, // { rep_name, roster, open_tasks, recent_completed_tasks } once loaded
     repTodosError: null,
     repTodosCalYear: null, // calendar's currently-shown year, set when the view opens
-    repTodosCalMonth: null // calendar's currently-shown month (1-12), set when the view opens
+    repTodosCalMonth: null, // calendar's currently-shown month (1-12), set when the view opens
+
+    // Projects view (state.view === 'projects') -- added 2026-10-02 per
+    // Michael's "Projects Follow Up" request: every ConnectWise Project on
+    // the Pre-Sales/Services Projects boards, with coordinator assignment,
+    // a 5-step checklist, and a ConnectWise-backed Notes box. The project
+    // list itself is fetched live every time this screen opens (see
+    // api/projects.php) -- never locally cached.
+    projectsLoading: false,
+    projectsError: null,
+    projectsData: null, // [ { id, company_name, name, status_name, start_date, contact_id, contact_name, assigned_to_name, checklist, kickoff_date }, ... ] | null while loading
+    projectsRoster: [], // roster names, from the same api/projects.php?action=list response
+    projectsAssignDraft: {}, // project id (string) -> roster name picked in that row's assign dropdown, not yet submitted
+    projectsTogglingId: null, // project id currently mid assign/unassign (button disabled while true)
+    projectsOpenIds: {}, // project id (string) -> true while that row's checklist/notes panel is expanded
+    projectsChecklistBusyKey: null, // 'projectId::step' currently mid save, so its checkbox disables during the round-trip
+    projectsKickoffDraft: {}, // project id (string) -> date string typed into step 4's date input, not yet saved
+    projectsKickoffSavingId: null,
+    projectsContactCache: {}, // contact id (string) -> { email, phone } once fetched live, so clicking a step icon twice doesn't re-fetch
+    projectsContactLoadingId: null, // contact id currently mid live fetch (icons disable while true)
+    projectsNotesOpenId: null, // project id whose notes panel is open, or null (one at a time)
+    projectsNotesLoading: false,
+    projectsNotesError: null,
+    projectsNotesData: null, // [ { id, text, type_name, updated_by, last_updated }, ... ] for projectsNotesOpenId, once loaded
+    projectsNoteDraftText: '',
+    projectsNoteSaving: false
   };
 
   function escapeHtml(s) {
@@ -2778,6 +2803,7 @@
             '<button class="nav-btn ' + (state.view === 'report' || state.view === 'queue' ? 'active' : '') + '" type="button" data-action="show-report">Cross-Sell Report</button>' +
             '<button class="nav-btn ' + (state.view === 'prospecting' ? 'active' : '') + '" type="button" data-action="show-prospecting">Prospecting</button>' +
             '<button class="nav-btn ' + (state.view === 'sync' ? 'active' : '') + '" type="button" data-action="show-sync">ConnectWise Sync</button>' +
+            '<button class="nav-btn ' + (state.view === 'projects' ? 'active' : '') + '" type="button" data-action="show-projects">Projects</button>' +
             (state.user.is_territory_admin
               ? '<button class="nav-btn ' + (state.view === 'territory-admin' ? 'active' : '') + '" type="button" data-action="show-territory-admin">Territory Admin</button>'
               : '') +
@@ -2815,6 +2841,9 @@
     }
     if (state.view === 'rep-todos') {
       return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + repTodosHtml();
+    }
+    if (state.view === 'projects') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + projectsHtml();
     }
 
     var html = '<div class="search-wrap">' + searchBoxHtml() + '</div>';
@@ -5425,6 +5454,479 @@
     return html;
   }
 
+  // ---- Projects view ------------------------------------------------------
+  // Added 2026-10-02 per Michael's "Projects Follow Up" request. Every
+  // ConnectWise Project on the Pre-Sales/Services Projects boards, with
+  // local-only coordinator assignment, a 5-step checklist (steps 1-4 have
+  // real email templates below; step 5's "Team Communication" template
+  // hasn't been supplied yet, so its checkbox works but has no email icon
+  // -- see PROJECTS_CHECKLIST_STEPS), and a textbox that posts a real
+  // ConnectWise Project Note. See claude/relationships-projects-module-plan.md
+  // for the full design history (board/field confirmation, and why the
+  // note's author name is prefixed into its text rather than set via a
+  // ConnectWise field -- ConnectWise always stamps notes created via this
+  // integration's API key as "Clyde", confirmed via a live test write).
+
+  var PROJECT_EMAIL_TEMPLATES = {
+    1: {
+      subject: 'Your Project Order Has Been Placed!',
+      body: [
+        '(Customer First Name)',
+        'We’ve got great news! Your project is moving forward!',
+        '',
+        '(Project Name)',
+        'Your project order has been processed. We are now awaiting the required parts to ship.',
+        'We will update you once all parts have been shipped for receiving. Our next steps are outlined below:',
+        '',
+        'Order Placed!',
+        '*\tWe have created your project for our service team to carry out to completion.',
+        '*\tAll parts and services on your order have been dispatched to distribution for shipment.',
+        '*\tYour project team is being assigned',
+        '',
+        'Michael Bergamo | Business Development Manager | CodeBlue Technology',
+        'Direct: 804.521.7684 | Richmond: 804.521.7660 | Northern Neck: 804.456.4500',
+        'When your company depends on IT'
+      ]
+    },
+    2: {
+      subject: 'Your Project Order Has Been Shipped!',
+      body: [
+        '(Customer First Name)',
+        'We’ve got great news! Your project is moving forward!',
+        '',
+        '(Project Name)',
+        'Your project order has been shipped. We are now awaiting the required parts to arrive.',
+        'We will update you once all parts have been received for prep. Our next steps are outlined below:',
+        '',
+        'Order Shipped!',
+        '*\tWe have updated your project for our service team to carry out to completion.',
+        '*\tAll parts and services on your order have been shipped from distribution to CodeBlue.',
+        '*\tYour project team is being updated for staging.',
+        '',
+        'Michael Bergamo | Business Development Manager | CodeBlue Technology',
+        'Direct: 804.521.7684 | Richmond: 804.521.7660 | Northern Neck: 804.456.4500',
+        'When your company depends on IT'
+      ]
+    },
+    3: {
+      subject: 'Your Project Order has Arrived at CodeBlue!',
+      body: [
+        '(Customer First Name)',
+        'We’ve got great news! Your project is moving forward!',
+        '',
+        '(Project Name)',
+        'Your project order has arrived at CodeBlue. We are now moving to a project kick-off with our internal team.',
+        'We will update you at the conclusion of that meeting. Our next steps are outlined below:',
+        '',
+        'Project Kick-off!',
+        '*\tAll parts have been ordered, shipped and arrived for staging.',
+        '*\tWe are scheduling your kick-off internal meeting to share the details of your project with your team.',
+        '*\tYou will receive an updated contact list for your specific project with engineering, project management and coordinators contact information.',
+        '',
+        'Michael Bergamo | Business Development Manager | CodeBlue Technology',
+        'Direct: 804.521.7684 | Richmond: 804.521.7660 | Northern Neck: 804.456.4500',
+        'When your company depends on IT'
+      ]
+    },
+    4: {
+      subject: 'Your Project is Kicking Off!',
+      body: [
+        '(Customer First Name)',
+        'We’ve got great news! Your project is starting!',
+        '',
+        '(Project Name)',
+        'Your project is kicking off internally here at CodeBlue. Your dedicated project team is going over specifics that are required for success.',
+        'We will update you at the conclusion of that meeting. Our next steps are outlined below:',
+        '',
+        'Project Kick-off!',
+        '*\tAll parts have been ordered, shipped and arrived for staging.',
+        '*\tWe have scheduled your kick-off internal meeting to share the details of your project with your team.',
+        '*\tBelow is an updated contact list for your specific project with engineering, project management and coordinators contact information.',
+        '',
+        'Project Coordination – Maz Ockaily (mockayli@codebluetechnology.com) – 804.212.6001',
+        'On-site Scheudling, Engineering feedback, Scope of Work monitoring',
+        '',
+        'Customer Service – (assigned Relationship coordinator)',
+        'Project communication, feedback and completion assurance',
+        '',
+        '*\tCasey Mayes (cmayes@codebluetechnology.com) – Client Coordinator Office: (804) 521-7660 x685',
+        '*\tClaire Hayden – (chayden@codebluetechnology.com) - Client Coordinator (804) 767-6793',
+        '*\tJake Bradshaw (jbradshaw@codebluetechnology.com) - Client Coordinator (804) 620-8865',
+        '',
+        'Michael Bergamo | Business Development Manager | CodeBlue Technology',
+        'Direct: 804.521.7684 | Richmond: 804.521.7660 | Northern Neck: 804.456.4500',
+        'When your company depends on IT'
+      ]
+    }
+  };
+
+  var PROJECTS_CHECKLIST_STEPS = [
+    { number: 1, label: 'Announce Order placement', hint: 'Call the customer to confirm their order has been successfully processed and ordering is complete', hasEmail: true, hasPhone: true },
+    { number: 2, label: 'Announce order shipment', hint: 'Email the customer and affirm that all parts have been shipped and their order is not at risk of backorder', hasEmail: true, hasPhone: false },
+    { number: 3, label: 'Announce the order has been received', hint: 'Email the customer and announce that all parts and services have been received by CodeBlue', hasEmail: true, hasPhone: false },
+    { number: 4, label: 'Confirm the kick off', hint: 'Input the date of the kickoff call with Service', hasEmail: true, hasPhone: false, hasKickoffDate: true },
+    { number: 5, label: 'Send the Team Communication email', hint: 'Update the email with project team contact info and process for engaging CodeBlue', hasEmail: false, hasPhone: false }
+    // Step 5's email icon is intentionally left off for now -- Michael
+    // hasn't supplied that template yet. The checkbox itself still works;
+    // wire hasEmail: true + a PROJECT_EMAIL_TEMPLATES[5] entry in once he
+    // sends it.
+  ];
+
+  function projectEmailMergeFields(text, project, coordinatorName) {
+    var firstName = (project.contact_name || '').trim().split(/\s+/)[0] || 'there';
+    var merged = text.split('(Customer First Name)').join(firstName)
+      .split('(Project Name)').join(project.name || '');
+    if (coordinatorName !== undefined) {
+      merged = merged.split('(assigned Relationship coordinator)').join(coordinatorName || 'CodeBlue Technology');
+    }
+    return merged;
+  }
+
+  function loadProjects() {
+    state.projectsLoading = true;
+    state.projectsError = null;
+    render();
+    apiGet('api/projects.php?action=list').then(function (r) {
+      state.projectsLoading = false;
+      if (r.data && r.data.ok) {
+        state.projectsData = r.data.projects;
+        state.projectsRoster = r.data.roster || [];
+      } else {
+        state.projectsError = (r.data && r.data.error) || 'Could not load the Projects list.';
+      }
+      render();
+    }).catch(function () {
+      state.projectsLoading = false;
+      state.projectsError = 'Could not load the Projects list — check your connection.';
+      render();
+    });
+  }
+
+  function setProjectAssigned(projectId, assigned, assignedToName) {
+    state.projectsTogglingId = projectId;
+    render();
+    var body = assigned ? { project_id: projectId, assigned_to_name: assignedToName } : { project_id: projectId };
+    apiPost('api/projects.php?action=' + (assigned ? 'assign' : 'unassign'), body).then(function (r) {
+      state.projectsTogglingId = null;
+      if (r.data && r.data.ok) {
+        var proj = (state.projectsData || []).filter(function (p) { return String(p.id) === String(projectId); })[0];
+        if (proj) proj.assigned_to_name = assigned ? assignedToName : null;
+        delete state.projectsAssignDraft[projectId];
+      } else {
+        state.projectsError = (r.data && r.data.error) || 'Could not update that assignment.';
+      }
+      render();
+    }).catch(function () {
+      state.projectsTogglingId = null;
+      state.projectsError = 'Could not update that assignment — check your connection.';
+      render();
+    });
+  }
+
+  function onProjectAssignSelectChange(ev) {
+    var el = ev.target;
+    var projectId = el.getAttribute && el.getAttribute('data-project-assign-select');
+    if (!projectId) return;
+    state.projectsAssignDraft[projectId] = el.value;
+  }
+
+  function toggleProjectChecklistStep(projectId, stepNumber, completed) {
+    var key = projectId + '::' + stepNumber;
+    state.projectsChecklistBusyKey = key;
+    render();
+    apiPost('api/projects.php?action=checklist_toggle', { project_id: projectId, step_number: stepNumber, completed: completed }).then(function (r) {
+      state.projectsChecklistBusyKey = null;
+      if (r.data && r.data.ok) {
+        var proj = (state.projectsData || []).filter(function (p) { return String(p.id) === String(projectId); })[0];
+        if (proj) {
+          if (completed) {
+            proj.checklist[stepNumber] = { completed_at: new Date().toISOString(), completed_by_name: state.user.name };
+          } else {
+            delete proj.checklist[stepNumber];
+          }
+        }
+      } else {
+        state.projectsError = (r.data && r.data.error) || 'Could not update that step.';
+      }
+      render();
+    }).catch(function () {
+      state.projectsChecklistBusyKey = null;
+      state.projectsError = 'Could not update that step — check your connection.';
+      render();
+    });
+  }
+
+  function setProjectKickoffDate(projectId) {
+    var date = state.projectsKickoffDraft[projectId];
+    if (date === undefined) return;
+    state.projectsKickoffSavingId = projectId;
+    render();
+    apiPost('api/projects.php?action=kickoff_date_set', { project_id: projectId, kickoff_date: date }).then(function (r) {
+      state.projectsKickoffSavingId = null;
+      if (r.data && r.data.ok) {
+        var proj = (state.projectsData || []).filter(function (p) { return String(p.id) === String(projectId); })[0];
+        if (proj) proj.kickoff_date = date || null;
+        delete state.projectsKickoffDraft[projectId];
+      } else {
+        state.projectsError = (r.data && r.data.error) || 'Could not save the kickoff date.';
+      }
+      render();
+    }).catch(function () {
+      state.projectsKickoffSavingId = null;
+      state.projectsError = 'Could not save the kickoff date — check your connection.';
+      render();
+    });
+  }
+
+  function fetchProjectContactInfo(contactId) {
+    if (!contactId) return Promise.resolve(null);
+    if (state.projectsContactCache[contactId]) return Promise.resolve(state.projectsContactCache[contactId]);
+    state.projectsContactLoadingId = contactId;
+    render();
+    return apiGet('api/projects.php?action=contact_info&contact_id=' + encodeURIComponent(contactId)).then(function (r) {
+      state.projectsContactLoadingId = null;
+      if (r.data && r.data.ok) {
+        var info = { email: r.data.email, phone: r.data.phone };
+        state.projectsContactCache[contactId] = info;
+        render();
+        return info;
+      }
+      state.projectsError = (r.data && r.data.error) || 'Could not look up that contact.';
+      render();
+      return null;
+    }).catch(function () {
+      state.projectsContactLoadingId = null;
+      state.projectsError = 'Could not look up that contact — check your connection.';
+      render();
+      return null;
+    });
+  }
+
+  function fireProjectStepEmail(project, stepNumber) {
+    var tpl = PROJECT_EMAIL_TEMPLATES[stepNumber];
+    if (!tpl) return;
+    fetchProjectContactInfo(project.contact_id).then(function (info) {
+      if (!info || !info.email) {
+        state.projectsError = 'No email on file for this project’s contact.';
+        render();
+        return;
+      }
+      var coordinatorName = stepNumber === 4 ? (project.assigned_to_name || null) : undefined;
+      var subject = projectEmailMergeFields(tpl.subject, project, coordinatorName);
+      var body = projectEmailMergeFields(tpl.body.join('\n'), project, coordinatorName);
+      window.location.href = crossSellMailtoUrl(info.email, subject, body);
+    });
+  }
+
+  function fireProjectStepCall(project) {
+    fetchProjectContactInfo(project.contact_id).then(function (info) {
+      if (!info || !info.phone) {
+        state.projectsError = 'No phone number on file for this project’s contact.';
+        render();
+        return;
+      }
+      window.location.href = 'tel:' + info.phone;
+    });
+  }
+
+  function toggleProjectNotes(projectId) {
+    if (state.projectsNotesOpenId === projectId) {
+      state.projectsNotesOpenId = null;
+      render();
+      return;
+    }
+    state.projectsNotesOpenId = projectId;
+    state.projectsNotesData = null;
+    state.projectsNotesError = null;
+    state.projectsNoteDraftText = '';
+    render();
+    loadProjectNotes(projectId);
+  }
+
+  function loadProjectNotes(projectId) {
+    state.projectsNotesLoading = true;
+    render();
+    apiGet('api/projects.php?action=notes_list&project_id=' + projectId).then(function (r) {
+      state.projectsNotesLoading = false;
+      if (r.data && r.data.ok) {
+        state.projectsNotesData = r.data.notes;
+      } else {
+        state.projectsNotesError = (r.data && r.data.error) || 'Could not load notes.';
+      }
+      render();
+    }).catch(function () {
+      state.projectsNotesLoading = false;
+      state.projectsNotesError = 'Could not load notes — check your connection.';
+      render();
+    });
+  }
+
+  function submitProjectNote(projectId) {
+    var text = (state.projectsNoteDraftText || '').trim();
+    if (!text) return;
+    state.projectsNoteSaving = true;
+    render();
+    apiPost('api/projects.php?action=notes_add', { project_id: projectId, note_text: text }).then(function (r) {
+      state.projectsNoteSaving = false;
+      if (r.data && r.data.ok) {
+        state.projectsNoteDraftText = '';
+        state.projectsNotesError = r.data.cw_warning || null;
+        loadProjectNotes(projectId);
+      } else {
+        state.projectsNotesError = (r.data && r.data.error) || 'Could not save that note.';
+        render();
+      }
+    }).catch(function () {
+      state.projectsNoteSaving = false;
+      state.projectsNotesError = 'Could not save that note — check your connection.';
+      render();
+    });
+  }
+
+  function onProjectKickoffInputChange(ev) {
+    var el = ev.target;
+    var projectId = el.getAttribute && el.getAttribute('data-project-kickoff-input');
+    if (!projectId) return;
+    state.projectsKickoffDraft[projectId] = el.value;
+  }
+
+  function onProjectNoteTextareaInput(ev) {
+    var el = ev.target;
+    var projectId = el.getAttribute && el.getAttribute('data-project-note-textarea');
+    if (!projectId) return;
+    state.projectsNoteDraftText = el.value;
+  }
+
+  function projectsHtml() {
+    var html = '<div class="projects-view">';
+    html += '<div class="view-header">' +
+      '<div class="view-title">Projects</div>' +
+      '<div class="view-sub">Every ConnectWise project on the Pre-Sales and Services Projects boards.</div>' +
+    '</div>';
+    if (state.projectsLoading && !state.projectsData) {
+      html += '<div class="loading">Loading projects…</div>';
+    } else if (!state.projectsData || !state.projectsData.length) {
+      html += '<div class="projects-empty">No projects found.</div>';
+    } else {
+      html += '<div class="projects-list">';
+      state.projectsData.forEach(function (p) { html += projectRowHtml(p); });
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function projectRowHtml(p) {
+    var isOpen = !!state.projectsOpenIds[p.id];
+    var isAssigned = !!p.assigned_to_name;
+    var isToggling = state.projectsTogglingId === p.id;
+    var startDate = p.start_date ? fmtTimestamp(p.start_date).split(',')[0] : '—';
+    var html = '<div class="project-item' + (isOpen ? ' open' : '') + '">';
+    html += '<div class="project-item-main" data-action="toggle-project" data-project="' + p.id + '">' +
+      '<div class="project-item-company">' + escapeHtml(p.company_name) + '</div>' +
+      '<div class="project-item-name">' + escapeHtml(p.name) + '</div>' +
+      '<div class="project-item-status">' + escapeHtml(p.status_name) + '</div>' +
+      '<div class="project-item-date">' + escapeHtml(startDate) + '</div>' +
+      '<div class="project-item-assigned">' + (isAssigned ? escapeHtml(p.assigned_to_name) : '—') + '</div>' +
+      '<div class="project-item-toggle">' + (isOpen ? '‹' : '›') + '</div>' +
+    '</div>';
+    if (isOpen) {
+      html += '<div class="project-item-detail">';
+      html += '<div class="project-assign-row">' +
+        (isAssigned
+          ? '<span class="project-assigned-label">Assigned to ' + escapeHtml(p.assigned_to_name) + '</span>' +
+            '<button class="svc-action-btn secondary" type="button" data-action="project-unassign" data-project="' + p.id + '" ' + (isToggling ? 'disabled' : '') + '>' + (isToggling ? '…' : 'Unassign') + '</button>'
+          : '<select class="project-assign-select" data-project-assign-select="' + p.id + '" ' + (isToggling ? 'disabled' : '') + '>' +
+              '<option value="">Assign to…</option>' +
+              state.projectsRoster.map(function (name) {
+                return '<option value="' + escapeHtml(name) + '"' + (state.projectsAssignDraft[p.id] === name ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
+              }).join('') +
+            '</select>' +
+            '<button class="svc-action-btn primary" type="button" data-action="project-assign" data-project="' + p.id + '" ' + (isToggling ? 'disabled' : '') + '>' + (isToggling ? '…' : 'Assign') + '</button>') +
+        '</div>';
+      html += '<div class="project-checklist">';
+      PROJECTS_CHECKLIST_STEPS.forEach(function (step) { html += projectChecklistStepHtml(p, step); });
+      html += '</div>';
+      html += projectNotesPanelHtml(p);
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function projectChecklistStepHtml(p, step) {
+    var progress = (p.checklist || {})[step.number];
+    var completed = !!progress;
+    var busy = state.projectsChecklistBusyKey === (p.id + '::' + step.number);
+    var contactLoading = state.projectsContactLoadingId === p.contact_id;
+    var icons = '';
+    if (step.hasEmail && PROJECT_EMAIL_TEMPLATES[step.number] && p.contact_id) {
+      icons += '<button type="button" class="checklist-step-icon-btn" title="Email" data-action="project-step-email" data-project="' + p.id + '" data-step="' + step.number + '" ' + (contactLoading ? 'disabled' : '') + '>' + CHECKLIST_ICON_EMAIL + '</button>';
+    }
+    if (step.hasPhone && p.contact_id) {
+      icons += '<button type="button" class="checklist-step-icon-btn" title="Call" data-action="project-step-call" data-project="' + p.id + '" ' + (contactLoading ? 'disabled' : '') + '>' + CHECKLIST_ICON_PHONE + '</button>';
+    }
+    var html = '<div class="checklist-step-row">';
+    html += '<label class="checklist-step ' + (completed ? 'done' : '') + '">' +
+      '<input type="checkbox" ' + (completed ? 'checked' : '') + (busy ? ' disabled' : '') +
+        ' data-action="project-step-toggle" data-project="' + p.id + '" data-step="' + step.number + '" data-completed="' + (completed ? '1' : '0') + '">' +
+      '<div class="checklist-step-text">' +
+        '<div class="checklist-step-label">' + step.number + '. ' + escapeHtml(step.label) + '</div>' +
+        '<div class="checklist-step-meta">' + escapeHtml(step.hint) + '</div>' +
+        (completed ? '<div class="checklist-step-meta">✓ ' + escapeHtml(progress.completed_by_name || '') + ' — ' + escapeHtml(fmtTimestamp(progress.completed_at)) + '</div>' : '') +
+      '</div>' +
+    '</label>';
+    html += icons;
+    html += '</div>';
+    if (step.hasKickoffDate) {
+      var draftDate = state.projectsKickoffDraft[p.id];
+      var currentDate = draftDate !== undefined ? draftDate : (p.kickoff_date || '');
+      var savingKickoff = state.projectsKickoffSavingId === p.id;
+      html += '<div class="project-kickoff-row">' +
+        '<label class="project-kickoff-label">Kickoff call date with Service</label>' +
+        '<input type="date" class="project-kickoff-input" data-project-kickoff-input="' + p.id + '" value="' + escapeHtml(currentDate) + '" ' + (savingKickoff ? 'disabled' : '') + '>' +
+        '<button type="button" class="svc-action-btn primary" data-action="project-kickoff-save" data-project="' + p.id + '" ' + (savingKickoff ? 'disabled' : '') + '>' + (savingKickoff ? 'Saving…' : 'Save') + '</button>' +
+      '</div>';
+    }
+    return html;
+  }
+
+  function projectNotesPanelHtml(p) {
+    var isOpen = state.projectsNotesOpenId === p.id;
+    var html = '<div class="project-notes-toggle-row">' +
+      '<button type="button" class="checklist-notes-toggle" data-action="project-notes-toggle" data-project="' + p.id + '">' +
+        (isOpen ? 'Hide Notes' : 'Notes') +
+      '</button>' +
+    '</div>';
+    if (!isOpen) return html;
+    html += '<div class="project-notes-panel">';
+    if (state.projectsNotesError) {
+      html += '<div class="checklist-error">' + escapeHtml(state.projectsNotesError) + '</div>';
+    }
+    if (state.projectsNotesLoading && !state.projectsNotesData) {
+      html += '<div class="checklist-loading">Loading notes…</div>';
+    } else if (state.projectsNotesData && state.projectsNotesData.length) {
+      html += '<div class="checklist-notes-scroll">' +
+        state.projectsNotesData.map(function (n) {
+          return '<div class="checklist-note-item">' +
+            '<div class="checklist-note-item-text">' + escapeHtml(n.text) + '</div>' +
+            '<div class="checklist-note-item-meta">' + escapeHtml(n.updated_by || '') + ' — ' + escapeHtml(fmtTimestamp(n.last_updated)) + '</div>' +
+          '</div>';
+        }).join('') +
+      '</div>';
+    } else if (state.projectsNotesData) {
+      html += '<div class="checklist-notes-empty">No notes yet on this project.</div>';
+    }
+    html += '<div class="checklist-note-form">' +
+      '<textarea class="checklist-note-textarea" rows="3" data-project-note-textarea="' + p.id + '" placeholder="Add a note to this project’s ConnectWise record…">' + escapeHtml(state.projectsNoteDraftText) + '</textarea>' +
+      '<div class="checklist-note-form-actions">' +
+        '<button type="button" class="svc-action-btn primary" data-action="project-note-save" data-project="' + p.id + '" ' + (state.projectsNoteSaving ? 'disabled' : '') + '>' + (state.projectsNoteSaving ? 'Saving…' : 'Save Note') + '</button>' +
+      '</div>' +
+    '</div>';
+    html += '</div>';
+    return html;
+  }
+
   // ---- Event binding ----------------------------------------------------
 
   function bindEvents() {
@@ -5591,6 +6093,38 @@
       state.error = null;
       render();
       loadSyncStatus();
+    } else if (action === 'show-projects') {
+      state.view = 'projects';
+      state.error = null;
+      render();
+      loadProjects();
+    } else if (action === 'toggle-project') {
+      var tpId = el.getAttribute('data-project');
+      state.projectsOpenIds[tpId] = !state.projectsOpenIds[tpId];
+      render();
+    } else if (action === 'project-assign') {
+      var paId = el.getAttribute('data-project');
+      var paName = state.projectsAssignDraft[paId];
+      if (paName) setProjectAssigned(paId, true, paName);
+    } else if (action === 'project-unassign') {
+      setProjectAssigned(el.getAttribute('data-project'), false);
+    } else if (action === 'project-step-toggle') {
+      var pstWasCompleted = el.getAttribute('data-completed') === '1';
+      toggleProjectChecklistStep(
+        el.getAttribute('data-project'), parseInt(el.getAttribute('data-step'), 10), !pstWasCompleted
+      );
+    } else if (action === 'project-step-email') {
+      var peProj = (state.projectsData || []).filter(function (p) { return String(p.id) === String(el.getAttribute('data-project')); })[0];
+      if (peProj) fireProjectStepEmail(peProj, parseInt(el.getAttribute('data-step'), 10));
+    } else if (action === 'project-step-call') {
+      var pcProj = (state.projectsData || []).filter(function (p) { return String(p.id) === String(el.getAttribute('data-project')); })[0];
+      if (pcProj) fireProjectStepCall(pcProj);
+    } else if (action === 'project-kickoff-save') {
+      setProjectKickoffDate(el.getAttribute('data-project'));
+    } else if (action === 'project-notes-toggle') {
+      toggleProjectNotes(el.getAttribute('data-project'));
+    } else if (action === 'project-note-save') {
+      submitProjectNote(el.getAttribute('data-project'));
     } else if (action === 'run-sync') {
       runFullSync();
     } else if (action === 'run-stage') {
@@ -5971,6 +6505,10 @@
   root.addEventListener('change', onProspectInput);
   root.addEventListener('change', onProspectFilterCommit);
   root.addEventListener('change', onRiskScanAssignSelectChange);
+  root.addEventListener('change', onProjectAssignSelectChange);
+  root.addEventListener('input', onProjectKickoffInputChange);
+  root.addEventListener('change', onProjectKickoffInputChange);
+  root.addEventListener('input', onProjectNoteTextareaInput);
   document.addEventListener('click', onDocumentClick);
 
   boot();

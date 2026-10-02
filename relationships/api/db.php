@@ -860,6 +860,92 @@ function relationships_migrate(PDO $pdo): void
         )
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_prospect_claims_deadline ON prospect_claims(status, deadline_at)');
+
+    // ---- Projects module (projects.php) -- added 2026-10-02 per Michael:
+    // a new nav button listing every ConnectWise Project on the Pre-Sales
+    // (id 45) / Services Projects (id 3) boards -- see
+    // claude/relationships-projects-module-plan.md for the full request
+    // and the live-probe findings these tables are built from. The project
+    // list itself is never stored locally (fetched live from ConnectWise
+    // every time the screen opens, same as Register's Pending Service
+    // Tickets) -- these four tables are purely this app's own bookkeeping
+    // keyed by cw_project_id, the one stable id ConnectWise gives us.
+
+    // One row = this project currently has a Relationship Coordinator
+    // assigned. Local-only, per Michael's explicit choice (AskUserQuestion,
+    // 2026-10-01) -- no ConnectWise write. Mirrors risk_scans' assignment
+    // columns, but as its own table (a project has no other local row to
+    // hang this off of) keyed directly on cw_project_id -- INSERT OR
+    // REPLACE to (re)assign, DELETE to unassign, so "no row" cleanly means
+    // "unassigned" rather than needing nullable columns on a fixed PK.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS project_assignments (
+            cw_project_id INTEGER PRIMARY KEY,
+            assigned_to_user_id INTEGER REFERENCES crc_users(id),
+            assigned_to_name TEXT NOT NULL,
+            assigned_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+
+    // The 5-step checklist's completion state. One row per (project, step)
+    // -- delete-then-insert on toggle, same pattern as checklist_progress
+    // above. Absence of a row = step not started. Step 5 ("Send the Team
+    // Communication email") is included in the step range even though its
+    // email template hasn't been supplied yet -- the checkbox itself isn't
+    // blocked on that, only its email icon is.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS project_checklist_progress (
+            cw_project_id INTEGER NOT NULL,
+            step_number INTEGER NOT NULL,
+            completed_at TEXT NOT NULL DEFAULT (datetime('now')),
+            completed_by_user_id INTEGER REFERENCES crc_users(id),
+            completed_by_name TEXT,
+            PRIMARY KEY (cw_project_id, step_number)
+        )
+    SQL);
+
+    // Step 4's "Input the date of the kickoff call with Service" -- its own
+    // tiny table rather than a column on project_checklist_progress, since
+    // it's a date VALUE (who's the kickoff with Service scheduled for),
+    // not a completion timestamp, and needs to persist independently of
+    // whether step 4's checkbox itself is ticked.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS project_kickoff_dates (
+            cw_project_id INTEGER PRIMARY KEY,
+            kickoff_date TEXT NOT NULL,
+            set_by_user_id INTEGER REFERENCES crc_users(id),
+            set_by_name TEXT,
+            set_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+
+    // Local audit log for every note a coordinator submits through the
+    // Projects module's notes textbox -- kept IN ADDITION to the real
+    // ConnectWise Project Note the same submit also tries to create
+    // (projects.php's 'notes_add' action), because ConnectWise's own write
+    // has a confirmed limitation: its `updatedBy` is always stamped from
+    // this integration's shared API member ("Clyde"), never the actual
+    // coordinator (confirmed live, project 1333, note id 4047 -- see the
+    // plan doc). This table is the only place created_by_user_id is a
+    // real, structured foreign key rather than a name baked into free
+    // text. cw_push_status/cw_push_error record whether the ConnectWise
+    // side succeeded, same fail-open spirit as Agreement sync's
+    // agreement_warning / tax lookup's tax_warning -- a coordinator's note
+    // is never lost locally even if the live push to ConnectWise fails.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS project_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cw_project_id INTEGER NOT NULL,
+            note_text TEXT NOT NULL,
+            created_by_user_id INTEGER REFERENCES crc_users(id),
+            created_by_name TEXT,
+            cw_note_id TEXT,
+            cw_push_status TEXT NOT NULL DEFAULT 'pending',
+            cw_push_error TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_project_notes_lookup ON project_notes(cw_project_id, created_at DESC)');
 }
 
 /**
