@@ -392,6 +392,14 @@
     repTodosCalYear: null, // calendar's currently-shown year, set when the view opens
     repTodosCalMonth: null, // calendar's currently-shown month (1-12), set when the view opens
 
+    // Collapsible Assigned Projects cards on the rep-todos screen -- added
+    // 2026-10-03 per Michael. At most one project card is expanded at a
+    // time (same single-id pattern as state.openMeetingId/projectsNotesOpenId
+    // elsewhere in this file); null means every card is collapsed, which is
+    // the default so the "glow" status colors are what a coordinator sees
+    // first when the screen opens.
+    repTodosExpandedProjectId: null,
+
     // Projects view (state.view === 'projects') -- added 2026-10-02 per
     // Michael's "Projects Follow Up" request: every ConnectWise Project on
     // the Pre-Sales/Services Projects boards, with coordinator assignment,
@@ -5255,16 +5263,51 @@
     return html;
   }
 
+  // Completion "glow" for a collapsed project card -- added 2026-10-03 per
+  // Michael: "make each project glow a certain color based on how complete
+  // they are when collapsed. A project with no steps complete, should glow
+  // red. A project with 1-3 steps complete should glow yellow. A project
+  // with 4 steps checked should glow green." completedCount only ever
+  // needs Object.keys(p.checklist).length -- api/projects.php's
+  // checklist_toggle deletes a step's row the moment it's unchecked, so a
+  // step appears in `checklist` at all if and only if it's complete; no
+  // separate completed/total tally to keep in sync. Reuses this codebase's
+  // existing green/amber/red tier palette (see .pf-tier-High/.pf-days.amber
+  // in styles.css) rather than inventing a new one.
+  function projectGlowClass(completedCount) {
+    if (completedCount <= 0) return 'project-glow-red';
+    if (completedCount >= 4) return 'project-glow-green';
+    return 'project-glow-yellow';
+  }
+
+  // Collapsible by project -- added 2026-10-03 per Michael. Single-open-id
+  // pattern (state.repTodosExpandedProjectId), same as this file's existing
+  // meetingRowHtml/projectNotesPanelHtml toggles: only one project's
+  // checklist is ever expanded at a time, and every other card collapses
+  // to its glow-colored summary row.
   function repTodosProjectCardHtml(p) {
-    var html = '<div class="rep-todos-project-card">';
-    html += '<div class="rep-todos-project-card-head">' +
-      '<div class="rep-todos-project-card-company">' + escapeHtml(p.company_name) + '</div>' +
-      '<div class="rep-todos-project-card-name">' + escapeHtml(p.name) + '</div>' +
-      '<div class="rep-todos-project-card-status">' + escapeHtml(p.status_name) + '</div>' +
+    var completedCount = Object.keys(p.checklist || {}).length;
+    var totalSteps = PROJECTS_CHECKLIST_STEPS.length;
+    var expanded = String(state.repTodosExpandedProjectId) === String(p.id);
+    var cardClass = 'rep-todos-project-card' + (expanded ? ' expanded' : ' collapsed ' + projectGlowClass(completedCount));
+
+    var html = '<div class="' + cardClass + '">';
+    html += '<div class="rep-todos-project-card-head" data-action="rep-todos-project-toggle" data-project-id="' + escapeHtml(String(p.id)) + '">' +
+      '<div class="rep-todos-project-card-head-main">' +
+        '<div class="rep-todos-project-card-company">' + escapeHtml(p.company_name) + '</div>' +
+        '<div class="rep-todos-project-card-name">' + escapeHtml(p.name) + '</div>' +
+        '<div class="rep-todos-project-card-status">' + escapeHtml(p.status_name) + '</div>' +
+      '</div>' +
+      '<div class="rep-todos-project-card-head-meta">' +
+        '<div class="rep-todos-project-card-progress">' + completedCount + ' of ' + totalSteps + ' steps</div>' +
+        '<div class="rep-todos-project-card-toggle">' + (expanded ? '▴' : '▾') + '</div>' +
+      '</div>' +
     '</div>';
-    html += '<div class="project-checklist">';
-    PROJECTS_CHECKLIST_STEPS.forEach(function (step) { html += projectChecklistStepHtml(p, step); });
-    html += '</div>';
+    if (expanded) {
+      html += '<div class="project-checklist">';
+      PROJECTS_CHECKLIST_STEPS.forEach(function (step) { html += projectChecklistStepHtml(p, step); });
+      html += '</div>';
+    }
     html += '</div>';
     return html;
   }
@@ -6721,6 +6764,7 @@
       state.repTodosError = null;
       state.repTodosCalYear = today.getFullYear();
       state.repTodosCalMonth = today.getMonth() + 1;
+      state.repTodosExpandedProjectId = null;
       render();
       loadRepTodos(repName);
       // Added 2026-10-02 per Michael: the rep-todos screen now also shows
@@ -6730,6 +6774,12 @@
       // loads into the same state.projectsData the Projects view itself
       // uses, so a checklist step checked off here and there always agree.
       loadProjects();
+    } else if (action === 'rep-todos-project-toggle') {
+      var repProjToggleId = el.getAttribute('data-project-id');
+      state.repTodosExpandedProjectId = (String(state.repTodosExpandedProjectId) === String(repProjToggleId))
+        ? null
+        : repProjToggleId;
+      render();
     } else if (action === 'rep-todos-back') {
       state.view = 'dashboard';
       state.error = null;

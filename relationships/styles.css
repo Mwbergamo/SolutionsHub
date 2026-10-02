@@ -2740,12 +2740,51 @@ a { color: inherit; }
   border: 1px solid oklch(0.26 0.02 255);
   border-radius: 12px;
   padding: 12px 14px;
+  transition: box-shadow .15s ease, border-color .15s ease;
 }
 
-.rep-todos-project-card-head { margin-bottom: 4px; }
+.rep-todos-project-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+}
+.rep-todos-project-card.expanded .rep-todos-project-card-head { margin-bottom: 4px; }
 .rep-todos-project-card-company { font-size: 12.5px; font-weight: 700; color: oklch(0.82 0.006 255); }
 .rep-todos-project-card-name { font-size: 12px; color: oklch(0.78 0.006 255); margin-top: 1px; }
 .rep-todos-project-card-status { font-size: 11px; color: #8fc3ff; margin-top: 2px; }
+
+.rep-todos-project-card-head-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.rep-todos-project-card-progress { font-size: 11px; color: oklch(0.6 0.015 255); }
+.rep-todos-project-card-toggle { color: oklch(0.55 0.015 255); font-size: 13px; }
+
+/* Completion "glow" on a collapsed project card -- added 2026-10-03 per
+   Michael: red (no steps complete), yellow (1-3), green (4, the whole
+   order-fulfillment checklist). Reuses the same hues as the existing
+   .pf-tier-High (155, green) / .pf-days.amber (80, yellow) / .pf-days.red
+   (27, red) tiers elsewhere in this file -- just applied as a border +
+   soft outer glow instead of a filled badge, since here it's describing a
+   whole card, not a small inline chip. Only shown while collapsed; an
+   expanded card shows its real checklist instead. */
+.rep-todos-project-card.collapsed.project-glow-red {
+  border-color: oklch(0.5 0.14 27);
+  box-shadow: 0 0 14px 1px oklch(0.5 0.14 27 / 35%);
+}
+.rep-todos-project-card.collapsed.project-glow-yellow {
+  border-color: oklch(0.65 0.13 80);
+  box-shadow: 0 0 14px 1px oklch(0.65 0.13 80 / 30%);
+}
+.rep-todos-project-card.collapsed.project-glow-green {
+  border-color: oklch(0.6 0.13 155);
+  box-shadow: 0 0 14px 1px oklch(0.6 0.13 155 / 30%);
+}
 
 /* ==========================================================================
    Territory Admin -- added 2026-09-16 per Michael's rep-based territory
