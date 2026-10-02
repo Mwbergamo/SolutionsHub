@@ -830,6 +830,27 @@ a { color: inherit; }
 }
 .risk-scan-assign-select:disabled { opacity: .5; cursor: default; }
 
+/* Customer Documents -- added 2026-10-02 per Michael. Reuses the
+   risk-scans-panel/risk-scan-* styles above; only the extras live here. */
+.document-hint {
+  margin-top: 8px;
+  font-size: 10.5px;
+  color: oklch(0.55 0.015 255);
+}
+.document-category-select { max-width: 170px; }
+.document-category-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: #8fc3ff;
+  border: 1px solid oklch(0.4 0.08 255 / 0.5);
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
 /* PeopleFirst summary line atop the Cross-Sell Report */
 
 .peoplefirst-summary {

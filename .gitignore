@@ -32,6 +32,8 @@ Thumbs.db
 /relationships/data/*.sqlite
 /relationships/data/*.sqlite-wal
 /relationships/data/*.sqlite-shm
+/relationships/data/risk-scans/
+/relationships/data/documents/
 
 # Same pattern for the Register app's ConnectWise API credentials -- copy
 # register/api/connectwise-config.sample.php to

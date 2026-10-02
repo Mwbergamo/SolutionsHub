@@ -767,6 +767,33 @@ function relationships_migrate(PDO $pdo): void
     relationships_add_column_if_missing($pdo, 'risk_scans', 'assigned_to_name', 'TEXT');
     relationships_add_column_if_missing($pdo, 'risk_scans', 'assigned_at', 'TEXT');
 
+    // Customer Documents -- added 2026-10-02 per Michael: a Documents section
+    // under each company for Word docs, PDFs, spreadsheets and other
+    // historical documents the CRCs need to see and share (documents.php).
+    // Same storage + ConnectWise-attachment pattern as risk_scans, without
+    // the review/assign columns and WITHOUT a retention purge. Files live on
+    // disk under data/documents/<customer_id>/ (blocked from direct HTTP
+    // access by data/.htaccess); only stored_filename says where.
+    // cw_upload_status: 'uploaded' | 'failed' | 'skipped' | NULL.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS customer_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            original_filename TEXT NOT NULL,
+            stored_filename TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT 'General',
+            size_bytes INTEGER NOT NULL,
+            uploaded_by_user_id INTEGER REFERENCES crc_users(id),
+            uploaded_by_name TEXT NOT NULL,
+            uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+            cw_upload_status TEXT,
+            cw_document_id TEXT,
+            cw_upload_error TEXT,
+            cw_uploaded_at TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_customer_documents_customer ON customer_documents(customer_id, uploaded_at DESC)');
+
     // ---- Prospecting (prospecting.php / prospecting-agent.php) -- added
     // 2026-09-23 per Michael: a rep issues a "Prospect" command, a research
     // agent searches the public web, and the rep claims a candidate as a

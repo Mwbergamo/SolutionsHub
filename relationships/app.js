@@ -373,6 +373,18 @@
     // -> a specific customer's risk-scan alert) -- same pattern as
     // pendingTaskFocus above, consumed once inside loadRiskScans().
     pendingRiskScanFocus: null, // { scanId } | null
+    // Customer Documents (api/documents.php) -- added 2026-10-02 per
+    // Michael: a Documents section under each company for Word docs, PDFs,
+    // spreadsheets and other historical files, attached to the customer's
+    // ConnectWise Documents exactly like Risk Scans.
+    documents: null, // [ { id, original_filename, category, size_bytes, uploaded_by_name, uploaded_at, cw_upload_status, cw_upload_error }, ... ] | null while loading
+    documentsLoading: false,
+    documentsError: null,
+    documentDraftFiles: [], // File objects chosen but not yet uploaded
+    documentDraftCategory: 'General',
+    documentUploading: false,
+    documentUploadProgress: '', // e.g. 'Uploading 2 of 3…'
+    documentRetryingId: null, // document id currently mid ConnectWise re-attach
 
     // Global master to-do dashboard -- the Relationships front page's new
     // right-hand panel (api/meetings.php?action=global), added 2026-09-15.
@@ -1233,6 +1245,114 @@
     selectCustomer(customerId);
   }
 
+  // ---- Customer Documents (api/documents.php) ---------------------------
+  // Added 2026-10-02 per Michael -- see documents.php's file header. Same
+  // load/reset/upload/retry pattern as Risk Scans above.
+
+  var DOCUMENT_CATEGORIES = ['General', 'Contract', 'Proposal / Quote', 'Network Diagram', 'Invoice / Billing', 'Meeting Notes', 'Assessment / Report', 'Other'];
+  var DOCUMENT_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.csv,.ppt,.pptx,.txt,.rtf,.odt,.ods,.msg,.eml,.png,.jpg,.jpeg,.gif,.vsd,.vsdx,.zip';
+
+  function resetDocumentsState() {
+    state.documents = null;
+    state.documentsLoading = false;
+    state.documentsError = null;
+    state.documentDraftFiles = [];
+    state.documentDraftCategory = 'General';
+    state.documentUploading = false;
+    state.documentUploadProgress = '';
+    state.documentRetryingId = null;
+  }
+
+  function loadDocuments(customerId) {
+    state.documentsLoading = true;
+    var requestFor = Number(customerId);
+    apiGet('api/documents.php?action=list&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.documentsLoading = false;
+      if (r.data && r.data.ok) {
+        state.documents = r.data.documents;
+      } else {
+        state.documentsError = (r.data && r.data.error) || 'Could not load documents.';
+      }
+      render();
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.documentsLoading = false;
+      state.documentsError = 'Could not load documents \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  // Uploads the chosen files one at a time (so one rejected file doesn't
+  // sink the rest, and each gets its own ConnectWise attachment). Files that
+  // fail are kept in the draft list with the reason shown; files that
+  // succeed drop out of it.
+  function uploadDocuments(customerId) {
+    var files = state.documentDraftFiles.slice();
+    if (!files.length) {
+      state.documentsError = 'Choose at least one file first.';
+      render();
+      return;
+    }
+    state.documentUploading = true;
+    state.documentsError = null;
+    var failures = [];
+    var remaining = [];
+    var category = state.documentDraftCategory;
+
+    function finish() {
+      state.documentUploading = false;
+      state.documentUploadProgress = '';
+      state.documentDraftFiles = remaining;
+      if (failures.length) state.documentsError = failures.join(' ');
+      loadDocuments(customerId);
+      render();
+    }
+
+    function next(i) {
+      if (i >= files.length) { finish(); return; }
+      var file = files[i];
+      state.documentUploadProgress = 'Uploading ' + (i + 1) + ' of ' + files.length + '\u2026';
+      render();
+      var formData = new FormData();
+      formData.append('customer_id', String(customerId));
+      formData.append('category', category);
+      formData.append('file', file);
+      apiUpload('api/documents.php?action=upload', formData).then(function (r) {
+        if (!(r.data && r.data.ok)) {
+          remaining.push(file);
+          failures.push(file.name + ': ' + ((r.data && r.data.error) || 'could not be uploaded.'));
+        }
+        next(i + 1);
+      }).catch(function () {
+        remaining.push(file);
+        failures.push(file.name + ': could not be uploaded \u2014 check your connection and try again.');
+        next(i + 1);
+      });
+    }
+    render();
+    next(0);
+  }
+
+  function retryDocumentCw(docId) {
+    state.documentRetryingId = docId;
+    render();
+    apiPost('api/documents.php?action=retry_cw_upload', { id: docId }).then(function (r) {
+      state.documentRetryingId = null;
+      if (r.data && r.data.ok && state.documents) {
+        var updated = r.data.document;
+        state.documents = state.documents.map(function (d) { return d.id === updated.id ? updated : d; });
+      } else {
+        state.documentsError = (r.data && r.data.error) || 'Could not retry the ConnectWise attachment.';
+      }
+      render();
+    }).catch(function () {
+      state.documentRetryingId = null;
+      state.documentsError = 'Could not retry the ConnectWise attachment \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
   function saveMeeting(customerId) {
     var subject = (state.meetingDraftSubject || '').trim();
     var date = state.meetingDraftDate;
@@ -1558,6 +1678,8 @@
         loadMeetings(id);
         resetRiskScansState();
         loadRiskScans(id);
+        resetDocumentsState();
+        loadDocuments(id);
         if (state.pendingFocus) {
           var pf = state.pendingFocus;
           state.pendingFocus = null;
@@ -4517,6 +4639,7 @@
     }
 
     html += riskScansPanelHtml(detail.customer.id);
+    html += documentsPanelHtml(detail.customer.id);
 
     html += activityPanelHtml(detail);
 
@@ -4716,6 +4839,86 @@
         '<button class="risk-scan-review-btn" type="button" data-action="' + (isReviewed ? 'riskscan-unmark-reviewed' : 'riskscan-mark-reviewed') + '" data-scan="' + scan.id + '" ' + (isToggling ? 'disabled' : '') + '>' +
           (isToggling ? '…' : (isReviewed ? 'Reopen' : 'Mark Reviewed')) +
         '</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // ---- Customer Documents panel ------------------------------------------
+  // Added 2026-10-02 per Michael. Shown on every customer's dashboard right
+  // under Risk Scans. Every upload is also attached to the customer's
+  // ConnectWise Documents (same status line + Retry as Risk Scans).
+
+  function documentsPanelHtml(customerId) {
+    var drafts = state.documentDraftFiles || [];
+    var label = !drafts.length ? 'Choose files…'
+      : (drafts.length === 1 ? drafts[0].name : drafts.length + ' files selected');
+    var html = '<div class="risk-scans-panel documents-panel">';
+    html += '<div class="risk-scans-panel-header">' +
+      '<div class="view-title">Documents</div>' +
+      '<div class="risk-scan-upload-row">' +
+        '<select class="risk-scan-assign-select document-category-select" id="documentCategorySelect" ' + (state.documentUploading ? 'disabled' : '') + '>' +
+          DOCUMENT_CATEGORIES.map(function (c) {
+            return '<option value="' + escapeHtml(c) + '"' + (state.documentDraftCategory === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
+          }).join('') +
+        '</select>' +
+        '<label class="risk-scan-file-label" for="documentFileInput">' + escapeHtml(label) + '</label>' +
+        '<input type="file" id="documentFileInput" accept="' + DOCUMENT_ACCEPT + '" multiple class="risk-scan-file-input">' +
+        '<button class="risk-scan-upload-btn" type="button" data-action="document-upload" data-customer="' + customerId + '" ' +
+          (!drafts.length || state.documentUploading ? 'disabled' : '') + '>' +
+          (state.documentUploading ? escapeHtml(state.documentUploadProgress || 'Uploading…') : 'Upload') +
+        '</button>' +
+      '</div>' +
+    '</div>';
+    html += '<div class="document-hint">Word, PDF, Excel, PowerPoint, images, Visio, email and zip files · up to 100 MB each · also saved to this customer’s ConnectWise attachments.</div>';
+
+    if (state.documentsError) {
+      html += '<div class="error-banner">' + escapeHtml(state.documentsError) + '</div>';
+    }
+
+    if (state.documentsLoading && !state.documents) {
+      html += '<div class="loading">Loading…</div>';
+    } else if (!state.documents || !state.documents.length) {
+      html += '<div class="roster-empty">No documents uploaded yet.</div>';
+    } else {
+      html += '<div class="risk-scan-list">';
+      state.documents.forEach(function (doc) {
+        html += documentItemHtml(doc);
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function documentCwStatusHtml(doc) {
+    var st = doc.cw_upload_status;
+    if (st === 'uploaded') {
+      return '<div class="risk-scan-cw-status ok">✓ Saved to ConnectWise attachments</div>';
+    }
+    if (st === 'skipped') {
+      return '<div class="risk-scan-cw-status muted">Not attached in ConnectWise — no ConnectWise company for this customer.</div>';
+    }
+    var retrying = state.documentRetryingId === doc.id;
+    var msg = st === 'failed'
+      ? 'ConnectWise attachment failed' + (doc.cw_upload_error ? ': ' + escapeHtml(doc.cw_upload_error) : '.')
+      : 'Not yet saved to ConnectWise attachments.';
+    return '<div class="risk-scan-cw-status bad">' + msg +
+      ' <button class="risk-scan-cw-retry" type="button" data-action="document-retry-cw" data-doc="' + doc.id + '" ' + (retrying ? 'disabled' : '') + '>' +
+        (retrying ? 'Retrying…' : 'Retry') +
+      '</button></div>';
+  }
+
+  function documentItemHtml(doc) {
+    return '<div class="risk-scan-item" data-document-row="' + doc.id + '">' +
+      '<div class="risk-scan-item-main">' +
+        '<div class="risk-scan-item-name">' + escapeHtml(doc.original_filename) +
+          ' <span class="document-category-tag">' + escapeHtml(doc.category || 'General') + '</span></div>' +
+        '<div class="risk-scan-item-meta">' + fmtFileSize(doc.size_bytes) + ' · uploaded by ' + escapeHtml(doc.uploaded_by_name) + ' · ' + escapeHtml(fmtTimestamp(doc.uploaded_at)) + '</div>' +
+        documentCwStatusHtml(doc) +
+      '</div>' +
+      '<div class="risk-scan-item-actions">' +
+        '<a class="risk-scan-download-btn" href="api/documents.php?action=download&id=' + doc.id + '">Download</a>' +
       '</div>' +
     '</div>';
   }
@@ -6318,6 +6521,21 @@
         render();
       });
     }
+
+    var documentFileInput = document.getElementById('documentFileInput');
+    if (documentFileInput) {
+      documentFileInput.addEventListener('change', function (e) {
+        state.documentDraftFiles = Array.prototype.slice.call(e.target.files || []);
+        state.documentsError = null;
+        render();
+      });
+    }
+    var documentCategorySelect = document.getElementById('documentCategorySelect');
+    if (documentCategorySelect) {
+      documentCategorySelect.addEventListener('change', function (e) {
+        state.documentDraftCategory = e.target.value;
+      });
+    }
   }
 
   function onRootClick(e) {
@@ -6739,6 +6957,10 @@
       uploadRiskScan(parseInt(el.getAttribute('data-customer'), 10));
     } else if (action === 'riskscan-retry-cw') {
       retryRiskScanCw(parseInt(el.getAttribute('data-scan'), 10));
+    } else if (action === 'document-upload') {
+      uploadDocuments(parseInt(el.getAttribute('data-customer'), 10));
+    } else if (action === 'document-retry-cw') {
+      retryDocumentCw(parseInt(el.getAttribute('data-doc'), 10));
     } else if (action === 'riskscan-mark-reviewed') {
       setRiskScanReviewed(parseInt(el.getAttribute('data-scan'), 10), true);
     } else if (action === 'riskscan-unmark-reviewed') {

@@ -197,7 +197,7 @@ function relationships_cw_request(string $path, array $query = [], string $metho
  * recordId, title, file) are ConnectWise's documented multipart contract
  * for this endpoint, but confirm on the first real upload.
  */
-function relationships_cw_upload_document(string $recordType, string $recordId, string $title, string $filePath, string $fileName, string $description = ''): array
+function relationships_cw_upload_document(string $recordType, string $recordId, string $title, string $filePath, string $fileName, string $description = '', string $mimeType = 'application/zip'): array
 {
     if (!is_file($filePath)) {
         throw new RelationshipsConnectWiseError('Local file to upload is missing: ' . $filePath);
@@ -216,7 +216,7 @@ function relationships_cw_upload_document(string $recordType, string $recordId, 
         'recordType' => $recordType,
         'recordId' => $recordId,
         'title' => $title,
-        'file' => new CURLFile($filePath, 'application/zip', $fileName),
+        'file' => new CURLFile($filePath, $mimeType, $fileName),
     ];
     if ($description !== '') {
         $fields['description'] = $description;
