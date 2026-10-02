@@ -5581,6 +5581,26 @@
     // sends it.
   ];
 
+  // Plain-text stand-in for the 4 progress-bar images Michael supplied
+  // (Order Placed / Order Shipped / Order Arrived / Kick-off, 2026-10-02).
+  // He originally wanted those images at the very top of each checklist
+  // step's email -- but these emails open as mailto: drafts in the rep's
+  // own Outlook for them to review/edit before sending (his explicit
+  // choice, same conversation), and a mailto: body is plain text only, no
+  // email client renders an <img> inside one. This is the closest
+  // equivalent that still works in plain text: every label from the real
+  // images, with a checkmark on each step reached so far -- same
+  // information the image conveyed, same position (top of the email,
+  // before the customer's name line), just rendered in text.
+  var PROJECTS_PROGRESS_LABELS = ['Order Placed', 'Order Shipped', 'Order Arrived', 'Kick-off'];
+
+  function projectProgressLine(stepNumber) {
+    return PROJECTS_PROGRESS_LABELS.map(function (label, idx) {
+      var reached = (idx + 1) <= stepNumber;
+      return (reached ? '✓ ' : '  ') + label;
+    }).join('   →   ');
+  }
+
   function projectEmailMergeFields(text, project, coordinatorName) {
     var firstName = (project.contact_name || '').trim().split(/\s+/)[0] || 'there';
     var merged = text.split('(Customer First Name)').join(firstName)
@@ -5736,7 +5756,8 @@
       }
       var coordinatorName = stepNumber === 4 ? (project.assigned_to_name || null) : undefined;
       var subject = projectEmailMergeFields(tpl.subject, project, coordinatorName);
-      var body = projectEmailMergeFields(tpl.body.join('\n'), project, coordinatorName);
+      var bodyText = projectProgressLine(stepNumber) + '\n\n' + tpl.body.join('\n');
+      var body = projectEmailMergeFields(bodyText, project, coordinatorName);
       window.location.href = crossSellMailtoUrl(info.email, subject, body);
     });
   }
