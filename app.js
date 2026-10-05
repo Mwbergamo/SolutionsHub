@@ -1014,7 +1014,7 @@ var PILLARS = [
             products: [
               { id: 'phone-49ga', label: '49GA Advanced IP Phone', sku: 'Bluetooth, wireless, HD video calling', image: phoneImg('m49ga'), options: [] },
               { id: 'phone-47ge', label: '47GE IP Phone', sku: 'Bluetooth, wireless, large screen, HD voice', image: phoneImg('m47ge'), options: [] },
-              { id: 'phone-mono', label: 'Monochrome IP Phone', sku: 'Programmable buttons, HD voice, speakerphone', image: phoneImg('m45g'), options: [] },
+              { id: 'phone-mono', label: '45GE IP Phone', sku: 'Programmable buttons, HD voice, speakerphone', image: phoneImg('m45g'), options: [] },
               { id: 'phone-z23ge', label: 'Z23GE General Use Color IP Phone', sku: 'Color display, headset support, programmable hot buttons', image: phoneImg('z23ge'), options: [] },
               { id: 'phone-z22g', label: 'Z22G Entry Level Color IP Phone', sku: 'Basic color display, headset support', image: phoneImg('z22g'), options: [] },
               { id: 'phone-z21i', label: 'Z21i Entry-Level IP Phone', sku: 'Basic monochrome display, headset support', image: phoneImg('z21i'), options: [] }
