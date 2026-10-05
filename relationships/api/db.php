@@ -121,6 +121,17 @@ function relationships_migrate(PDO $pdo): void
     // new Residential block, even if it also has real synced services.
     relationships_add_column_if_missing($pdo, 'customers', 'cw_status_name', 'TEXT');
     relationships_add_column_if_missing($pdo, 'customers', 'is_residential', 'INTEGER NOT NULL DEFAULT 0');
+    // cw_bucket -- added 2026-10-05, per Michael ("CodeBlue has 476 Active
+    // clients ... Prospects = Inactive / Inactive-still approved ... Residential
+    // = Residential"). The ONE stored answer to "which list is this company
+    // in?", written only by the Company Status sync
+    // (connectwise-prospect-sync-core.php) from the live ConnectWise Company
+    // Status + Vendor type: 'active' | 'prospect' | 'residential' |
+    // 'excluded' (any other status, a Vendor, or demo data -- hidden from
+    // every Relationships list and count). NULL = not classified yet (a
+    // customer the Agreement sync just created, until the next Company
+    // Status sync run); treated like 'active' by readers, same as before.
+    relationships_add_column_if_missing($pdo, 'customers', 'cw_bucket', 'TEXT');
     // 'monthly' (default) or 'annual' -- set by the Monthly Billing sync
     // (connectwise-billing-sync-core.php) when a customer's normal
     // trailing-6-month Agreement-invoice window comes back entirely $0 but
@@ -284,6 +295,10 @@ function relationships_migrate(PDO $pdo): void
     // further ConnectWise round-trip) -- added 2026-09-26 alongside the
     // customers.cw_status_name column above, same reasoning.
     relationships_add_column_if_missing($pdo, 'cw_prospect_sync_queue', 'cw_status_name', "TEXT NOT NULL DEFAULT ''");
+    // 1 when the company has a Vendor type (excluded from every bucket) --
+    // added 2026-10-05 so Vendors travel through the queue and get their
+    // existing customer row hidden, rather than being silently skipped.
+    relationships_add_column_if_missing($pdo, 'cw_prospect_sync_queue', 'is_vendor', 'INTEGER NOT NULL DEFAULT 0');
 
     // Front-page Primary Relationship Dashboard metrics -- added 2026-09-10
     // per Michael. Both the Service Ticket volume and Active Contact count

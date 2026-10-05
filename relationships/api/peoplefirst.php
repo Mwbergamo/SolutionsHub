@@ -61,7 +61,7 @@ function relationships_peoplefirst_status(PDO $pdo, ?array $allowedTerritories =
         : relationships_territory_filter_sql($allowedTerritories, 'customers');
     $stmt = $pdo->prepare(
         "SELECT id, name, last_client_checkin_at, last_client_checkin_by, last_risk_scan_at, last_risk_scan_by
-         FROM customers WHERE is_peoplefirst = 1 {$territoryFilter['sql']} ORDER BY name ASC"
+         FROM customers WHERE is_peoplefirst = 1 AND COALESCE(cw_bucket, '') != 'excluded' {$territoryFilter['sql']} ORDER BY name ASC"
     );
     $stmt->execute($territoryFilter['params']);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);

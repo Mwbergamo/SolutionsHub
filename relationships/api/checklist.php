@@ -380,7 +380,7 @@ function relationships_missing_services_with_progress(PDO $pdo, ?array $allowedT
         ? ['sql' => '', 'params' => []]
         : relationships_territory_filter_sql($allowedTerritories, 'customers');
     $customerStmt = $pdo->prepare(
-        "SELECT id, name, voip_hosted_elsewhere FROM customers WHERE 1=1 {$territoryFilter['sql']} ORDER BY name ASC"
+        "SELECT id, name, voip_hosted_elsewhere FROM customers WHERE COALESCE(cw_bucket, '') != 'excluded' {$territoryFilter['sql']} ORDER BY name ASC"
     );
     $customerStmt->execute($territoryFilter['params']);
     $customers = $customerStmt->fetchAll(PDO::FETCH_ASSOC);

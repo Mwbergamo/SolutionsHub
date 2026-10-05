@@ -167,6 +167,13 @@ if ($action === 'billing-status') {
     ]);
 }
 
+// GET ?action=company-counts -- Company reconciliation numbers (added
+// 2026-10-05): stored Active / Prospect / Residential / excluded totals and a
+// per-ConnectWise-status breakdown, for comparing against ConnectWise.
+if ($action === 'company-counts') {
+    relationships_respond(200, array_merge(['ok' => true], relationships_cw_company_counts($pdo)));
+}
+
 if ($action === 'prospect-status') {
     $counts = $pdo->query('SELECT status, COUNT(*) AS n FROM cw_prospect_sync_queue GROUP BY status')->fetchAll(PDO::FETCH_KEY_PAIR);
     $meta = $pdo->query('SELECT key, value FROM cw_sync_meta')->fetchAll(PDO::FETCH_KEY_PAIR);

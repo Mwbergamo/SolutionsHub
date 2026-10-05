@@ -2,6 +2,24 @@
 /**
  * relationships/api/connectwise-prospect-sync-core.php
  *
+ * ===== REDEFINED 2026-10-05 (read this first; the history below is older) =====
+ * Per Michael, ConnectWise's Company Status is now the ONLY thing that
+ * decides which list a company is in (all locations, Vendor types excluded):
+ *
+ *   Active      = status Active, Delinquent or Special Info
+ *   Prospect    = status Inactive or Inactive - Still Approved
+ *   Residential = status Residential
+ *   anything else (Credit Hold, Lead Pursuit, Not Approved, ...), or a
+ *   Vendor type, = excluded: hidden from every list and count.
+ *
+ * Having an agreement no longer makes a company Active, and Active no longer
+ * hides companies that have no synced contacts (dashboard.php). The result
+ * is stored in customers.cw_bucket. One exception: a company a rep claimed
+ * through Prospecting (status "Prospect" in ConnectWise, active 90-day
+ * claim) stays a Prospect while the claim is active.
+ * Status names are matched ignoring case, spaces and punctuation, so
+ * "Inactive-still approved" == "Inactive - Still Approved".
+ *
  * Company Status sync -- pulls in EVERY non-Vendor ConnectWise Company
  * (regardless of status) and classifies each one into exactly one of three
  * buckets: Active, Prospect, or Residential (see
@@ -94,103 +112,73 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/connectwise.php';
 
-/**
- * The three ConnectWise Company statuses that make a company "Active"
- * even with zero recorded agreements -- Michael's own list, 2026-09-26.
- * Matched case-insensitively (relationships_cw_status_matches()) since
- * ConnectWise's own casing hasn't been independently confirmed here.
- */
+/** ConnectWise Company statuses that make a company "Active". */
 const RELATIONSHIPS_CW_ACTIVE_STATUSES = ['Active', 'Delinquent', 'Special Info'];
 
-/**
- * The one ConnectWise Company status that gets its own Residential block,
- * regardless of agreements -- Michael's own answer, 2026-09-26, when asked
- * directly whether a Residential-status company with a real agreement
- * should stay Active or move to the new block: "Residential always wins."
- */
+/** ConnectWise Company statuses that make a company a "Prospect". */
+const RELATIONSHIPS_CW_PROSPECT_STATUSES = ['Inactive', 'Inactive - Still Approved'];
+
+/** The ConnectWise Company status that makes a company "Residential". */
 const RELATIONSHIPS_CW_RESIDENTIAL_STATUS = 'Residential';
 
 /**
- * Case-insensitive, trimmed equality -- the one place a raw ConnectWise
- * status string ever gets compared in this file, so a stray leading/
- * trailing space or a casing difference (which this integration has been
- * burned by before -- see the board-name saga in
- * claude/relationships-connectwise-sync.md) doesn't silently misclassify
- * a company.
+ * Status comparison key: lower-cased with everything except letters/digits
+ * removed, so "Inactive-still approved", "Inactive - Still Approved" and
+ * "inactive still approved" all compare equal.
  */
-function relationships_cw_status_matches(string $a, string $b): bool
+function relationships_cw_status_key(string $status): string
 {
-    return strcasecmp(trim($a), trim($b)) === 0;
+    return strtolower(preg_replace('/[^A-Za-z0-9]+/', '', $status) ?? '');
 }
 
-/**
- * The ONLY ConnectWise Company statuses that get imported into
- * Relationships as a zero-service Prospect row -- Michael's own list,
- * 2026-09-26, tightening the original catch-all-everything-else Prospect
- * bucket once it started pulling in every permanently-inactive status
- * ConnectWise has (see the NARROWED note in this file's header). Matched
- * case-insensitively via relationships_cw_status_matches(), same as the
- * Active/Residential sets above.
- */
-const RELATIONSHIPS_CW_PROSPECT_STATUSES = [
-    'Inactive',
-    'Inactive - Still Approved',
-    'Lead Pursuit',
-    'Prospect',
-];
-
-/**
- * True if $statusName matches one of the allowlisted Prospect statuses
- * above (case-insensitive, trimmed). Used by
- * relationships_cw_classify_company_bucket() to decide 'prospect' vs the
- * new 'ignore' bucket.
- */
-function relationships_cw_prospect_status_allowed(string $statusName): bool
+function relationships_cw_status_matches(string $a, string $b): bool
 {
-    foreach (RELATIONSHIPS_CW_PROSPECT_STATUSES as $allowed) {
-        if (relationships_cw_status_matches($statusName, $allowed)) {
+    return relationships_cw_status_key($a) === relationships_cw_status_key($b);
+}
+
+function relationships_cw_status_in(string $status, array $names): bool
+{
+    foreach ($names as $name) {
+        if (relationships_cw_status_matches($status, (string) $name)) {
             return true;
         }
     }
     return false;
 }
 
+/** True if $statusName is one of the Prospect statuses above. */
+function relationships_cw_prospect_status_allowed(string $statusName): bool
+{
+    return relationships_cw_status_in($statusName, RELATIONSHIPS_CW_PROSPECT_STATUSES);
+}
+
 /**
  * Classifies one company into exactly one of 'active' | 'prospect' |
- * 'residential' | 'ignore', per the rules in this file's header.
- * $hasRealAgreement is whether this company already has any real
- * customer_services rows (an existing agreement-backed customer) --
- * irrelevant once Residential is matched, since Residential wins
- * regardless, and irrelevant to 'ignore' too since $hasRealAgreement=true
- * always resolves to 'active' before the allowlist check is ever reached.
- * 'ignore' means: not Residential, no real agreement, not one of the
- * Active-by-status names, and not in the new Prospect allowlist either --
- * a permanently-inactive-looking status this sync now leaves alone.
+ * 'residential' | 'excluded' from its ConnectWise Company Status and
+ * Vendor flag ONLY -- see the REDEFINED note in this file's header.
  */
-function relationships_cw_classify_company_bucket(string $statusName, bool $hasRealAgreement): string
+function relationships_cw_classify_company_bucket(string $statusName, bool $isVendor = false): string
 {
+    if ($isVendor) {
+        return 'excluded';
+    }
     if (relationships_cw_status_matches($statusName, RELATIONSHIPS_CW_RESIDENTIAL_STATUS)) {
         return 'residential';
     }
-    if ($hasRealAgreement) {
+    if (relationships_cw_status_in($statusName, RELATIONSHIPS_CW_ACTIVE_STATUSES)) {
         return 'active';
-    }
-    foreach (RELATIONSHIPS_CW_ACTIVE_STATUSES as $activeName) {
-        if (relationships_cw_status_matches($statusName, $activeName)) {
-            return 'active';
-        }
     }
     if (relationships_cw_prospect_status_allowed($statusName)) {
         return 'prospect';
     }
-    return 'ignore';
+    return 'excluded';
 }
 
 /**
- * True if this company's `types` array (as returned by /company/companies
- * with types in the fields list) contains anything matching "Vendor" --
- * a substring match, not exact, done here in PHP rather than as a
- * ConnectWise condition -- see file header for why.
+ * True if this company's `types` array contains anything matching "Vendor"
+ * (a substring match, same as ConnectWise's "Type NOT CONTAINS Vendor"),
+ * done here in PHP rather than as a ConnectWise condition -- see the file
+ * header history for why.
  */
 function relationships_cw_prospect_is_vendor(array $company): bool
 {
@@ -208,20 +196,16 @@ function relationships_cw_prospect_is_vendor(array $company): bool
 }
 
 /**
- * Rebuilds the company-status queue from scratch: every non-Vendor
- * ConnectWise Company, whatever its status. Also resets is_prospect_only
- * AND is_residential back to 0 for every customer currently flagged --
- * same reset-then-recompute pattern as is_peoplefirst/voip_hosted_elsewhere
- * in connectwise-sync-core.php -- so a company that no longer matches its
- * old bucket (status changed, or picked up a Vendor type) correctly loses
- * the old flag once this full run completes, rather than it sticking
- * forever.
+ * Rebuilds the company-status queue from scratch: EVERY ConnectWise Company
+ * (Vendors included, flagged is_vendor, so their existing rows can be hidden).
+ * Nothing is reset up front any more -- step() rewrites each company's flags
+ * from its live status, and the last step hides rows ConnectWise no longer
+ * returns -- so an interrupted run leaves the previous classification in
+ * place instead of dumping everyone into Active.
  */
 function relationships_cw_prospect_sync_start(PDO $pdo): array
 {
     $pdo->exec('DELETE FROM cw_prospect_sync_queue');
-    $pdo->exec('UPDATE customers SET is_prospect_only = 0 WHERE is_prospect_only = 1');
-    $pdo->exec('UPDATE customers SET is_residential = 0 WHERE is_residential = 1');
 
     $companies = relationships_cw_list(
         '/company/companies',
@@ -230,9 +214,13 @@ function relationships_cw_prospect_sync_start(PDO $pdo): array
         200
     );
 
+    // Demo/mock rows only exist before the first real sync; once ConnectWise
+    // answers they are no longer part of any real list or count.
+    $pdo->exec("UPDATE customers SET cw_bucket = 'excluded', is_prospect_only = 0, is_residential = 0 WHERE is_mock = 1");
+
     $insert = $pdo->prepare(
-        "INSERT OR REPLACE INTO cw_prospect_sync_queue (connectwise_id, company_name, cw_status_name, status)
-         VALUES (:cwid, :name, :status_name, 'pending')"
+        "INSERT OR REPLACE INTO cw_prospect_sync_queue (connectwise_id, company_name, cw_status_name, is_vendor, status)
+         VALUES (:cwid, :name, :status_name, :vendor, 'pending')"
     );
 
     // Prospecting's 90-day claims (prospecting.php): a claimed company whose
@@ -245,14 +233,16 @@ function relationships_cw_prospect_sync_start(PDO $pdo): array
         if (!isset($c['id'], $c['name'])) {
             continue;
         }
-        if (relationships_cw_prospect_is_vendor($c)) {
-            continue;
-        }
         $statusName = is_array($c['status'] ?? null) ? (string) ($c['status']['name'] ?? '') : '';
         if ($statusName !== '' && strcasecmp($statusName, 'Prospect') !== 0) {
             $markPromoted->execute([':cwid' => (string) $c['id']]);
         }
-        $insert->execute([':cwid' => (string) $c['id'], ':name' => (string) $c['name'], ':status_name' => $statusName]);
+        $insert->execute([
+            ':cwid' => (string) $c['id'],
+            ':name' => (string) $c['name'],
+            ':status_name' => $statusName,
+            ':vendor' => relationships_cw_prospect_is_vendor($c) ? 1 : 0,
+        ]);
         $total++;
     }
 
@@ -265,19 +255,11 @@ function relationships_cw_prospect_sync_start(PDO $pdo): array
 }
 
 /**
- * Processes up to $batchSize pending queue rows. No ConnectWise round-trip
- * per row -- start() already has everything needed -- so this is just a
- * classify-then-upsert per company:
- *
- * - A customer WITH real synced services (an existing agreement-backed
- *   customer) never has its name/is_mock/services touched here -- the
- *   Agreement sync owns those. Its cw_status_name is still refreshed, and
- *   is_residential is still set/cleared, because Residential wins even
- *   over a real agreement (see file header); is_prospect_only is forced
- *   back to 0 defensively (it should already be 0 for these).
- * - A customer with NO real synced services is fully owned by this sync,
- *   same as before this feature -- name, cw_status_name, is_prospect_only,
- *   and is_residential are all (re)written from the live classification.
+ * Processes up to $batchSize pending queue rows (pure DB work -- start()
+ * already fetched everything): classify each company from its status and
+ * write cw_bucket + the is_prospect_only / is_residential flags the rest of
+ * the app reads. Applies to every customer row, with or without synced
+ * services -- an agreement no longer overrides the status.
  */
 function relationships_cw_prospect_sync_step(PDO $pdo, int $batchSize = 50): array
 {
@@ -287,17 +269,14 @@ function relationships_cw_prospect_sync_step(PDO $pdo, int $batchSize = 50): arr
     $rows = $pending->fetchAll(PDO::FETCH_ASSOC);
 
     $findCustomer = $pdo->prepare('SELECT id FROM customers WHERE connectwise_id = :cw');
-    $hasServices = $pdo->prepare('SELECT 1 FROM customer_services WHERE customer_id = :id LIMIT 1');
-
-    $updateServiced = $pdo->prepare(
-        'UPDATE customers SET cw_status_name = :status_name, is_prospect_only = 0, is_residential = :is_res WHERE id = :id'
-    );
-    $updateUnserviced = $pdo->prepare(
-        'UPDATE customers SET name = :name, is_mock = 0, cw_status_name = :status_name, is_prospect_only = :is_prospect, is_residential = :is_res WHERE id = :id'
+    $hasActiveClaim = $pdo->prepare("SELECT 1 FROM prospect_claims WHERE status = 'active' AND (cw_company_id = :cw OR customer_id = :cid) LIMIT 1");
+    $update = $pdo->prepare(
+        'UPDATE customers SET name = :name, is_mock = 0, cw_status_name = :status_name, cw_bucket = :bucket,
+                is_prospect_only = :is_prospect, is_residential = :is_res WHERE id = :id'
     );
     $insertNew = $pdo->prepare(
-        'INSERT INTO customers (connectwise_id, name, is_mock, cw_status_name, is_prospect_only, is_residential)
-         VALUES (:cw, :name, 0, :status_name, :is_prospect, :is_res)'
+        'INSERT INTO customers (connectwise_id, name, is_mock, cw_status_name, cw_bucket, is_prospect_only, is_residential)
+         VALUES (:cw, :name, 0, :status_name, :bucket, :is_prospect, :is_res)'
     );
 
     $processed = 0;
@@ -305,49 +284,46 @@ function relationships_cw_prospect_sync_step(PDO $pdo, int $batchSize = 50): arr
     foreach ($rows as $row) {
         $cwId = (string) $row['connectwise_id'];
         $statusName = (string) ($row['cw_status_name'] ?? '');
+        $isVendor = (int) ($row['is_vendor'] ?? 0) === 1;
         try {
+            $bucket = relationships_cw_classify_company_bucket($statusName, $isVendor);
+
             $findCustomer->execute([':cw' => $cwId]);
             $existing = $findCustomer->fetch(PDO::FETCH_ASSOC);
+            $customerId = $existing ? (int) $existing['id'] : 0;
+
+            // A company claimed through Prospecting (ConnectWise status
+            // "Prospect") stays a Prospect while its 90-day claim is active.
+            if ($bucket === 'excluded' && !$isVendor && relationships_cw_status_matches($statusName, 'Prospect')) {
+                $hasActiveClaim->execute([':cw' => $cwId, ':cid' => $customerId]);
+                if ($hasActiveClaim->fetch() !== false) {
+                    $bucket = 'prospect';
+                }
+            }
+
+            $isProspect = $bucket === 'prospect' ? 1 : 0;
+            $isRes = $bucket === 'residential' ? 1 : 0;
 
             if ($existing) {
-                $customerId = (int) $existing['id'];
-                $hasServices->execute([':id' => $customerId]);
-                $hasReal = $hasServices->fetch() !== false;
-                $bucket = relationships_cw_classify_company_bucket($statusName, $hasReal);
-
-                if ($hasReal) {
-                    $updateServiced->execute([
-                        ':status_name' => $statusName,
-                        ':is_res' => $bucket === 'residential' ? 1 : 0,
-                        ':id' => $customerId,
-                    ]);
-                } else {
-                    $updateUnserviced->execute([
-                        ':name' => $row['company_name'],
-                        ':status_name' => $statusName,
-                        ':is_prospect' => $bucket === 'prospect' ? 1 : 0,
-                        ':is_res' => $bucket === 'residential' ? 1 : 0,
-                        ':id' => $customerId,
-                    ]);
-                }
-            } else {
-                $bucket = relationships_cw_classify_company_bucket($statusName, false);
-                if ($bucket !== 'ignore') {
-                    $insertNew->execute([
-                        ':cw' => $cwId,
-                        ':name' => $row['company_name'],
-                        ':status_name' => $statusName,
-                        ':is_prospect' => $bucket === 'prospect' ? 1 : 0,
-                        ':is_res' => $bucket === 'residential' ? 1 : 0,
-                    ]);
-                }
-                // else: no existing customer row, and this company's status
-                // isn't in the Prospect allowlist (nor Active/Residential) --
-                // deliberately create nothing, per the 2026-09-26 narrowing
-                // in this file's header. The queue row below is still marked
-                // done either way, so this company is simply left alone
-                // until its ConnectWise status changes.
+                $update->execute([
+                    ':name' => $row['company_name'],
+                    ':status_name' => $statusName,
+                    ':bucket' => $bucket,
+                    ':is_prospect' => $isProspect,
+                    ':is_res' => $isRes,
+                    ':id' => $customerId,
+                ]);
+            } elseif ($bucket !== 'excluded') {
+                $insertNew->execute([
+                    ':cw' => $cwId,
+                    ':name' => $row['company_name'],
+                    ':status_name' => $statusName,
+                    ':bucket' => $bucket,
+                    ':is_prospect' => $isProspect,
+                    ':is_res' => $isRes,
+                ]);
             }
+            // else: excluded and no row yet -- deliberately create nothing.
 
             $pdo->prepare("UPDATE cw_prospect_sync_queue SET status = 'done', processed_at = datetime('now'), error_message = NULL WHERE connectwise_id = :cw")
                 ->execute([':cw' => $cwId]);
@@ -362,6 +338,16 @@ function relationships_cw_prospect_sync_step(PDO $pdo, int $batchSize = 50): arr
     $counts = $pdo->query("SELECT status, COUNT(*) AS n FROM cw_prospect_sync_queue GROUP BY status")->fetchAll(PDO::FETCH_KEY_PAIR);
     $remaining = (int) ($counts['pending'] ?? 0);
 
+    // Last batch: any real customer row whose company ConnectWise no longer
+    // returns (deleted/merged) drops out of every list.
+    if ($remaining === 0 && array_sum(array_map('intval', $counts)) > 0) {
+        $pdo->exec(
+            "UPDATE customers SET cw_bucket = 'excluded', is_prospect_only = 0, is_residential = 0
+             WHERE is_mock = 0 AND COALESCE(connectwise_id, '') != ''
+               AND connectwise_id NOT IN (SELECT connectwise_id FROM cw_prospect_sync_queue)"
+        );
+    }
+
     return [
         'processed_this_batch' => $processed,
         'remaining' => $remaining,
@@ -372,5 +358,47 @@ function relationships_cw_prospect_sync_step(PDO $pdo, int $batchSize = 50): arr
             'error' => (int) ($counts['error'] ?? 0),
         ],
         'errors' => $errors,
+    ];
+}
+
+/**
+ * Reconciliation numbers for the ConnectWise Sync screen: the stored bucket
+ * totals plus a per-status breakdown, so they can be compared against
+ * ConnectWise's own company counts. Pure DB read.
+ */
+function relationships_cw_company_counts(PDO $pdo): array
+{
+    $bucketRows = $pdo->query(
+        "SELECT COALESCE(cw_bucket, 'unclassified') AS b, COUNT(*) AS n FROM customers WHERE is_mock = 0 GROUP BY b"
+    )->fetchAll(PDO::FETCH_KEY_PAIR);
+    $statusRows = $pdo->query(
+        "SELECT COALESCE(cw_bucket, 'unclassified') AS b, COALESCE(NULLIF(TRIM(cw_status_name), ''), '(no status)') AS s, COUNT(*) AS n
+         FROM customers WHERE is_mock = 0 GROUP BY b, s ORDER BY b, n DESC"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $claimed = (int) $pdo->query(
+        "SELECT COUNT(*) FROM customers c JOIN prospect_claims pc ON pc.customer_id = c.id
+         WHERE pc.status = 'active' AND c.cw_bucket = 'prospect' AND LOWER(COALESCE(c.cw_status_name, '')) = 'prospect'"
+    )->fetchColumn();
+    $activeNoContacts = (int) $pdo->query(
+        "SELECT COUNT(*) FROM customers WHERE is_mock = 0 AND COALESCE(cw_bucket, 'active') = 'active' AND COALESCE(active_contact_count, 0) = 0"
+    )->fetchColumn();
+    $meta = $pdo->query('SELECT key, value FROM cw_sync_meta')->fetchAll(PDO::FETCH_KEY_PAIR);
+
+    $buckets = [];
+    foreach (['active', 'prospect', 'residential', 'excluded', 'unclassified'] as $b) {
+        $buckets[$b] = (int) ($bucketRows[$b] ?? 0);
+    }
+    $byStatus = [];
+    foreach ($statusRows as $r) {
+        $byStatus[] = ['bucket' => $r['b'], 'status' => $r['s'], 'count' => (int) $r['n']];
+    }
+
+    return [
+        'buckets' => $buckets,
+        'by_status' => $byStatus,
+        'prospect_claimed' => $claimed,
+        'active_without_contacts' => $activeNoContacts,
+        'last_company_sync' => $meta['prospect_started_at'] ?? null,
+        'companies_seen_last_sync' => isset($meta['prospect_total_queued']) ? (int) $meta['prospect_total_queued'] : null,
     ];
 }

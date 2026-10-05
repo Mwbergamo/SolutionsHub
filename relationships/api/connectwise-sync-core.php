@@ -148,14 +148,14 @@ function relationships_cw_sync_one_agreement(PDO $pdo, array $catalog, int $agre
     $custStmt = $pdo->prepare('SELECT id FROM customers WHERE connectwise_id = :cw');
     $custStmt->execute([':cw' => $companyCwId]);
     $existing = $custStmt->fetch(PDO::FETCH_ASSOC);
-    // is_prospect_only always cleared here: reaching this point means the
-    // company has a real active agreement, so it's no longer a zero-
-    // service prospect even if the Prospect sync (connectwise-prospect-
-    // sync-core.php) previously flagged it that way -- see that file's
-    // header for how the two syncs stay consistent with each other.
+    // 2026-10-05: this sync no longer touches is_prospect_only /
+    // is_residential / cw_bucket. Which list a company belongs to is decided
+    // ONLY by its ConnectWise Company Status (Company Status sync,
+    // connectwise-prospect-sync-core.php) -- an agreement no longer makes a
+    // company "Active" by itself.
     if ($existing) {
         $customerId = (int) $existing['id'];
-        $pdo->prepare('UPDATE customers SET name = :name, is_mock = 0, is_prospect_only = 0 WHERE id = :id')
+        $pdo->prepare('UPDATE customers SET name = :name, is_mock = 0 WHERE id = :id')
             ->execute([':name' => $companyName, ':id' => $customerId]);
     } else {
         $pdo->prepare('INSERT INTO customers (connectwise_id, name, is_mock, is_prospect_only) VALUES (:cw, :name, 0, 0)')

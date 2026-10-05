@@ -400,6 +400,9 @@
 
     // Global master to-do dashboard -- the Relationships front page's new
     // right-hand panel (api/meetings.php?action=global), added 2026-09-15.
+    // Company Counts reconciliation (ConnectWise Sync screen) -- added 2026-10-05.
+    companyCounts: null,
+    companyCountsLoading: false,
     globalTodosLoading: false,
     globalTodos: null, // { roster, counts, tasks } once loaded
     globalTodosError: null,
@@ -2155,6 +2158,58 @@
     });
   }
 
+  // Company reconciliation numbers (api/sync.php?action=company-counts):
+  // what the Hub currently holds as Active / Prospect / Residential /
+  // excluded, plus a per-ConnectWise-status breakdown, for checking against
+  // ConnectWise's own company counts.
+  function loadCompanyCounts() {
+    state.companyCountsLoading = true;
+    apiGet('api/sync.php?action=company-counts').then(function (r) {
+      state.companyCountsLoading = false;
+      if (r.data && r.data.ok) {
+        state.companyCounts = r.data;
+      }
+      render();
+    }).catch(function () {
+      state.companyCountsLoading = false;
+      render();
+    });
+  }
+
+  function companyCountsHtml() {
+    var cc = state.companyCounts;
+    var html = '<div class="company-counts">' +
+      '<div class="company-counts-title">Company Counts' +
+      '<button class="sync-stage-btn" type="button" data-action="refresh-company-counts"' + (state.companyCountsLoading ? ' disabled' : '') + '>' + (state.companyCountsLoading ? 'Loading…' : 'Refresh') + '</button></div>';
+    if (!cc) {
+      return html + '<div class="company-counts-note">Loading…</div></div>';
+    }
+    var b = cc.buckets || {};
+    html += '<div class="company-counts-grid">' +
+      '<div><span>' + (b.active || 0) + '</span>Active</div>' +
+      '<div><span>' + (b.prospect || 0) + '</span>Prospects</div>' +
+      '<div><span>' + (b.residential || 0) + '</span>Residential</div>' +
+      '<div class="muted"><span>' + (b.excluded || 0) + '</span>Hidden</div>' +
+    '</div>';
+    html += '<div class="company-counts-note">Active = status Active, Delinquent or Special Info. Prospects = Inactive or Inactive - Still Approved' +
+      (cc.prospect_claimed ? ' (plus ' + cc.prospect_claimed + ' company claimed in Prospecting)' : '') +
+      '. Residential = status Residential. Vendors and every other status are hidden. Last company sync: ' +
+      (cc.last_company_sync ? escapeHtml(fmtTimestamp(cc.last_company_sync)) : 'never') +
+      (cc.companies_seen_last_sync != null ? ' (' + cc.companies_seen_last_sync + ' ConnectWise companies seen)' : '') + '.</div>';
+    if (b.unclassified) {
+      html += '<div class="company-counts-note">' + b.unclassified + ' companies are not classified yet — run the Company Status sync.</div>';
+    }
+    if (cc.active_without_contacts) {
+      html += '<div class="company-counts-note">' + cc.active_without_contacts + ' Active companies have no synced contacts (they still count).</div>';
+    }
+    html += '<table class="company-counts-table"><thead><tr><th>Hub list</th><th>ConnectWise status</th><th>Companies</th></tr></thead><tbody>';
+    (cc.by_status || []).forEach(function (row) {
+      html += '<tr><td>' + escapeHtml(row.bucket === 'excluded' ? 'hidden' : row.bucket) + '</td><td>' + escapeHtml(row.status) + '</td><td>' + row.count + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    return html;
+  }
+
   function loadSyncStatus() {
     apiGet('api/sync.php?action=status').then(function (r) {
       if (r.data && r.data.ok) {
@@ -2368,6 +2423,7 @@
       if (r.data.done) {
         state.prospectSyncRunning = false;
         state.prospectSyncDone = true;
+        loadCompanyCounts();
         render();
         if (chained) {
           runTicketHistorySync();
@@ -3786,7 +3842,7 @@
   function syncHtml() {
     var html = '<div class="view-header">' +
       '<div class="view-title">ConnectWise Sync</div>' +
-      '<div class="view-sub">Pulls active services from ConnectWise — IT Services, Voice, Premise Security, and Data Center agreements — into this dashboard, refreshes every customer’s Monthly Billing chart, pulls in Active/Delinquent/Special Info companies with no agreement at all as Prospects, refreshes the front page’s Service Tickets YTD/trend and Active Contacts count/trend and search-by-contact data, then tags every company with its ConnectWise Territory so rep-based customer filtering (Territory Admin) stays current. Checklist progress already recorded isn’t touched.</div>' +
+      '<div class="view-sub">Pulls active services from ConnectWise — IT Services, Voice, Premise Security, and Data Center agreements — into this dashboard, refreshes every customer’s Monthly Billing chart, sorts every ConnectWise company into Active (Active/Delinquent/Special Info), Prospect (Inactive/Inactive - Still Approved) or Residential by its Company Status, refreshes the front page’s Service Tickets YTD/trend and Active Contacts count/trend and search-by-contact data, then tags every company with its ConnectWise Territory so rep-based customer filtering (Territory Admin) stays current. Checklist progress already recorded isn’t touched.</div>' +
     '</div>';
 
     html += '<div class="sync-panel">';
@@ -3963,6 +4019,8 @@
       });
       html += '</div>';
     }
+
+    html += companyCountsHtml();
 
     html += '</div>';
     return html;
@@ -6988,6 +7046,9 @@
       state.error = null;
       render();
       loadSyncStatus();
+      loadCompanyCounts();
+    } else if (action === 'refresh-company-counts') {
+      loadCompanyCounts();
     } else if (action === 'show-projects') {
       state.view = 'projects';
       state.error = null;
