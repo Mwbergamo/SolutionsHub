@@ -163,6 +163,18 @@ function relationships_cw_activity_ticket_count_ytd(string $cwCompanyId): int
 }
 
 /**
+ * A ticket's entered date. ConnectWise exposes it as top-level `dateEntered`
+ * on some versions/field selections and only as `_info.dateEntered` on
+ * others (the Service Tickets YTD drill-down showed a blank Date column,
+ * 2026-10-05), so accept either.
+ */
+function relationships_cw_ticket_entered(array $t): ?string
+{
+    $v = $t['dateEntered'] ?? ($t['_info']['dateEntered'] ?? null);
+    return ($v === null || $v === '') ? null : (string) $v;
+}
+
+/**
  * The actual YTD ticket list for the "click the total to see the list"
  * drill-down: date, ticket #, summary, assigned engineer, hours worked.
  * ConnectWise's own "actualHours" field on the ticket (aggregated from
@@ -176,7 +188,7 @@ function relationships_cw_activity_tickets_ytd(string $cwCompanyId): array
     $rows = relationships_cw_list(
         '/service/tickets',
         $conditions,
-        ['id', 'summary', 'dateEntered', 'actualHours', 'owner', 'status'],
+        ['id', 'summary', 'dateEntered', '_info', 'actualHours', 'owner', 'status'],
         200
     );
 
@@ -189,7 +201,7 @@ function relationships_cw_activity_tickets_ytd(string $cwCompanyId): array
         return [
             'id' => (int) ($t['id'] ?? 0),
             'ticket_number' => (int) ($t['id'] ?? 0), // ConnectWise's ticket "number" IS its id
-            'date' => $t['dateEntered'] ?? null,
+            'date' => relationships_cw_ticket_entered($t),
             'summary' => (string) ($t['summary'] ?? ''),
             'engineer' => $engineer ?? 'Unassigned',
             'hours' => isset($t['actualHours']) ? (float) $t['actualHours'] : 0.0,
@@ -231,7 +243,7 @@ function relationships_cw_activity_ticket_sync_data(string $cwCompanyId, int $mo
 
     $conditions = "company/id=$cwCompanyId and " . relationships_cw_activity_board_condition()
         . " and dateEntered>=[" . $sinceStart->format('Y-m-d') . "T00:00:00Z]";
-    $rows = relationships_cw_list('/service/tickets', $conditions, ['id', 'dateEntered'], 200);
+    $rows = relationships_cw_list('/service/tickets', $conditions, ['id', 'dateEntered', '_info'], 200);
 
     $monthFloor = $monthsStart->format('Y-m');
     $yearPrefix = date('Y') . '-';
@@ -239,7 +251,7 @@ function relationships_cw_activity_ticket_sync_data(string $cwCompanyId, int $mo
     $byMonth = [];
     $ytdCount = 0;
     foreach ($rows as $t) {
-        $date = (string) ($t['dateEntered'] ?? '');
+        $date = (string) (relationships_cw_ticket_entered($t) ?? '');
         if ($date === '') {
             continue;
         }
@@ -542,7 +554,7 @@ function relationships_cw_activity_ticket_sync_data_batch(array $cwCompanyIds, i
     )) . ')';
     $conditions = "$companyClause and " . relationships_cw_activity_board_condition()
         . " and dateEntered>=[" . $sinceStart->format('Y-m-d') . "T00:00:00Z]";
-    $rows = relationships_cw_list('/service/tickets', $conditions, ['id', 'dateEntered', 'company'], 200);
+    $rows = relationships_cw_list('/service/tickets', $conditions, ['id', 'dateEntered', '_info', 'company'], 200);
 
     $byCompanyRows = relationships_cw_group_batch_rows($rows, $cwCompanyIds, 'company');
 
@@ -554,7 +566,7 @@ function relationships_cw_activity_ticket_sync_data_batch(array $cwCompanyIds, i
         $byMonth = [];
         $ytdCount = 0;
         foreach ($byCompanyRows[(string) $cid] ?? [] as $t) {
-            $date = (string) ($t['dateEntered'] ?? '');
+            $date = (string) (relationships_cw_ticket_entered($t) ?? '');
             if ($date === '') {
                 continue;
             }
@@ -590,7 +602,7 @@ function relationships_cw_activity_recent_tickets_batch(array $cwCompanyIds, int
     )) . ')';
     $conditions = "$companyClause and " . relationships_cw_activity_board_condition()
         . " and dateEntered>=[" . $since->format('Y-m-d') . "T00:00:00Z]";
-    $rows = relationships_cw_list('/service/tickets', $conditions, ['id', 'summary', 'dateEntered', 'company'], 200);
+    $rows = relationships_cw_list('/service/tickets', $conditions, ['id', 'summary', 'dateEntered', '_info', 'company'], 200);
 
     $byCompanyRows = relationships_cw_group_batch_rows($rows, $cwCompanyIds, 'company');
 
@@ -600,7 +612,7 @@ function relationships_cw_activity_recent_tickets_batch(array $cwCompanyIds, int
             return [
                 'id' => (int) ($t['id'] ?? 0),
                 'summary' => (string) ($t['summary'] ?? ''),
-                'date_entered' => (string) ($t['dateEntered'] ?? ''),
+                'date_entered' => (string) (relationships_cw_ticket_entered($t) ?? ''),
             ];
         }, $byCompanyRows[(string) $cid] ?? []);
     }
