@@ -973,6 +973,65 @@ function relationships_migrate(PDO $pdo): void
         )
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_project_notes_lookup ON project_notes(cw_project_id, created_at DESC)');
+
+    // Account Opportunity/Risk ranking -- added 2026-10-05 per Michael's
+    // "routine recommendation agent" request: rank every account from
+    // "Likely to Need Services" to "Account in Danger", surfaced on the
+    // front-page Overview list. Three of the four signals (billing/ticket/
+    // contact-count trend) already exist as derived, request-time math
+    // over customer_monthly_billing/customer_ticket_count_history/
+    // customer_contact_count_history -- no new storage needed for those.
+    // The genuinely new signal is this one: how many of a customer's
+    // recent Service Tickets needed more than one scheduled dispatch (a
+    // repeat visit, or a missed appointment) -- Michael's own proxy for a
+    // "customer-experience issue" that case notes alone can't surface.
+    // cx_issue_ticket_count_90d is the per-customer rollup dashboard.php
+    // reads to build the score; cx_issue_synced_at is null until this
+    // customer has been through at least one real run of this sync, so the
+    // UI can show "not yet synced" instead of a confirmed zero -- same
+    // pattern as customer_monthly_billing's billing_synced_at.
+    relationships_add_column_if_missing($pdo, 'customers', 'cx_issue_ticket_count_90d', 'INTEGER NOT NULL DEFAULT 0');
+    relationships_add_column_if_missing($pdo, 'customers', 'cx_issue_synced_at', 'TEXT');
+
+    // One row per Service Ticket seen in the trailing 90-day window (see
+    // connectwise-opportunity-sync-core.php) -- kept at ticket granularity,
+    // not just a per-customer count, specifically so the dashboard can
+    // show a coordinator WHICH tickets triggered the flag (summary, date,
+    // how many scheduled dispatches) rather than just a bare number, same
+    // "always show the real underlying data" principle as every other
+    // badge/trend in this app. Replaced wholesale per customer on each
+    // sync run -- a ticket that ages out of the 90-day window or gets
+    // re-evaluated at a lower count simply isn't re-inserted.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS ticket_dispatch_counts (
+            cw_ticket_id INTEGER PRIMARY KEY,
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            ticket_summary TEXT NOT NULL DEFAULT '',
+            date_entered TEXT,
+            schedule_entry_count INTEGER NOT NULL DEFAULT 0,
+            is_cx_issue INTEGER NOT NULL DEFAULT 0,
+            synced_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_ticket_dispatch_counts_customer ON ticket_dispatch_counts(customer_id)');
+
+    // Queue for the new sync stage -- same start()/step() shape, and the
+    // same (customer_id, connectwise_id, company_name, status,
+    // error_message) shape, as every other per-customer sync queue in this
+    // file (cw_ticket_history_sync_queue immediately above is the closest
+    // analog).
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS cw_opportunity_sync_queue (
+            customer_id INTEGER PRIMARY KEY,
+            connectwise_id TEXT NOT NULL,
+            company_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            error_message TEXT,
+            queued_at TEXT NOT NULL DEFAULT (datetime('now')),
+            processed_at TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_cw_opportunity_sync_queue_status ON cw_opportunity_sync_queue(status)');
 }
 
 /**

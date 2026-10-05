@@ -160,6 +160,14 @@
     // filteredOverviewCustomers(). (The old Prospects on/off toggle was
     // removed 2026-09-23: prospects now have their own tile and list.)
     overviewPeopleFirstOnly: false,
+    // "Group by Territory" toggle for the main Total Customers list --
+    // added 2026-10-05 per Michael's "organized by ... territory" ask for
+    // the Account Opportunity/Risk ranking. Purely a display concern, same
+    // spirit as overviewSort: groups state.overview.customers by
+    // territory_name (see connectwise-territory-sync-core.php) rather than
+    // showing one flat list. Off by default, and (like overviewStatusFilter)
+    // never persisted across list opens.
+    overviewGroupByTerritory: false,
     // Front-page customer list is hidden by default (2026-09-23, per
     // Michael: the front page is a team dashboard + global action items
     // list, not a customer directory) -- clicking the Total Customers
@@ -4022,6 +4030,51 @@
     return '<span class="' + cls + '"' + title + '>' + icon + (pctText ? ' ' + pctText : '') + '</span>';
   }
 
+  // One trend's percent as plain text, for the Opportunity/Risk badge's
+  // tooltip below -- same null/"not enough history yet" handling as
+  // trendBadgeHtml(), just without the markup.
+  function overviewTrendTitleText(trend) {
+    if (!trend) return 'n/a';
+    if (trend.percent == null) return 'not enough history yet';
+    return (trend.direction === 'up' ? '+' : (trend.direction === 'down' ? '-' : '')) + trend.percent + '%';
+  }
+
+  // Account Opportunity/Risk badge -- added 2026-10-05 per Michael's
+  // "routine recommendation agent" request: ranks every account from
+  // "Likely to need services" (opportunity) to "Account in danger" (risk),
+  // using the exact score/label dashboard.php's
+  // relationships_account_opportunity_score() computes server-side (this
+  // is a FIRST CUT, not a tuned/confirmed spec -- see that function's own
+  // comment). Per this app's "always show the real underlying numbers, not
+  // just a badge" convention (same as every other trend/status indicator
+  // here), the title tooltip always spells out the three trend percents
+  // and the Customer-Experience ticket count that produced the score,
+  // rather than leaving the badge as an unexplained verdict. A score of
+  // null (no customers rows synced far enough to compute it, which
+  // shouldn't normally happen but degrades gracefully) renders as a dash.
+  function overviewOpportunityClass(label) {
+    if (label === 'Likely to need services') return 'opportunity';
+    if (label === 'Account in danger') return 'risk';
+    return 'stable';
+  }
+
+  function opportunityBadgeHtml(c) {
+    if (c.opportunity_score == null) return '<span class="overview-dash">—</span>';
+    var cls = overviewOpportunityClass(c.opportunity_label);
+    var title = 'Billing trend: ' + overviewTrendTitleText(c.billing_trend) +
+      ' · Tickets trend: ' + overviewTrendTitleText(c.ticket_trend) +
+      ' · Contacts trend: ' + overviewTrendTitleText(c.contact_trend) +
+      ' · Customer-experience issues (last 90 days): ' + (c.cx_issue_ticket_count_90d || 0);
+    var html = '<span class="opportunity-badge ' + cls + '" title="' + escapeHtml(title) + '">' +
+        escapeHtml(c.opportunity_label) +
+        ' <span class="opportunity-score">' + (c.opportunity_score > 0 ? '+' : '') + c.opportunity_score + '</span>' +
+      '</span>';
+    if (c.cx_issue_ticket_count_90d) {
+      html += '<span class="cx-issue-chip" title="' + c.cx_issue_ticket_count_90d + ' ticket(s) in the last 90 days needed more than one scheduled dispatch">CX ' + c.cx_issue_ticket_count_90d + '</span>';
+    }
+    return html;
+  }
+
   // Rectangular KPI tiles under the search bar -- gauges is a flat ordered
   // array from the server (see dashboard.php's header for why), so this
   // renders whatever comes back rather than a fixed set of named fields;
@@ -4111,6 +4164,13 @@
       case 'billing_trend': return overviewTrendSignedPercent(c.billing_trend);
       case 'ticket_count_ytd': return c.ticket_count_ytd || 0;
       case 'contact_count': return c.contact_count || 0;
+      // Opportunity/Risk column -- added 2026-10-05. Sorts by the signed
+      // score itself (positive = opportunity, negative = risk -- see
+      // relationships_account_opportunity_score() in dashboard.php), same
+      // "low to high" direction convention as every other numeric column
+      // here, so ascending puts the most at-risk accounts first and
+      // descending puts the biggest opportunities first.
+      case 'opportunity_score': return c.opportunity_score == null ? 0 : c.opportunity_score;
       case 'name':
       default:
         return (c.name || '').toLowerCase();
@@ -4213,11 +4273,16 @@
     if (state.overviewListMode === 'residential') return '';
     var peopleFirstCount = customers.filter(function (c) { return c.is_peoplefirst; }).length;
     var pfOnly = !!state.overviewPeopleFirstOnly;
+    var groupOn = !!state.overviewGroupByTerritory;
     return '<div class="overview-filter-bar">' +
       '<button class="overview-filter-btn peoplefirst' + (pfOnly ? ' active' : '') + '" type="button" ' +
         'data-action="toggle-overview-peoplefirst" title="Show only PeopleFirst member companies">' +
         '★ PeopleFirst Only' +
         ' <span class="overview-filter-count">' + peopleFirstCount + '</span>' +
+      '</button>' +
+      '<button class="overview-filter-btn territory-group' + (groupOn ? ' active' : '') + '" type="button" ' +
+        'data-action="toggle-overview-group-territory" title="Group this list by synced territory">' +
+        (groupOn ? '✓ Grouped by Territory' : 'Group by Territory') +
       '</button>' +
     '</div>';
   }
@@ -4266,10 +4331,29 @@
     return html;
   }
 
+  // One customer row, extracted 2026-10-05 so the territory-grouped and
+  // flat rendering paths in customerOverviewListHtml() below share the
+  // exact same row markup instead of drifting apart.
+  function overviewRowHtml(c) {
+    var badge = c.is_peoplefirst ? peopleFirstBadgeHtml() : (c.is_prospect_only ? prospectBadgeHtml() : (c.is_residential ? residentialBadgeHtml() : ''));
+    return '<div class="overview-row" data-action="select-customer" data-id="' + c.id + '">' +
+      '<div class="overview-col-name"><span class="overview-name">' + escapeHtml(c.name) + '</span>' + badge + '</div>' +
+      '<div class="overview-col">' + (trendBadgeHtml(c.billing_trend) || '<span class="overview-dash">—</span>') + '</div>' +
+      '<div class="overview-col"><span class="overview-count">' + c.ticket_count_ytd + '</span>' + trendBadgeHtml(c.ticket_trend) + '</div>' +
+      '<div class="overview-col"><span class="overview-count">' + c.contact_count + '</span>' + trendBadgeHtml(c.contact_trend) + '</div>' +
+      '<div class="overview-col overview-col-opportunity">' + opportunityBadgeHtml(c) + '</div>' +
+    '</div>';
+  }
+
   function customerOverviewListHtml(customers) {
     if (!customers.length) return '';
     var filtered = filteredOverviewCustomers(customers);
     var sorted = sortOverviewCustomers(filtered);
+    // Territory grouping (added 2026-10-05, per Michael's "organized by
+    // ... territory" ask) only applies to the main Total Customers list --
+    // Prospects/Residential keep their existing flat lists, since this
+    // Account Opportunity/Risk ranking is scoped to real customers.
+    var groupByTerritory = !!state.overviewGroupByTerritory && state.overviewListMode === 'customers';
     var html = '<div class="overview-list-wrap">' +
       overviewFilterBarHtml(customers) +
       '<div class="overview-list-header">' +
@@ -4277,20 +4361,39 @@
         '<div class="overview-col">' + overviewHeaderCellHtml('billing_trend', 'Billing Trend (6mo)') + '</div>' +
         '<div class="overview-col">' + overviewHeaderCellHtml('ticket_count_ytd', 'Tickets YTD') + '</div>' +
         '<div class="overview-col">' + overviewHeaderCellHtml('contact_count', 'Active Contacts') + '</div>' +
+        '<div class="overview-col overview-col-opportunity">' + overviewHeaderCellHtml('opportunity_score', 'Opportunity/Risk') + '</div>' +
       '</div>' +
       '<div class="overview-list">';
     if (!sorted.length) {
       html += '<div class="overview-list-empty">' + (state.overviewListMode === 'prospects' ? 'No prospects match the current filter.' : (state.overviewListMode === 'residential' ? 'No residential customers.' : 'No customers match the current filter.')) + '</div>';
+    } else if (groupByTerritory) {
+      // Groups preserve the already-applied sort order within each
+      // territory; the groups themselves are alphabetical by territory
+      // name, with customers who have no synced territory_name yet (see
+      // connectwise-territory-sync-core.php -- most CRCs have no
+      // restriction and this sync may never have been run) bucketed last
+      // under "No Territory Synced" rather than silently dropped.
+      var groups = {};
+      var groupNames = [];
+      sorted.forEach(function (c) {
+        var t = c.territory_name || '';
+        if (!groups[t]) { groups[t] = []; groupNames.push(t); }
+        groups[t].push(c);
+      });
+      groupNames.sort(function (a, b) {
+        if (a === b) return 0;
+        if (a === '') return 1;
+        if (b === '') return -1;
+        return a.localeCompare(b);
+      });
+      groupNames.forEach(function (t) {
+        html += '<div class="overview-group-header">' + (t ? escapeHtml(t) : 'No Territory Synced') +
+          ' <span class="overview-group-count">' + groups[t].length + '</span></div>';
+        groups[t].forEach(function (c) { html += overviewRowHtml(c); });
+      });
+    } else {
+      sorted.forEach(function (c) { html += overviewRowHtml(c); });
     }
-    sorted.forEach(function (c) {
-      var badge = c.is_peoplefirst ? peopleFirstBadgeHtml() : (c.is_prospect_only ? prospectBadgeHtml() : (c.is_residential ? residentialBadgeHtml() : ''));
-      html += '<div class="overview-row" data-action="select-customer" data-id="' + c.id + '">' +
-        '<div class="overview-col-name"><span class="overview-name">' + escapeHtml(c.name) + '</span>' + badge + '</div>' +
-        '<div class="overview-col">' + (trendBadgeHtml(c.billing_trend) || '<span class="overview-dash">—</span>') + '</div>' +
-        '<div class="overview-col"><span class="overview-count">' + c.ticket_count_ytd + '</span>' + trendBadgeHtml(c.ticket_trend) + '</div>' +
-        '<div class="overview-col"><span class="overview-count">' + c.contact_count + '</span>' + trendBadgeHtml(c.contact_trend) + '</div>' +
-      '</div>';
-    });
     html += '</div></div>';
     return html;
   }
@@ -4306,6 +4409,14 @@
   function adjustOverviewListScroll() {
     var list = document.querySelector('.overview-list');
     if (!list) return;
+    // Territory-grouped view (added 2026-10-05) mixes shorter group-header
+    // rows into this list, which breaks the uniform-row-height math below
+    // -- skip the height cap while grouped and let the page grow instead
+    // of scroll, rather than mismeasuring against a header's height.
+    if (state.overviewGroupByTerritory && state.overviewListMode === 'customers') {
+      list.style.maxHeight = '';
+      return;
+    }
     var rows = list.children;
     if (rows.length <= OVERVIEW_VISIBLE_ROWS) {
       list.style.maxHeight = '';
@@ -6821,6 +6932,9 @@
       render();
     } else if (action === 'toggle-overview-peoplefirst') {
       state.overviewPeopleFirstOnly = !state.overviewPeopleFirstOnly;
+      render();
+    } else if (action === 'toggle-overview-group-territory') {
+      state.overviewGroupByTerritory = !state.overviewGroupByTerritory;
       render();
     } else if (action === 'toggle-overview-status') {
       var status = el.getAttribute('data-status');

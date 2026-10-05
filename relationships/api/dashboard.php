@@ -22,10 +22,22 @@
  *   -> { ok: true,
  *        gauges: [ { key, label, value, format: 'count'|'trend', trend? }, ... ],
  *        leaderboards: [ { key, label, entries: [ { name, count }, ... ] (0-3, ranked) }, ... ],
- *        customers: [ { id, name, is_peoplefirst, is_prospect_only,
+ *        customers: [ { id, name, is_peoplefirst, is_prospect_only, territory_name,
  *                        billing_trend: { direction, percent },
  *                        ticket_count_ytd, ticket_trend: { direction, percent },
- *                        contact_count, contact_trend: { direction, percent } }, ... ] }
+ *                        contact_count, contact_trend: { direction, percent },
+ *                        cx_issue_ticket_count_90d, cx_issue_synced_at,
+ *                        opportunity_score, opportunity_label }, ... ] }
+ *
+ * opportunity_score / opportunity_label / cx_issue_ticket_count_90d --
+ * added 2026-10-05 per Michael's "routine recommendation agent" request:
+ * a single ranked signal per account, from "Likely to Need Services" to
+ * "Account in Danger", built from the three trend signals already above
+ * plus a new Customer-Experience ticket signal (how many of this
+ * customer's last 90 days' Service Tickets needed more than one
+ * scheduled dispatch -- see connectwise-opportunity-sync-core.php and
+ * relationships_account_opportunity_score() below for the full scoring
+ * writeup, including why it's explicitly a first cut, not a tuned spec).
  *
  * gauges is deliberately a flat, ordered array (not a fixed set of named
  * fields) so more tiles can be added later -- per Michael, "there will be a
@@ -120,6 +132,85 @@ function relationships_leaderboard_rows(PDO $pdo, string $sql, array $params): a
     return $rows;
 }
 
+/**
+ * Account Opportunity/Risk score -- added 2026-10-05 per Michael's
+ * "routine recommendation agent" request: rank every account on one
+ * spectrum from "Likely to Need Services" (an upsell/outreach
+ * opportunity) to "Account in Danger" (declining, worth a service-
+ * experience check-in), using the three trend signals that already drive
+ * this page's Billing/Ticket/Contact columns plus the new Customer-
+ * Experience ticket signal (see connectwise-opportunity-sync-core.php).
+ *
+ * THIS IS A FIRST CUT, not a finished/confirmed spec -- same posture as
+ * this endpoint's original gauge set ("there will be a dozen gauges very
+ * soon," never separately confirmed as a finished list -- see this file's
+ * header). The weights below are a reasonable starting point, not
+ * something Michael has tuned: billing trend counts most (0.4), ticket-
+ * volume and contact-count trends split the rest evenly (0.3 each,
+ * matching Michael's own framing -- all three are "leading indicators of
+ * whether a customer is growing or shrinking"), and each flagged
+ * multi-dispatch ticket in the trailing 90 days docks a flat 15 points,
+ * capped at -60 so a handful of bad tickets alone can't bottom out an
+ * otherwise-healthy account's score. Worth revisiting once Michael has
+ * seen real scores against real accounts and has an opinion on whether
+ * any of this should be weighted differently.
+ *
+ * A trend with percent: null (not enough synced history yet -- see this
+ * file's header) contributes 0, i.e. neutral, neither helping nor hurting
+ * the score -- NOT the same as a confirmed 0% change. A brand-new or
+ * recently-resynced account can read as "Stable" by default simply for
+ * lack of data yet, not because it's actually steady; the real trend
+ * badges elsewhere on this row still show "not enough history yet"
+ * honestly, so a coordinator isn't misled by the score alone.
+ */
+const RELATIONSHIPS_OPPORTUNITY_WEIGHT_BILLING = 0.4;
+const RELATIONSHIPS_OPPORTUNITY_WEIGHT_TICKETS = 0.3;
+const RELATIONSHIPS_OPPORTUNITY_WEIGHT_CONTACTS = 0.3;
+const RELATIONSHIPS_OPPORTUNITY_CX_PENALTY_PER_TICKET = 15.0;
+const RELATIONSHIPS_OPPORTUNITY_CX_PENALTY_MAX = 60.0;
+
+/** Folds a {direction, percent} trend back into one signed, clamped percent -- null/'flat' both read as 0 (neutral). */
+function relationships_account_opportunity_signed_percent(array $trend): float
+{
+    if ($trend['percent'] === null || $trend['direction'] === 'flat') {
+        return 0.0;
+    }
+    $percent = (float) $trend['percent'];
+    if ($trend['direction'] === 'down') {
+        $percent = -$percent;
+    }
+    return max(-100.0, min(100.0, $percent));
+}
+
+/**
+ * Returns ['score' => float (-100..100), 'label' => string]. Score sign
+ * matches Michael's own framing: positive = opportunity (toward "Likely
+ * to Need Services"), negative = risk (toward "Account in Danger").
+ * Thresholds (+/-20) are as much a first cut as the weights above --
+ * picked to keep the vast majority of ordinary, unremarkable accounts
+ * out of either extreme bucket, not derived from any real distribution of
+ * scores yet.
+ */
+function relationships_account_opportunity_score(array $billingTrend, array $ticketTrend, array $contactTrend, int $cxIssueCount): array
+{
+    $weighted = (relationships_account_opportunity_signed_percent($billingTrend) * RELATIONSHIPS_OPPORTUNITY_WEIGHT_BILLING)
+        + (relationships_account_opportunity_signed_percent($ticketTrend) * RELATIONSHIPS_OPPORTUNITY_WEIGHT_TICKETS)
+        + (relationships_account_opportunity_signed_percent($contactTrend) * RELATIONSHIPS_OPPORTUNITY_WEIGHT_CONTACTS);
+
+    $cxPenalty = min(RELATIONSHIPS_OPPORTUNITY_CX_PENALTY_MAX, $cxIssueCount * RELATIONSHIPS_OPPORTUNITY_CX_PENALTY_PER_TICKET);
+    $score = max(-100.0, min(100.0, $weighted - $cxPenalty));
+
+    if ($score >= 20.0) {
+        $label = 'Likely to need services';
+    } elseif ($score <= -20.0) {
+        $label = 'Account in danger';
+    } else {
+        $label = 'Stable';
+    }
+
+    return ['score' => round($score, 1), 'label' => $label];
+}
+
 if ($action === 'overview') {
     // Rep-based territory filtering (see territory-access.php) -- applied
     // both to the customer list below AND to the portfolio-wide billing
@@ -153,7 +244,7 @@ if ($action === 'overview') {
     // queries for the gauges (so they're correct regardless of list size)
     // rather than reintroducing a LIMIT that silently drops real data.
     $customerStmt = $pdo->prepare(
-        "SELECT id, name, is_peoplefirst, is_prospect_only, is_residential, cw_status_name, ticket_count_ytd, active_contact_count, has_recent_billing
+        "SELECT id, name, is_peoplefirst, is_prospect_only, is_residential, cw_status_name, ticket_count_ytd, active_contact_count, has_recent_billing, territory_name, cx_issue_ticket_count_90d, cx_issue_synced_at
          FROM customers WHERE 1=1 {$territoryFilter['sql']} ORDER BY name ASC"
     );
     $customerStmt->execute($territoryFilter['params']);
@@ -244,6 +335,8 @@ if ($action === 'overview') {
         $billingTrend = relationships_cw_billing_stored_series($pdo, $customerId)['trend'];
         $ticketTrend = relationships_cw_ticket_history_trend($pdo, $customerId);
         $contactTrend = relationships_cw_contacts_trend($pdo, $customerId);
+        $cxIssueCount = (int) ($r['cx_issue_ticket_count_90d'] ?? 0);
+        $opportunity = relationships_account_opportunity_score($billingTrend, $ticketTrend, $contactTrend, $cxIssueCount);
 
         $customers[] = [
             'id' => $customerId,
@@ -253,6 +346,7 @@ if ($action === 'overview') {
             'is_residential' => $isResidential,
             'cw_status_name' => $r['cw_status_name'],
             'has_recent_billing' => $hasRecentBilling,
+            'territory_name' => $r['territory_name'],
             'last_outgrow_touch' => $lastTouch,
             'last_outgrow_touch_by' => $lastTouch !== null ? ($outgrowLatest[$customerId]['set_by_name'] ?? null) : null,
             'outgrow_days_since' => $outgrowDaysSince,
@@ -261,6 +355,10 @@ if ($action === 'overview') {
             'ticket_trend' => $ticketTrend,
             'contact_count' => $contactCount,
             'contact_trend' => $contactTrend,
+            'cx_issue_ticket_count_90d' => $cxIssueCount,
+            'cx_issue_synced_at' => $r['cx_issue_synced_at'],
+            'opportunity_score' => $opportunity['score'],
+            'opportunity_label' => $opportunity['label'],
         ];
     }
 

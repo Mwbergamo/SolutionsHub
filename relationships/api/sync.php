@@ -90,6 +90,19 @@
  * POST /relationships/api/sync.php?action=territory-step
  *   Same shapes again.
  *
+ * The opportunity-* actions below (added 2026-10-05 per Michael's "routine
+ * recommendation agent" request) are the 7th and final stage, tagging each
+ * customer with how many of their last 90 days' Service Tickets needed
+ * more than one scheduled dispatch -- the "customer-experience issue"
+ * signal feeding the Account Opportunity/Risk ranking on the front page.
+ * See connectwise-opportunity-sync-core.php. Chained last in both "Run
+ * Sync Now" and connectwise-cron.php, same as every stage before it.
+ *
+ * GET  /relationships/api/sync.php?action=opportunity-status
+ * POST /relationships/api/sync.php?action=opportunity-start
+ * POST /relationships/api/sync.php?action=opportunity-step
+ *   Same shapes again.
+ *
  * The *-retry-failed actions below (added 2026-09-26 per Michael, as part of
  * the sync-reliability fix -- Contacts sync was failing ~70% of its calls at
  * the volume this integration now runs at) exist for every stage above. Each
@@ -106,6 +119,7 @@
  * POST /relationships/api/sync.php?action=ticket-history-retry-failed
  * POST /relationships/api/sync.php?action=contacts-retry-failed
  * POST /relationships/api/sync.php?action=territory-retry-failed
+ * POST /relationships/api/sync.php?action=opportunity-retry-failed
  *   -> { ok: true, requeued: int }
  */
 
@@ -118,6 +132,7 @@ require_once __DIR__ . '/connectwise-prospect-sync-core.php';
 require_once __DIR__ . '/connectwise-ticket-history-sync-core.php';
 require_once __DIR__ . '/connectwise-contacts-sync-core.php';
 require_once __DIR__ . '/connectwise-territory-sync-core.php';
+require_once __DIR__ . '/connectwise-opportunity-sync-core.php';
 
 $pdo = relationships_db();
 relationships_require_login($pdo);
@@ -205,6 +220,20 @@ if ($action === 'territory-status') {
             'error' => (int) ($counts['error'] ?? 0),
         ],
         'started_at' => $meta['territory_started_at'] ?? null,
+    ]);
+}
+
+if ($action === 'opportunity-status') {
+    $counts = $pdo->query('SELECT status, COUNT(*) AS n FROM cw_opportunity_sync_queue GROUP BY status')->fetchAll(PDO::FETCH_KEY_PAIR);
+    $meta = $pdo->query('SELECT key, value FROM cw_sync_meta')->fetchAll(PDO::FETCH_KEY_PAIR);
+    relationships_respond(200, [
+        'ok' => true,
+        'totals' => [
+            'pending' => (int) ($counts['pending'] ?? 0),
+            'done' => (int) ($counts['done'] ?? 0),
+            'error' => (int) ($counts['error'] ?? 0),
+        ],
+        'started_at' => $meta['opportunity_started_at'] ?? null,
     ]);
 }
 
@@ -365,6 +394,32 @@ if ($action === 'territory-step') {
 
 if ($action === 'territory-retry-failed') {
     $requeued = relationships_cw_sync_requeue_errors($pdo, 'cw_territory_sync_queue');
+    relationships_respond(200, ['ok' => true, 'requeued' => $requeued]);
+}
+
+if ($action === 'opportunity-start') {
+    try {
+        $result = relationships_cw_opportunity_sync_start($pdo);
+        relationships_respond(200, ['ok' => true, 'total' => $result['total']]);
+    } catch (RelationshipsConnectWiseError $e) {
+        relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
+    }
+}
+
+if ($action === 'opportunity-step') {
+    $data = relationships_read_json_body();
+    $batchSize = (int) ($data['batch_size'] ?? 20);
+    $batchSize = max(1, min(50, $batchSize));
+    try {
+        $result = relationships_cw_opportunity_sync_step($pdo, $batchSize);
+        relationships_respond(200, array_merge(['ok' => true], $result));
+    } catch (RelationshipsConnectWiseError $e) {
+        relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
+    }
+}
+
+if ($action === 'opportunity-retry-failed') {
+    $requeued = relationships_cw_sync_requeue_errors($pdo, 'cw_opportunity_sync_queue');
     relationships_respond(200, ['ok' => true, 'requeued' => $requeued]);
 }
 

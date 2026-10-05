@@ -572,6 +572,120 @@ function relationships_cw_activity_ticket_sync_data_batch(array $cwCompanyIds, i
 }
 
 /**
+ * Customer-Experience ticket signal (added 2026-10-05, per Michael's
+ * "routine recommendation agent" request): recent Professional Services
+ * ticket ids/summaries per company, feeding the dispatch-count pass right
+ * below. Batched the same way relationships_cw_activity_ticket_sync_data_batch()
+ * above already is (OR'd company/id equality, <= RELATIONSHIPS_CW_SYNC_BATCH_SIZE
+ * ids per call), reusing the same confirmed board condition and bracketed
+ * date-range style as every other date-scoped ticket query in this file --
+ * this part is NOT a new condition shape, just a new field list (summary).
+ */
+function relationships_cw_activity_recent_tickets_batch(array $cwCompanyIds, int $days = 90): array
+{
+    $since = new DateTimeImmutable("-$days days");
+    $companyClause = '(' . implode(' or ', array_map(
+        static fn ($id): string => 'company/id=' . (string) $id,
+        $cwCompanyIds
+    )) . ')';
+    $conditions = "$companyClause and " . relationships_cw_activity_board_condition()
+        . " and dateEntered>=[" . $since->format('Y-m-d') . "T00:00:00Z]";
+    $rows = relationships_cw_list('/service/tickets', $conditions, ['id', 'summary', 'dateEntered', 'company'], 200);
+
+    $byCompanyRows = relationships_cw_group_batch_rows($rows, $cwCompanyIds, 'company');
+
+    $result = [];
+    foreach ($cwCompanyIds as $cid) {
+        $result[(string) $cid] = array_map(static function (array $t): array {
+            return [
+                'id' => (int) ($t['id'] ?? 0),
+                'summary' => (string) ($t['summary'] ?? ''),
+                'date_entered' => (string) ($t['dateEntered'] ?? ''),
+            ];
+        }, $byCompanyRows[(string) $cid] ?? []);
+    }
+    return $result;
+}
+
+/**
+ * How many scheduled dispatches a ticket actually got -- Michael's own
+ * stated proxy for "customer-experience issue": "One of the leading
+ * indicators of trouble are how many scheduled events are in the single
+ * case. If dispatch has to assign the ticket multiple times, it is likely
+ * due to repeat visits or the engineer is missing the appointment." Each
+ * dispatch/visit is its own row on ConnectWise's /schedule/entries,
+ * carrying the ticket's id in the entry's plain objectId field.
+ *
+ * UNVERIFIED GUESS -- this is the first time this integration has ever
+ * touched /schedule/entries, and this build environment has no network
+ * path to connect.codebluetechnology.com to confirm it (same standing
+ * limitation documented in connectwise-activity-create.php's file header
+ * for every other first-time endpoint in this app). Two assumptions in
+ * particular:
+ *   1. objectId is the right field tying a schedule entry back to its
+ *      ticket (plausible, but never confirmed against a real entry).
+ *   2. A schedule entry's `type` field identifies whether it's a Service
+ *      Ticket dispatch vs. an Activity/Opportunity schedule entry that
+ *      happens to share the same numeric id -- relationships_cw_schedule_entry_is_service_ticket()
+ *      below tries to check this, but COUNTS THE ENTRY ANYWAY whenever
+ *      the shape doesn't match what's expected, rather than silently
+ *      dropping it. A slightly-too-generous dispatch count (occasionally
+ *      counting an unrelated same-id entry) is a far safer failure mode
+ *      here than silently undercounting real repeat dispatches -- the
+ *      whole point of this signal is to catch trouble case notes miss,
+ *      so under-flagging it defeats the purpose.
+ * Needs a real "Run Sync Now" plus a spot-check against a ticket Michael
+ * already knows was dispatched more than once before this can be called
+ * confirmed, same "get one real data point, then fix" discipline as every
+ * other guess in this integration's history.
+ *
+ * $ticketIds must be <= RELATIONSHIPS_CW_SYNC_BATCH_SIZE per call -- OR'd
+ * plain equality on objectId (a top-level field, not a related one), the
+ * same proven-safe condition style as dateEntered/agreementStatus
+ * elsewhere in this file -- not the riskier related-field case
+ * `company/id=` batching above took on.
+ */
+function relationships_cw_schedule_entry_is_service_ticket(array $entry): bool
+{
+    $type = $entry['type'] ?? null;
+    if (!is_array($type)) {
+        return true; // shape not as expected -- count rather than silently drop, see file header
+    }
+    $identifier = (string) ($type['identifier'] ?? '');
+    $name = (string) ($type['name'] ?? '');
+    if ($identifier === '' && $name === '') {
+        return true; // couldn't tell -- count rather than silently drop, see file header
+    }
+    return $identifier === 'S' || stripos($name, 'service') !== false || stripos($name, 'ticket') !== false;
+}
+
+function relationships_cw_activity_schedule_entry_counts_batch(array $ticketIds): array
+{
+    $counts = array_fill_keys(array_map('strval', $ticketIds), 0);
+    if ($ticketIds === []) {
+        return $counts;
+    }
+
+    $clause = '(' . implode(' or ', array_map(
+        static fn ($id): string => 'objectId=' . (string) $id,
+        $ticketIds
+    )) . ')';
+    $rows = relationships_cw_list('/schedule/entries', $clause, ['id', 'objectId', 'type'], 200);
+
+    foreach ($rows as $row) {
+        $objectId = (string) ($row['objectId'] ?? '');
+        if ($objectId === '' || !isset($counts[$objectId])) {
+            continue;
+        }
+        if (relationships_cw_schedule_entry_is_service_ticket($row)) {
+            $counts[$objectId]++;
+        }
+    }
+
+    return $counts;
+}
+
+/**
  * Shared by relationships_cw_activity_invoices_for_month() and (added
  * 2026-09-15 for the annual-billing-cadence feature)
  * relationships_cw_activity_invoices_for_year(): resolves a list of raw

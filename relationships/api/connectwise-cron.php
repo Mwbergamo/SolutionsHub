@@ -27,6 +27,7 @@ require_once __DIR__ . '/connectwise-billing-sync-core.php';
 require_once __DIR__ . '/connectwise-prospect-sync-core.php';
 require_once __DIR__ . '/connectwise-ticket-history-sync-core.php';
 require_once __DIR__ . '/connectwise-contacts-sync-core.php';
+require_once __DIR__ . '/connectwise-opportunity-sync-core.php';
 
 set_time_limit(0);
 
@@ -192,10 +193,46 @@ if ($totalContactsErrors !== []) {
     }
 }
 
+// Opportunity/Risk ranking's Customer-Experience ticket signal (added
+// 2026-10-05 per Michael's "routine recommendation agent" request) --
+// runs last, same independent-queue pattern. Deliberately does NOT depend
+// on the Territory sync (territory-sync-core.php isn't wired into this
+// cron script at all yet -- a pre-existing gap, unrelated to this feature,
+// see claude/relationships-connectwise-sync.md) since it only needs each
+// customer's connectwise_id, not its territory_name.
+echo "\n[" . date('c') . "] Starting ConnectWise Opportunity (ticket dispatch) sync...\n";
+
+try {
+    $opportunityStart = relationships_cw_opportunity_sync_start($pdo);
+} catch (RelationshipsConnectWiseError $e) {
+    fwrite(STDERR, "Failed to start opportunity sync: " . $e->getMessage() . "\n");
+    exit(1);
+}
+echo "Queued {$opportunityStart['total']} customers.\n";
+
+$totalOpportunityErrors = [];
+do {
+    $opportunityResult = relationships_cw_opportunity_sync_step($pdo, 20);
+    echo "  processed {$opportunityResult['processed_this_batch']} (remaining {$opportunityResult['remaining']}, errors so far {$opportunityResult['totals']['error']})\n";
+    foreach ($opportunityResult['errors'] as $err) {
+        $totalOpportunityErrors[] = $err;
+    }
+} while (!$opportunityResult['done']);
+
+echo "[" . date('c') . "] Done. " . $opportunityResult['totals']['done'] . " customers' ticket dispatch counts synced, " . $opportunityResult['totals']['error'] . " failed.\n";
+
+if ($totalOpportunityErrors !== []) {
+    echo "Opportunity sync errors:\n";
+    foreach ($totalOpportunityErrors as $err) {
+        echo "  - customer {$err['customer_id']} ({$err['company_name']}): {$err['error']}\n";
+    }
+}
+
 exit((
     $agreementSyncErrorCount > 0
     || $billingResult['totals']['error'] > 0
     || $prospectResult['totals']['error'] > 0
     || $ticketHistoryResult['totals']['error'] > 0
     || $contactsResult['totals']['error'] > 0
+    || $opportunityResult['totals']['error'] > 0
 ) ? 1 : 0);

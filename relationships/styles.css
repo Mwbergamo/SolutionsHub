@@ -340,7 +340,9 @@ a { color: inherit; }
 .overview-list-header,
 .overview-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
+  /* Widened from repeat(3,...) to repeat(4,...) 2026-10-05 to fit the new
+     Opportunity/Risk column (see opportunityBadgeHtml() in app.js). */
+  grid-template-columns: minmax(0, 1.6fr) repeat(4, minmax(0, 1fr));
   gap: 14px;
   align-items: center;
 }
@@ -481,6 +483,83 @@ a { color: inherit; }
   background: oklch(0.72 0.14 300 / 0.16);
   border-color: oklch(0.72 0.14 300 / 0.55);
   color: oklch(0.72 0.14 300);
+}
+
+/* "Group by Territory" toggle (added 2026-10-05, per Michael's "organized
+   by ... territory" ask) -- blue, matching .overview-col-sort.active, since
+   this changes how the list is laid out rather than filtering it down. */
+.overview-filter-btn.territory-group.active {
+  background: rgba(47,143,239,0.16);
+  border-color: rgba(47,143,239,0.55);
+  color: #2f8fef;
+}
+
+/* Account Opportunity/Risk badge -- added 2026-10-05 per Michael's
+   "routine recommendation agent" request (see dashboard.php's
+   relationships_account_opportunity_score() for how score/label are
+   computed). Same pill shape and oklch hues as .pf-tier/.pf-days
+   (green 155 / amber 80 / red 27) so the color means the same thing
+   everywhere in this app: green is good, amber is neutral/watch, red is
+   trouble. */
+.overview-col-opportunity {
+  flex-wrap: wrap;
+}
+
+.opportunity-badge {
+  display: inline-block;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.opportunity-badge.opportunity { background: oklch(0.3 0.08 155); color: oklch(0.85 0.13 155); }
+.opportunity-badge.stable { background: oklch(0.26 0.02 255); color: oklch(0.75 0.01 255); }
+.opportunity-badge.risk { background: oklch(0.32 0.1 27); color: oklch(0.85 0.14 27); }
+
+.opportunity-score {
+  font-weight: 600;
+  opacity: .85;
+  margin-left: 2px;
+}
+
+/* Customer-Experience ticket chip -- shown only when
+   cx_issue_ticket_count_90d > 0 (a ticket in the trailing 90 days needed
+   more than one scheduled dispatch; see
+   connectwise-opportunity-sync-core.php). Amber, same hue as the
+   opportunity badge's "stable"/watch tier, since this is a flag worth a
+   look rather than a confirmed emergency. */
+.cx-issue-chip {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: oklch(0.3 0.07 80);
+  color: oklch(0.85 0.12 80);
+  white-space: nowrap;
+}
+
+/* Territory group headers (added 2026-10-05) -- spans the full grid width
+   inside .overview-list, which is a flex column, so each header is just
+   its own full-width block between rows rather than a grid cell. */
+.overview-group-header {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: oklch(0.6 0.015 255);
+  padding: 14px 6px 2px;
+}
+.overview-group-header:first-child { padding-top: 2px; }
+
+.overview-group-count {
+  font-weight: 600;
+  opacity: .7;
+  margin-left: 6px;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .overview-list-empty {
