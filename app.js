@@ -1388,6 +1388,7 @@ class Component extends DCLogic {
       // match SKUs in ConnectWise. Reuses checkout.companyName/contactName so
       // those fields stay consistent with the customer-facing quote email.
       insideSales: { isOpen: false, status: 'idle', error: null },
+      help: { isOpen: false, status: 'idle', error: null, type: 'suggestion', message: '', replyEmail: '', files: [] },
       // Generic image lightbox/modal state — reusable by any future feature.
       // Set { isOpen: true, url, caption } to open it; not scoped to any
       // one category or product.
@@ -2228,6 +2229,133 @@ class Component extends DCLogic {
     });
   }
 
+  // ---- Help / Suggestions (added 2026-10-05) --------------------------------
+  // Header button -> modal -> POST mail/send-feedback.php, which emails
+  // Mbergamo@codebluetechnology.com. Screenshots are attached as images:
+  // large ones are downscaled in the browser first so the JSON body stays
+  // well under Graph's sendMail request-size limit.
+  helpDefaults() {
+    return { isOpen: false, status: 'idle', error: null, type: 'suggestion', message: '', replyEmail: '', files: [] };
+  }
+  setHelp(patch) {
+    this.setState({ help: Object.assign({}, this.helpDefaults(), this.state.help || {}, patch) });
+  }
+  openHelpModal() { this.setHelp({ isOpen: true, status: 'idle', error: null }); }
+  closeHelpModal() {
+    var h = this.state.help || {};
+    if (h.status === 'sending') return;
+    this.setState({ help: this.helpDefaults() });
+  }
+  helpFormatSize(n) {
+    return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+  }
+  // Resolves { name, type, data (base64, no prefix), thumb (data URL), size }.
+  prepareHelpImage(file, fallbackName) {
+    var self = this;
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onerror = function () { reject(new Error('Could not read ' + (file.name || 'that image') + '.')); };
+      reader.onload = function () {
+        var dataUrl = String(reader.result);
+        var baseName = (file.name && file.name !== 'image.png') ? file.name : fallbackName;
+        if (file.size <= 1200000) {
+          resolve({ name: baseName, type: file.type || 'image/png', data: dataUrl.split(',')[1] || '', thumb: dataUrl, size: file.size });
+          return;
+        }
+        var img = new Image();
+        img.onerror = function () { reject(new Error('Could not open ' + baseName + ' as an image.')); };
+        img.onload = function () {
+          var max = 1800, w = img.naturalWidth, hgt = img.naturalHeight;
+          var scale = Math.min(1, max / Math.max(w, hgt));
+          var canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(w * scale));
+          canvas.height = Math.max(1, Math.round(hgt * scale));
+          var ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          var out = canvas.toDataURL('image/jpeg', 0.85);
+          var b64 = out.split(',')[1] || '';
+          resolve({ name: baseName.replace(/\.[A-Za-z0-9]+$/, '') + '.jpg', type: 'image/jpeg', data: b64, thumb: out, size: Math.round(b64.length * 0.75) });
+        };
+        img.src = dataUrl;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+  addHelpFiles(fileList) {
+    var self = this;
+    var incoming = Array.prototype.slice.call(fileList || []);
+    if (!incoming.length) return;
+    var current = (this.state.help && this.state.help.files) || [];
+    var room = 5 - current.length;
+    if (room <= 0) { this.setHelp({ error: 'You can attach up to 5 screenshots.' }); return; }
+    var images = incoming.filter(function (f) { return /^image\/(png|jpeg|gif|webp)$/.test(f.type); });
+    var skipped = incoming.length - images.length;
+    var toAdd = images.slice(0, room);
+    var note = null;
+    if (skipped > 0) note = 'Only PNG, JPG, GIF or WebP images can be attached.';
+    else if (images.length > room) note = 'You can attach up to 5 screenshots — extras were skipped.';
+    var stamp = Date.now();
+    Promise.all(toAdd.map(function (f, i) {
+      return self.prepareHelpImage(f, 'screenshot-' + (current.length + i + 1) + '.png').catch(function (err) { note = err.message; return null; });
+    })).then(function (done) {
+      var ok = done.filter(Boolean);
+      var existing = (self.state.help && self.state.help.files) || [];
+      var all = existing.concat(ok);
+      var total = all.reduce(function (n, f) { return n + f.data.length; }, 0);
+      if (total > 4500000) {
+        note = 'Those screenshots are too large together — try attaching fewer or smaller images.';
+        all = existing;
+      }
+      self.setHelp({ files: all, error: note });
+    });
+  }
+  removeHelpFile(index) {
+    var files = ((this.state.help && this.state.help.files) || []).filter(function (_, i) { return i !== index; });
+    this.setHelp({ files: files, error: null });
+  }
+  sendHelpMessage() {
+    var self = this;
+    var h = Object.assign({}, this.helpDefaults(), this.state.help || {});
+    if (h.status === 'sending' || h.status === 'sent') return;
+    var message = (h.message || '').trim();
+    var replyEmail = (h.replyEmail || '').trim();
+    if (!message) { this.setHelp({ status: 'error', error: 'Please type a message before sending.' }); return; }
+    if (replyEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(replyEmail)) { this.setHelp({ status: 'error', error: 'That reply-to email address does not look valid.' }); return; }
+    this.setHelp({ status: 'sending', error: null });
+    var payload = {
+      type: h.type,
+      message: message,
+      replyEmail: replyEmail,
+      attachments: h.files.map(function (f) { return { name: f.name, type: f.type, data: f.data }; }),
+      context: {
+        url: window.location.href,
+        view: this.state.view,
+        viewport: window.innerWidth + 'x' + window.innerHeight,
+        userAgent: navigator.userAgent
+      },
+      website: '' // honeypot field -- must stay empty
+    };
+    fetch('mail/send-feedback.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok || !data || data.ok !== true) {
+          throw new Error((data && data.error) || ('Request failed (' + res.status + ')'));
+        }
+        return data;
+      });
+    }).then(function () {
+      self.setHelp({ status: 'sent', error: null });
+      setTimeout(function () { if (self.state.help && self.state.help.status === 'sent') self.setState({ help: self.helpDefaults() }); }, 2200);
+    }).catch(function (err) {
+      self.setHelp({ status: 'error', error: (err && err.message) || 'Could not send your message — please try again.' });
+    });
+  }
+
   selectOption(pillarId, pillarName, serviceId, serviceName, outcomeTags, optionId, optionLabel, optionDetail) {
     var sel = Object.assign({}, this.state.selections);
     var existing = sel[serviceId];
@@ -3054,6 +3182,51 @@ class Component extends DCLogic {
       sendLabel: isState.status === 'sending' ? 'Sending…' : (isState.status === 'sent' ? 'Sent ✓' : 'Send Request'),
       onSend: function () { self.sendToInsideSales(); },
       onClose: function () { self.closeInsideSalesModal(); },
+      onStop: function (e) { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); }
+    };
+
+    // Help / Suggestions modal -- see openHelpModal()/sendHelpMessage() above.
+    var hs = Object.assign({}, this.helpDefaults(), this.state.help || {});
+    var helpTypeDefs = [
+      { id: 'suggestion', label: 'Suggest a feature' },
+      { id: 'issue', label: 'Report an issue / error' },
+      { id: 'help', label: 'Ask for help' },
+      { id: 'other', label: 'Other' }
+    ];
+    var helpVM = {
+      isOpen: !!hs.isOpen,
+      message: hs.message,
+      replyEmail: hs.replyEmail,
+      types: helpTypeDefs.map(function (t) {
+        var on = hs.type === t.id;
+        return {
+          label: t.label,
+          style: 'font-size:12.5px;font-weight:700;padding:7px 14px;border-radius:999px;cursor:pointer;font-family:\'Libre Franklin\',sans-serif;border:1px solid ' + (on ? 'var(--cbt-purple-inside-sales)' : 'oklch(0.85 0.006 255)') + ';background:' + (on ? 'var(--cbt-purple-inside-sales)' : 'white') + ';color:' + (on ? 'white' : 'oklch(0.3 0.02 255)') + ';',
+          onPick: function () { self.setHelp({ type: t.id }); }
+        };
+      }),
+      files: hs.files.map(function (f, i) {
+        return { name: f.name, thumb: f.thumb, sizeText: self.helpFormatSize(f.size), onRemove: function () { self.removeHelpFile(i); } };
+      }),
+      hasFiles: hs.files.length > 0,
+      hasError: !!hs.error,
+      errorText: hs.error || '',
+      isSent: hs.status === 'sent',
+      sendLabel: hs.status === 'sending' ? 'Sending\u2026' : (hs.status === 'sent' ? 'Sent \u2713' : 'Send'),
+      onMessageInput: function (e) { self.setHelp({ message: e.target.value }); },
+      onReplyEmailInput: function (e) { self.setHelp({ replyEmail: e.target.value }); },
+      onAttachClick: function () { var el = document.getElementById('helpFileInput'); if (el) el.click(); },
+      onFilesChosen: function (e) { var files = e.target.files; self.addHelpFiles(files); e.target.value = ''; },
+      onPaste: function (e) {
+        var items = (e.clipboardData && e.clipboardData.items) || [];
+        var pics = [];
+        for (var i = 0; i < items.length; i++) {
+          if (items[i].kind === 'file' && /^image\//.test(items[i].type)) { var f = items[i].getAsFile(); if (f) pics.push(f); }
+        }
+        if (pics.length) { e.preventDefault(); self.addHelpFiles(pics); }
+      },
+      onSend: function () { self.sendHelpMessage(); },
+      onClose: function () { self.closeHelpModal(); },
       onStop: function (e) { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); }
     };
 
@@ -4293,6 +4466,8 @@ class Component extends DCLogic {
     return {
       imagePreview: imagePreviewVM,
       insideSalesVM: insideSalesVM,
+      helpVM: helpVM,
+      onOpenHelp: function () { self.openHelpModal(); },
       onOpenInsideSales: function () { self.openInsideSalesModal(); },
       accentColor: accentColor,
       logoWhite: CBT_LOGO_WHITE,

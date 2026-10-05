@@ -45,9 +45,15 @@ class GraphMailer
      *        letterhead/logo, not possible in a plain-text body) --
      *        defaults to false so every existing caller (mail/send-quote.php)
      *        is unaffected.
+     * @param array $attachments Added 2026-10-05 for the Help / Suggestions
+     *        form (mail/send-feedback.php): list of
+     *        ['name' => string, 'contentType' => string, 'contentBytes' => base64].
+     *        Defaults to none, so existing callers are unaffected.
+     * @param string|null $replyToEmail Optional Reply-To address (also added
+     *        for the Help form so replies reach the person who wrote in).
      * @throws GraphMailerException
      */
-    public function send(string $toEmail, string $subject, string $body, ?string $bccEmail = null, ?string $fromDisplayName = null, bool $isHtml = false): void
+    public function send(string $toEmail, string $subject, string $body, ?string $bccEmail = null, ?string $fromDisplayName = null, bool $isHtml = false, array $attachments = [], ?string $replyToEmail = null): void
     {
         $token = $this->getAccessToken();
 
@@ -62,6 +68,22 @@ class GraphMailer
             $message['bccRecipients'] = [
                 ['emailAddress' => ['address' => $bccEmail]],
             ];
+        }
+        if ($replyToEmail !== null && $replyToEmail !== '') {
+            $message['replyTo'] = [
+                ['emailAddress' => ['address' => $replyToEmail]],
+            ];
+        }
+        if ($attachments) {
+            $message['attachments'] = [];
+            foreach ($attachments as $att) {
+                $message['attachments'][] = [
+                    '@odata.type' => '#microsoft.graph.fileAttachment',
+                    'name' => $att['name'],
+                    'contentType' => $att['contentType'],
+                    'contentBytes' => $att['contentBytes'],
+                ];
+            }
         }
         if ($fromDisplayName !== null && $fromDisplayName !== '') {
             $message['from'] = [
