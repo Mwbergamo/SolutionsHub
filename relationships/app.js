@@ -168,6 +168,10 @@
     // showing one flat list. Off by default, and (like overviewStatusFilter)
     // never persisted across list opens.
     overviewGroupByTerritory: false,
+    // Opportunity/Risk rank explainer popover -- added 2026-10-06, see
+    // opportunityPopoverHtml() for the shape and why a single shared piece
+    // of state (not one per row) is used.
+    opportunityPopover: null,
     // Front-page customer list is hidden by default (2026-09-23, per
     // Michael: the front page is a team dashboard + global action items
     // list, not a customer directory) -- clicking the Total Customers
@@ -4058,21 +4062,141 @@
     return 'stable';
   }
 
+  // The badge itself no longer carries a native title tooltip -- clicking
+  // or hovering it instead opens the explainer popover below
+  // (opportunityPopoverHtml()), which shows the same information in a
+  // readable, always-visible bubble rather than the browser's own slow,
+  // plain-text tooltip. data-id ties the trigger back to a row in
+  // state.overview.customers for the popover to look up.
   function opportunityBadgeHtml(c) {
     if (c.opportunity_score == null) return '<span class="overview-dash">—</span>';
     var cls = overviewOpportunityClass(c.opportunity_label);
-    var title = 'Billing trend: ' + overviewTrendTitleText(c.billing_trend) +
-      ' · Tickets trend: ' + overviewTrendTitleText(c.ticket_trend) +
-      ' · Contacts trend: ' + overviewTrendTitleText(c.contact_trend) +
-      ' · Customer-experience issues (last 90 days): ' + (c.cx_issue_ticket_count_90d || 0);
-    var html = '<span class="opportunity-badge ' + cls + '" title="' + escapeHtml(title) + '">' +
+    var html = '<span class="opportunity-badge ' + cls + '" data-action="toggle-opportunity-popover" data-id="' + c.id + '" tabindex="0">' +
         escapeHtml(c.opportunity_label) +
         ' <span class="opportunity-score">' + (c.opportunity_score > 0 ? '+' : '') + c.opportunity_score + '</span>' +
       '</span>';
     if (c.cx_issue_ticket_count_90d) {
-      html += '<span class="cx-issue-chip" title="' + c.cx_issue_ticket_count_90d + ' ticket(s) in the last 90 days needed more than one scheduled dispatch">CX ' + c.cx_issue_ticket_count_90d + '</span>';
+      html += '<span class="cx-issue-chip" data-action="toggle-opportunity-popover" data-id="' + c.id + '">CX ' + c.cx_issue_ticket_count_90d + '</span>';
     }
     return html;
+  }
+
+  // ---- Opportunity/Risk rank explainer popover ---------------------------
+  // Added 2026-10-06 per Michael: "a summary bubble ... tells you why it's
+  // ranked that way." One shared element rather than one per row -- the
+  // Overview list can hold thousands of customers -- positioned with
+  // position:fixed from the hovered/clicked badge's actual screen location
+  // (computeOpportunityPopoverPosition() below), so it always lands next to
+  // the right row and is never clipped by .overview-list's own scrollbar:
+  // position:fixed escapes an ancestor's overflow:auto entirely (as long as
+  // no ancestor sets a CSS transform/filter, which none here do).
+  //
+  // state.opportunityPopover: { customerId, left, top, pinned } | null.
+  // pinned:false is a hover preview (closes on mouseout -- see
+  // onOpportunityMouseOver/Out below); pinned:true came from a click and
+  // stays open until clicked again or dismissed by clicking elsewhere (see
+  // the click-away check at the top of onRootClick).
+
+  // Mirrors dashboard.php's RELATIONSHIPS_OPPORTUNITY_WEIGHT_*/
+  // RELATIONSHIPS_OPPORTUNITY_CX_PENALTY_* constants, purely so this
+  // popover can show a per-signal point breakdown. MUST be kept in sync by
+  // hand if those server-side weights ever change -- relationships_account_
+  // opportunity_score() in dashboard.php is the actual source of truth for
+  // opportunity_score/opportunity_label everywhere else in this app; this
+  // never recomputes or overrides those, only re-derives the breakdown for
+  // display.
+  var OPPORTUNITY_WEIGHT_BILLING = 0.4;
+  var OPPORTUNITY_WEIGHT_TICKETS = 0.3;
+  var OPPORTUNITY_WEIGHT_CONTACTS = 0.3;
+  var OPPORTUNITY_CX_PENALTY_PER_TICKET = 15;
+  var OPPORTUNITY_CX_PENALTY_MAX = 60;
+
+  function opportunityContributionRowHtml(label, trend) {
+    var signed = overviewTrendSignedPercent(trend);
+    var weight = label === 'Billing trend' ? OPPORTUNITY_WEIGHT_BILLING
+      : (label === 'Ticket volume trend' ? OPPORTUNITY_WEIGHT_TICKETS : OPPORTUNITY_WEIGHT_CONTACTS);
+    var contribution = signed * weight;
+    var sign = contribution > 0.05 ? '+' : '';
+    var cls = contribution > 0.05 ? 'pos' : (contribution < -0.05 ? 'neg' : 'neutral');
+    return '<div class="opp-pop-row">' +
+      '<span class="opp-pop-label">' + escapeHtml(label) + ' <span class="opp-pop-weight">(' + Math.round(weight * 100) + '%)</span></span>' +
+      '<span class="opp-pop-trend">' + escapeHtml(overviewTrendTitleText(trend)) + '</span>' +
+      '<span class="opp-pop-contrib ' + cls + '">' + sign + contribution.toFixed(1) + ' pts</span>' +
+    '</div>';
+  }
+
+  function opportunityPopoverContentHtml(c) {
+    var cxCount = c.cx_issue_ticket_count_90d || 0;
+    var cxPenalty = Math.min(OPPORTUNITY_CX_PENALTY_MAX, cxCount * OPPORTUNITY_CX_PENALTY_PER_TICKET);
+    return '<div class="opp-pop-title">' + escapeHtml(c.name) + '</div>' +
+      '<div class="opp-pop-subtitle">Why this rank: <strong class="opp-pop-label-' + overviewOpportunityClass(c.opportunity_label) + '">' + escapeHtml(c.opportunity_label) +
+        '</strong> (' + (c.opportunity_score > 0 ? '+' : '') + c.opportunity_score + ')</div>' +
+      opportunityContributionRowHtml('Billing trend', c.billing_trend) +
+      opportunityContributionRowHtml('Ticket volume trend', c.ticket_trend) +
+      opportunityContributionRowHtml('Active contacts trend', c.contact_trend) +
+      '<div class="opp-pop-row">' +
+        '<span class="opp-pop-label">Customer-experience issues <span class="opp-pop-weight">(90d)</span></span>' +
+        '<span class="opp-pop-trend">' + cxCount + ' ticket' + (cxCount === 1 ? '' : 's') + ' needed repeat dispatch</span>' +
+        '<span class="opp-pop-contrib ' + (cxPenalty > 0 ? 'neg' : 'neutral') + '">' + (cxPenalty > 0 ? '-' : '') + cxPenalty.toFixed(1) + ' pts</span>' +
+      '</div>' +
+      '<div class="opp-pop-footer">Positive points pull toward “Likely to need services,” negative toward “Account in danger.” First-cut weights — not yet tuned against real accounts.</div>';
+  }
+
+  // Anchors the popover near the trigger badge without letting it run off
+  // the viewport -- clamped horizontally, and flipped above the badge
+  // instead of below when there isn't room underneath (estimated height,
+  // since the real height isn't known until the popover itself renders).
+  function computeOpportunityPopoverPosition(rect) {
+    var width = 280;
+    var estHeight = 210;
+    var left = Math.min(rect.left, window.innerWidth - width - 12);
+    left = Math.max(12, left);
+    var top = rect.bottom + 8;
+    if (top + estHeight > window.innerHeight - 12) {
+      top = rect.top - estHeight - 8;
+    }
+    return { left: left, top: Math.max(12, top) };
+  }
+
+  function opportunityPopoverHtml() {
+    var pop = state.opportunityPopover;
+    if (!pop || !state.overview) return '';
+    var customers = state.overview.customers || [];
+    var c = null;
+    for (var i = 0; i < customers.length; i++) {
+      if (String(customers[i].id) === String(pop.customerId)) { c = customers[i]; break; }
+    }
+    if (!c) return '';
+    return '<div class="opportunity-popover" style="left:' + pop.left + 'px; top:' + pop.top + 'px;">' +
+      opportunityPopoverContentHtml(c) +
+    '</div>';
+  }
+
+  // Hover handlers (event-delegated on `root`, bound once alongside the
+  // other root listeners -- see the bottom of this file) -- a click-pinned
+  // popover (state.opportunityPopover.pinned) is left alone by hovering
+  // elsewhere; only another click, or the click-away check in onRootClick,
+  // closes it.
+  function onOpportunityMouseOver(e) {
+    var el = e.target.closest('[data-action="toggle-opportunity-popover"]');
+    if (!el) return;
+    if (state.opportunityPopover && state.opportunityPopover.pinned) return;
+    var oppId = el.getAttribute('data-id');
+    if (state.opportunityPopover && !state.opportunityPopover.pinned && String(state.opportunityPopover.customerId) === String(oppId)) return;
+    var pos = computeOpportunityPopoverPosition(el.getBoundingClientRect());
+    state.opportunityPopover = { customerId: oppId, left: pos.left, top: pos.top, pinned: false };
+    render();
+  }
+
+  function onOpportunityMouseOut(e) {
+    if (!state.opportunityPopover || state.opportunityPopover.pinned) return;
+    var leavingBadge = e.target.closest('[data-action="toggle-opportunity-popover"]');
+    var leavingPopover = e.target.closest('.opportunity-popover');
+    if (!leavingBadge && !leavingPopover) return;
+    var to = e.relatedTarget;
+    if (to && to.closest && (to.closest('.opportunity-popover') || to.closest('[data-action="toggle-opportunity-popover"]'))) return;
+    state.opportunityPopover = null;
+    render();
   }
 
   // Rectangular KPI tiles under the search bar -- gauges is a flat ordered
@@ -4394,7 +4518,7 @@
     } else {
       sorted.forEach(function (c) { html += overviewRowHtml(c); });
     }
-    html += '</div></div>';
+    html += '</div>' + opportunityPopoverHtml() + '</div>';
     return html;
   }
 
@@ -6650,6 +6774,20 @@
   }
 
   function onRootClick(e) {
+    // Click-away dismissal for the pinned Opportunity/Risk popover (added
+    // 2026-10-06) -- runs before the data-action dispatch below so a click
+    // anywhere else, including empty space with no data-action at all,
+    // closes a pinned popover rather than only another element's own click
+    // handler doing it. A click back on the badge itself (or inside the
+    // popover) is left alone -- the dispatch below handles that toggle.
+    if (state.opportunityPopover && state.opportunityPopover.pinned) {
+      var withinOpportunityPopover = e.target.closest('.opportunity-popover, [data-action="toggle-opportunity-popover"]');
+      if (!withinOpportunityPopover) {
+        state.opportunityPopover = null;
+        render();
+      }
+    }
+
     var el = e.target.closest('[data-action]');
     if (!el) return;
     var action = el.getAttribute('data-action');
@@ -6936,6 +7074,15 @@
     } else if (action === 'toggle-overview-group-territory') {
       state.overviewGroupByTerritory = !state.overviewGroupByTerritory;
       render();
+    } else if (action === 'toggle-opportunity-popover') {
+      var oppId = el.getAttribute('data-id');
+      if (state.opportunityPopover && state.opportunityPopover.pinned && String(state.opportunityPopover.customerId) === String(oppId)) {
+        state.opportunityPopover = null;
+      } else {
+        var oppPos = computeOpportunityPopoverPosition(el.getBoundingClientRect());
+        state.opportunityPopover = { customerId: oppId, left: oppPos.left, top: oppPos.top, pinned: true };
+      }
+      render();
     } else if (action === 'toggle-overview-status') {
       var status = el.getAttribute('data-status');
       var filterMap = state.overviewStatusFilter || {};
@@ -7157,6 +7304,15 @@
   // Bound once — root's contents are replaced on every render(), so these
   // rely on event delegation rather than being rebound each time.
   root.addEventListener('click', onRootClick);
+  // Opportunity/Risk popover hover support (added 2026-10-06) -- mouseover/
+  // mouseout don't bubble in the usual sense (they fire per-element, not
+  // delegatable the way 'click' is), but their non-bubbling cousins
+  // 'mouseenter'/'mouseleave' aren't delegatable either; 'mouseover'/
+  // 'mouseout' DO bubble, so the same single-listener-on-root pattern as
+  // onRootClick works here too -- see onOpportunityMouseOver/Out for the
+  // e.target.closest() delegation.
+  root.addEventListener('mouseover', onOpportunityMouseOver);
+  root.addEventListener('mouseout', onOpportunityMouseOut);
   root.addEventListener('input', onProspectInput);
   root.addEventListener('change', onProspectInput);
   root.addEventListener('change', onProspectFilterCommit);

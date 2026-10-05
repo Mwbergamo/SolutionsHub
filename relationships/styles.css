@@ -512,6 +512,11 @@ a { color: inherit; }
   padding: 3px 10px;
   border-radius: 999px;
   white-space: nowrap;
+  /* "help" rather than this app's usual pointer -- hovering/clicking opens
+     the rank-explainer popover (see opportunityPopoverHtml() in app.js)
+     instead of navigating anywhere, unlike the rest of the row underneath
+     it which still opens the customer on click. */
+  cursor: help;
 }
 .opportunity-badge.opportunity { background: oklch(0.3 0.08 155); color: oklch(0.85 0.13 155); }
 .opportunity-badge.stable { background: oklch(0.26 0.02 255); color: oklch(0.75 0.01 255); }
@@ -539,6 +544,96 @@ a { color: inherit; }
   background: oklch(0.3 0.07 80);
   color: oklch(0.85 0.12 80);
   white-space: nowrap;
+  cursor: help;
+}
+
+/* Opportunity/Risk rank explainer popover -- added 2026-10-06 per
+   Michael's "a summary bubble ... tells you why it's ranked that way"
+   ask. position:fixed (coordinates computed in app.js's
+   computeOpportunityPopoverPosition(), from the trigger badge's actual
+   screen position) so it always escapes .overview-list's own
+   overflow:auto scrollbar rather than getting clipped by it -- see the
+   long comment above opportunityPopoverHtml() in app.js for why that
+   matters with a list that can hold thousands of rows. */
+.opportunity-popover {
+  position: fixed;
+  z-index: 200;
+  width: 280px;
+  max-width: calc(100vw - 24px);
+  background: oklch(0.16 0.015 255);
+  border: 1px solid oklch(0.36 0.02 255);
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+  font-size: 12px;
+  line-height: 1.5;
+  color: oklch(0.78 0.01 255);
+}
+
+.opp-pop-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: white;
+  margin-bottom: 2px;
+}
+
+.opp-pop-subtitle {
+  font-size: 11.5px;
+  color: oklch(0.65 0.015 255);
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid oklch(0.3 0.02 255);
+}
+.opp-pop-label-opportunity { color: oklch(0.78 0.13 155); }
+.opp-pop-label-stable { color: oklch(0.75 0.01 255); }
+.opp-pop-label-risk { color: oklch(0.78 0.14 27); }
+
+.opp-pop-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "label contrib" "trend contrib";
+  align-items: center;
+  gap: 1px 10px;
+  padding: 5px 0;
+}
+.opp-pop-row + .opp-pop-row { border-top: 1px solid oklch(0.25 0.015 255); }
+
+.opp-pop-label {
+  grid-area: label;
+  font-size: 11px;
+  font-weight: 600;
+  color: oklch(0.85 0.01 255);
+}
+
+.opp-pop-weight {
+  font-weight: 400;
+  color: oklch(0.55 0.015 255);
+}
+
+.opp-pop-trend {
+  grid-area: trend;
+  font-size: 10.5px;
+  color: oklch(0.6 0.015 255);
+}
+
+.opp-pop-contrib {
+  grid-area: contrib;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.opp-pop-contrib.pos { color: #4ade80; }
+.opp-pop-contrib.neg { color: #f87171; }
+.opp-pop-contrib.neutral { color: oklch(0.6 0.015 255); }
+
+.opp-pop-footer {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid oklch(0.3 0.02 255);
+  font-size: 10.5px;
+  color: oklch(0.55 0.015 255);
+  line-height: 1.5;
 }
 
 /* Territory group headers (added 2026-10-05) -- spans the full grid width
