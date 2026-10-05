@@ -36,8 +36,10 @@
  * plus a new Customer-Experience ticket signal (how many of this
  * customer's last 90 days' Service Tickets needed more than one
  * scheduled dispatch -- see connectwise-opportunity-sync-core.php and
- * relationships_account_opportunity_score() below for the full scoring
- * writeup, including why it's explicitly a first cut, not a tuned spec).
+ * opportunity-scoring.php's relationships_account_opportunity_score() for
+ * the full scoring writeup, including why it's explicitly a first cut,
+ * not a tuned spec). customers.php's detail action returns this same
+ * score for a single customer's own profile -- see that file's header.
  *
  * gauges is deliberately a flat, ordered array (not a fixed set of named
  * fields) so more tiles can be added later -- per Michael, "there will be a
@@ -83,6 +85,7 @@ require_once __DIR__ . '/connectwise-activity.php';
 require_once __DIR__ . '/connectwise-billing-sync-core.php';
 require_once __DIR__ . '/connectwise-ticket-history-sync-core.php';
 require_once __DIR__ . '/connectwise-contacts-sync-core.php';
+require_once __DIR__ . '/opportunity-scoring.php';
 
 $pdo = relationships_db();
 relationships_require_login($pdo);
@@ -132,84 +135,12 @@ function relationships_leaderboard_rows(PDO $pdo, string $sql, array $params): a
     return $rows;
 }
 
-/**
- * Account Opportunity/Risk score -- added 2026-10-05 per Michael's
- * "routine recommendation agent" request: rank every account on one
- * spectrum from "Likely to Need Services" (an upsell/outreach
- * opportunity) to "Account in Danger" (declining, worth a service-
- * experience check-in), using the three trend signals that already drive
- * this page's Billing/Ticket/Contact columns plus the new Customer-
- * Experience ticket signal (see connectwise-opportunity-sync-core.php).
- *
- * THIS IS A FIRST CUT, not a finished/confirmed spec -- same posture as
- * this endpoint's original gauge set ("there will be a dozen gauges very
- * soon," never separately confirmed as a finished list -- see this file's
- * header). The weights below are a reasonable starting point, not
- * something Michael has tuned: billing trend counts most (0.4), ticket-
- * volume and contact-count trends split the rest evenly (0.3 each,
- * matching Michael's own framing -- all three are "leading indicators of
- * whether a customer is growing or shrinking"), and each flagged
- * multi-dispatch ticket in the trailing 90 days docks a flat 15 points,
- * capped at -60 so a handful of bad tickets alone can't bottom out an
- * otherwise-healthy account's score. Worth revisiting once Michael has
- * seen real scores against real accounts and has an opinion on whether
- * any of this should be weighted differently.
- *
- * A trend with percent: null (not enough synced history yet -- see this
- * file's header) contributes 0, i.e. neutral, neither helping nor hurting
- * the score -- NOT the same as a confirmed 0% change. A brand-new or
- * recently-resynced account can read as "Stable" by default simply for
- * lack of data yet, not because it's actually steady; the real trend
- * badges elsewhere on this row still show "not enough history yet"
- * honestly, so a coordinator isn't misled by the score alone.
- */
-const RELATIONSHIPS_OPPORTUNITY_WEIGHT_BILLING = 0.4;
-const RELATIONSHIPS_OPPORTUNITY_WEIGHT_TICKETS = 0.3;
-const RELATIONSHIPS_OPPORTUNITY_WEIGHT_CONTACTS = 0.3;
-const RELATIONSHIPS_OPPORTUNITY_CX_PENALTY_PER_TICKET = 15.0;
-const RELATIONSHIPS_OPPORTUNITY_CX_PENALTY_MAX = 60.0;
-
-/** Folds a {direction, percent} trend back into one signed, clamped percent -- null/'flat' both read as 0 (neutral). */
-function relationships_account_opportunity_signed_percent(array $trend): float
-{
-    if ($trend['percent'] === null || $trend['direction'] === 'flat') {
-        return 0.0;
-    }
-    $percent = (float) $trend['percent'];
-    if ($trend['direction'] === 'down') {
-        $percent = -$percent;
-    }
-    return max(-100.0, min(100.0, $percent));
-}
-
-/**
- * Returns ['score' => float (-100..100), 'label' => string]. Score sign
- * matches Michael's own framing: positive = opportunity (toward "Likely
- * to Need Services"), negative = risk (toward "Account in Danger").
- * Thresholds (+/-20) are as much a first cut as the weights above --
- * picked to keep the vast majority of ordinary, unremarkable accounts
- * out of either extreme bucket, not derived from any real distribution of
- * scores yet.
- */
-function relationships_account_opportunity_score(array $billingTrend, array $ticketTrend, array $contactTrend, int $cxIssueCount): array
-{
-    $weighted = (relationships_account_opportunity_signed_percent($billingTrend) * RELATIONSHIPS_OPPORTUNITY_WEIGHT_BILLING)
-        + (relationships_account_opportunity_signed_percent($ticketTrend) * RELATIONSHIPS_OPPORTUNITY_WEIGHT_TICKETS)
-        + (relationships_account_opportunity_signed_percent($contactTrend) * RELATIONSHIPS_OPPORTUNITY_WEIGHT_CONTACTS);
-
-    $cxPenalty = min(RELATIONSHIPS_OPPORTUNITY_CX_PENALTY_MAX, $cxIssueCount * RELATIONSHIPS_OPPORTUNITY_CX_PENALTY_PER_TICKET);
-    $score = max(-100.0, min(100.0, $weighted - $cxPenalty));
-
-    if ($score >= 20.0) {
-        $label = 'Likely to need services';
-    } elseif ($score <= -20.0) {
-        $label = 'Account in danger';
-    } else {
-        $label = 'Stable';
-    }
-
-    return ['score' => round($score, 1), 'label' => $label];
-}
+// Account Opportunity/Risk scoring (relationships_account_opportunity_score()
+// and friends) moved into its own shared file 2026-10-07 -- see
+// opportunity-scoring.php's header -- so customers.php's single-customer
+// detail view can compute the exact same score for its own "why this
+// rank" panel (per Michael's follow-up request) without a second,
+// drift-prone copy of the formula.
 
 if ($action === 'overview') {
     // Rep-based territory filtering (see territory-access.php) -- applied

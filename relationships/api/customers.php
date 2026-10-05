@@ -20,7 +20,10 @@
  *                               last_risk_scan_at, last_risk_scan_by,
  *                               voip_hosted_elsewhere: bool, voip_hosted_agreement_name,
  *                               is_prospect_only: bool, is_residential: bool,
- *                               cw_status_name },
+ *                               cw_status_name,
+ *                               billing_trend, ticket_trend, contact_trend,
+ *                               cx_issue_ticket_count_90d, cx_issue_synced_at,
+ *                               opportunity_score, opportunity_label },
  *        pillars: [{ id, name, active: bool,
  *                     services: [{ id, name, active: bool,
  *                                  products: [{ label, qty, unit }, ...] }, ...] }, ...] }
@@ -68,6 +71,17 @@
  * by company name as always. A matched-via-contact result carries
  * matched_contact_name so the UI can show why it's in the list ("via
  * William Munn").
+ *
+ * billing_trend / ticket_trend / contact_trend / cx_issue_ticket_count_90d /
+ * opportunity_score / opportunity_label on the detail action -- added
+ * 2026-10-07 per Michael: "I'd also like the popover data to show in the
+ * customer's profile. This will give the reps a direct report after their
+ * attention is brought to issues." Same scoring formula dashboard.php's
+ * Overview list uses (opportunity-scoring.php), computed fresh for this one
+ * customer rather than reused from a bulk list, so the profile page always
+ * reflects this customer's current synced numbers even when opened
+ * directly (e.g. from a search result) rather than clicked from the
+ * Overview list.
  */
 
 declare(strict_types=1);
@@ -75,6 +89,16 @@ declare(strict_types=1);
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/territory-access.php';
 require_once __DIR__ . '/prospecting-core.php';
+// Account Opportunity/Risk score, added 2026-10-07 per Michael's "show the
+// popover data in the customer's profile" follow-up -- the 'detail' action
+// below returns the same score/label/trend breakdown dashboard.php's
+// Overview list shows, computed from the exact same shared formula (see
+// opportunity-scoring.php) so a rep opening this customer sees the same
+// "why" a coordinator saw on the front page.
+require_once __DIR__ . '/opportunity-scoring.php';
+require_once __DIR__ . '/connectwise-billing-sync-core.php';
+require_once __DIR__ . '/connectwise-ticket-history-sync-core.php';
+require_once __DIR__ . '/connectwise-contacts-sync-core.php';
 
 $pdo = relationships_db();
 relationships_require_login($pdo);
@@ -164,7 +188,8 @@ if ($action === 'detail') {
 
     $custStmt = $pdo->prepare(
         'SELECT id, name, is_peoplefirst, last_client_checkin_at, last_client_checkin_by, last_risk_scan_at, last_risk_scan_by,
-                voip_hosted_elsewhere, voip_hosted_agreement_name, is_prospect_only, is_residential, cw_status_name, territory_name
+                voip_hosted_elsewhere, voip_hosted_agreement_name, is_prospect_only, is_residential, cw_status_name, territory_name,
+                cx_issue_ticket_count_90d, cx_issue_synced_at
          FROM customers WHERE id = :id'
     );
     $custStmt->execute([':id' => $id]);
@@ -231,6 +256,15 @@ if ($action === 'detail') {
         ];
     }
 
+    // Account Opportunity/Risk score -- see opportunity-scoring.php. Same
+    // three trend lookups dashboard.php's Overview list already makes per
+    // customer, just for this one id instead of the whole portfolio.
+    $billingTrend = relationships_cw_billing_stored_series($pdo, (int) $customer['id'])['trend'];
+    $ticketTrend = relationships_cw_ticket_history_trend($pdo, (int) $customer['id']);
+    $contactTrend = relationships_cw_contacts_trend($pdo, (int) $customer['id']);
+    $cxIssueCount = (int) ($customer['cx_issue_ticket_count_90d'] ?? 0);
+    $opportunity = relationships_account_opportunity_score($billingTrend, $ticketTrend, $contactTrend, $cxIssueCount);
+
     relationships_respond(200, [
         'ok' => true,
         'customer' => [
@@ -249,6 +283,18 @@ if ($action === 'detail') {
             // Prospecting's 90-day claim (null unless claimed via Prospecting
             // and not yet promoted) -- see prospecting-core.php.
             'prospect_claim' => (bool) $customer['is_prospect_only'] ? relationships_prospect_claim_for_customer($pdo, (int) $customer['id']) : null,
+            // Opportunity/Risk rank explainer -- added 2026-10-07. Same
+            // field names/shapes as dashboard.php's Overview list rows, so
+            // app.js's opportunityPopoverContentHtml() can render this
+            // customer's own profile panel with the exact same function
+            // used for the Overview list's hover/click popover.
+            'billing_trend' => $billingTrend,
+            'ticket_trend' => $ticketTrend,
+            'contact_trend' => $contactTrend,
+            'cx_issue_ticket_count_90d' => $cxIssueCount,
+            'cx_issue_synced_at' => $customer['cx_issue_synced_at'],
+            'opportunity_score' => $opportunity['score'],
+            'opportunity_label' => $opportunity['label'],
         ],
         'pillars' => $pillars,
     ]);

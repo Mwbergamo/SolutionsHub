@@ -636,6 +636,29 @@ a { color: inherit; }
   line-height: 1.5;
 }
 
+/* Permanent Opportunity/Risk report on a customer's own profile -- added
+   2026-10-07, per Michael's "show in the customer's profile" follow-up.
+   Reuses .risk-scans-panel/.risk-scans-panel-header wholesale for the
+   outer card and header row (same as Documents/Risk Scans), and the
+   popover's own .opp-pop-row/.opp-pop-label/.opp-pop-trend/.opp-pop-contrib
+   classes for each breakdown line (see opportunityBreakdownRowsHtml() in
+   app.js) -- only the row width changes, since this card is far wider than
+   the 280px hover popover. The badge in the header is the same markup as
+   the Overview list's but isn't a hover/click trigger here (the full
+   breakdown is already shown below it), so its cursor is reset to the
+   panel's ordinary default rather than the badge's usual "help" cursor. */
+.opportunity-report-panel .risk-scans-panel-header { margin-bottom: 14px; }
+.opportunity-report-panel .opportunity-badge { cursor: default; }
+.opportunity-report-rows .opp-pop-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  max-width: 560px;
+  padding: 9px 0;
+}
+.opportunity-report-rows .opp-pop-label { font-size: 12.5px; }
+.opportunity-report-rows .opp-pop-trend { font-size: 11.5px; }
+.opportunity-report-rows .opp-pop-contrib { font-size: 13px; }
+.opportunity-report-rows .opp-pop-footer { max-width: 560px; }
+
 /* Territory group headers (added 2026-10-05) -- spans the full grid width
    inside .overview-list, which is a flex column, so each header is just
    its own full-width block between rows rather than a grid cell. */

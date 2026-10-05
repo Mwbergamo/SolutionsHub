@@ -2919,10 +2919,23 @@
     // already stale. Reading document.activeElement here, before any
     // mutation, is the only reliable way to know it was focused.
     var searchFocus = captureSearchFocus();
+    // Same idea for the Overview list's own scroll position (added
+    // 2026-10-07, per Michael: hovering/clicking the Opportunity/Risk badge
+    // was jumping a scrolled customer list back to the top) -- re-creating
+    // .overview-list via innerHTML always resets its scrollTop to 0, so
+    // read it here before the swap and put it back after. This is a
+    // general safety net for *any* render() call that happens while that
+    // list is scrolled, not just the popover path -- the popover's own
+    // hover/click handlers below go further and avoid calling render() at
+    // all, which is the real fix for that specific jump; this is the
+    // backstop for every other action that still re-renders the whole page
+    // (sorting, filtering, grouping, etc.) while the list is scrolled.
+    var overviewScroll = captureOverviewListScroll();
     root.innerHTML = topbarHtml() + '<div class="main">' + mainHtml() + '</div>';
     bindEvents();
     restoreSearchFocus(searchFocus);
     adjustOverviewListScroll();
+    restoreOverviewListScroll(overviewScroll);
   }
 
   function captureSearchFocus() {
@@ -2944,6 +2957,19 @@
       // setSelectionRange can throw on some input types -- ignore, focus
       // alone is the important part.
     }
+  }
+
+  function captureOverviewListScroll() {
+    var list = document.querySelector('.overview-list');
+    if (!list) return null;
+    return { scrollTop: list.scrollTop };
+  }
+
+  function restoreOverviewListScroll(scrollInfo) {
+    if (!scrollInfo) return;
+    var list = document.querySelector('.overview-list');
+    if (!list) return;
+    list.scrollTop = scrollInfo.scrollTop;
   }
 
   function topbarHtml() {
@@ -4125,13 +4151,16 @@
     '</div>';
   }
 
-  function opportunityPopoverContentHtml(c) {
+  // The per-signal rows + CX-penalty row + footer, with no title/subtitle --
+  // extracted 2026-10-07 from what was all of opportunityPopoverContentHtml()
+  // so the hover/click popover above AND the permanent report panel on the
+  // customer's own profile (opportunityReportPanelHtml() below) render the
+  // exact same breakdown from one function rather than two copies that
+  // could drift apart.
+  function opportunityBreakdownRowsHtml(c) {
     var cxCount = c.cx_issue_ticket_count_90d || 0;
     var cxPenalty = Math.min(OPPORTUNITY_CX_PENALTY_MAX, cxCount * OPPORTUNITY_CX_PENALTY_PER_TICKET);
-    return '<div class="opp-pop-title">' + escapeHtml(c.name) + '</div>' +
-      '<div class="opp-pop-subtitle">Why this rank: <strong class="opp-pop-label-' + overviewOpportunityClass(c.opportunity_label) + '">' + escapeHtml(c.opportunity_label) +
-        '</strong> (' + (c.opportunity_score > 0 ? '+' : '') + c.opportunity_score + ')</div>' +
-      opportunityContributionRowHtml('Billing trend', c.billing_trend) +
+    return opportunityContributionRowHtml('Billing trend', c.billing_trend) +
       opportunityContributionRowHtml('Ticket volume trend', c.ticket_trend) +
       opportunityContributionRowHtml('Active contacts trend', c.contact_trend) +
       '<div class="opp-pop-row">' +
@@ -4140,6 +4169,40 @@
         '<span class="opp-pop-contrib ' + (cxPenalty > 0 ? 'neg' : 'neutral') + '">' + (cxPenalty > 0 ? '-' : '') + cxPenalty.toFixed(1) + ' pts</span>' +
       '</div>' +
       '<div class="opp-pop-footer">Positive points pull toward “Likely to need services,” negative toward “Account in danger.” First-cut weights — not yet tuned against real accounts.</div>';
+  }
+
+  function opportunityPopoverContentHtml(c) {
+    return '<div class="opp-pop-title">' + escapeHtml(c.name) + '</div>' +
+      '<div class="opp-pop-subtitle">Why this rank: <strong class="opp-pop-label-' + overviewOpportunityClass(c.opportunity_label) + '">' + escapeHtml(c.opportunity_label) +
+        '</strong> (' + (c.opportunity_score > 0 ? '+' : '') + c.opportunity_score + ')</div>' +
+      opportunityBreakdownRowsHtml(c);
+  }
+
+  // Permanent "why ranked this way" report on the customer's own profile --
+  // added 2026-10-07 per Michael's follow-up to the popover: "I'd also
+  // like the popover data to show in the customer's profile. This will
+  // give the reps a direct report after their attention is brought to
+  // issues." Reuses opportunityBreakdownRowsHtml() so this never drifts
+  // from the Overview list's own popover, backed by the same
+  // billing_trend/ticket_trend/contact_trend/cx_issue_ticket_count_90d/
+  // opportunity_score/opportunity_label fields customers.php's detail
+  // action now returns (see that file's header) -- computed fresh from
+  // this customer's own synced data on every detail load, not carried
+  // over from the Overview list. Guarded the same way opportunityBadgeHtml()
+  // is: opportunity_score == null (no synced trend history yet) renders
+  // nothing rather than a misleading empty report.
+  function opportunityReportPanelHtml(customer) {
+    if (customer.opportunity_score == null) return '';
+    var cls = overviewOpportunityClass(customer.opportunity_label);
+    return '<div class="risk-scans-panel opportunity-report-panel">' +
+      '<div class="risk-scans-panel-header">' +
+        '<div class="view-title">Opportunity/Risk Report</div>' +
+        '<span class="opportunity-badge ' + cls + '">' + escapeHtml(customer.opportunity_label) +
+          ' <span class="opportunity-score">' + (customer.opportunity_score > 0 ? '+' : '') + customer.opportunity_score + '</span>' +
+        '</span>' +
+      '</div>' +
+      '<div class="opportunity-report-rows">' + opportunityBreakdownRowsHtml(customer) + '</div>' +
+    '</div>';
   }
 
   // Anchors the popover near the trigger badge without letting it run off
@@ -4158,18 +4221,61 @@
     return { left: left, top: Math.max(12, top) };
   }
 
+  // Always emits the #opportunityPopover container, even when nothing is
+  // open -- hidden via inline display:none rather than omitted entirely
+  // (added 2026-10-07, alongside updateOpportunityPopoverDom() below). A
+  // real, persistent DOM node is what lets the hover/click handlers update
+  // the popover WITHOUT a full render() -- updateOpportunityPopoverDom()
+  // just mutates this one element directly. If the node didn't exist until
+  // the first hover, there'd be nothing for that direct update to grab,
+  // and render() would be unavoidable on first show.
   function opportunityPopoverHtml() {
     var pop = state.opportunityPopover;
-    if (!pop || !state.overview) return '';
-    var customers = state.overview.customers || [];
+    var customers = (state.overview && state.overview.customers) || [];
     var c = null;
-    for (var i = 0; i < customers.length; i++) {
-      if (String(customers[i].id) === String(pop.customerId)) { c = customers[i]; break; }
+    if (pop) {
+      for (var i = 0; i < customers.length; i++) {
+        if (String(customers[i].id) === String(pop.customerId)) { c = customers[i]; break; }
+      }
     }
-    if (!c) return '';
-    return '<div class="opportunity-popover" style="left:' + pop.left + 'px; top:' + pop.top + 'px;">' +
+    if (!pop || !c) {
+      return '<div id="opportunityPopover" class="opportunity-popover" style="display:none;"></div>';
+    }
+    return '<div id="opportunityPopover" class="opportunity-popover" style="left:' + pop.left + 'px; top:' + pop.top + 'px;">' +
       opportunityPopoverContentHtml(c) +
     '</div>';
+  }
+
+  // Updates the one shared #opportunityPopover element in place from the
+  // current state.opportunityPopover, instead of calling render() --
+  // added 2026-10-07 per Michael: hovering/clicking the badge was
+  // triggering a full render() (root.innerHTML = ...), which re-creates
+  // .overview-list from scratch and resets its scroll position, jumping a
+  // scrolled customer list back to the top. A hover/click on this badge
+  // never needs to touch anything else on the page, so this talks to the
+  // popover element directly and leaves the rest of the DOM (and its
+  // scroll position) completely alone. Falls through to doing nothing if
+  // the popover node isn't currently in the DOM at all (e.g. the Overview
+  // list itself is collapsed/hidden) -- there's nothing to update then.
+  function updateOpportunityPopoverDom() {
+    var el = document.getElementById('opportunityPopover');
+    if (!el) return;
+    var pop = state.opportunityPopover;
+    var customers = (state.overview && state.overview.customers) || [];
+    var c = null;
+    if (pop) {
+      for (var i = 0; i < customers.length; i++) {
+        if (String(customers[i].id) === String(pop.customerId)) { c = customers[i]; break; }
+      }
+    }
+    if (!pop || !c) {
+      el.style.display = 'none';
+      return;
+    }
+    el.innerHTML = opportunityPopoverContentHtml(c);
+    el.style.left = pop.left + 'px';
+    el.style.top = pop.top + 'px';
+    el.style.display = '';
   }
 
   // Hover handlers (event-delegated on `root`, bound once alongside the
@@ -4185,7 +4291,7 @@
     if (state.opportunityPopover && !state.opportunityPopover.pinned && String(state.opportunityPopover.customerId) === String(oppId)) return;
     var pos = computeOpportunityPopoverPosition(el.getBoundingClientRect());
     state.opportunityPopover = { customerId: oppId, left: pos.left, top: pos.top, pinned: false };
-    render();
+    updateOpportunityPopoverDom();
   }
 
   function onOpportunityMouseOut(e) {
@@ -4196,7 +4302,7 @@
     var to = e.relatedTarget;
     if (to && to.closest && (to.closest('.opportunity-popover') || to.closest('[data-action="toggle-opportunity-popover"]'))) return;
     state.opportunityPopover = null;
-    render();
+    updateOpportunityPopoverDom();
   }
 
   // Rectangular KPI tiles under the search bar -- gauges is a flat ordered
@@ -4852,6 +4958,7 @@
       '</div>' +
     '</div>';
 
+    html += opportunityReportPanelHtml(detail.customer);
     html += contactCardHtml();
     html += outgrowFieldHtml();
 
@@ -6784,7 +6891,7 @@
       var withinOpportunityPopover = e.target.closest('.opportunity-popover, [data-action="toggle-opportunity-popover"]');
       if (!withinOpportunityPopover) {
         state.opportunityPopover = null;
-        render();
+        updateOpportunityPopoverDom();
       }
     }
 
@@ -7082,7 +7189,7 @@
         var oppPos = computeOpportunityPopoverPosition(el.getBoundingClientRect());
         state.opportunityPopover = { customerId: oppId, left: oppPos.left, top: oppPos.top, pinned: true };
       }
-      render();
+      updateOpportunityPopoverDom();
     } else if (action === 'toggle-overview-status') {
       var status = el.getAttribute('data-status');
       var filterMap = state.overviewStatusFilter || {};
