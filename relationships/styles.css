@@ -3422,3 +3422,20 @@ a { color: inherit; }
 @media (max-width: 640px) {
   .projects-status-bar-row { grid-template-columns: minmax(0, 120px) 1fr 28px; }
 }
+
+/* Clyde mascot art (added 2026-10-05) -- same ~150px footprint as the Clyde on
+   the Solutions Hub home page; the --small variant sits in the Global To-Do
+   panel header. */
+.clyde-img { width: 150px; max-width: 30vw; height: auto; flex: 0 0 auto; user-select: none; }
+.clyde-img--small { width: 58px; max-width: none; }
+.view-header--clyde { display: flex; align-items: center; gap: 24px; }
+.view-header--clyde .view-header-text, .view-header--clyde-small .view-header-text { min-width: 0; flex: 1 1 auto; }
+.view-header--clyde-small { display: flex; align-items: flex-start; gap: 12px; }
+.hub-hero { display: flex; align-items: center; gap: 24px; margin-bottom: 4px; }
+.hub-hero .search-wrap { flex: 1 1 auto; min-width: 0; }
+@media (max-width: 640px) {
+  .view-header--clyde, .hub-hero { gap: 14px; }
+  .clyde-img { width: 96px; }
+  .clyde-img--small { width: 48px; }
+}
+

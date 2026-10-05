@@ -2972,6 +2972,17 @@
     list.scrollTop = scrollInfo.scrollTop;
   }
 
+  // Clyde mascot art (added 2026-10-05). Same ~150px footprint as the Clyde on
+  // the Solutions Hub home page; `small` is the compact variant used inside
+  // the Global To-Do panel header. Files live in ../assets/clyde/.
+  function clydeImgHtml(name, alt, small) {
+    return '<img class="clyde-img' + (small ? ' clyde-img--small' : '') + '" src="../assets/clyde/clyde-' + name + '.png" alt="' + alt + '" draggable="false">';
+  }
+  // A view-header with a Clyde on the left and the title/subtitle beside it.
+  function clydeHeaderHtml(name, alt, innerHtml) {
+    return '<div class="view-header view-header--clyde">' + clydeImgHtml(name, alt) + '<div class="view-header-text">' + innerHtml + '</div></div>';
+  }
+
   function topbarHtml() {
     if (!state.user) return '';
     return (
@@ -3029,7 +3040,14 @@
       return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + projectsHtml();
     }
 
-    var html = '<div class="search-wrap">' + searchBoxHtml() + '</div>';
+    var html;
+    if (!state.loadingDetail && !state.selectedCustomer) {
+      // Relationships Hub main screen: laptop Clyde beside the customer search.
+      html = '<div class="hub-hero">' + clydeImgHtml('hub', 'Clyde at the Relationships Hub') +
+        '<div class="search-wrap">' + searchBoxHtml() + '</div></div>';
+    } else {
+      html = '<div class="search-wrap">' + searchBoxHtml() + '</div>';
+    }
 
     if (state.error) {
       html += '<div class="error-banner">' + escapeHtml(state.error) + '</div>';
@@ -3053,10 +3071,9 @@
   }
 
   function reportHtml() {
-    var html = '<div class="view-header">' +
+    var html = clydeHeaderHtml('cross-sell', 'Clyde working the Cross-Sell Report',
       '<div class="view-title">Cross-Sell Step Report</div>' +
-      '<div class="view-sub">How many customers are currently sitting at each step, per missing service. Click a number to see who.</div>' +
-    '</div>';
+      '<div class="view-sub">How many customers are currently sitting at each step, per missing service. Click a number to see who.</div>');
 
     html += peopleFirstSummaryHtml();
 
@@ -3704,8 +3721,9 @@
 
   function prospectingHtml() {
     var p = state.prospecting;
-    var html = '<div class="view-header"><div class="view-title">Prospecting</div>' +
-      '<div class="view-sub">Find target-market businesses within 150 miles of Richmond, review a quick profile, and claim them as ConnectWise Prospects. You have 90 days to move each one forward.</div></div>';
+    var html = clydeHeaderHtml('prospecting', 'Clyde researching prospects',
+      '<div class="view-title">Prospecting</div>' +
+      '<div class="view-sub">Find target-market businesses within 150 miles of Richmond, review a quick profile, and claim them as ConnectWise Prospects. You have 90 days to move each one forward.</div>');
     html += '<div class="pf-tabs">' +
       '<button type="button" class="pf-tab' + (p.tab === 'search' ? ' active' : '') + '" data-action="prospect-tab" data-tab="search">Find Prospects</button>' +
       '<button type="button" class="pf-tab' + (p.tab === 'mine' ? ' active' : '') + '" data-action="prospect-tab" data-tab="mine">My Prospects</button>' +
@@ -5477,10 +5495,11 @@
 
   function globalTodosPanelHtml() {
     var html = '<div class="global-todo-panel">';
-    html += '<div class="view-header">' +
+    html += '<div class="view-header view-header--clyde-small">' + clydeImgHtml('todo', 'Clyde checking the to-do list', true) +
+      '<div class="view-header-text">' +
       '<div class="view-title">Global To-Do Checklist</div>' +
       '<div class="view-sub">Open tasks from every customer’s meetings. Click one to open that company and complete it there. Click a coordinator’s name below to see just their to-do list and calendar.</div>' +
-    '</div>';
+      '</div></div>';
 
     if (state.globalTodosError) {
       html += '<div class="error-banner">' + escapeHtml(state.globalTodosError) + '</div>';
@@ -6636,10 +6655,9 @@
 
   function projectsHtml() {
     var html = '<div class="projects-view">';
-    html += '<div class="view-header">' +
+    html += clydeHeaderHtml('projects', 'Clyde reviewing project plans',
       '<div class="view-title">Projects</div>' +
-      '<div class="view-sub">Every ConnectWise project on the Pre-Sales and Services Projects boards.</div>' +
-    '</div>';
+      '<div class="view-sub">Every ConnectWise project on the Pre-Sales and Services Projects boards.</div>');
     if (state.projectsLoading && !state.projectsData) {
       html += '<div class="loading">Loading projects…</div>';
     } else if (!state.projectsData || !state.projectsData.length) {
