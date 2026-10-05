@@ -333,7 +333,7 @@ if ($action === 'overview') {
     // It's a direct counter incremented in the loop above instead.
 
     $gauges = [
-        ['key' => 'total_customers', 'label' => 'Total Customers', 'value' => $totalCustomers, 'format' => 'count'],
+        ['key' => 'total_customers', 'label' => 'Active Clients', 'value' => $totalCustomers, 'format' => 'count'],
         ['key' => 'total_prospects', 'label' => 'Total Prospects', 'value' => $totalProspects, 'format' => 'count'],
         ['key' => 'total_residential', 'label' => 'Total Residential', 'value' => $totalResidential, 'format' => 'count'],
         ['key' => 'portfolio_billing_trend', 'label' => 'Portfolio Billing Trend', 'value' => null, 'format' => 'trend', 'trend' => $portfolioBillingTrend],

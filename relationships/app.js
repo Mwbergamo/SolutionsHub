@@ -2191,9 +2191,7 @@
       '<div><span>' + (b.residential || 0) + '</span>Residential</div>' +
       '<div class="muted"><span>' + (b.excluded || 0) + '</span>Hidden</div>' +
     '</div>';
-    html += '<div class="company-counts-note">Active = status Active, Delinquent or Special Info. Prospects = Inactive or Inactive - Still Approved' +
-      (cc.prospect_claimed ? ' (plus ' + cc.prospect_claimed + ' company claimed in Prospecting)' : '') +
-      '. Residential = status Residential. Vendors and every other status are hidden. Last company sync: ' +
+    html += '<div class="company-counts-note">Active = status Active, Delinquent or Special Info (not Vendor). Residential = status Residential. Prospects = every other company. Hidden = demo rows and companies no longer in ConnectWise. Last company sync: ' +
       (cc.last_company_sync ? escapeHtml(fmtTimestamp(cc.last_company_sync)) : 'never') +
       (cc.companies_seen_last_sync != null ? ' (' + cc.companies_seen_last_sync + ' ConnectWise companies seen)' : '') + '.</div>';
     if (b.unclassified) {

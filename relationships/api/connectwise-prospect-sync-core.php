@@ -9,14 +9,15 @@
  *   Active      = status Active, Delinquent or Special Info
  *   Prospect    = status Inactive or Inactive - Still Approved
  *   Residential = status Residential
- *   anything else (Credit Hold, Lead Pursuit, Not Approved, ...), or a
- *   Vendor type, = excluded: hidden from every list and count.
+ *   EVERY other company (Credit Hold, Lead Pursuit, Not Approved, a Vendor
+ *   type, no status, ...) = Prospect too (changed later 2026-10-05: "All
+ *   other businesses can go under Prospects"). Only a Vendor is kept out of
+ *   Active. 'excluded' now means only demo rows and companies ConnectWise no
+ *   longer returns.
  *
  * Having an agreement no longer makes a company Active, and Active no longer
  * hides companies that have no synced contacts (dashboard.php). The result
- * is stored in customers.cw_bucket. One exception: a company a rep claimed
- * through Prospecting (status "Prospect" in ConnectWise, active 90-day
- * claim) stays a Prospect while the claim is active.
+ * is stored in customers.cw_bucket.
  * Status names are matched ignoring case, spaces and punctuation, so
  * "Inactive-still approved" == "Inactive - Still Approved".
  *
@@ -154,13 +155,13 @@ function relationships_cw_prospect_status_allowed(string $statusName): bool
 
 /**
  * Classifies one company into exactly one of 'active' | 'prospect' |
- * 'residential' | 'excluded' from its ConnectWise Company Status and
+ * 'residential' from its ConnectWise Company Status and
  * Vendor flag ONLY -- see the REDEFINED note in this file's header.
  */
 function relationships_cw_classify_company_bucket(string $statusName, bool $isVendor = false): string
 {
     if ($isVendor) {
-        return 'excluded';
+        return 'prospect'; // never Active; "all other businesses" are Prospects
     }
     if (relationships_cw_status_matches($statusName, RELATIONSHIPS_CW_RESIDENTIAL_STATUS)) {
         return 'residential';
@@ -168,10 +169,7 @@ function relationships_cw_classify_company_bucket(string $statusName, bool $isVe
     if (relationships_cw_status_in($statusName, RELATIONSHIPS_CW_ACTIVE_STATUSES)) {
         return 'active';
     }
-    if (relationships_cw_prospect_status_allowed($statusName)) {
-        return 'prospect';
-    }
-    return 'excluded';
+    return 'prospect';
 }
 
 /**
@@ -269,7 +267,6 @@ function relationships_cw_prospect_sync_step(PDO $pdo, int $batchSize = 50): arr
     $rows = $pending->fetchAll(PDO::FETCH_ASSOC);
 
     $findCustomer = $pdo->prepare('SELECT id FROM customers WHERE connectwise_id = :cw');
-    $hasActiveClaim = $pdo->prepare("SELECT 1 FROM prospect_claims WHERE status = 'active' AND (cw_company_id = :cw OR customer_id = :cid) LIMIT 1");
     $update = $pdo->prepare(
         'UPDATE customers SET name = :name, is_mock = 0, cw_status_name = :status_name, cw_bucket = :bucket,
                 is_prospect_only = :is_prospect, is_residential = :is_res WHERE id = :id'
@@ -292,15 +289,6 @@ function relationships_cw_prospect_sync_step(PDO $pdo, int $batchSize = 50): arr
             $existing = $findCustomer->fetch(PDO::FETCH_ASSOC);
             $customerId = $existing ? (int) $existing['id'] : 0;
 
-            // A company claimed through Prospecting (ConnectWise status
-            // "Prospect") stays a Prospect while its 90-day claim is active.
-            if ($bucket === 'excluded' && !$isVendor && relationships_cw_status_matches($statusName, 'Prospect')) {
-                $hasActiveClaim->execute([':cw' => $cwId, ':cid' => $customerId]);
-                if ($hasActiveClaim->fetch() !== false) {
-                    $bucket = 'prospect';
-                }
-            }
-
             $isProspect = $bucket === 'prospect' ? 1 : 0;
             $isRes = $bucket === 'residential' ? 1 : 0;
 
@@ -313,7 +301,7 @@ function relationships_cw_prospect_sync_step(PDO $pdo, int $batchSize = 50): arr
                     ':is_res' => $isRes,
                     ':id' => $customerId,
                 ]);
-            } elseif ($bucket !== 'excluded') {
+            } else {
                 $insertNew->execute([
                     ':cw' => $cwId,
                     ':name' => $row['company_name'],
@@ -323,7 +311,6 @@ function relationships_cw_prospect_sync_step(PDO $pdo, int $batchSize = 50): arr
                     ':is_res' => $isRes,
                 ]);
             }
-            // else: excluded and no row yet -- deliberately create nothing.
 
             $pdo->prepare("UPDATE cw_prospect_sync_queue SET status = 'done', processed_at = datetime('now'), error_message = NULL WHERE connectwise_id = :cw")
                 ->execute([':cw' => $cwId]);
