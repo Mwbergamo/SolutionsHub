@@ -160,6 +160,11 @@
     // filteredOverviewCustomers(). (The old Prospects on/off toggle was
     // removed 2026-09-23: prospects now have their own tile and list.)
     overviewPeopleFirstOnly: false,
+    // Territory filter for the 60+ Days Since Last OutGrow Touch list --
+    // added 2026-10-05 per Michael. null = all territories; otherwise the
+    // exact territory_name ('' = customers with no synced territory).
+    // Resets each time a list is opened, like the other overview filters.
+    outgrowTerritory: null,
     // "Group by Territory" toggle for the main Total Customers list --
     // added 2026-10-05 per Michael's "organized by ... territory" ask for
     // the Account Opportunity/Risk ranking. Purely a display concern, same
@@ -4606,6 +4611,35 @@
     var stale = customers.filter(function (c) {
       return !c.is_prospect_only && !c.is_residential && c.has_recent_billing && (c.outgrow_days_since == null || c.outgrow_days_since >= 60);
     });
+    // Territory chips are built from the full stale set so a territory's
+    // chip (and count) stays put while another one is selected.
+    var terrCounts = {};
+    stale.forEach(function (c) {
+      var t = c.territory_name || '';
+      terrCounts[t] = (terrCounts[t] || 0) + 1;
+    });
+    var terrNames = Object.keys(terrCounts).sort(function (a, b) {
+      if (a === '') return 1;
+      if (b === '') return -1;
+      return a.localeCompare(b);
+    });
+    if (state.outgrowTerritory !== null && !(state.outgrowTerritory in terrCounts)) {
+      state.outgrowTerritory = null; // selected territory no longer has stale customers
+    }
+    var totalStale = stale.length;
+    if (state.outgrowTerritory !== null) {
+      stale = stale.filter(function (c) { return (c.territory_name || '') === state.outgrowTerritory; });
+    }
+    var terrBar = '';
+    if (terrNames.length > 1 || state.outgrowTerritory !== null) {
+      terrBar = '<div class="overview-filter-bar">' +
+        '<button class="overview-filter-btn territory-group' + (state.outgrowTerritory === null ? ' active' : '') + '" type="button" data-action="set-outgrow-territory" data-territory="" data-all="1">All Territories <span class="overview-filter-count">' + totalStale + '</span></button>' +
+        terrNames.map(function (t) {
+          return '<button class="overview-filter-btn territory-group' + (state.outgrowTerritory === t ? ' active' : '') + '" type="button" data-action="set-outgrow-territory" data-territory="' + escapeHtml(t) + '">' +
+            escapeHtml(t || 'No territory') + ' <span class="overview-filter-count">' + terrCounts[t] + '</span></button>';
+        }).join('') +
+      '</div>';
+    }
     var dir = state.outgrowSortDir === 'desc' ? -1 : 1;
     stale.sort(function (a, b) {
       var av = a.last_outgrow_touch || '';
@@ -4615,7 +4649,7 @@
       return a.name.localeCompare(b.name);
     });
     var arrow = state.outgrowSortDir === 'desc' ? ' ▼' : ' ▲';
-    var html = '<div class="overview-list-wrap">' +
+    var html = '<div class="overview-list-wrap">' + terrBar +
       '<div class="overview-list-header">' +
         '<div class="overview-col-name"><span class="overview-col-sort">Customer</span></div>' +
         '<div class="overview-col"><button class="overview-col-sort active" type="button" data-action="sort-outgrow" title="Flip between earliest-first and latest-first">Last OutGrow Touch' + arrow + '</button></div>' +
@@ -4624,7 +4658,7 @@
       '</div>' +
       '<div class="overview-list">';
     if (!stale.length) {
-      html += '<div class="overview-list-empty">Every customer has had an OutGrow touch in the last 60 days.</div>';
+      html += '<div class="overview-list-empty">' + (state.outgrowTerritory !== null ? 'No customers in this territory need an OutGrow touch.' : 'Every customer has had an OutGrow touch in the last 60 days.') + '</div>';
     }
     stale.forEach(function (c) {
       var badge = c.is_peoplefirst ? peopleFirstBadgeHtml() : '';
@@ -7255,6 +7289,10 @@
       // 2026-09-26, per Michael's explicit "Resets every time" answer --
       // so every status starts shown again each time a list is (re)opened.
       state.overviewStatusFilter = {};
+      state.outgrowTerritory = null;
+      render();
+    } else if (action === 'set-outgrow-territory') {
+      state.outgrowTerritory = el.getAttribute('data-all') ? null : el.getAttribute('data-territory');
       render();
     } else if (action === 'toggle-overview-peoplefirst') {
       state.overviewPeopleFirstOnly = !state.overviewPeopleFirstOnly;
