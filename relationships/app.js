@@ -2975,8 +2975,12 @@
   // Clyde mascot art (added 2026-10-05). Same ~150px footprint as the Clyde on
   // the Solutions Hub home page; `small` is the compact variant used inside
   // the Global To-Do panel header. Files live in ../assets/clyde/.
+  // Seasonal art (assets/clyde/clyde-season.js picks the folder by date).
+  function clydeSrc(name) {
+    return window.ClydeSeason ? window.ClydeSeason.src(name, '../assets/clyde/') : '../assets/clyde/clyde-' + name + '.png';
+  }
   function clydeImgHtml(name, alt, small) {
-    return '<img class="clyde-img' + (small ? ' clyde-img--small' : '') + '" src="../assets/clyde/clyde-' + name + '.png" alt="' + alt + '" draggable="false">';
+    return '<img class="clyde-img' + (small ? ' clyde-img--small' : '') + '" src="' + clydeSrc(name) + '" alt="' + alt + '" draggable="false">';
   }
   // A view-header with a Clyde on the left and the title/subtitle beside it.
   function clydeHeaderHtml(name, alt, innerHtml) {
