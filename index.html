@@ -164,6 +164,10 @@
     <!-- SOLUTIONS CREATOR -->
     <sc-if value="{{isSolutionsCreator}}" hint-placeholder-val="{{false}}">
       <div class="view-pad view-enter" style="padding:36px 56px 40px;">
+        <!-- Clyde (server rack + wrench), added 2026-10-05: same 150px size as the home page Clyde. -->
+        <div style="display:flex;align-items:flex-start;gap:28px;flex-wrap:wrap;">
+          <img src="assets/clyde/clyde-solutions-creator.png" alt="CodeBlue Clyde — Solutions Creator" style="width:150px;max-width:38vw;height:auto;flex:0 0 auto;" />
+          <div style="flex:1;min-width:300px;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
           <div style="display:flex;align-items:center;gap:14px;">
             <div data-on-click="{{goOverview}}" style="width:36px;height:36px;border-radius:999px;background:var(--cbt-bg-control-2);display:flex;align-items:center;justify-content:center;cursor:pointer;">
@@ -212,6 +216,8 @@
               </sc-if>
             </div>
           </sc-if>
+        </div>
+        </div>
         </div>
 
         <div style="margin-top:32px;margin-left:50px;display:flex;flex-wrap:wrap;gap:24px;justify-content:flex-start;">
