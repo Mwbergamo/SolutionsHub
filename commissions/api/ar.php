@@ -60,6 +60,8 @@ try {
             'territories' => $byTerritory,
             'house' => commissions_ar_totals($house),
             'total' => commissions_ar_totals($rows),
+            'bad_debt' => commissions_ar_totals(commissions_ar_rows($pdo, true)),
+            'bad_debt_days' => COMMISSIONS_AR_BAD_DEBT_DAYS,
             'detail_pending' => commissions_ar_pending_detail($pdo),
         ]);
     }

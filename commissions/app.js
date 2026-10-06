@@ -295,7 +295,7 @@
     if (!a) return '';
     var head = '<tr><th>__W__</th><th class="r">Open invoices</th><th class="r">Outstanding</th><th class="r">0–30 days</th><th class="r">31–60 days</th><th class="r">Over 60 days</th></tr>';
     var h = '<div class="card ar-card no-print"><h3>Open invoices to collect <small>as of ' + esc(a.as_of_label) + '</small></h3>' +
-      '<div class="view-sub" style="margin-bottom:10px">Closed ConnectWise invoices that have not been paid yet, with days counted from the invoice date. Click an amount to see the invoices and send a collections report.' +
+      '<div class="view-sub" style="margin-bottom:10px">Closed ConnectWise invoices not yet paid and no more than ' + a.bad_debt_days + ' days old (older is bad debt), with days counted from the invoice date. Click an amount to see the invoices and send a collections report.' +
       (a.detail_pending ? ' <i>(' + a.detail_pending + ' invoice' + (a.detail_pending === 1 ? '' : 's') + ' still waiting for agreement/ticket detail — run Sync now.)</i>' : '') + '</div>' +
       '<table class="data ar-table"><thead>' + head.replace('__W__', 'Rep') + '</thead><tbody>';
     a.reps.forEach(function (r) {
@@ -312,7 +312,7 @@
       h += '<tr><td>' + esc(t.label) + ' <span class="hint">' + (t.house ? 'house account' : '→ ' + esc(t.payees.join(' + '))) + '</span></td><td class="r">' + t.count + '</td><td class="r">' +
         arAmountBtn(t, 'all', t.territory || '(none)') + '</td>' + agingCells(t) + '</tr>';
     });
-    h += '</tbody></table><div class="hint" style="margin-top:6px">Open invoices refreshed ' + esc(fmtStamp(a.refreshed_at)) + '.</div></div>';
+    h += '</tbody></table><div class="hint" style="margin-top:6px">Only invoices 0–' + a.bad_debt_days + ' days old are tracked' + (a.bad_debt && a.bad_debt.count ? '; ' + a.bad_debt.count + ' older invoice' + (a.bad_debt.count === 1 ? '' : 's') + ' (' + money(a.bad_debt.balance) + ') are treated as bad debt and not shown' : '') + '. Open invoices refreshed ' + esc(fmtStamp(a.refreshed_at)) + '.</div></div>';
     return h;
   }
 

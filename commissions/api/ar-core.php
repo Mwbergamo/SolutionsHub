@@ -15,6 +15,8 @@ require_once __DIR__ . '/sync-core.php';
 
 const COMMISSIONS_AR_DETAIL_BATCH = 12;
 const COMMISSIONS_AR_HOLD_DAYS = 60;
+/** Invoices older than this many days are written off as bad debt and left out of collections. */
+const COMMISSIONS_AR_BAD_DEBT_DAYS = 730;
 const COMMISSIONS_AR_HOLD_NOTE = 'This invoice is over 60 days old. The customer will remain on service hold until the balance is current.';
 
 /**
@@ -212,12 +214,16 @@ function commissions_ar_days(string $invoiceDate, DateTimeImmutable $today): int
  * All open invoices with days outstanding and the payee ids for their territory.
  * @return list<array<string,mixed>>
  */
-function commissions_ar_rows(PDO $pdo): array
+function commissions_ar_rows(PDO $pdo, bool $badDebtOnly = false): array
 {
     $today = commissions_ar_today();
     $reps = commissions_reps($pdo);
     $out = [];
     foreach ($pdo->query('SELECT * FROM ar_invoices')->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $days = commissions_ar_days((string) $r['invoice_date'], $today);
+        if (($days > COMMISSIONS_AR_BAD_DEBT_DAYS) !== $badDebtOnly) {
+            continue;
+        }
         $out[] = [
             'invoice_id' => (int) $r['invoice_id'],
             'invoice_number' => (string) $r['invoice_number'],
@@ -229,7 +235,7 @@ function commissions_ar_rows(PDO $pdo): array
             'tickets' => (string) ($r['tickets'] ?? ''),
             'total' => round((float) $r['total'], 2),
             'balance' => round((float) $r['balance'], 2),
-            'days' => commissions_ar_days((string) $r['invoice_date'], $today),
+            'days' => $days,
             'rep_ids' => commissions_reps_for_territory($reps, (string) $r['territory']),
         ];
     }
