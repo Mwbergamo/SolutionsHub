@@ -8,9 +8,12 @@
  *   commission = rep % x gross profit
  *   gross profit (per line) = price billed - assumed cost
  *     - Product line: price = quantity x unit price on the invoice;
- *       cost = quantity x the Product Catalog's cost (static, regardless of
- *       when it was sold) -- EXCEPT agreement items on an invoice, whose cost
- *       is the invoice Products tab's own Unit Cost / Ext Cost (2026-10-06).
+ *       cost = the invoice Products tab line's own Unit Cost / Ext Cost
+ *       (2026-10-06); the Product Catalog's cost is only the backup when the
+ *       invoice line carries no cost.
+ *     - Block Time Agreement invoice (no products/time/additions): hours =
+ *       invoice subtotal / the agreement's Work Roles Rate (a hard-set rate);
+ *       price = the subtotal, cost = those hours x labor cost per hour.
  *     - Time line: price = hours x the hourly rate on the invoice;
  *       cost = hours x labor cost per hour (default $90, editable in
  *       Settings). The cost is ALWAYS the labor setting, never the rate.

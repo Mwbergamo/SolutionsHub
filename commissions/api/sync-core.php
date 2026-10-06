@@ -389,6 +389,40 @@ function commissions_agreement_lookup(PDO $pdo, int $agreementId): array
     }
 }
 
+/**
+ * Hard-set hourly rate from an agreement's Work Roles tab (Block Time
+ * Agreements carry no additions; the Work Roles "Rate" is what each hour
+ * billed against the agreement is worth). Uses the row in effect on the
+ * invoice date (latest effective date not after it), else the first row with
+ * a rate. Returns null when there is none or ConnectWise can't be reached.
+ */
+function commissions_agreement_work_rate(int $agreementId, string $invoiceDate): ?float
+{
+    try {
+        $rows = commissions_cw_list_all("/finance/agreements/$agreementId/workroles", '');
+    } catch (Throwable $e) {
+        return null;
+    }
+    $best = null;
+    $bestEff = '';
+    $first = null;
+    foreach ($rows as $r) {
+        $rate = isset($r['rate']) ? (float) $r['rate'] : 0.0;
+        if ($rate <= 0) {
+            continue;
+        }
+        if ($first === null) {
+            $first = $rate;
+        }
+        $eff = substr((string) ($r['effectiveDate'] ?? ''), 0, 10);
+        if ($eff <= substr($invoiceDate, 0, 10) && ($best === null || $eff >= $bestEff)) {
+            $best = $rate;
+            $bestEff = $eff;
+        }
+    }
+    return $best ?? $first;
+}
+
 // ---------------------------------------------------------------------
 // step: process a batch of queued invoices
 // ---------------------------------------------------------------------
@@ -420,26 +454,26 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
         $unitCost = null;
         $costNote = null;
         $lineCost = isset($p['cost']) ? (float) $p['cost'] : null;
-        $isAgreementLine = $isAgreement || !empty($p['agreement']['id']);
         $extCostOverride = null;
         $catalogCost = ($cat !== null && $cat['cost'] !== null) ? (float) $cat['cost'] : null;
-        if ($isAgreementLine && $lineCost !== null && !($lineCost == 0.0 && $catalogCost !== null && $catalogCost > 0)) {
-            // Agreement items: the cost is what the invoice's Products tab
-            // shows -- the line's own Unit Cost and Ext Cost -- not the
-            // catalog's current cost (they differ once catalog costs change).
+        if ($lineCost !== null && !($lineCost == 0.0 && $catalogCost !== null && $catalogCost > 0)) {
+            // The invoice's own Products-tab line is the source of truth for
+            // cost: its Unit Cost and Ext Cost, for every product line
+            // (agreement or not). A $0 line cost with a real catalog cost is
+            // treated as "not filled in" and falls through to the catalog.
             $unitCost = $lineCost;
             if (isset($p['extCost']) && is_numeric($p['extCost'])) {
                 $extCostOverride = (float) $p['extCost'];
             }
             $costNote = 'Invoice Products tab cost';
-        } elseif ($cat !== null && $cat['cost'] !== null && !((float) $cat['cost'] == 0.0 && $lineCost !== null && $lineCost > 0)) {
-            $unitCost = (float) $cat['cost'];
-            $costNote = 'Product Catalog cost' . ($lineCost !== null && abs($lineCost - $unitCost) > 0.004 ? ' (invoice line cost was ' . number_format($lineCost, 2) . ')' : '');
+        } elseif ($catalogCost !== null) {
+            $unitCost = $catalogCost;
+            $costNote = 'Product Catalog cost (invoice line had no cost)';
         } else {
-            $unitCost = (float) ($p['cost'] ?? 0);
+            $unitCost = 0.0;
             $costNote = $catId > 0
-                ? 'Catalog cost not found -- used the cost on the invoice line'
-                : 'No catalog item on this line -- used the cost on the invoice line';
+                ? 'No cost on the invoice line and catalog cost not found -- cost assumed $0'
+                : 'No cost on the invoice line and no catalog item -- cost assumed $0';
         }
         $ident = (string) ($p['catalogItem']['identifier'] ?? ($cat['identifier'] ?? ''));
         $desc = (string) ($p['description'] ?? ($cat['description'] ?? ''));
@@ -537,6 +571,30 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
                 'cost_note' => $costNote,
             ];
         }
+    }
+
+    // Block Time Agreement: an agreement invoice with no products, no time
+    // entries and no agreement additions. The agreement's Work Roles Rate is a
+    // hard-set rate per hour billed, so hours = invoice subtotal / rate; the
+    // cost is those hours at the assumed labor cost (Settings, default $90/hr).
+    // e.g. $13,500 at $135/hr = 100 hrs; cost $9,000; GP $4,500.
+    $workRate = ($isAgreement && $agreement !== null) ? (float) ($agreement['work_rate'] ?? 0) : 0.0;
+    if ($lines === [] && $workRate > 0 && $subtotal > 0.004) {
+        $bta = round($subtotal / $workRate, 2);
+        $lines[] = [
+            'kind' => 'time',
+            'item' => 'Block time — ' . rtrim(rtrim(number_format($bta, 2, '.', ''), '0'), '.') . ' hrs @ $' . number_format($workRate, 2) . '/hr (Work Roles rate)',
+            'ticket_id' => null,
+            'ticket_summary' => null,
+            'hours' => $bta,
+            'actual_hours' => $bta,
+            'member' => null,
+            'qty' => null,
+            'price' => round($subtotal, 2),
+            'unit_cost' => null,
+            'cost' => round($bta * $laborCost, 2),
+            'cost_note' => 'Assumed labor cost $' . number_format($laborCost, 2) . '/hr x ' . $bta . ' hrs (hours = invoice subtotal / Work Roles rate $' . number_format($workRate, 2) . ')',
+        ];
     }
 
     $linesTotal = 0.0;
@@ -653,6 +711,9 @@ function commissions_sync_step(PDO $pdo, int $batch = COMMISSIONS_STEP_BATCH): a
                         $agreements[$aid] = commissions_agreement_lookup($pdo, $aid);
                         foreach ($agreements[$aid]['additions'] as $a) {
                             $catIds[] = (int) ($a['product_id'] ?? 0);
+                        }
+                        if ($agreements[$aid]['additions'] === []) {
+                            $agreements[$aid]['work_rate'] = commissions_agreement_work_rate($aid, (string) $inv['date']);
                         }
                     } catch (Throwable $e) {
                         $agreements[$aid] = null;
