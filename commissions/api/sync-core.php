@@ -456,7 +456,20 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
         $lineCost = isset($p['cost']) ? (float) $p['cost'] : null;
         $extCostOverride = null;
         $catalogCost = ($cat !== null && $cat['cost'] !== null) ? (float) $cat['cost'] : null;
-        if ($lineCost !== null && !($lineCost == 0.0 && $catalogCost !== null && $catalogCost > 0)) {
+        // A line that is not billed (Bill Customer = Do Not Bill) or carries no
+        // price has nothing to earn commission on and nothing to cost: use the
+        // invoice line's own cost (normally $0) and NEVER the catalog's, which
+        // would otherwise book a loss for a line the customer isn't charged for.
+        $doNotBill = strcasecmp((string) ($p['billableOption'] ?? ''), 'DoNotBill') === 0;
+        if ($doNotBill || abs($unitPrice) < 0.00005) {
+            $unitCost = $lineCost ?? 0.0;
+            if ($lineCost !== null && isset($p['extCost']) && is_numeric($p['extCost'])) {
+                $extCostOverride = (float) $p['extCost'];
+            }
+            $costNote = $doNotBill
+                ? 'Do Not Bill -- not charged, so no price; cost taken from the invoice line (catalog cost not used)'
+                : 'No price on this line -- cost taken from the invoice line (catalog cost not used)';
+        } elseif ($lineCost !== null && !($lineCost == 0.0 && $catalogCost !== null && $catalogCost > 0)) {
             // The invoice's own Products-tab line is the source of truth for
             // cost: its Unit Cost and Ext Cost, for every product line
             // (agreement or not). A $0 line cost with a real catalog cost is
@@ -551,7 +564,11 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
             }
             $catId = (int) ($a['product_id'] ?? 0);
             $cat = $catId > 0 ? ($catalog[$catId] ?? null) : null;
-            if ($cat !== null && $cat['cost'] !== null) {
+            if (abs((float) ($a['unit_price'] ?? 0)) < 0.00005) {
+                // Nothing is charged for this addition -- never apply catalog cost.
+                $unitCost = (float) ($a['unit_cost'] ?? 0);
+                $costNote = 'No price on the agreement addition -- catalog cost not used';
+            } elseif ($cat !== null && $cat['cost'] !== null) {
                 $unitCost = (float) $cat['cost'];
                 $costNote = 'Product Catalog cost (static)';
             } else {
