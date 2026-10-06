@@ -59,3 +59,10 @@ Thumbs.db
 # relationships/api/anthropic-config.sample.php to anthropic-config.php on
 # the server and fill it in there.
 /relationships/api/anthropic-config.php
+
+# Commissions sub-app's runtime SQLite database (invoice-level profit and
+# every rep's commission) -- created on first request by commissions/api/db.php.
+# Never commit it: a `git pull` deploy must never overwrite or wipe it.
+/commissions/data/*.sqlite
+/commissions/data/*.sqlite-wal
+/commissions/data/*.sqlite-shm

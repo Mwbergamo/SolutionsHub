@@ -12,10 +12,19 @@ declare(strict_types=1);
  * kept as separate endpoints since those apps' app.js already call them
  * by that URL).
  *
+ * As of 2026-10-05 the user also carries `can_view_commissions` (see
+ * auth/commissions-access.php) so the home page can hide the Commissions
+ * card from everyone who isn't on that allow-list.
+ *
  * Response: { ok: true, user: {...} | null }
  */
 
 require_once __DIR__ . '/session.php';
+require_once __DIR__ . '/commissions-access.php';
 
 header('Content-Type: application/json; charset=utf-8');
-echo json_encode(['ok' => true, 'user' => auth_current_user()]);
+$user = auth_current_user();
+if ($user !== null) {
+    $user['can_view_commissions'] = commissions_email_allowed($user['email'] ?? '');
+}
+echo json_encode(['ok' => true, 'user' => $user]);

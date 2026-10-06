@@ -157,6 +157,24 @@
             <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">SEND A RATE SHEET →</div>
           </a>
 
+          <!-- Commissions (added 2026-10-05) -- visible ONLY to the four people on the allow-list in
+               auth/commissions-access.php (auth/me.php sets can_view_commissions); the API enforces it too. -->
+          <sc-if value="{{canViewCommissions}}" hint-placeholder-val="{{false}}">
+          <a href="commissions/" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="3" x2="12" y2="21"></line><path d="M16.5 7.5c0-1.7-2-3-4.5-3s-4.5 1.3-4.5 3 2 2.7 4.5 3 4.5 1.3 4.5 3-2 3-4.5 3-4.5-1.3-4.5-3"></path></svg>
+              </div>
+            </div>
+            <div>
+              <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">05</div>
+              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Commissions</div>
+              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">Live sales commissions from ConnectWise invoices, by rep.</div>
+            </div>
+            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">COMMISSION REPORTS →</div>
+          </a>
+          </sc-if>
+
         </div>
       </div>
     </sc-if>
@@ -2023,7 +2041,7 @@
 </script>
 
 <script src="assets/clyde/clyde-season.js?v=1"></script>
-<script src="app.js?v=e241c2d"></script>
+<script src="app.js?v=comm1"></script>
 <script src="runtime.js?v=62c06d5"></script>
 <script>
   // Sign-in gate (added 2026-09-15) -- app.js/runtime.js load unconditionally

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign In — Commissions — CodeBlue Technology</title>
+<!-- Sign-in is the shared Microsoft 365 login at /login.php (see auth/session.php);
+     this page only forwards there and comes back to /commissions/ afterward. -->
+<meta http-equiv="refresh" content="0; url=/login.php?return_to=%2Fcommissions%2Findex.html">
+<style>
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; background:#0f1624; font-family:sans-serif; color:#9aa4b5; }
+</style>
+</head>
+<body>
+  <div>Redirecting to Microsoft sign-in…</div>
+  <script>
+    (function () {
+      window.location.replace('/login.php?return_to=' + encodeURIComponent('/commissions/index.html'));
+    })();
+  </script>
+</body>
+</html>

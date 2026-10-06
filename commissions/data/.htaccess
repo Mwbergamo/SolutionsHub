@@ -1,0 +1,5 @@
+# Block all direct HTTP access -- holds the Commissions SQLite database
+# (invoice-level profit and every rep's commission). Only commissions/api/*.php
+# reads/writes it, server-side, via PDO.
+Order allow,deny
+Deny from all
