@@ -420,7 +420,19 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
         $unitCost = null;
         $costNote = null;
         $lineCost = isset($p['cost']) ? (float) $p['cost'] : null;
-        if ($cat !== null && $cat['cost'] !== null && !((float) $cat['cost'] == 0.0 && $lineCost !== null && $lineCost > 0)) {
+        $isAgreementLine = $isAgreement || !empty($p['agreement']['id']);
+        $extCostOverride = null;
+        $catalogCost = ($cat !== null && $cat['cost'] !== null) ? (float) $cat['cost'] : null;
+        if ($isAgreementLine && $lineCost !== null && !($lineCost == 0.0 && $catalogCost !== null && $catalogCost > 0)) {
+            // Agreement items: the cost is what the invoice's Products tab
+            // shows -- the line's own Unit Cost and Ext Cost -- not the
+            // catalog's current cost (they differ once catalog costs change).
+            $unitCost = $lineCost;
+            if (isset($p['extCost']) && is_numeric($p['extCost'])) {
+                $extCostOverride = (float) $p['extCost'];
+            }
+            $costNote = 'Invoice Products tab cost';
+        } elseif ($cat !== null && $cat['cost'] !== null && !((float) $cat['cost'] == 0.0 && $lineCost !== null && $lineCost > 0)) {
             $unitCost = (float) $cat['cost'];
             $costNote = 'Product Catalog cost' . ($lineCost !== null && abs($lineCost - $unitCost) > 0.004 ? ' (invoice line cost was ' . number_format($lineCost, 2) . ')' : '');
         } else {
@@ -441,7 +453,7 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
             'qty' => $qty,
             'price' => round($qty * $unitPrice, 2),
             'unit_cost' => $unitCost,
-            'cost' => round($qty * $unitCost, 2),
+            'cost' => $extCostOverride !== null ? round($extCostOverride, 2) : round($qty * $unitCost, 2),
             'cost_note' => $costNote,
         ];
     }
