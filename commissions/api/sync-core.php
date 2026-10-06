@@ -408,6 +408,10 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
     $notes = [];
     $isAgreement = stripos((string) $inv['apply_to_type'], 'agreement') !== false && !empty($inv['apply_to_id']);
 
+    // The invoice's OWN product lines (ConnectWise invoice > Products tab, i.e.
+    // /procurement/products linked to the invoice) are the source of truth --
+    // for agreement invoices too: they carry the quantity and price actually
+    // billed, the "Level" (agreement) and the line's own unit cost.
     foreach ($products as $p) {
         $qty = (float) ($p['quantity'] ?? 1);
         $unitPrice = (float) ($p['price'] ?? 0);
@@ -415,9 +419,10 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
         $cat = $catId > 0 ? ($catalog[$catId] ?? null) : null;
         $unitCost = null;
         $costNote = null;
-        if ($cat !== null && $cat['cost'] !== null) {
+        $lineCost = isset($p['cost']) ? (float) $p['cost'] : null;
+        if ($cat !== null && $cat['cost'] !== null && !((float) $cat['cost'] == 0.0 && $lineCost !== null && $lineCost > 0)) {
             $unitCost = (float) $cat['cost'];
-            $costNote = 'Product Catalog cost';
+            $costNote = 'Product Catalog cost' . ($lineCost !== null && abs($lineCost - $unitCost) > 0.004 ? ' (invoice line cost was ' . number_format($lineCost, 2) . ')' : '');
         } else {
             $unitCost = (float) ($p['cost'] ?? 0);
             $costNote = $catId > 0
@@ -428,7 +433,7 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
         $desc = (string) ($p['description'] ?? ($cat['description'] ?? ''));
         $ticketId = isset($p['ticket']['id']) ? (int) $p['ticket']['id'] : null;
         $lines[] = [
-            'kind' => 'product',
+            'kind' => ($isAgreement || !empty($p['agreement']['id'])) ? 'agreement' : 'product',
             'item' => trim($ident . ($ident !== '' && $desc !== '' ? ' — ' : '') . $desc),
             'ticket_id' => $ticketId,
             'ticket_summary' => $ticketId !== null ? ($tickets[$ticketId] ?? null) : null,
@@ -481,7 +486,12 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
     }
     $subtotal = (float) $subtotal;
 
-    if ($isAgreement && $agreement !== null) {
+    // Fallback only: if ConnectWise returned NO product lines for an agreement
+    // invoice, rebuild it from the agreement's additions (never both -- that
+    // double counted).
+    $usedAdditions = false;
+    if ($isAgreement && $agreement !== null && $products === []) {
+        $usedAdditions = true;
         $date = (string) $inv['date'];
         foreach ($agreement['additions'] as $a) {
             if (!empty($a['do_not_bill'])) {
@@ -531,8 +541,8 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
         $state = 'no_lines';
         $note = 'ConnectWise returned no products, time or agreement additions for this invoice, so no cost could be assumed. No commission is paid until this is resolved.';
     } elseif (abs($diff) > $tolerance) {
-        if ($isAgreement && $agreement !== null) {
-            // Agreement invoices are built from the agreement's CURRENT
+        if ($usedAdditions) {
+            // Agreement invoices rebuilt from the agreement's CURRENT
             // additions; proration/discounts/changes since then show up here
             // as one adjustment line (no cost) so the invoice still totals.
             $lines[] = [
