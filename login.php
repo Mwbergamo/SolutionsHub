@@ -36,7 +36,7 @@ $auth = new MicrosoftAuth(
     $config['tenant_id'],
     $config['client_id'],
     $config['client_secret'],
-    $config['redirect_uri']
+    auth_redirect_uri($config)
 );
 
 header('Location: ' . $auth->authorizeUrl($state));

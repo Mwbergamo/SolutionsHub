@@ -11,8 +11,8 @@
  *       cost = the invoice Products tab line's own Unit Cost / Ext Cost
  *       (2026-10-06); the Product Catalog's cost is only the backup when the
  *       invoice line carries no cost.
- *       A line that is Do Not Bill or has no price carries no price and no
- *       cost (the catalog cost is never applied to it), so it cannot create a loss.
+ *       A Do Not Bill line (product or time) is ignored completely. A billable
+ *       line with no price takes the invoice line's own cost, never the catalog's.
  *     - Block Time Agreement invoice (no products/time/additions): hours =
  *       invoice subtotal / the agreement's Work Roles Rate (a hard-set rate);
  *       price = the subtotal, cost = those hours x labor cost per hour.

@@ -54,6 +54,17 @@ return [
     // registration (scheme + host + path -- no trailing slash difference).
     'redirect_uri' => 'https://portal.codebluetechnology.com/auth/callback.php',
 
+    // OPTIONAL: only needed when the same install is also served from a
+    // second domain (e.g. codebluetechexpress.com). Maps each hostname to
+    // its own full redirect URI; each one must ALSO be added as a Web
+    // Redirect URI on the same Entra app registration. Any host not listed
+    // falls back to 'redirect_uri' above.
+    // 'redirect_uris' => [
+    //     'portal.codebluetechnology.com' => 'https://portal.codebluetechnology.com/auth/callback.php',
+    //     'codebluetechexpress.com'       => 'https://codebluetechexpress.com/auth/callback.php',
+    //     'www.codebluetechexpress.com'   => 'https://www.codebluetechexpress.com/auth/callback.php',
+    // ],
+
     // Defense-in-depth alongside the tenant restriction above -- only
     // emails ending in this are allowed to complete sign-in, in case the
     // tenant ever grows guest/B2B accounts from other domains.

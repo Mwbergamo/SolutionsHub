@@ -40,6 +40,15 @@ require_once __DIR__ . '/../../relationships/api/connectwise.php';
 const COMMISSIONS_STEP_BATCH = 10;
 const COMMISSIONS_PENDING_LOOKBACK_DAYS = 180;
 
+/**
+ * Bump this whenever the line-building rules change (cost source, Do Not Bill
+ * handling, block time...). The next sync then rebuilds every stored invoice in
+ * the sync window (never locked months -- only an explicit force does that), so
+ * lines saved under the old rules can't linger until ConnectWise happens to
+ * change the invoice.
+ */
+const COMMISSIONS_RULES_VERSION = '2026-10-06-c';
+
 /** All pages of a ConnectWise list; sends `fields` only when given (unrestricted otherwise). */
 function commissions_cw_list_all(string $path, string $conditions, array $fields = [], int $pageSize = 200): array
 {
@@ -96,6 +105,8 @@ function commissions_sync_start(PDO $pdo, int $monthsBack = 1, bool $force = fal
     $windowMonth = $windowStart->format('Y-m');
 
     $pdo->exec('DELETE FROM sync_queue');
+    $rulesChanged = commissions_state_get($pdo, 'rules_version') !== COMMISSIONS_RULES_VERSION;
+    $rebuild = $force || $rulesChanged;
 
     $rows = commissions_cw_list_all(
         '/finance/invoices',
@@ -127,7 +138,7 @@ function commissions_sync_start(PDO $pdo, int $monthsBack = 1, bool $force = fal
         $closed = commissions_status_is_closed($statusName);
         $locked = commissions_month_is_locked($pdo, $month);
         $seen = $existing[$id] ?? null;
-        $changed = $force
+        $changed = $rebuild
             || $seen === null
             || in_array((string) $seen['detail_state'], ['pending', 'error'], true)
             || (string) $seen['status_name'] !== $statusName
@@ -178,6 +189,7 @@ function commissions_sync_start(PDO $pdo, int $monthsBack = 1, bool $force = fal
         'queued' => $queued,
         'skipped' => $skipped,
         'window_from' => $windowMonth,
+        'rules_rebuild' => $rulesChanged,
     ];
 }
 
@@ -447,6 +459,13 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
     // for agreement invoices too: they carry the quantity and price actually
     // billed, the "Level" (agreement) and the line's own unit cost.
     foreach ($products as $p) {
+        // Bill Customer = Do Not Bill: ConnectWise isn't charging for this line,
+        // so it is ignored by commissions completely -- no price, no cost, no
+        // catalog fallback -- and can't count for or against any rep.
+        $doNotBill = strcasecmp((string) ($p['billableOption'] ?? ''), 'DoNotBill') === 0;
+        if ($doNotBill) {
+            continue;
+        }
         $qty = (float) ($p['quantity'] ?? 1);
         $unitPrice = (float) ($p['price'] ?? 0);
         $catId = (int) ($p['catalogItem']['id'] ?? 0);
@@ -460,15 +479,12 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
         // price has nothing to earn commission on and nothing to cost: use the
         // invoice line's own cost (normally $0) and NEVER the catalog's, which
         // would otherwise book a loss for a line the customer isn't charged for.
-        $doNotBill = strcasecmp((string) ($p['billableOption'] ?? ''), 'DoNotBill') === 0;
-        if ($doNotBill || abs($unitPrice) < 0.00005) {
+        if (abs($unitPrice) < 0.00005) {
             $unitCost = $lineCost ?? 0.0;
             if ($lineCost !== null && isset($p['extCost']) && is_numeric($p['extCost'])) {
                 $extCostOverride = (float) $p['extCost'];
             }
-            $costNote = $doNotBill
-                ? 'Do Not Bill -- not charged, so no price; cost taken from the invoice line (catalog cost not used)'
-                : 'No price on this line -- cost taken from the invoice line (catalog cost not used)';
+            $costNote = 'No price on this line -- cost taken from the invoice line (catalog cost not used)';
         } elseif ($lineCost !== null && !($lineCost == 0.0 && $catalogCost !== null && $catalogCost > 0)) {
             // The invoice's own Products-tab line is the source of truth for
             // cost: its Unit Cost and Ext Cost, for every product line
@@ -506,6 +522,9 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
     }
 
     foreach ($times as $t) {
+        if (strcasecmp((string) ($t['billableOption'] ?? ''), 'DoNotBill') === 0) {
+            continue; // Do Not Bill time is ignored by commissions, like Do Not Bill products
+        }
         $hours = 0.0;
         foreach (['invoiceHours', 'hoursBilled', 'actualHours'] as $f) {
             if (isset($t[$f]) && (float) $t[$f] > 0) {
@@ -834,6 +853,9 @@ function commissions_sync_finish(PDO $pdo): void
         $lock->execute([':m' => $m, ':t' => gmdate('c')]);
     }
     commissions_state_set($pdo, 'sync_finished_at', gmdate('c'));
+    // Only now is every queued invoice rebuilt under the current rules, so an
+    // interrupted sync will redo the rebuild on its next start.
+    commissions_state_set($pdo, 'rules_version', COMMISSIONS_RULES_VERSION);
 }
 
 function commissions_sync_status(PDO $pdo): array

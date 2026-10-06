@@ -73,6 +73,30 @@ function auth_current_user(): ?array
     ];
 }
 
+/**
+ * The Microsoft redirect URI to use for THIS request's domain. The same
+ * SolutionsHub code can now be served from more than one domain (e.g.
+ * portal.codebluetechnology.com and codebluetechexpress.com), and Microsoft
+ * requires the redirect URI to match the domain the person started on.
+ *
+ * auth-config.php may define an optional 'redirect_uris' map of
+ * host => full redirect URI. If the request's host is in that map, that URI
+ * is used; otherwise (and always, when the map is absent) the original
+ * single 'redirect_uri' applies, so existing single-domain setups behave
+ * exactly as before. The value always comes from the config, never from
+ * the request, so a forged Host header cannot choose an arbitrary URI.
+ */
+function auth_redirect_uri(array $config): string
+{
+    $host = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
+    $host = preg_replace('/:\d+$/', '', $host) ?? $host;
+    $map = $config['redirect_uris'] ?? null;
+    if (is_array($map) && $host !== '' && isset($map[$host]) && is_string($map[$host]) && $map[$host] !== '') {
+        return $map[$host];
+    }
+    return (string) $config['redirect_uri'];
+}
+
 /** Clears the shared session -- used by /logout.php. */
 function auth_logout(): void
 {

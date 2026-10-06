@@ -55,7 +55,7 @@ if (!is_file($configPath)) {
 /** @var array{tenant_id:string,client_id:string,client_secret:string,redirect_uri:string,allowed_email_domain?:string} $config */
 $config = require $configPath;
 
-$auth = new MicrosoftAuth($config['tenant_id'], $config['client_id'], $config['client_secret'], $config['redirect_uri']);
+$auth = new MicrosoftAuth($config['tenant_id'], $config['client_id'], $config['client_secret'], auth_redirect_uri($config));
 
 try {
     $accessToken = $auth->exchangeCodeForAccessToken($code);
