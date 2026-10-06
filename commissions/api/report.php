@@ -7,6 +7,8 @@
  *      -> every commission line behind a dashboard number, with invoice,
  *         customer, territory, item, ticket summary, hours, assumed cost,
  *         price, rep %, and commission $. Lines that lost money have is_loss.
+ * GET ?action=territories&bucket=pending|current|last|all (or &month=YYYY-MM)
+ *      -> Hardware/Software vs Agreements vs Service totals per company territory
  * GET ?action=months
  *      -> months that have saved data (closed invoices), with per-rep totals
  *         and whether the month is locked (frozen).
@@ -101,8 +103,8 @@ if ($action === 'lines') {
 
     $sql = 'SELECT i.id AS invoice_id, i.invoice_number, i.invoice_date, i.company_name, i.territory, i.status_name, i.is_closed,
                    i.detail_state, i.detail_note, i.agreement_start, ' . $repCols . ',
-                   l.id AS line_id, l.kind, l.item, l.ticket_id, l.ticket_summary, l.hours, l.qty, l.price, l.cost, l.cost_note,
-                   l.gp, l.over_year, l.is_loss
+                   l.id AS line_id, l.kind, l.item, l.ticket_id, l.ticket_summary, l.hours, l.actual_hours, l.member, l.qty, l.price, l.cost, l.cost_note,
+                   l.gp, l.over_year, l.is_loss, CASE WHEN l.kind = \'product\' THEN \'hardware\' WHEN l.kind = \'time\' THEN \'service\' WHEN l.kind = \'agreement\' THEN \'agreement\' WHEN l.kind = \'adjustment\' AND i.apply_to_type LIKE \'%greement%\' THEN \'agreement\' ELSE \'other\' END AS category
             FROM invoice_lines l
             JOIN invoices i ON i.id = l.invoice_id
             ' . $join . '
@@ -116,7 +118,7 @@ if ($action === 'lines') {
     $seen = [];
     $seenLines = [];
     foreach ($rows as &$row) {
-        foreach (['hours', 'qty', 'price', 'cost', 'gp', 'pct', 'commission'] as $f) {
+        foreach (['hours', 'actual_hours', 'qty', 'price', 'cost', 'gp', 'pct', 'commission'] as $f) {
             if ($row[$f] !== null) {
                 $row[$f] = (float) $row[$f];
             }
@@ -177,6 +179,65 @@ if ($action === 'lines') {
         'labor_cost_per_hour' => (float) commissions_setting($pdo, 'labor_cost_per_hour', '90'),
         'generated_at' => gmdate('c'),
     ]);
+}
+
+if ($action === 'territories') {
+    // Hardware/Software vs Agreements vs Service (vs other), by company territory,
+    // for one period. Commission = what the payees earn on those lines (all payees summed).
+    $bucket = (string) ($_GET['bucket'] ?? 'all');
+    $month = (string) ($_GET['month'] ?? '');
+    $cur = commissions_month_key(0);
+    $last = commissions_month_key(1);
+    $params = [];
+    if ($month !== '') {
+        if (preg_match('/^\d{4}-\d{2}$/', $month) !== 1) {
+            commissions_respond(400, ['ok' => false, 'error' => 'month must be YYYY-MM.']);
+        }
+        $where = 'i.is_closed = 1 AND i.month = :m';
+        $params[':m'] = $month;
+        $label = 'Closed invoices — ' . commissions_period_label($month);
+    } elseif ($bucket === 'pending') {
+        $where = 'i.is_closed = 0';
+        $label = 'Pending (not yet Closed)';
+    } elseif ($bucket === 'current' || $bucket === 'last') {
+        $where = 'i.is_closed = 1 AND i.month = :m';
+        $params[':m'] = $bucket === 'current' ? $cur : $last;
+        $label = ($bucket === 'current' ? 'Current month' : 'Last month') . ' — ' . commissions_period_label($params[':m']);
+    } else {
+        $where = '(i.is_closed = 0 OR (i.is_closed = 1 AND i.month IN (:mc, :ml)))';
+        $params[':mc'] = $cur;
+        $params[':ml'] = $last;
+        $label = 'Pending + ' . commissions_period_label($cur) . ' + ' . commissions_period_label($last);
+    }
+    $stmt = $pdo->prepare(
+        "SELECT COALESCE(NULLIF(i.territory, ''), '(no territory)') AS territory, CASE WHEN l.kind = 'product' THEN 'hardware' WHEN l.kind = 'time' THEN 'service' WHEN l.kind = 'agreement' THEN 'agreement' WHEN l.kind = 'adjustment' AND i.apply_to_type LIKE '%greement%' THEN 'agreement' ELSE 'other' END AS category,
+                COUNT(DISTINCT i.id) AS invoices, SUM(l.price) AS revenue, SUM(l.cost) AS cost, SUM(l.gp) AS gp, SUM(l.commission) AS commission,
+                SUM(l.is_loss) AS loss_lines
+         FROM invoices i JOIN invoice_lines l ON l.invoice_id = i.id
+         WHERE $where GROUP BY territory, category ORDER BY territory"
+    );
+    $stmt->execute($params);
+    $reps = array_values(array_filter(commissions_reps($pdo), static fn (array $r): bool => !empty($r['active'])));
+    $terr = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $t = (string) $r['territory'];
+        if (!isset($terr[$t])) {
+            $names = [];
+            foreach (commissions_reps_for_territory($reps, $t) as $rid) {
+                foreach ($reps as $rp) {
+                    if ((int) $rp['id'] === $rid) {
+                        $names[] = $rp['name'];
+                    }
+                }
+            }
+            $terr[$t] = ['territory' => $t, 'payees' => $names, 'cats' => []];
+        }
+        $terr[$t]['cats'][(string) $r['category']] = [
+            'invoices' => (int) $r['invoices'], 'revenue' => round((float) $r['revenue'], 2), 'cost' => round((float) $r['cost'], 2),
+            'gp' => round((float) $r['gp'], 2), 'commission' => round((float) $r['commission'], 2), 'loss_lines' => (int) $r['loss_lines'],
+        ];
+    }
+    commissions_respond(200, ['ok' => true, 'label' => $label, 'territories' => array_values($terr), 'generated_at' => gmdate('c')]);
 }
 
 if ($action === 'months') {

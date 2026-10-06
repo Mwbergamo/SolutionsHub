@@ -92,8 +92,8 @@ if ($action === 'lines') {
     $stmt = $pdo->prepare(
         "SELECT i.id AS invoice_id, i.invoice_number, i.invoice_date, i.company_name, i.territory, i.status_name, i.is_closed,
                 i.detail_state, i.detail_note, i.agreement_start, 0 AS rep_id, 'Sales manager' AS rep_name,
-                l.id AS line_id, l.kind, l.item, l.ticket_id, l.ticket_summary, l.hours, l.qty, l.price, l.cost, l.cost_note,
-                l.gp, l.over_year, l.is_loss
+                l.id AS line_id, l.kind, l.item, l.ticket_id, l.ticket_summary, l.hours, l.actual_hours, l.member, l.qty, l.price, l.cost, l.cost_note,
+                l.gp, l.over_year, l.is_loss, CASE WHEN l.kind = 'product' THEN 'hardware' WHEN l.kind = 'time' THEN 'service' WHEN l.kind = 'agreement' THEN 'agreement' WHEN l.kind = 'adjustment' AND i.apply_to_type LIKE '%greement%' THEN 'agreement' ELSE 'other' END AS category
          FROM invoice_lines l JOIN invoices i ON i.id = l.invoice_id
          WHERE $where ORDER BY i.invoice_date, i.invoice_number, l.id"
     );
@@ -102,7 +102,7 @@ if ($action === 'lines') {
     $totals = ['commission' => 0.0, 'revenue' => 0.0, 'cost' => 0.0, 'gp' => 0.0, 'loss_lines' => 0, 'loss_amount' => 0.0, 'invoices' => 0, 'needs_review' => 0];
     $seen = [];
     foreach ($rows as &$row) {
-        foreach (['hours', 'qty', 'price', 'cost', 'gp'] as $f) {
+        foreach (['hours', 'actual_hours', 'qty', 'price', 'cost', 'gp'] as $f) {
             if ($row[$f] !== null) {
                 $row[$f] = (float) $row[$f];
             }

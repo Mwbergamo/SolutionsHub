@@ -92,7 +92,9 @@ function commissions_migrate(PDO $pdo): void
             item TEXT,
             ticket_id INTEGER,
             ticket_summary TEXT,
-            hours REAL,
+            hours REAL,                           -- billable (invoiced) hours
+            actual_hours REAL,                    -- hours actually worked; labor cost is based on these
+            member TEXT,                          -- technician (ConnectWise member) on time lines
             qty REAL,
             price REAL NOT NULL DEFAULT 0,        -- extended price billed
             cost REAL NOT NULL DEFAULT 0,         -- extended assumed cost
@@ -178,6 +180,15 @@ function commissions_migrate(PDO $pdo): void
     $ins = $pdo->prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (:k, :v)');
     foreach ($defaults as $k => $v) {
         $ins->execute([':k' => $k, ':v' => $v]);
+    }
+
+    // Databases created before actual_hours/member existed.
+    $cols = array_column($pdo->query('PRAGMA table_info(invoice_lines)')->fetchAll(PDO::FETCH_ASSOC), 'name');
+    if (!in_array('actual_hours', $cols, true)) {
+        $pdo->exec('ALTER TABLE invoice_lines ADD COLUMN actual_hours REAL');
+    }
+    if (!in_array('member', $cols, true)) {
+        $pdo->exec('ALTER TABLE invoice_lines ADD COLUMN member TEXT');
     }
 
     $payees = [

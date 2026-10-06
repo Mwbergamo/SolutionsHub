@@ -19,6 +19,7 @@
     histYear: null, histMonth: null,
     trendsRep: null, trends: null, trendsLoading: false,
     settings: null, settingsLoading: false, settingsMsg: null,
+    terr: null, terrPeriod: 'all', terrLoading: false,
     mgr: null                   // Michael's private sales-manager commission (only fetched for him)
   };
 
@@ -168,7 +169,7 @@
       return '<button class="nav-btn' + (state.view === v ? ' active' : '') + '" type="button" data-action="view" data-view="' + v + '">' + label + '</button>';
     };
     return '<div class="topbar no-print"><div class="topbar-left"><div><div class="brand">Commissions</div><div class="brand-sub">CodeBlue Technology</div></div></div>' +
-      '<div class="topbar-nav">' + tab('dashboard', 'Dashboard') + tab('history', 'History') + tab('trends', 'Rep Trends') + tab('settings', 'Settings') + '</div>' +
+      '<div class="topbar-nav">' + tab('dashboard', 'Dashboard') + tab('history', 'History') + tab('trends', 'Rep Trends') + tab('territories', 'By Territory') + tab('settings', 'Settings') + '</div>' +
       '<div class="topbar-right"><a class="back-to-hub" href="../index.html">← SolutionsHub</a></div></div>';
   }
 
@@ -231,7 +232,7 @@
     h += '</tbody></table>';
     h += '<div class="synced-note no-print">Last synced ' + esc(fmtStamp(d.sync && d.sync.finished_at)) +
       ' &nbsp; <button class="btn small secondary" type="button" data-action="sync" data-months="1"' + (state.sync.running ? ' disabled' : '') + '>Sync now</button>' +
-      ' &nbsp; Labor assumed at ' + money(d.labor_cost_per_hour) + '/hr · a losing line is subtracted from the rep’s commission.</div>';
+      ' &nbsp; Labor assumed at ' + money(d.labor_cost_per_hour) + '/hr of actual time · a losing line is subtracted from the rep’s commission.</div>';
     h += managerCardHtml();
     return h;
   }
@@ -271,7 +272,7 @@
   // ---- report (popover + printable) ---------------------------------------
 
   function openReport(repId, bucket, month) {
-    state.report = { loading: true, data: null, error: null, lossOnly: false };
+    state.report = { loading: true, data: null, error: null, lossOnly: false, cat: 'all' };
     render();
     var url = repId === 'manager'
       ? 'api/manager.php?action=lines&bucket=' + encodeURIComponent(bucket)
@@ -283,8 +284,62 @@
     }).catch(function () { state.report.loading = false; state.report.error = 'Could not load the report.'; render(); });
   }
 
-  function reportDocHtml(data, lossOnly) {
-    var rows = data.rows;
+  var CATS = [['hardware', 'Hardware / Software'], ['agreement', 'Agreements'], ['service', 'Service (time)'], ['other', 'Other / unresolved']];
+  function catLabel(k) { for (var i = 0; i < CATS.length; i++) if (CATS[i][0] === k) return CATS[i][1]; return k; }
+  function catOptions(rows, cur) {
+    var present = {};
+    rows.forEach(function (r) { present[r.category] = true; });
+    return '<option value="all"' + (cur === 'all' ? ' selected' : '') + '>All three together</option>' +
+      CATS.filter(function (c) { return present[c[0]] || c[0] === cur; }).map(function (c) { return '<option value="' + c[0] + '"' + (cur === c[0] ? ' selected' : '') + '>' + c[1] + ' only</option>'; }).join('');
+  }
+  function computeTotals(rows) {
+    var t = { commission: 0, revenue: 0, cost: 0, gp: 0, loss_lines: 0, loss_amount: 0, invoices: 0, needs_review: 0 }, lines = {}, inv = {};
+    rows.forEach(function (r) {
+      t.commission += r.commission;
+      if (!lines[r.line_id]) {
+        lines[r.line_id] = 1; t.revenue += r.price; t.cost += r.cost; t.gp += r.gp;
+        if (r.is_loss) { t.loss_lines++; t.loss_amount += r.gp; }
+      }
+      if (!inv[r.invoice_id]) { inv[r.invoice_id] = 1; t.invoices++; if (r.detail_state && r.detail_state !== 'ok') t.needs_review++; }
+    });
+    return t;
+  }
+  // Territory x category summary (margin and commission) for the rows in a report.
+  function categorySummaryHtml(rows) {
+    var terr = {}, order = [], present = {};
+    rows.forEach(function (r) {
+      var k = r.territory || '(no territory)';
+      if (!terr[k]) { terr[k] = {}; order.push(k); }
+      var c = terr[k][r.category] = terr[k][r.category] || { gp: 0, com: 0, seen: {} };
+      if (!c.seen[r.line_id]) { c.seen[r.line_id] = 1; c.gp += r.gp; }
+      c.com += r.commission;
+      present[r.category] = true;
+    });
+    var cats = CATS.filter(function (c) { return present[c[0]]; });
+    if (!order.length) return '';
+    var h = '<div class="report-section"><h4>Summary by territory</h4><table class="report"><thead><tr><th>Territory</th>' +
+      cats.map(function (c) { return '<th class="r">' + c[1] + '<br>margin / commission</th>'; }).join('') + '<th class="r">Total<br>margin / commission</th></tr></thead><tbody>';
+    var tot = {};
+    order.sort().forEach(function (k) {
+      var gp = 0, com = 0;
+      h += '<tr><td>' + esc(k) + '</td>';
+      cats.forEach(function (c) {
+        var v = terr[k][c[0]];
+        h += '<td class="r">' + (v ? money(v.gp) + ' / <b>' + money(v.com) + '</b>' : '—') + '</td>';
+        if (v) { gp += v.gp; com += v.com; tot[c[0]] = tot[c[0]] || { gp: 0, com: 0 }; tot[c[0]].gp += v.gp; tot[c[0]].com += v.com; }
+      });
+      h += '<td class="r">' + money(gp) + ' / <b>' + money(com) + '</b></td></tr>';
+    });
+    var tg = 0, tc = 0;
+    h += '<tr class="total"><td>All territories</td>';
+    cats.forEach(function (c) { var v = tot[c[0]] || { gp: 0, com: 0 }; tg += v.gp; tc += v.com; h += '<td class="r">' + money(v.gp) + ' / ' + money(v.com) + '</td>'; });
+    return h + '<td class="r">' + money(tg) + ' / ' + money(tc) + '</td></tr></tbody></table></div>';
+  }
+
+  function reportDocHtml(data, lossOnly, cat) {
+    cat = cat || 'all';
+    var allRows = data.rows;
+    var rows = cat === 'all' ? allRows : allRows.filter(function (r) { return r.category === cat; });
     var rep = data.rep || {};
     var rateLine = '';
     if (rep.kind === 'rep') {
@@ -296,10 +351,10 @@
     } else if (rep.kind === 'house') {
       rateLine = 'House accounts do not pay commission; shown for reference.';
     }
-    var t = data.totals;
+    var t = cat === 'all' ? data.totals : computeTotals(rows);
     var h = '<div class="report-doc"><h1 class="report-title">CodeBlue Technology — Commission Report</h1>' +
-      '<div class="report-meta"><b>' + esc(rep.name || '') + '</b> · ' + esc(data.title) + '<br>' + esc(rateLine) +
-      ' Labor cost assumed at ' + money(data.labor_cost_per_hour) + ' per hour. Generated ' + esc(new Date(data.generated_at).toLocaleString()) + '.</div>' +
+      '<div class="report-meta"><b>' + esc(rep.name || '') + '</b> · ' + esc(data.title) + (cat !== 'all' ? ' · <b>' + catLabel(cat) + ' only</b>' : '') + '<br>' + esc(rateLine) +
+      ' Labor cost assumed at ' + money(data.labor_cost_per_hour) + ' per hour worked (actual hours). Generated ' + esc(new Date(data.generated_at).toLocaleString()) + '.</div>' +
       '<div class="report-summary">' +
         '<div><span>Commission</span><b>' + money(t.commission) + '</b></div>' +
         '<div><span>Revenue (price)</span><b>' + money(t.revenue) + '</b></div>' +
@@ -311,6 +366,7 @@
     if (data.late_after_lock) {
       h += '<div class="report-meta"><b>Note:</b> ' + data.late_after_lock + ' invoice(s) in this month were closed after the month was locked and are included.</div>';
     }
+    if (cat === 'all') h += categorySummaryHtml(allRows);
     var losses = rows.filter(function (r) { return r.is_loss; });
     if (losses.length) {
       h += '<div class="report-section"><h4>Transactions that lost money (cost higher than price)</h4>' + tableHtml(losses, false) + '</div>';
@@ -327,34 +383,51 @@
         h += '<div class="report-section' + (gi > 0 ? ' rep-break' : '') + '"><h4>' + esc(g.name) + ' — commission ' + money(sum) + '</h4>' + tableHtml(g.rows, true) + '</div>';
       });
     } else {
-      h += '<div class="report-section"><h4>' + (lossOnly ? 'Losing lines only' : 'All lines') + '</h4>' + tableHtml(shown, true) + '</div>';
+      h += '<div class="report-section"><h4>' + (lossOnly ? 'Losing lines only' : (cat === 'all' ? 'All lines' : catLabel(cat))) + '</h4>' + tableHtml(shown, true) + '</div>';
     }
     return h + '</div>';
   }
 
+  // Laid out like the existing ConnectWise "Service Commission" report: grouped
+  // under each company territory, one row per line with the technician, ticket,
+  // billable vs actual hours, billable amount, cost, margin and commission.
   function tableHtml(rows, withTotal) {
     if (!rows.length) return '<div class="hint">Nothing to show.</div>';
-    var h = '<table class="report"><colgroup><col style="width:10%"><col style="width:13%"><col style="width:8%"><col style="width:16%"><col style="width:14%"><col style="width:5%"><col style="width:8%"><col style="width:8%"><col style="width:5%"><col style="width:9%"></colgroup>' +
-      '<thead><tr><th>Invoice</th><th>Customer</th><th>Territory</th><th>Item</th><th>Ticket summary</th><th class="r">Time</th><th class="r">Cost</th><th class="r">Price</th><th class="r">Rate</th><th class="r">Commission</th></tr></thead><tbody>';
-    var lastInv = null, sum = 0;
+    var groups = [], idx = {};
     rows.forEach(function (r) {
-      sum += r.commission;
-      var flag = r.detail_state && r.detail_state !== 'ok';
-      h += '<tr class="' + (r.is_loss ? 'loss' : '') + '"><td>' + esc(r.invoice_number) + (flag ? ' ⚠' : '') + (r.is_closed === 0 || r.is_closed === '0' ? ' <span class="hint">(pending)</span>' : '') + '<br><span class="hint" style="white-space:nowrap">' + esc(fmtDate(r.invoice_date)) + '</span></td>' +
-        '<td>' + esc(r.company_name) + '</td><td>' + esc(r.territory || '—') + '</td>' +
-        '<td>' + esc(r.item || '') + (r.qty && r.kind !== 'time' ? ' <span class="hint">× ' + r.qty + '</span>' : '') + (r.is_loss ? '<span class="loss-tag">LOSS</span>' : '') + '</td>' +
-        '<td>' + esc(r.ticket_summary || '') + '</td>' +
-        '<td class="r">' + (r.hours ? r.hours + ' h' : '') + '</td>' +
-        '<td class="r">' + money(r.cost) + '</td><td class="r">' + money(r.price) + '</td>' +
-        '<td class="r">' + pctText(r.pct) + (r.over_year ? '*' : '') + '</td>' +
-        '<td class="r"><b>' + money(r.commission) + '</b></td></tr>';
-      if (flag && lastInv !== r.invoice_id && r.detail_note) {
-        h += '<tr class="note"><td colspan="10">⚠ Invoice ' + esc(r.invoice_number) + ': ' + esc(r.detail_note) + '</td></tr>';
-      }
-      lastInv = r.invoice_id;
+      var k = r.territory || '(no territory)';
+      if (idx[k] == null) { idx[k] = groups.length; groups.push({ name: k, rows: [] }); }
+      groups[idx[k]].rows.push(r);
     });
-    if (withTotal) h += '<tr class="total"><td colspan="9" class="r">Total commission</td><td class="r">' + money(sum) + '</td></tr>';
-    h += '</tbody></table>';
+    var h = '<table class="report"><colgroup><col style="width:9%"><col style="width:15%"><col style="width:24%"><col style="width:10%"><col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:6%"><col style="width:9%"></colgroup>' +
+      '<thead><tr><th>Invoice</th><th>Customer / Tech</th><th>Ticket / Item</th><th class="r">Hours<br>bill / act</th><th class="r">Billable amt</th><th class="r">Cost</th><th class="r">Margin</th><th class="r">Rate</th><th class="r">Commission</th></tr></thead>';
+    var grand = { price: 0, cost: 0, gp: 0, com: 0 };
+    groups.forEach(function (g) {
+      var t = { price: 0, cost: 0, gp: 0, com: 0 }, lastInv = null;
+      h += '<tbody><tr class="terr"><td colspan="9">' + esc(g.name) + ' <span class="hint">(' + g.rows.length + ' line' + (g.rows.length === 1 ? '' : 's') + ')</span></td></tr>';
+      g.rows.forEach(function (r) {
+        t.price += r.price; t.cost += r.cost; t.gp += r.gp; t.com += r.commission;
+        var flag = r.detail_state && r.detail_state !== 'ok';
+        var pending = r.is_closed === 0 || r.is_closed === '0';
+        var tick = r.ticket_id ? '#' + r.ticket_id + (r.ticket_summary ? ' ' + esc(r.ticket_summary) : '') : (r.ticket_summary ? esc(r.ticket_summary) : '');
+        var hrs = r.hours ? (r.hours + (r.actual_hours != null && r.actual_hours !== r.hours ? ' / ' + r.actual_hours : ' / ' + r.hours)) : '';
+        h += '<tr class="' + (r.is_loss ? 'loss' : '') + '"><td>' + esc(r.invoice_number) + (flag ? ' ⚠' : '') + (pending ? ' <span class="hint">(pending)</span>' : '') + '<br><span class="hint" style="white-space:nowrap">' + esc(fmtDate(r.invoice_date)) + '</span></td>' +
+          '<td>' + esc(r.company_name) + (r.member ? '<br><span class="hint">' + esc(r.member) + '</span>' : '') + '</td>' +
+          '<td>' + (r.kind === 'time' ? '' : '<b>' + esc(r.item || '') + '</b>' + (r.qty ? ' <span class="hint">× ' + r.qty + '</span>' : '') + '<br>') + tick + (r.is_loss ? '<span class="loss-tag">LOSS</span>' : '') + '</td>' +
+          '<td class="r">' + hrs + '</td>' +
+          '<td class="r">' + money(r.price) + '</td><td class="r">' + money(r.cost) + '</td><td class="r">' + money(r.gp) + '</td>' +
+          '<td class="r">' + pctText(r.pct) + (r.over_year ? '*' : '') + '</td>' +
+          '<td class="r"><b>' + money(r.commission) + '</b></td></tr>';
+        if (flag && lastInv !== r.invoice_id && r.detail_note) {
+          h += '<tr class="note"><td colspan="9">⚠ Invoice ' + esc(r.invoice_number) + ': ' + esc(r.detail_note) + '</td></tr>';
+        }
+        lastInv = r.invoice_id;
+      });
+      h += '<tr class="subtotal"><td colspan="4" class="r">' + esc(g.name) + ' total</td><td class="r">' + money(t.price) + '</td><td class="r">' + money(t.cost) + '</td><td class="r">' + money(t.gp) + '</td><td></td><td class="r"><b>' + money(t.com) + '</b></td></tr></tbody>';
+      grand.price += t.price; grand.cost += t.cost; grand.gp += t.gp; grand.com += t.com;
+    });
+    if (withTotal) h += '<tbody><tr class="total"><td colspan="4" class="r">Total</td><td class="r">' + money(grand.price) + '</td><td class="r">' + money(grand.cost) + '</td><td class="r">' + money(grand.gp) + '</td><td></td><td class="r">' + money(grand.com) + '</td></tr></tbody>';
+    h += '</table>';
     if (rows.some(function (r) { return r.over_year; })) h += '<div class="hint">* Agreement is 365 or more days old at the invoice date — reduced rate applies.</div>';
     return h;
   }
@@ -365,12 +438,60 @@
     var body;
     if (r.loading) body = '<div class="loading">Loading report…</div>';
     else if (r.error) body = '<div class="banner error">' + esc(r.error) + '</div>';
-    else body = reportDocHtml(r.data, r.lossOnly);
+    else body = reportDocHtml(r.data, r.lossOnly, r.cat);
     return '<div class="modal-backdrop" data-action="close-report-bg"><div class="modal" role="dialog">' +
       '<div class="modal-head no-print"><h3>' + (r.data ? esc(r.data.rep.name + ' — ' + r.data.title) : 'Report') + '</h3><div class="actions">' +
+      (r.data ? '<select data-change="report-cat" aria-label="Show">' + catOptions(r.data.rows, r.cat) + '</select>' : '') +
       '<label class="hint"><input type="checkbox" data-action="toggle-loss"' + (r.lossOnly ? ' checked' : '') + '> Losing lines only</label>' +
       '<button class="btn" type="button" data-action="print">Print / Save PDF</button>' +
       '<button class="btn secondary" type="button" data-action="close-report">Close</button></div></div>' + body + '</div></div>';
+  }
+
+  // ---- by territory: Hardware/Software vs Agreements vs Service -----------
+
+  function loadMonthsQuiet() {
+    api('api/report.php?action=months').then(function (r) { if (r.data && r.data.ok) { state.months = r.data; render(); } });
+  }
+  function loadTerritories() {
+    state.terrLoading = true; render();
+    var p = state.terrPeriod;
+    var url = 'api/report.php?action=territories&' + (/^\d{4}-\d{2}$/.test(p) ? 'month=' + p : 'bucket=' + p);
+    api(url).then(function (r) {
+      state.terrLoading = false;
+      if (r.data && r.data.ok) state.terr = r.data; else state.error = (r.data && r.data.error) || 'Could not load.';
+      render();
+    }).catch(function () { state.terrLoading = false; state.error = 'Could not load.'; render(); });
+  }
+  function territoriesHtml() {
+    var h = '<h2 class="view-title">Commissions by Territory</h2><div class="view-sub">Hardware / Software, Agreements and Service (time) reported separately for each company territory — margin and what the payees earn on it. Includes house territories (no commission).</div>';
+    var opts = [['all', 'Pending + Current + Last month'], ['pending', 'Pending (not yet Closed)'], ['current', 'Current month'], ['last', 'Last month']];
+    ((state.months && state.months.months) || []).forEach(function (m) { opts.push([m.month, m.label + ' (closed)']); });
+    h += '<div class="controls no-print"><label class="field">Period<select data-change="terr-period">' + opts.map(function (o) { return '<option value="' + o[0] + '"' + (state.terrPeriod === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select></label>' +
+      '<button class="btn" type="button" data-action="print">Print / Save PDF</button></div>';
+    var t = state.terr;
+    if (!t) return h + '<div class="loading">Loading…</div>';
+    h += '<div class="print-only"><h1 class="report-title">CodeBlue Technology — Commissions by Territory</h1></div><div class="report-meta"><b>' + esc(t.label) + '</b> · generated ' + esc(new Date(t.generated_at).toLocaleString()) + '</div>';
+    if (!t.territories.length) return h + '<div class="empty">No invoices in this period.</div>';
+    var cats = CATS.filter(function (c) { return t.territories.some(function (x) { return x.cats[c[0]]; }); });
+    h += '<table class="report terr-table"><thead><tr><th>Territory</th><th>Pays</th>' +
+      cats.map(function (c) { return '<th class="r">' + c[1] + '<br>revenue · margin · <b>commission</b></th>'; }).join('') + '<th class="r">Total<br>margin · <b>commission</b></th></tr></thead><tbody>';
+    var tot = {}, gT = 0, cT = 0;
+    t.territories.forEach(function (x) {
+      var g = 0, c = 0;
+      h += '<tr><td><b>' + esc(x.territory) + '</b></td><td>' + (x.payees.length ? esc(x.payees.join(' + ')) : '<span class="hint">House</span>') + '</td>';
+      cats.forEach(function (k) {
+        var v = x.cats[k[0]];
+        if (v) {
+          h += '<td class="r">' + money(v.revenue) + ' · <span class="' + (v.gp < 0 ? 'neg' : '') + '">' + money(v.gp) + '</span> · <b>' + money(v.commission) + '</b><br><span class="hint">' + v.invoices + ' inv' + (v.loss_lines ? ' · <span class="loss">' + v.loss_lines + ' loss</span>' : '') + '</span></td>';
+          g += v.gp; c += v.commission; tot[k[0]] = tot[k[0]] || { rev: 0, gp: 0, com: 0 }; tot[k[0]].rev += v.revenue; tot[k[0]].gp += v.gp; tot[k[0]].com += v.commission;
+        } else h += '<td class="r hint">—</td>';
+      });
+      h += '<td class="r">' + money(g) + ' · <b>' + money(c) + '</b></td></tr>';
+      gT += g; cT += c;
+    });
+    h += '<tr class="total"><td colspan="2" class="r">All territories</td>' + cats.map(function (k) { var v = tot[k[0]] || { rev: 0, gp: 0, com: 0 }; return '<td class="r">' + money(v.rev) + ' · ' + money(v.gp) + ' · ' + money(v.com) + '</td>'; }).join('') + '<td class="r">' + money(gT) + ' · ' + money(cT) + '</td></tr></tbody></table>';
+    h += '<div class="hint" style="margin-top:8px">For the invoice-level lines, open any rep’s report and pick Hardware / Software, Agreements or Service from the “Show” menu.</div>';
+    return h;
   }
 
   // ---- history ------------------------------------------------------------
@@ -530,7 +651,7 @@
     if (!s) return h + '<div class="loading">Loading…</div>';
     h += '<div class="card"><h3>Labor cost</h3><div class="controls">' +
       '<label class="field">Labor cost per hour ($)<input type="number" step="0.01" min="0" id="set-labor" value="' + esc(s.settings.labor_cost_per_hour) + '"></label></div>' +
-      '<div class="hint">Every hour of time is costed at the labor rate above regardless of what the customer was billed. A line that loses money is subtracted from the rep’s commission and always appears in the drill-downs and printed reports.</div></div>';
+      '<div class="hint">Time is costed at the labor rate above times the hours actually worked (as in the ConnectWise Service Commission report), regardless of what the customer was billed. A line that loses money is subtracted from the rep’s commission and always appears in the drill-downs and printed reports.</div></div>';
 
     h += '<div class="card"><h3>Who gets paid</h3><div class="hint" style="margin-bottom:8px">A ConnectWise territory pays every rep below whose words appear in it (whole words, any order). “Arcus + Chester Sienko” matches both Arcus and Chester, so it splits; “Moe” matches “Moe Okeilli (new accounts)” and “Trey + Moe Okeilli”. A territory that matches nobody is a house account and pays nothing.</div><table class="data"><thead><tr><th>Rep</th><th>Territory words (comma separated)</th><th>Commission % of gross profit</th><th>% on Agreement invoices after 1 year<br><span class="hint" style="text-transform:none">(leave empty for no change)</span></th></tr></thead><tbody>';
     s.reps.forEach(function (r) {
@@ -594,6 +715,7 @@
     var body;
     if (state.view === 'history') body = historyHtml();
     else if (state.view === 'trends') body = trendsHtml();
+    else if (state.view === 'territories') body = territoriesHtml();
     else if (state.view === 'settings') body = settingsHtml();
     else body = dashboardHtml();
     document.body.classList.toggle('has-report', !!state.report);
@@ -607,14 +729,16 @@
     else if (v === 'trends') {
       if (!state.trendsRep && state.dash && state.dash.reps.length) state.trendsRep = state.dash.reps[0].id;
       loadTrends();
-    } else if (v === 'settings') loadSettings();
+    } else if (v === 'territories') { if (!state.months) loadMonthsQuiet(); loadTerritories(); }
+    else if (v === 'settings') loadSettings();
     else render();
   }
 
   var savedTitle = document.title;
   function printWithTitle() {
     var title = savedTitle;
-    if (state.report && state.report.data) title = 'Commission Report - ' + state.report.data.rep.name + ' - ' + state.report.data.period_label;
+    if (state.report && state.report.data) title = 'Commission Report - ' + state.report.data.rep.name + ' - ' + state.report.data.period_label + (state.report.cat && state.report.cat !== 'all' ? ' - ' + catLabel(state.report.cat) : '');
+    else if (state.view === 'territories' && state.terr) title = 'Commissions by Territory - ' + state.terr.label;
     else if (state.view === 'trends' && state.trends) title = 'Commission Trend Review - ' + state.trends.rep.name;
     document.title = title;
     window.print();
@@ -647,6 +771,8 @@
     var c = t.getAttribute && t.getAttribute('data-change');
     if (c === 'hist-year') { state.histYear = t.value; render(); }
     else if (c === 'hist-month') { state.histMonth = t.value; render(); }
+    else if (c === 'report-cat') { state.report.cat = t.value; render(); }
+    else if (c === 'terr-period') { state.terrPeriod = t.value; loadTerritories(); }
   });
   window.addEventListener('afterprint', function () { document.title = savedTitle; });
 

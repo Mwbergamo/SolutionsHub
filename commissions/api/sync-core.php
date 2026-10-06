@@ -452,6 +452,9 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
         if ($hours <= 0) {
             continue; // an empty time entry carries nothing to bill or cost
         }
+        // Same basis as the existing Service Commission report: price is the
+        // BILLED hours x rate; cost is the hours actually worked x hourly cost.
+        $actual = (isset($t['actualHours']) && (float) $t['actualHours'] > 0) ? (float) $t['actualHours'] : $hours;
         $rate = (float) ($t['hourlyRate'] ?? 0);
         $chargeType = (string) ($t['chargeToType'] ?? '');
         $ticketId = (isset($t['chargeToId']) && stripos($chargeType, 'Ticket') !== false) ? (int) $t['chargeToId'] : (isset($t['ticket']['id']) ? (int) $t['ticket']['id'] : null);
@@ -462,11 +465,13 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
             'ticket_id' => $ticketId,
             'ticket_summary' => $ticketId !== null ? ($tickets[$ticketId] ?? null) : null,
             'hours' => $hours,
+            'actual_hours' => $actual,
+            'member' => $member !== '' ? $member : null,
             'qty' => null,
             'price' => round($hours * $rate, 2),
             'unit_cost' => null,
-            'cost' => round($hours * $laborCost, 2),
-            'cost_note' => 'Assumed labor cost $' . number_format($laborCost, 2) . '/hr',
+            'cost' => round($actual * $laborCost, 2),
+            'cost_note' => 'Assumed labor cost $' . number_format($laborCost, 2) . '/hr x ' . $actual . ' actual hrs',
         ];
     }
 
@@ -651,8 +656,8 @@ function commissions_sync_step(PDO $pdo, int $batch = COMMISSIONS_STEP_BATCH): a
         );
         $delLines = $pdo->prepare('DELETE FROM invoice_lines WHERE invoice_id = :id');
         $insLine = $pdo->prepare(
-            'INSERT INTO invoice_lines (invoice_id, kind, item, ticket_id, ticket_summary, hours, qty, price, cost, unit_cost, cost_note, gp, over_year, pct, commission, is_loss)
-             VALUES (:iid, :k, :item, :tid, :ts, :h, :q, :p, :c, :uc, :cn, :gp, :oy, :pct, :com, :loss)'
+            'INSERT INTO invoice_lines (invoice_id, kind, item, ticket_id, ticket_summary, hours, actual_hours, member, qty, price, cost, unit_cost, cost_note, gp, over_year, pct, commission, is_loss)
+             VALUES (:iid, :k, :item, :tid, :ts, :h, :ah, :mem, :q, :p, :c, :uc, :cn, :gp, :oy, :pct, :com, :loss)'
         );
         $markDone = $pdo->prepare("UPDATE sync_queue SET status = :s, error_message = :e WHERE invoice_id = :id");
 
@@ -693,7 +698,7 @@ function commissions_sync_step(PDO $pdo, int $batch = COMMISSIONS_STEP_BATCH): a
                     $m = commissions_line_money((float) $l['price'], (float) $l['cost'], 0.0);
                     $insLine->execute([
                         ':iid' => $id, ':k' => $l['kind'], ':item' => $l['item'], ':tid' => $l['ticket_id'], ':ts' => $l['ticket_summary'],
-                        ':h' => $l['hours'], ':q' => $l['qty'], ':p' => $l['price'], ':c' => $l['cost'], ':uc' => $l['unit_cost'], ':cn' => $l['cost_note'],
+                        ':h' => $l['hours'], ':ah' => $l['actual_hours'] ?? null, ':mem' => $l['member'] ?? null, ':q' => $l['qty'], ':p' => $l['price'], ':c' => $l['cost'], ':uc' => $l['unit_cost'], ':cn' => $l['cost_note'],
                         ':gp' => $m['gp'], ':oy' => $overYear ? 1 : 0, ':pct' => 0, ':com' => 0, ':loss' => $m['is_loss'],
                     ]);
                     commissions_store_payouts($pdo, (int) $pdo->lastInsertId(), $id, $reps, $payees, $state, $built['is_agreement'], $overYear, (float) $l['price'], (float) $l['cost']);
@@ -802,7 +807,8 @@ function commissions_recompute(PDO $pdo, bool $includeLocked = false): int
         foreach ($getLines->fetchAll(PDO::FETCH_ASSOC) as $l) {
             $cost = (float) $l['cost'];
             if ($l['kind'] === 'time') {
-                $cost = round((float) $l['hours'] * $laborCost, 2);
+                $worked = ($l['actual_hours'] !== null && (float) $l['actual_hours'] > 0) ? (float) $l['actual_hours'] : (float) $l['hours'];
+                $cost = round($worked * $laborCost, 2);
             }
             $m = commissions_line_money((float) $l['price'], $cost, 0.0);
             $setLine->execute([':c' => $cost, ':gp' => $m['gp'], ':l' => $m['is_loss'], ':id' => $l['id']]);
