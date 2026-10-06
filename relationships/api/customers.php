@@ -180,6 +180,23 @@ if ($action === 'list') {
     relationships_respond(200, ['ok' => true, 'customers' => $customers]);
 }
 
+// ?action=resolve&cw_id=N -- ConnectWise company id -> local customer id, used by the
+// Commissions "open invoices" report to link a customer name to its page here.
+if ($action === 'resolve') {
+    $cw = trim((string) ($_GET['cw_id'] ?? ''));
+    if ($cw === '' || !ctype_digit($cw)) {
+        relationships_respond(400, ['ok' => false, 'error' => 'Missing ConnectWise company id.']);
+    }
+    $resStmt = $pdo->prepare('SELECT id, territory_name FROM customers WHERE connectwise_id = :cw LIMIT 1');
+    $resStmt->execute([':cw' => $cw]);
+    $found = $resStmt->fetch(PDO::FETCH_ASSOC);
+    if ($found === false) {
+        relationships_respond(404, ['ok' => false, 'error' => 'That customer is not in Relationships yet.']);
+    }
+    relationships_require_territory_scope($allowedTerritories, $found['territory_name']);
+    relationships_respond(200, ['ok' => true, 'id' => (int) $found['id']]);
+}
+
 if ($action === 'detail') {
     $id = (int) ($_GET['id'] ?? 0);
     if ($id <= 0) {

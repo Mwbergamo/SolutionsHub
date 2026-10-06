@@ -26,6 +26,9 @@
  *   commission is subtracted from the payee's total.
  *   Territories pay the payees whose words they contain (see
  *   commissions_reps_for_territory); no match = house account, no commission.
+ *   Shared territory "Arcus + Chester Sienko": Chester is paid his % of GP
+ *   first (30%, or 15% on agreements 365+ days old); Arcus is then paid his shared
+ *   % (Settings, default 30) of the REMAINDER after Chester's commission (see commissions_line_payouts).
  */
 
 declare(strict_types=1);
@@ -81,6 +84,73 @@ function commissions_line_money(float $price, float $cost, float $pct): array
         'commission' => commissions_money($gp * $pct / 100.0),
         'is_loss' => $gp < 0 ? 1 : 0,
     ];
+}
+
+/** Default for Arcus's rate on the remainder when it shares a territory with Chester (2026-10-06); editable in Settings (setting `shared_arcus_pct`). */
+const COMMISSIONS_SHARED_ARCUS_PCT = 30.0;
+
+/**
+ * What each payee of ONE line earns. Normally every payee is paid its own %
+ * of the line's gross profit. The one exception is the shared
+ * "Arcus + Chester Sienko" territory (a territory that pays BOTH Chester and
+ * Arcus): Chester is paid first -- his base %, or his after-a-year % when the
+ * agreement is 365+ days old -- and Arcus is then paid 30% of the REMAINDER,
+ * i.e. of the gross profit left after Chester's commission (examples at the default 30%):
+ *     GP $1,000, Chester 30%  -> Chester $300, Arcus 30% x $700 = $210
+ *     GP $1,000, Chester 15%  -> Chester $150, Arcus 30% x $850 = $255
+ * A losing line nets the same way (the remainder is negative too).
+ *
+ * `pct` is each payee's effective % of the line's gross profit (so Arcus shows
+ * 21%, not 30%, in the first example); `commission` is the dollars.
+ * $trusted = false (no lines / lookup error) pays everyone $0.
+ *
+ * @param array<int,array> $repsById rep rows keyed by id
+ * @param int[]            $payees   rep ids the territory pays
+ * @return array<int,array{pct:float,commission:float}> keyed by rep id
+ */
+function commissions_line_payouts(array $repsById, array $payees, bool $isAgreementInvoice, bool $overYear, float $price, float $cost, bool $trusted = true, ?float $sharedArcusPct = null): array
+{
+    $arcusPct = $sharedArcusPct ?? COMMISSIONS_SHARED_ARCUS_PCT;
+    $gp = commissions_money($price - $cost);
+    $chesterId = null;
+    $arcusId = null;
+    foreach ($payees as $rid) {
+        if (!isset($repsById[$rid])) {
+            continue;
+        }
+        $name = strtolower(trim((string) ($repsById[$rid]['name'] ?? '')));
+        if ($name === 'chester') {
+            $chesterId = $rid;
+        } elseif ($name === 'arcus') {
+            $arcusId = $rid;
+        }
+    }
+    $shared = $chesterId !== null && $arcusId !== null;
+
+    $chesterPct = 0.0;
+    $chesterComm = 0.0;
+    if ($shared) {
+        $chesterPct = $trusted ? commissions_rep_pct($repsById[$chesterId], $isAgreementInvoice, $overYear) : 0.0;
+        $chesterComm = commissions_money($gp * $chesterPct / 100.0);
+    }
+
+    $out = [];
+    foreach ($payees as $rid) {
+        if (!isset($repsById[$rid])) {
+            continue;
+        }
+        if ($shared && $rid === $chesterId) {
+            $out[$rid] = ['pct' => $chesterPct, 'commission' => $chesterComm];
+        } elseif ($shared && $rid === $arcusId) {
+            $pct = $trusted ? $arcusPct * (1.0 - $chesterPct / 100.0) : 0.0;
+            $comm = $trusted ? commissions_money(($gp - $chesterComm) * $arcusPct / 100.0) : 0.0;
+            $out[$rid] = ['pct' => round($pct, 4), 'commission' => $comm];
+        } else {
+            $pct = $trusted ? commissions_rep_pct($repsById[$rid], $isAgreementInvoice, $overYear) : 0.0;
+            $out[$rid] = ['pct' => $pct, 'commission' => commissions_line_money($price, $cost, $pct)['commission']];
+        }
+    }
+    return $out;
 }
 
 /**

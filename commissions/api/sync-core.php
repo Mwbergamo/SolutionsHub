@@ -49,6 +49,9 @@ const COMMISSIONS_PENDING_LOOKBACK_DAYS = 180;
  */
 const COMMISSIONS_RULES_VERSION = '2026-10-06-c';
 
+/** Bump when how payees share a line changes; the next API call re-applies it to unlocked months. */
+const COMMISSIONS_PAYOUT_RULES_VERSION = '2026-10-06-chester-arcus';
+
 /** All pages of a ConnectWise list; sends `fields` only when given (unrestricted otherwise). */
 function commissions_cw_list_all(string $path, string $conditions, array $fields = [], int $pageSize = 200): array
 {
@@ -73,6 +76,13 @@ function commissions_cw_list_all(string $path, string $conditions, array $fields
         }
     }
     return $all;
+}
+
+/** Arcus's % of the remainder on a shared Arcus + Chester territory (Settings; default 30). */
+function commissions_shared_arcus_pct(PDO $pdo): float
+{
+    $v = commissions_setting($pdo, 'shared_arcus_pct', (string) COMMISSIONS_SHARED_ARCUS_PCT);
+    return is_numeric($v) ? max(0.0, min(100.0, (float) $v)) : COMMISSIONS_SHARED_ARCUS_PCT;
 }
 
 function commissions_reps(PDO $pdo): array
@@ -184,12 +194,25 @@ function commissions_sync_start(PDO $pdo, int $monthsBack = 1, bool $force = fal
     commissions_state_set($pdo, 'sync_total', (string) $queued);
     commissions_state_set($pdo, 'sync_force', $force ? '1' : '0');
 
+    // Open (unpaid) invoices for the collections card. A failure here must not
+    // stop the commission sync; the old list simply stays until the next run.
+    $arOpen = null;
+    $arError = null;
+    try {
+        require_once __DIR__ . '/ar-core.php';
+        $arOpen = commissions_ar_refresh($pdo);
+    } catch (Throwable $e) {
+        $arError = $e->getMessage();
+    }
+
     return [
         'total_listed' => count($rows),
         'queued' => $queued,
         'skipped' => $skipped,
         'window_from' => $windowMonth,
         'rules_rebuild' => $rulesChanged,
+        'ar_open_invoices' => $arOpen,
+        'ar_error' => $arError,
     ];
 }
 
@@ -835,6 +858,15 @@ function commissions_sync_step(PDO $pdo, int $batch = COMMISSIONS_STEP_BATCH): a
     }
 
     $remaining = (int) $pdo->query("SELECT COUNT(*) FROM sync_queue WHERE status = 'pending'")->fetchColumn();
+    if ($remaining === 0) {
+        // Commission work is finished; fill in agreement/ticket detail for open invoices a few at a time.
+        try {
+            require_once __DIR__ . '/ar-core.php';
+            $remaining += commissions_ar_detail_step($pdo);
+        } catch (Throwable $e) {
+            // never block the sync on collections detail
+        }
+    }
     $done = $remaining === 0;
     if ($done && commissions_state_get($pdo, 'sync_finished_at') === null) {
         commissions_sync_finish($pdo);
@@ -883,8 +915,9 @@ function commissions_sync_status(PDO $pdo): array
  *
  * @param int[] $payees
  */
-function commissions_store_payouts(PDO $pdo, int $lineId, int $invoiceId, array $reps, array $payees, string $state, bool $isAgreement, bool $overYear, float $price, float $cost): float
+function commissions_store_payouts(PDO $pdo, int $lineId, int $invoiceId, array $reps, array $payees, string $state, bool $isAgreement, bool $overYear, float $price, float $cost, ?float $sharedArcusPct = null): float
 {
+    $sharedArcusPct = $sharedArcusPct ?? commissions_shared_arcus_pct($pdo);
     $pdo->prepare('DELETE FROM line_commissions WHERE line_id = :l')->execute([':l' => $lineId]);
     $byId = [];
     foreach ($reps as $r) {
@@ -892,14 +925,12 @@ function commissions_store_payouts(PDO $pdo, int $lineId, int $invoiceId, array 
     }
     $ins = $pdo->prepare('INSERT INTO line_commissions (line_id, invoice_id, rep_id, pct, commission) VALUES (:l, :i, :r, :p, :c)');
     $total = 0.0;
-    foreach ($payees as $rid) {
-        if (!isset($byId[$rid])) {
-            continue;
-        }
-        $pct = ($state === 'no_lines' || $state === 'error') ? 0.0 : commissions_rep_pct($byId[$rid], $isAgreement, $overYear);
-        $m = commissions_line_money($price, $cost, $pct);
-        $ins->execute([':l' => $lineId, ':i' => $invoiceId, ':r' => $rid, ':p' => $pct, ':c' => $m['commission']]);
-        $total += $m['commission'];
+    // Per-payee % and dollars; a shared Arcus + Chester territory pays Chester
+    // first and Arcus on the remainder (commissions_line_payouts in calc.php).
+    $trusted = !($state === 'no_lines' || $state === 'error');
+    foreach (commissions_line_payouts($byId, $payees, $isAgreement, $overYear, $price, $cost, $trusted, $sharedArcusPct) as $rid => $pay) {
+        $ins->execute([':l' => $lineId, ':i' => $invoiceId, ':r' => $rid, ':p' => $pay['pct'], ':c' => $pay['commission']]);
+        $total += $pay['commission'];
     }
     $pdo->prepare('UPDATE invoice_lines SET commission = :c WHERE id = :l')->execute([':c' => round($total, 2), ':l' => $lineId]);
     return $total;
@@ -913,6 +944,7 @@ function commissions_store_payouts(PDO $pdo, int $lineId, int $invoiceId, array 
 function commissions_recompute(PDO $pdo, bool $includeLocked = false): int
 {
     $laborCost = (float) commissions_setting($pdo, 'labor_cost_per_hour', '90');
+    $sharedArcusPct = commissions_shared_arcus_pct($pdo);
     $reps = commissions_reps($pdo);
     $invoices = $pdo->query(
         'SELECT i.* FROM invoices i LEFT JOIN months m ON m.month = i.month' . ($includeLocked ? '' : ' WHERE m.month IS NULL')
@@ -934,7 +966,7 @@ function commissions_recompute(PDO $pdo, bool $includeLocked = false): int
             }
             $m = commissions_line_money((float) $l['price'], $cost, 0.0);
             $setLine->execute([':c' => $cost, ':gp' => $m['gp'], ':l' => $m['is_loss'], ':id' => $l['id']]);
-            commissions_store_payouts($pdo, (int) $l['id'], (int) $inv['id'], $reps, $payees, (string) $inv['detail_state'], $isAgreement, (bool) $l['over_year'], (float) $l['price'], $cost);
+            commissions_store_payouts($pdo, (int) $l['id'], (int) $inv['id'], $reps, $payees, (string) $inv['detail_state'], $isAgreement, (bool) $l['over_year'], (float) $l['price'], $cost, $sharedArcusPct);
             $n++;
         }
     }
@@ -945,6 +977,13 @@ function commissions_recompute(PDO $pdo, bool $includeLocked = false): int
 /** One-time rebuild after the payout model changed (flag set by the db upgrade). */
 function commissions_run_pending_migration(PDO $pdo): void
 {
+    // 2026-10-06: shared Arcus + Chester territories now pay Chester first and
+    // Arcus 30% of the remainder. Re-apply to every UNLOCKED month once, with
+    // no ConnectWise calls; frozen (locked) months are left as they were.
+    if (commissions_setting($pdo, 'payout_rules_version', '0') !== COMMISSIONS_PAYOUT_RULES_VERSION) {
+        commissions_recompute($pdo, false);
+        commissions_set_setting($pdo, 'payout_rules_version', COMMISSIONS_PAYOUT_RULES_VERSION);
+    }
     if (commissions_setting($pdo, 'model_recompute_pending', '0') === '1') {
         commissions_recompute($pdo, true);
         commissions_set_setting($pdo, 'model_recompute_pending', '0');

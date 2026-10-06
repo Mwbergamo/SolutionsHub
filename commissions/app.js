@@ -20,6 +20,7 @@
     trendsRep: null, trends: null, trendsLoading: false,
     settings: null, settingsLoading: false, settingsMsg: null,
     terr: null, terrPeriod: 'all', terrLoading: false,
+    ar: null, arPop: null,      // open invoices to collect (summary + pop-over)
     mgr: null                   // Michael's private sales-manager commission (only fetched for him)
   };
 
@@ -105,6 +106,7 @@
         state.dash = r.data;
         state.error = null;
         loadManager();
+        loadAr();
         if (autoSync && !state.sync.running && r.data.total_invoices > 0) {
           var fin = r.data.sync && r.data.sync.finished_at ? new Date(r.data.sync.finished_at).getTime() : 0;
           if (Date.now() - fin > 30 * 60 * 1000) runSync(1, false, true);
@@ -143,7 +145,7 @@
       var st = r.data.status || {};
       state.sync.done = (st.done || 0) + (st.error || 0);
       state.sync.total = st.total || state.sync.total;
-      state.sync.text = 'Processed ' + state.sync.done + ' of ' + state.sync.total + ' invoices…';
+      state.sync.text = (st.pending === 0 && state.sync.total) ? 'Looking up agreement and ticket details for open invoices…' : 'Processed ' + state.sync.done + ' of ' + state.sync.total + ' invoices…';
       if (r.data.done) {
         state.sync = { running: false, text: '', done: 0, total: 0 };
         loadDashboard(false);
@@ -233,6 +235,7 @@
     h += '<div class="synced-note no-print">Last synced ' + esc(fmtStamp(d.sync && d.sync.finished_at)) +
       ' &nbsp; <button class="btn small secondary" type="button" data-action="sync" data-months="1"' + (state.sync.running ? ' disabled' : '') + '>Sync now</button>' +
       ' &nbsp; Labor assumed at ' + money(d.labor_cost_per_hour) + '/hr of actual time · a losing line is subtracted from the rep’s commission.</div>';
+    h += arCardHtml();
     h += managerCardHtml();
     return h;
   }
@@ -267,6 +270,120 @@
     if (cell.loss_lines) sub += ' · <span class="loss">' + cell.loss_lines + ' loss' + (cell.loss_lines === 1 ? '' : 'es') + '</span>';
     if (cell.needs_review) sub += ' · <span class="review">⚠ ' + cell.needs_review + '</span>';
     return '<button class="comm-cell' + cls + '" type="button" ' + attrs + '><span class="num">' + money(cell.commission, { whole: false }) + '</span><span class="sub">' + sub + '</span></button>';
+  }
+
+  // ---- open invoices to collect -------------------------------------------
+
+  function loadAr() {
+    api('api/ar.php?action=summary').then(function (r) {
+      if (r.data && r.data.ok) { state.ar = r.data; render(); }
+    }).catch(function () {});
+  }
+
+  function agingCells(t) {
+    return '<td class="r">' + (t.b0 ? money(t.b0) : '<span class="hint">—</span>') + '</td>' +
+      '<td class="r">' + (t.b30 ? money(t.b30) : '<span class="hint">—</span>') + '</td>' +
+      '<td class="r' + (t.b60 ? ' neg' : '') + '">' + (t.b60 ? money(t.b60) : '<span class="hint">—</span>') + '</td>';
+  }
+  function arAmountBtn(t, rep, territory) {
+    if (!t.count) return '<span class="hint">$0.00</span>';
+    return '<button class="ar-amt" type="button" data-action="open-ar" data-rep="' + esc(rep) + '" data-territory="' + esc(territory || '') + '" title="Show the open invoices">' + money(t.balance) + '</button>';
+  }
+
+  function arCardHtml() {
+    var a = state.ar;
+    if (!a) return '';
+    var head = '<tr><th>__W__</th><th class="r">Open invoices</th><th class="r">Outstanding</th><th class="r">0–30 days</th><th class="r">31–60 days</th><th class="r">Over 60 days</th></tr>';
+    var h = '<div class="card ar-card no-print"><h3>Open invoices to collect <small>as of ' + esc(a.as_of_label) + '</small></h3>' +
+      '<div class="view-sub" style="margin-bottom:10px">Closed ConnectWise invoices that have not been paid yet, with days counted from the invoice date. Click an amount to see the invoices and send a collections report.' +
+      (a.detail_pending ? ' <i>(' + a.detail_pending + ' invoice' + (a.detail_pending === 1 ? '' : 's') + ' still waiting for agreement/ticket detail — run Sync now.)</i>' : '') + '</div>' +
+      '<table class="data ar-table"><thead>' + head.replace('__W__', 'Rep') + '</thead><tbody>';
+    a.reps.forEach(function (r) {
+      h += '<tr><td><b>' + esc(r.name) + '</b></td><td class="r">' + r.count + '</td><td class="r">' + arAmountBtn(r, r.id) + '</td>' + agingCells(r) + '</tr>';
+    });
+    if (a.house.count) {
+      h += '<tr><td><b>House accounts</b> <span class="hint">(no rep)</span></td><td class="r">' + a.house.count + '</td><td class="r">' + arAmountBtn(a.house, 'house') + '</td>' + agingCells(a.house) + '</tr>';
+    }
+    h += '<tr class="total"><td><b>All open invoices</b></td><td class="r">' + a.total.count + '</td><td class="r">' + arAmountBtn(a.total, 'all') + '</td>' + agingCells(a.total) + '</tr></tbody></table>';
+    h += '<div class="hint" style="margin:6px 0 14px">A shared territory (Arcus + Chester) shows its invoices under both reps; the All row counts each invoice once.</div>';
+    h += '<table class="data ar-table"><thead>' + head.replace('__W__', 'Territory') + '</thead><tbody>';
+    if (!a.territories.length) h += '<tr><td colspan="6" class="hint">Nothing unpaid. (Refreshes on every sync.)</td></tr>';
+    a.territories.forEach(function (t) {
+      h += '<tr><td>' + esc(t.label) + ' <span class="hint">' + (t.house ? 'house account' : '→ ' + esc(t.payees.join(' + '))) + '</span></td><td class="r">' + t.count + '</td><td class="r">' +
+        arAmountBtn(t, 'all', t.territory || '(none)') + '</td>' + agingCells(t) + '</tr>';
+    });
+    h += '</tbody></table><div class="hint" style="margin-top:6px">Open invoices refreshed ' + esc(fmtStamp(a.refreshed_at)) + '.</div></div>';
+    return h;
+  }
+
+  function openAr(rep, territory) {
+    var p = state.arPop = { loading: true, data: null, error: null, rep: rep, territory: territory || '', emailOpen: false, to: '', msg: null, msgOk: false, sending: false };
+    render();
+    var url = 'api/ar.php?action=detail&rep_id=' + encodeURIComponent(rep) + (territory ? '&territory=' + encodeURIComponent(territory) : '');
+    api(url).then(function (r) {
+      if (r.data && r.data.ok) { p.data = r.data; p.to = (r.data.rep && r.data.rep.email) || ''; } else p.error = (r.data && r.data.error) || 'Could not load the open invoices.';
+      p.loading = false; render();
+    }).catch(function () { p.loading = false; p.error = 'Could not load the open invoices.'; render(); });
+  }
+
+  function arDocHtml(d) {
+    var t = d.totals;
+    var h = '<div class="report-doc"><div class="print-only report-title">Collections report — ' + esc(d.title) + '</div>' +
+      '<div class="report-meta">As of ' + esc(d.as_of_label) + ' · days counted from the invoice date · customers listed oldest balance first, invoices oldest to newest.</div>' +
+      '<div class="report-summary"><div><span>Total outstanding</span><b>' + money(t.balance) + '</b></div><div><span>Open invoices</span><b>' + t.count + '</b></div>' +
+      '<div><span>Over ' + d.hold_days + ' days</span><b>' + money(t.b60) + '</b></div><div><span>Oldest</span><b>' + t.oldest_days + ' days</b></div></div>';
+    if (!d.customers.length) return h + '<div class="hint">No open invoices. 🎉</div></div>';
+    d.customers.forEach(function (c) {
+      var name = c.company_id > 0
+        ? '<a class="cust-link" href="../relationships/index.html?cw_company=' + c.company_id + '" target="_blank" rel="noopener" title="Open in Relationships">' + esc(c.customer) + ' ↗</a>'
+        : esc(c.customer);
+      h += '<div class="report-section"><h4>' + name + ' <span class="hint">— ' + money(c.subtotal) + ' outstanding' + (c.territory ? ' · ' + esc(c.territory) : '') + '</span></h4>' +
+        '<table class="report"><thead><tr><th>Invoice #</th><th>Customer</th><th>Agreement</th><th>Ticket</th><th>Invoice date</th><th class="r">Days</th><th class="r">Open balance</th></tr></thead><tbody>';
+      c.invoices.forEach(function (i) {
+        var over = i.days > d.hold_days;
+        h += '<tr' + (over ? ' class="loss"' : '') + '><td>' + esc(i.invoice_number) + '</td><td>' + esc(i.customer) + '</td><td>' + (i.agreement ? esc(i.agreement) : '<span class="hint">—</span>') + '</td>' +
+          '<td>' + (i.tickets ? esc(i.tickets) : '<span class="hint">—</span>') + '</td><td>' + esc(fmtDate(i.invoice_date)) + '</td><td class="r">' + i.days + '</td><td class="r">' + money(i.balance) + '</td></tr>';
+        if (over) h += '<tr class="note"><td colspan="7">Invoice ' + esc(i.invoice_number) + ' — ' + esc(d.hold_note) + '</td></tr>';
+      });
+      h += '<tr class="total"><td colspan="6">Total — ' + esc(c.customer) + '</td><td class="r">' + money(c.subtotal) + '</td></tr></tbody></table></div>';
+    });
+    h += '<div class="report-section"><h4>Grand total outstanding: ' + money(t.balance) + '</h4></div></div>';
+    return h;
+  }
+
+  function arModalHtml() {
+    var p = state.arPop;
+    if (!p) return '';
+    var body;
+    if (p.loading) body = '<div class="loading">Loading open invoices…</div>';
+    else if (p.error) body = '<div class="banner error">' + esc(p.error) + '</div>';
+    else body = arDocHtml(p.data);
+    var email = '';
+    if (p.emailOpen && p.data) {
+      email = '<div class="ar-email no-print"><label class="field">Send collections report to<input type="email" data-change="ar-to" id="ar-to" placeholder="name@company.com" value="' + esc(p.to) + '"></label>' +
+        '<button class="btn" type="button" data-action="ar-email-send"' + (p.sending ? ' disabled' : '') + '>' + (p.sending ? 'Sending…' : 'Send') + '</button>' +
+        '<span class="hint">' + (p.data.rep && !p.data.rep.email ? 'No email saved for this rep — add one in Settings to prefill it. ' : '') + 'It is sent from the CodeBlue mailbox and replies come to you.</span></div>';
+    }
+    var msg = p.msg ? '<div class="banner ' + (p.msgOk ? 'info' : 'error') + ' no-print">' + esc(p.msg) + '</div>' : '';
+    return '<div class="modal-backdrop" data-action="close-ar-bg"><div class="modal" role="dialog">' +
+      '<div class="modal-head no-print"><h3>' + (p.data ? 'Open invoices — ' + esc(p.data.title) : 'Open invoices') + '</h3><div class="actions">' +
+      (p.data && p.data.customers.length ? '<button class="btn" type="button" data-action="ar-email-toggle">Collections report…</button>' : '') +
+      '<button class="btn secondary" type="button" data-action="print">Print / Save PDF</button>' +
+      '<button class="btn secondary" type="button" data-action="close-ar">Close</button></div></div>' + email + msg + body + '</div></div>';
+  }
+
+  function sendArEmail() {
+    var p = state.arPop;
+    var inp = document.getElementById('ar-to');
+    if (inp) p.to = inp.value.trim();
+    if (!p.to) { p.msg = 'Enter an email address first.'; p.msgOk = false; render(); return; }
+    p.sending = true; p.msg = null; render();
+    api('api/ar.php?action=email', { rep_id: p.rep, territory: p.territory, to: p.to }).then(function (r) {
+      p.sending = false;
+      if (r.data && r.data.ok) { p.msg = 'Collections report sent to ' + r.data.sent_to + ' (' + r.data.invoices + ' invoice' + (r.data.invoices === 1 ? '' : 's') + ', ' + money(r.data.balance) + ').'; p.msgOk = true; p.emailOpen = false; }
+      else { p.msg = (r.data && r.data.error) || 'Could not send the email.'; p.msgOk = false; }
+      render();
+    }).catch(function () { p.sending = false; p.msg = 'Could not reach the server.'; p.msgOk = false; render(); });
   }
 
   // ---- report (popover + printable) ---------------------------------------
@@ -343,7 +460,7 @@
     var rep = data.rep || {};
     var rateLine = '';
     if (rep.kind === 'rep') {
-      rateLine = 'Commission rate: ' + pctText(rep.base_pct) + (rep.agreement_after_year_pct != null ? ' (' + pctText(rep.agreement_after_year_pct) + ' on Agreement invoices once the agreement is 365 or more days old)' : '') + ' of gross profit.';
+      rateLine = 'Commission rate: ' + pctText(rep.base_pct) + (rep.agreement_after_year_pct != null ? ' (' + pctText(rep.agreement_after_year_pct) + ' on Agreement invoices once the agreement is 365 or more days old)' : '') + ' of gross profit.' + (rep.name === 'Arcus' ? ' On a shared Arcus + Chester Sienko territory, Arcus is paid his shared-territory % (set in Settings) of the gross profit remaining after Chester’s commission.' : '');
     } else if (rep.kind === 'all') {
       rateLine = 'Each rep is paid their own rate on each line (a split territory pays more than one rep).';
     } else if (rep.kind === 'manager') {
@@ -653,13 +770,18 @@
       '<label class="field">Labor cost per hour ($)<input type="number" step="0.01" min="0" id="set-labor" value="' + esc(s.settings.labor_cost_per_hour) + '"></label></div>' +
       '<div class="hint">Time is costed at the labor rate above times the hours actually worked (as in the ConnectWise Service Commission report), regardless of what the customer was billed. A line that loses money is subtracted from the rep’s commission and always appears in the drill-downs and printed reports.</div></div>';
 
-    h += '<div class="card"><h3>Who gets paid</h3><div class="hint" style="margin-bottom:8px">A ConnectWise territory pays every rep below whose words appear in it (whole words, any order). “Arcus + Chester Sienko” matches both Arcus and Chester, so it splits; “Moe” matches “Moe Okeilli (new accounts)” and “Trey + Moe Okeilli”. A territory that matches nobody is a house account and pays nothing.</div><table class="data"><thead><tr><th>Rep</th><th>Territory words (comma separated)</th><th>Commission % of gross profit</th><th>% on Agreement invoices after 1 year<br><span class="hint" style="text-transform:none">(leave empty for no change)</span></th></tr></thead><tbody>';
+    h += '<div class="card"><h3>Who gets paid</h3><div class="hint" style="margin-bottom:8px">A ConnectWise territory pays every rep below whose words appear in it (whole words, any order). “Arcus + Chester Sienko” matches both Arcus and Chester, so it splits: Chester is paid his rate first, then Arcus is paid ' + esc(s.settings.shared_arcus_pct) + '% of the gross profit that remains after Chester’s commission (the % shown on those lines is Arcus’s share of the full gross profit; change it below the table); “Moe” matches “Moe Okeilli (new accounts)” and “Trey + Moe Okeilli”. A territory that matches nobody is a house account and pays nothing.</div><table class="data"><thead><tr><th>Rep</th><th>Territory words (comma separated)</th><th>Email<br><span class="hint" style="text-transform:none">(collections reports)</span></th><th>Commission % of gross profit</th><th>% on Agreement invoices after 1 year<br><span class="hint" style="text-transform:none">(leave empty for no change)</span></th></tr></thead><tbody>';
     s.reps.forEach(function (r) {
       h += '<tr data-rep-row="' + r.id + '"><td><b>' + esc(r.name) + '</b></td><td><input type="text" style="width:100%" data-f="territory" value="' + esc(r.territory_match) + '"></td>' +
+        '<td><input type="email" style="width:100%" data-f="email" value="' + esc(r.email || '') + '"></td>' +
         '<td><input type="number" step="0.01" min="0" max="100" class="pct" data-f="base" value="' + esc(r.base_pct) + '"> %</td>' +
         '<td><input type="number" step="0.01" min="0" max="100" class="pct" data-f="after" value="' + (r.agreement_after_year_pct == null ? '' : esc(r.agreement_after_year_pct)) + '"> %</td></tr>';
     });
-    h += '</tbody></table><div style="margin-top:12px"><button class="btn" type="button" data-action="save-settings">Save and recalculate</button></div></div>';
+    h += '</tbody></table>' +
+      '<div class="controls" style="margin-top:12px"><label class="field">Arcus on a shared Arcus + Chester territory — % of the gross profit remaining after Chester’s commission' +
+      '<input type="number" step="0.01" min="0" max="100" class="pct" id="set-shared-arcus" value="' + esc(s.settings.shared_arcus_pct) + '"> %</label></div>' +
+      '<div class="hint">Chester is paid first (his % above, or his after-one-year % on older agreements); Arcus is then paid this % of what is left. Arcus alone in a territory still uses his own % in the table.</div>' +
+      '<div style="margin-top:12px"><button class="btn" type="button" data-action="save-settings">Save and recalculate</button></div></div>';
 
     h += '<div class="card"><h3>Territories seen on synced invoices</h3><table class="data"><thead><tr><th>ConnectWise territory</th><th class="r">Invoices</th><th>Pays</th></tr></thead><tbody>';
     if (!s.territories.length) h += '<tr><td colspan="3" class="hint">Nothing synced yet.</td></tr>';
@@ -684,12 +806,14 @@
       reps.push({
         id: Number(tr.getAttribute('data-rep-row')),
         territory_match: tr.querySelector('[data-f=territory]').value,
+        email: tr.querySelector('[data-f=email]').value,
         base_pct: tr.querySelector('[data-f=base]').value,
         agreement_after_year_pct: tr.querySelector('[data-f=after]').value
       });
     });
     api('api/settings.php', {
       labor_cost_per_hour: document.getElementById('set-labor').value,
+      shared_arcus_pct: document.getElementById('set-shared-arcus').value,
       reps: reps
     }).then(function (r) {
       if (r.data && r.data.ok) {
@@ -718,9 +842,9 @@
     else if (state.view === 'territories') body = territoriesHtml();
     else if (state.view === 'settings') body = settingsHtml();
     else body = dashboardHtml();
-    document.body.classList.toggle('has-report', !!state.report);
+    document.body.classList.toggle('has-report', !!(state.report || state.arPop));
     root.innerHTML = topbarHtml() + '<main>' + (state.error ? '<div class="banner error no-print">' + esc(state.error) + ' <a href="#" data-action="dismiss">dismiss</a></div>' : '') +
-      syncBarHtml() + '<div class="view-body">' + body + '</div><div class="report-slot">' + reportModalHtml() + '</div></main>';
+      syncBarHtml() + '<div class="view-body">' + body + '</div><div class="report-slot">' + reportModalHtml() + arModalHtml() + '</div></main>';
   }
 
   function setView(v) {
@@ -737,7 +861,8 @@
   var savedTitle = document.title;
   function printWithTitle() {
     var title = savedTitle;
-    if (state.report && state.report.data) title = 'Commission Report - ' + state.report.data.rep.name + ' - ' + state.report.data.period_label + (state.report.cat && state.report.cat !== 'all' ? ' - ' + catLabel(state.report.cat) : '');
+    if (state.arPop && state.arPop.data) title = 'Collections Report - ' + state.arPop.data.title + ' - ' + state.arPop.data.as_of_label;
+    else if (state.report && state.report.data) title = 'Commission Report - ' + state.report.data.rep.name + ' - ' + state.report.data.period_label + (state.report.cat && state.report.cat !== 'all' ? ' - ' + catLabel(state.report.cat) : '');
     else if (state.view === 'territories' && state.terr) title = 'Commissions by Territory - ' + state.terr.label;
     else if (state.view === 'trends' && state.trends) title = 'Commission Trend Review - ' + state.trends.rep.name;
     document.title = title;
@@ -749,6 +874,7 @@
     var el = e.target.closest('[data-action]');
     if (!el) return;
     var a = el.getAttribute('data-action');
+    if (a === 'close-ar-bg') { if (e.target === el) { state.arPop = null; render(); } return; }
     if (a === 'close-report-bg') { if (e.target === el) { state.report = null; render(); } return; }
     if (el.tagName === 'A') e.preventDefault();
     if (a === 'view') setView(el.getAttribute('data-view'));
@@ -756,6 +882,10 @@
     else if (a === 'sync') runSync(Number(el.getAttribute('data-months')) || 1, false);
     else if (a === 'sync-force') runSync(Number(el.getAttribute('data-months')) || 3, true);
     else if (a === 'open-report') openReport(el.getAttribute('data-rep'), el.getAttribute('data-bucket'), el.getAttribute('data-month'));
+    else if (a === 'open-ar') openAr(el.getAttribute('data-rep'), el.getAttribute('data-territory'));
+    else if (a === 'close-ar') { state.arPop = null; render(); }
+    else if (a === 'ar-email-toggle') { state.arPop.emailOpen = !state.arPop.emailOpen; state.arPop.msg = null; render(); }
+    else if (a === 'ar-email-send') sendArEmail();
     else if (a === 'close-report') { state.report = null; render(); }
     else if (a === 'print') printWithTitle();
     else if (a === 'trends-rep') { state.trendsRep = el.getAttribute('data-rep'); state.trends = null; loadTrends(); }
@@ -769,6 +899,7 @@
     var t = e.target;
     if (t.getAttribute && t.getAttribute('data-action') === 'toggle-loss') { state.report.lossOnly = t.checked; render(); return; }
     var c = t.getAttribute && t.getAttribute('data-change');
+    if (c === 'ar-to') { state.arPop.to = t.value.trim(); return; }
     if (c === 'hist-year') { state.histYear = t.value; render(); }
     else if (c === 'hist-month') { state.histMonth = t.value; render(); }
     else if (c === 'report-cat') { state.report.cat = t.value; render(); }

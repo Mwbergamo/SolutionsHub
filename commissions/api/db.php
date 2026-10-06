@@ -155,6 +155,24 @@ function commissions_migrate(PDO $pdo): void
             key TEXT PRIMARY KEY,
             value TEXT
         );
+        CREATE TABLE IF NOT EXISTS ar_invoices (
+            invoice_id INTEGER PRIMARY KEY,       -- ConnectWise invoice id
+            invoice_number TEXT,
+            invoice_date TEXT,                    -- YYYY-MM-DD
+            due_date TEXT,
+            status_name TEXT,
+            company_id INTEGER,
+            company_name TEXT,
+            territory TEXT,
+            agreement_id INTEGER,
+            agreement_name TEXT,
+            total REAL NOT NULL DEFAULT 0,
+            balance REAL NOT NULL DEFAULT 0,      -- still unpaid in ConnectWise
+            tickets TEXT,                         -- ticket summaries on the invoice, '; ' separated
+            detail_at TEXT,                       -- when agreement/ticket detail was filled in (NULL = still to do)
+            updated_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_ar_company ON ar_invoices(company_id);
         CREATE TABLE IF NOT EXISTS settings_audit (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             at TEXT NOT NULL,
@@ -168,7 +186,7 @@ function commissions_migrate(PDO $pdo): void
     // Payout model (Michael, 2026-10-05). Each "rep" row is a PAYEE: it earns
     // base_pct of a line's gross profit whenever the invoiced company's
     // ConnectWise territory contains one of its territory_match words.
-    //   "Arcus + Chester Sienko"        -> Arcus 15% + Chester 30% (15% on agreements 365+ days old)
+    //   "Arcus + Chester Sienko"        -> Chester 30% of GP (15% on agreements 365+ days old), then Arcus 30% of the REMAINDER after Chester
     //   "Arcus, LLC Accounts"           -> Arcus 15%
     //   "Chester Sienko's Accounts"     -> Chester 30% (15% on agreements 365+ days old)
     //   "Moe Okeilli (new accounts)" / "Trey + Moe Okeilli" -> Moe 20%
@@ -189,6 +207,12 @@ function commissions_migrate(PDO $pdo): void
     }
     if (!in_array('member', $cols, true)) {
         $pdo->exec('ALTER TABLE invoice_lines ADD COLUMN member TEXT');
+    }
+
+    // Rep email (collections reports are mailed to it; editable in Settings).
+    $repCols = array_column($pdo->query('PRAGMA table_info(reps)')->fetchAll(PDO::FETCH_ASSOC), 'name');
+    if (!in_array('email', $repCols, true)) {
+        $pdo->exec("ALTER TABLE reps ADD COLUMN email TEXT NOT NULL DEFAULT ''");
     }
 
     $payees = [

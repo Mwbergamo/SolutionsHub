@@ -2,11 +2,11 @@
 /**
  * commissions/api/settings.php
  *
- * GET  -> { settings: { labor_cost_per_hour }, reps: [...], territories: [...] }
+ * GET  -> { settings: { labor_cost_per_hour, shared_arcus_pct }, reps: [...], territories: [...] }
  *         `territories` = every distinct ConnectWise territory seen on synced
  *         companies (with its invoice count and who it pays; nobody = house
  *         account) so the territory -> payee mapping can be checked at a glance.
- * POST -> saves labor cost and each payee's % / territory words,
+ * POST -> saves labor cost, Arcus's shared-territory % and each payee's % / territory words,
  *         records an audit row for every change, and re-applies the new
  *         numbers to every UNLOCKED month (locked months are frozen).
  */
@@ -43,6 +43,7 @@ function commissions_settings_payload(PDO $pdo): array
         'ok' => true,
         'settings' => [
             'labor_cost_per_hour' => (float) commissions_setting($pdo, 'labor_cost_per_hour', '90'),
+            'shared_arcus_pct' => commissions_shared_arcus_pct($pdo),
         ],
         'reps' => array_map(static fn (array $r): array => [
             'id' => (int) $r['id'],
@@ -50,6 +51,7 @@ function commissions_settings_payload(PDO $pdo): array
             'territory_match' => $r['territory_match'],
             'base_pct' => (float) $r['base_pct'],
             'agreement_after_year_pct' => $r['agreement_after_year_pct'] !== null ? (float) $r['agreement_after_year_pct'] : null,
+            'email' => (string) ($r['email'] ?? ''),
         ], $reps),
         'territories' => $terr,
         'locked_months' => $lockedMonths,
@@ -84,9 +86,17 @@ if (array_key_exists('labor_cost_per_hour', $body)) {
     $log('labor_cost_per_hour', commissions_setting($pdo, 'labor_cost_per_hour', '90'), (string) $labor);
     commissions_set_setting($pdo, 'labor_cost_per_hour', (string) $labor);
 }
+if (array_key_exists('shared_arcus_pct', $body)) {
+    $arcus = $num($body['shared_arcus_pct'], 0, 100);
+    if ($arcus === null) {
+        commissions_respond(400, ['ok' => false, 'error' => 'Arcus’s shared-territory % must be a number from 0 to 100.']);
+    }
+    $log('Arcus % of remainder on shared Arcus + Chester territories', (string) commissions_shared_arcus_pct($pdo), (string) $arcus);
+    commissions_set_setting($pdo, 'shared_arcus_pct', (string) $arcus);
+}
 if (isset($body['reps']) && is_array($body['reps'])) {
     $get = $pdo->prepare('SELECT * FROM reps WHERE id = :id');
-    $upd = $pdo->prepare('UPDATE reps SET territory_match = :t, base_pct = :b, agreement_after_year_pct = :a WHERE id = :id');
+    $upd = $pdo->prepare('UPDATE reps SET territory_match = :t, base_pct = :b, agreement_after_year_pct = :a, email = :e WHERE id = :id');
     foreach ($body['reps'] as $r) {
         $id = (int) ($r['id'] ?? 0);
         $get->execute([':id' => $id]);
@@ -107,7 +117,12 @@ if (isset($body['reps']) && is_array($body['reps'])) {
         $log($old['name'] . ' base %', (string) $old['base_pct'], (string) $base);
         $log($old['name'] . ' agreement after 1 year %', (string) ($old['agreement_after_year_pct'] ?? ''), (string) ($after ?? ''));
         $log($old['name'] . ' territories', (string) $old['territory_match'], $terr);
-        $upd->execute([':t' => $terr, ':b' => $base, ':a' => $after, ':id' => $id]);
+        $email = array_key_exists('email', $r) ? trim((string) $r['email']) : (string) ($old['email'] ?? '');
+        if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+            commissions_respond(400, ['ok' => false, 'error' => 'The email for ' . $old['name'] . ' is not a valid address.']);
+        }
+        $log($old['name'] . ' email', (string) ($old['email'] ?? ''), $email);
+        $upd->execute([':t' => $terr, ':b' => $base, ':a' => $after, ':e' => $email, ':id' => $id]);
     }
 }
 

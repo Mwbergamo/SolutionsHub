@@ -567,9 +567,26 @@
       render();
       loadOverview();
       loadGlobalTodos();
+      openFromLink();
     }).catch(function () {
       window.location.href = 'login.html?next=' + encodeURIComponent('index.html');
     });
+  }
+
+  // Deep link from the Commissions report: index.html?cw_company=<ConnectWise company id>
+  // opens that customer's page.
+  function openFromLink() {
+    var cw = '';
+    try { cw = new URLSearchParams(window.location.search).get('cw_company') || ''; } catch (e) { cw = ''; }
+    if (!/^\d+$/.test(cw)) return;
+    apiGet('api/customers.php?action=resolve&cw_id=' + encodeURIComponent(cw)).then(function (r) {
+      if (r.data && r.data.ok && r.data.id) {
+        selectCustomer(r.data.id);
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not find that customer.';
+        render();
+      }
+    }).catch(function () {});
   }
 
   // Front-page gauges + per-customer trend list (api/dashboard.php) --
