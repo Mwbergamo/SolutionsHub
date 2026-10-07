@@ -286,6 +286,7 @@ if ($action === 'detail') {
         'ok' => true,
         'customer' => [
             'id' => (int) $customer['id'],
+            'connectwise_id' => $customer['connectwise_id'] !== null ? (string) $customer['connectwise_id'] : null,
             'name' => $customer['name'],
             'is_peoplefirst' => (bool) $customer['is_peoplefirst'],
             'last_client_checkin_at' => $customer['last_client_checkin_at'],
