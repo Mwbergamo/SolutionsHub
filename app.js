@@ -2285,7 +2285,7 @@ class Component extends DCLogic {
     });
   }
 
-  // ---- Help / Suggestions (added 2026-10-05) --------------------------------
+  // ---- Clyde Support (added 2026-10-05) --------------------------------
   // Header button -> modal -> POST mail/send-feedback.php, which emails
   // Mbergamo@codebluetechnology.com. Screenshots are attached as images:
   // large ones are downscaled in the browser first so the JSON body stays
@@ -3362,7 +3362,7 @@ class Component extends DCLogic {
       onStop: function (e) { if (e && typeof e.stopPropagation === 'function') e.stopPropagation(); }
     };
 
-    // Help / Suggestions modal -- see openHelpModal()/sendHelpMessage() above.
+    // Clyde Support modal -- see openHelpModal()/sendHelpMessage() above.
     var hs = Object.assign({}, this.helpDefaults(), this.state.help || {});
     var helpTypeDefs = [
       { id: 'suggestion', label: 'Suggest a feature' },

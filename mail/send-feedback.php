@@ -2,7 +2,7 @@
 /**
  * mail/send-feedback.php
  *
- * POST endpoint behind the "Help / Suggestions" button in the SolutionsHub
+ * POST endpoint behind the "Clyde Support" button in the SolutionsHub
  * header (app.js: Component.sendHelpMessage()). Emails the message -- plus any
  * attached screenshots -- to the feedback inbox (Mbergamo@codebluetechnology.com
  * unless mail-config.php sets 'feedback_to').

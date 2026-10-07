@@ -3,6 +3,7 @@
  * Fields: date (YYYY-MM-DD), title, text (1-2 sentences), articles [article ids to link].
  */
 window.HELP_CHANGELOG = [
+  { date: '2026-10-07', title: 'Clyde Support and Help Center in the header', text: 'The Help / Suggestions button is now Clyde Support, and the Help Center sits beside it in the Hub header instead of on the home tiles.', articles: ['help-suggestions', 'help-center'] },
   { date: '2026-10-07', title: 'Help Center launched', text: 'A searchable guide to every tool, with links straight to each feature. The Services section is built from the Hub catalog and stays current automatically.', articles: ['help-center'] },
   { date: '2026-10-07', title: 'Arrange your dashboard cards', text: 'Edit view on a customer dashboard lets each rep drag the cards between two columns; the layout applies to every customer.', articles: ['rel-edit-view'] },
   { date: '2026-10-07', title: 'Save solutions to a customer', text: 'Save a solution, with documents and images, to the customer\'s dashboard (Solutions card), then reopen, update or delete it. Each saved solution has a unique link.', articles: ['save-to-customer', 'rel-solutions-card'] },
@@ -13,7 +14,7 @@ window.HELP_CHANGELOG = [
   { date: '2026-10-06', title: 'Opportunity/Risk popover', text: 'Hover or click the badge to see why an account was flagged.', articles: ['rel-opportunity-risk'] },
   { date: '2026-10-05', title: 'Commissions app', text: 'Live commissions from ConnectWise invoices, with dashboard, reports, history, trends and by-territory views (restricted access).', articles: ['comm-dashboard', 'comm-how-calculated', 'comm-reports'] },
   { date: '2026-10-05', title: 'Opportunity/Risk badge and Company Counts', text: 'Accounts are ranked Likely to need services, Stable or Account in danger. Company Counts reconciles Hub totals with ConnectWise.', articles: ['rel-opportunity-risk', 'rel-cw-sync'] },
-  { date: '2026-10-05', title: 'Help / Suggestions button', text: 'Send a suggestion, issue report or question, with screenshots, from the Hub header.', articles: ['help-suggestions'] },
+  { date: '2026-10-05', title: 'Help / Suggestions button (now Clyde Support)', text: 'Send a suggestion, issue report or question, with screenshots, from the Hub header.', articles: ['help-suggestions'] },
   { date: '2026-10-03', title: 'Projects status graph', text: 'Projects can be collapsed and filtered by a status bar graph.', articles: ['rel-projects'] },
   { date: '2026-10-02', title: 'Projects tab and Documents', text: 'Open Pre-Sales and Services projects with a follow-up checklist and notes; customer Documents upload also attaches to ConnectWise.', articles: ['rel-projects', 'rel-documents'] },
   { date: '2026-09-30', title: 'Checklist icons before picking a contact', text: 'Cross-sell checklist step icons are visible before a contact is chosen; clicking one opens the contact picker first.', articles: ['rel-cross-sell'] },

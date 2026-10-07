@@ -45,7 +45,7 @@ class GraphMailer
      *        letterhead/logo, not possible in a plain-text body) --
      *        defaults to false so every existing caller (mail/send-quote.php)
      *        is unaffected.
-     * @param array $attachments Added 2026-10-05 for the Help / Suggestions
+     * @param array $attachments Added 2026-10-05 for the Clyde Support
      *        form (mail/send-feedback.php): list of
      *        ['name' => string, 'contentType' => string, 'contentBytes' => base64].
      *        Defaults to none, so existing callers are unaffected.

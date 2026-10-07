@@ -145,7 +145,7 @@
     }
     var rel = changelog.filter(function (c) { return (c.articles || []).indexOf(a.id) >= 0; });
     if (rel.length) h += '<h2>Recent changes</h2><ul class="log-mini">' + rel.slice(0, 5).map(function (c) { return '<li><span>' + esc(fmtDate(c.date)) + '</span> ' + esc(c.title) + '</li>'; }).join('') + '</ul>';
-    h += '<p class="foot">Something missing or out of date? Use <strong>Help / Suggestions</strong> in the Hub header.</p></article>';
+    h += '<p class="foot">Something missing or out of date? Use <strong>Clyde Support</strong> in the Hub header.</p></article>';
     return h;
   }
 
