@@ -12,6 +12,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/sync-core.php';
+require_once __DIR__ . '/../../auth/collections-access.php';
 
 const COMMISSIONS_AR_DETAIL_BATCH = 12;
 const COMMISSIONS_AR_HOLD_DAYS = 60;
@@ -214,14 +215,31 @@ function commissions_ar_days(string $invoiceDate, DateTimeImmutable $today): int
  * All open invoices with days outstanding and the payee ids for their territory.
  * @return list<array<string,mixed>>
  */
-function commissions_ar_rows(PDO $pdo, bool $badDebtOnly = false): array
+function commissions_ar_rows(PDO $pdo, bool $badDebtOnly = false, ?int $onlyRepId = null): array
 {
     $today = commissions_ar_today();
     $reps = commissions_reps($pdo);
+    // Collections gives Moe and Chester an explicit territory list (auth/collections-access.php) instead of the commission word match.
+    $scoped = [];
+    foreach ($reps as $r) {
+        if (isset(COLLECTIONS_REP_TERRITORIES[$r['name']])) {
+            $scoped[(int) $r['id']] = array_map('strtolower', COLLECTIONS_REP_TERRITORIES[$r['name']]);
+        }
+    }
     $out = [];
     foreach ($pdo->query('SELECT * FROM ar_invoices')->fetchAll(PDO::FETCH_ASSOC) as $r) {
         $days = commissions_ar_days((string) $r['invoice_date'], $today);
         if (($days > COMMISSIONS_AR_BAD_DEBT_DAYS) !== $badDebtOnly) {
+            continue;
+        }
+        $repIds = commissions_reps_for_territory($reps, (string) $r['territory']);
+        foreach ($scoped as $sid => $list) {
+            $repIds = array_values(array_diff($repIds, [$sid]));
+            if (in_array(strtolower(trim((string) $r['territory'])), $list, true)) {
+                $repIds[] = $sid;
+            }
+        }
+        if ($onlyRepId !== null && !in_array($onlyRepId, $repIds, true)) {
             continue;
         }
         $out[] = [
@@ -236,7 +254,7 @@ function commissions_ar_rows(PDO $pdo, bool $badDebtOnly = false): array
             'total' => round((float) $r['total'], 2),
             'balance' => round((float) $r['balance'], 2),
             'days' => $days,
-            'rep_ids' => commissions_reps_for_territory($reps, (string) $r['territory']),
+            'rep_ids' => $repIds,
         ];
     }
     return $out;
@@ -293,9 +311,12 @@ function commissions_ar_group(array $rows): array
  * Rows for a scope: rep id, 'house' (no payee), or 'all'; optional territory name.
  * @return array{rows:list<array<string,mixed>>, title:string, rep:?array}
  */
-function commissions_ar_scope(PDO $pdo, string $repParam, string $territory = ''): array
+function commissions_ar_scope(PDO $pdo, string $repParam, string $territory = '', ?int $onlyRepId = null): array
 {
-    $rows = commissions_ar_rows($pdo);
+    if ($onlyRepId !== null) {
+        $repParam = (string) $onlyRepId; // a restricted viewer can only ever see their own rep
+    }
+    $rows = commissions_ar_rows($pdo, false, $onlyRepId);
     $title = 'All reps';
     $rep = null;
     if ($repParam === 'house') {

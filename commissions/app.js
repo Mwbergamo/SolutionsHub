@@ -20,7 +20,6 @@
     trendsRep: null, trends: null, trendsLoading: false,
     settings: null, settingsLoading: false, settingsMsg: null,
     terr: null, terrPeriod: 'all', terrLoading: false,
-    ar: null, arPop: null,      // open invoices to collect (summary + pop-over)
     mgr: null                   // Michael's private sales-manager commission (only fetched for him)
   };
 
@@ -106,7 +105,6 @@
         state.dash = r.data;
         state.error = null;
         loadManager();
-        loadAr();
         if (autoSync && !state.sync.running && r.data.total_invoices > 0) {
           var fin = r.data.sync && r.data.sync.finished_at ? new Date(r.data.sync.finished_at).getTime() : 0;
           if (Date.now() - fin > 30 * 60 * 1000) runSync(1, false, true);
@@ -235,7 +233,6 @@
     h += '<div class="synced-note no-print">Last synced ' + esc(fmtStamp(d.sync && d.sync.finished_at)) +
       ' &nbsp; <button class="btn small secondary" type="button" data-action="sync" data-months="1"' + (state.sync.running ? ' disabled' : '') + '>Sync now</button>' +
       ' &nbsp; Labor assumed at ' + money(d.labor_cost_per_hour) + '/hr of actual time · a losing line is subtracted from the rep’s commission.</div>';
-    h += arCardHtml();
     h += managerCardHtml();
     return h;
   }
@@ -270,120 +267,6 @@
     if (cell.loss_lines) sub += ' · <span class="loss">' + cell.loss_lines + ' loss' + (cell.loss_lines === 1 ? '' : 'es') + '</span>';
     if (cell.needs_review) sub += ' · <span class="review">⚠ ' + cell.needs_review + '</span>';
     return '<button class="comm-cell' + cls + '" type="button" ' + attrs + '><span class="num">' + money(cell.commission, { whole: false }) + '</span><span class="sub">' + sub + '</span></button>';
-  }
-
-  // ---- open invoices to collect -------------------------------------------
-
-  function loadAr() {
-    api('api/ar.php?action=summary').then(function (r) {
-      if (r.data && r.data.ok) { state.ar = r.data; render(); }
-    }).catch(function () {});
-  }
-
-  function agingCells(t) {
-    return '<td class="r">' + (t.b0 ? money(t.b0) : '<span class="hint">—</span>') + '</td>' +
-      '<td class="r">' + (t.b30 ? money(t.b30) : '<span class="hint">—</span>') + '</td>' +
-      '<td class="r' + (t.b60 ? ' neg' : '') + '">' + (t.b60 ? money(t.b60) : '<span class="hint">—</span>') + '</td>';
-  }
-  function arAmountBtn(t, rep, territory) {
-    if (!t.count) return '<span class="hint">$0.00</span>';
-    return '<button class="ar-amt" type="button" data-action="open-ar" data-rep="' + esc(rep) + '" data-territory="' + esc(territory || '') + '" title="Show the open invoices">' + money(t.balance) + '</button>';
-  }
-
-  function arCardHtml() {
-    var a = state.ar;
-    if (!a) return '';
-    var head = '<tr><th>__W__</th><th class="r">Open invoices</th><th class="r">Outstanding</th><th class="r">0–30 days</th><th class="r">31–60 days</th><th class="r">Over 60 days</th></tr>';
-    var h = '<div class="card ar-card no-print"><h3>Open invoices to collect <small>as of ' + esc(a.as_of_label) + '</small></h3>' +
-      '<div class="view-sub" style="margin-bottom:10px">Closed ConnectWise invoices not yet paid and no more than ' + a.bad_debt_days + ' days old (older is bad debt), with days counted from the invoice date. Click an amount to see the invoices and send a collections report.' +
-      (a.detail_pending ? ' <i>(' + a.detail_pending + ' invoice' + (a.detail_pending === 1 ? '' : 's') + ' still waiting for agreement/ticket detail — run Sync now.)</i>' : '') + '</div>' +
-      '<table class="data ar-table"><thead>' + head.replace('__W__', 'Rep') + '</thead><tbody>';
-    a.reps.forEach(function (r) {
-      h += '<tr><td><b>' + esc(r.name) + '</b></td><td class="r">' + r.count + '</td><td class="r">' + arAmountBtn(r, r.id) + '</td>' + agingCells(r) + '</tr>';
-    });
-    if (a.house.count) {
-      h += '<tr><td><b>House accounts</b> <span class="hint">(no rep)</span></td><td class="r">' + a.house.count + '</td><td class="r">' + arAmountBtn(a.house, 'house') + '</td>' + agingCells(a.house) + '</tr>';
-    }
-    h += '<tr class="total"><td><b>All open invoices</b></td><td class="r">' + a.total.count + '</td><td class="r">' + arAmountBtn(a.total, 'all') + '</td>' + agingCells(a.total) + '</tr></tbody></table>';
-    h += '<div class="hint" style="margin:6px 0 14px">A shared territory (Arcus + Chester) shows its invoices under both reps; the All row counts each invoice once.</div>';
-    h += '<table class="data ar-table"><thead>' + head.replace('__W__', 'Territory') + '</thead><tbody>';
-    if (!a.territories.length) h += '<tr><td colspan="6" class="hint">Nothing unpaid. (Refreshes on every sync.)</td></tr>';
-    a.territories.forEach(function (t) {
-      h += '<tr><td>' + esc(t.label) + ' <span class="hint">' + (t.house ? 'house account' : '→ ' + esc(t.payees.join(' + '))) + '</span></td><td class="r">' + t.count + '</td><td class="r">' +
-        arAmountBtn(t, 'all', t.territory || '(none)') + '</td>' + agingCells(t) + '</tr>';
-    });
-    h += '</tbody></table><div class="hint" style="margin-top:6px">Only invoices 0–' + a.bad_debt_days + ' days old are tracked' + (a.bad_debt && a.bad_debt.count ? '; ' + a.bad_debt.count + ' older invoice' + (a.bad_debt.count === 1 ? '' : 's') + ' (' + money(a.bad_debt.balance) + ') are treated as bad debt and not shown' : '') + '. Open invoices refreshed ' + esc(fmtStamp(a.refreshed_at)) + '.</div></div>';
-    return h;
-  }
-
-  function openAr(rep, territory) {
-    var p = state.arPop = { loading: true, data: null, error: null, rep: rep, territory: territory || '', emailOpen: false, to: '', msg: null, msgOk: false, sending: false };
-    render();
-    var url = 'api/ar.php?action=detail&rep_id=' + encodeURIComponent(rep) + (territory ? '&territory=' + encodeURIComponent(territory) : '');
-    api(url).then(function (r) {
-      if (r.data && r.data.ok) { p.data = r.data; p.to = (r.data.rep && r.data.rep.email) || ''; } else p.error = (r.data && r.data.error) || 'Could not load the open invoices.';
-      p.loading = false; render();
-    }).catch(function () { p.loading = false; p.error = 'Could not load the open invoices.'; render(); });
-  }
-
-  function arDocHtml(d) {
-    var t = d.totals;
-    var h = '<div class="report-doc"><div class="print-only report-title">Collections report — ' + esc(d.title) + '</div>' +
-      '<div class="report-meta">As of ' + esc(d.as_of_label) + ' · days counted from the invoice date · customers listed oldest balance first, invoices oldest to newest.</div>' +
-      '<div class="report-summary"><div><span>Total outstanding</span><b>' + money(t.balance) + '</b></div><div><span>Open invoices</span><b>' + t.count + '</b></div>' +
-      '<div><span>Over ' + d.hold_days + ' days</span><b>' + money(t.b60) + '</b></div><div><span>Oldest</span><b>' + t.oldest_days + ' days</b></div></div>';
-    if (!d.customers.length) return h + '<div class="hint">No open invoices. 🎉</div></div>';
-    d.customers.forEach(function (c) {
-      var name = c.company_id > 0
-        ? '<a class="cust-link" href="../relationships/index.html?cw_company=' + c.company_id + '" target="_blank" rel="noopener" title="Open in Relationships">' + esc(c.customer) + ' ↗</a>'
-        : esc(c.customer);
-      h += '<div class="report-section"><h4>' + name + ' <span class="hint">— ' + money(c.subtotal) + ' outstanding' + (c.territory ? ' · ' + esc(c.territory) : '') + '</span></h4>' +
-        '<table class="report"><thead><tr><th>Invoice #</th><th>Customer</th><th>Agreement</th><th>Ticket</th><th>Invoice date</th><th class="r">Days</th><th class="r">Open balance</th></tr></thead><tbody>';
-      c.invoices.forEach(function (i) {
-        var over = i.days > d.hold_days;
-        h += '<tr' + (over ? ' class="loss"' : '') + '><td>' + esc(i.invoice_number) + '</td><td>' + esc(i.customer) + '</td><td>' + (i.agreement ? esc(i.agreement) : '<span class="hint">—</span>') + '</td>' +
-          '<td>' + (i.tickets ? esc(i.tickets) : '<span class="hint">—</span>') + '</td><td>' + esc(fmtDate(i.invoice_date)) + '</td><td class="r">' + i.days + '</td><td class="r">' + money(i.balance) + '</td></tr>';
-        if (over) h += '<tr class="note"><td colspan="7">Invoice ' + esc(i.invoice_number) + ' — ' + esc(d.hold_note) + '</td></tr>';
-      });
-      h += '<tr class="total"><td colspan="6">Total — ' + esc(c.customer) + '</td><td class="r">' + money(c.subtotal) + '</td></tr></tbody></table></div>';
-    });
-    h += '<div class="report-section"><h4>Grand total outstanding: ' + money(t.balance) + '</h4></div></div>';
-    return h;
-  }
-
-  function arModalHtml() {
-    var p = state.arPop;
-    if (!p) return '';
-    var body;
-    if (p.loading) body = '<div class="loading">Loading open invoices…</div>';
-    else if (p.error) body = '<div class="banner error">' + esc(p.error) + '</div>';
-    else body = arDocHtml(p.data);
-    var email = '';
-    if (p.emailOpen && p.data) {
-      email = '<div class="ar-email no-print"><label class="field">Send collections report to<input type="email" data-change="ar-to" id="ar-to" placeholder="name@company.com" value="' + esc(p.to) + '"></label>' +
-        '<button class="btn" type="button" data-action="ar-email-send"' + (p.sending ? ' disabled' : '') + '>' + (p.sending ? 'Sending…' : 'Send') + '</button>' +
-        '<span class="hint">' + (p.data.rep && !p.data.rep.email ? 'No email saved for this rep — add one in Settings to prefill it. ' : '') + 'It is sent from the CodeBlue mailbox and replies come to you.</span></div>';
-    }
-    var msg = p.msg ? '<div class="banner ' + (p.msgOk ? 'info' : 'error') + ' no-print">' + esc(p.msg) + '</div>' : '';
-    return '<div class="modal-backdrop" data-action="close-ar-bg"><div class="modal" role="dialog">' +
-      '<div class="modal-head no-print"><h3>' + (p.data ? 'Open invoices — ' + esc(p.data.title) : 'Open invoices') + '</h3><div class="actions">' +
-      (p.data && p.data.customers.length ? '<button class="btn" type="button" data-action="ar-email-toggle">Collections report…</button>' : '') +
-      '<button class="btn secondary" type="button" data-action="print">Print / Save PDF</button>' +
-      '<button class="btn secondary" type="button" data-action="close-ar">Close</button></div></div>' + email + msg + body + '</div></div>';
-  }
-
-  function sendArEmail() {
-    var p = state.arPop;
-    var inp = document.getElementById('ar-to');
-    if (inp) p.to = inp.value.trim();
-    if (!p.to) { p.msg = 'Enter an email address first.'; p.msgOk = false; render(); return; }
-    p.sending = true; p.msg = null; render();
-    api('api/ar.php?action=email', { rep_id: p.rep, territory: p.territory, to: p.to }).then(function (r) {
-      p.sending = false;
-      if (r.data && r.data.ok) { p.msg = 'Collections report sent to ' + r.data.sent_to + ' (' + r.data.invoices + ' invoice' + (r.data.invoices === 1 ? '' : 's') + ', ' + money(r.data.balance) + ').'; p.msgOk = true; p.emailOpen = false; }
-      else { p.msg = (r.data && r.data.error) || 'Could not send the email.'; p.msgOk = false; }
-      render();
-    }).catch(function () { p.sending = false; p.msg = 'Could not reach the server.'; p.msgOk = false; render(); });
   }
 
   // ---- report (popover + printable) ---------------------------------------
@@ -842,9 +725,9 @@
     else if (state.view === 'territories') body = territoriesHtml();
     else if (state.view === 'settings') body = settingsHtml();
     else body = dashboardHtml();
-    document.body.classList.toggle('has-report', !!(state.report || state.arPop));
+    document.body.classList.toggle('has-report', !!state.report);
     root.innerHTML = topbarHtml() + '<main>' + (state.error ? '<div class="banner error no-print">' + esc(state.error) + ' <a href="#" data-action="dismiss">dismiss</a></div>' : '') +
-      syncBarHtml() + '<div class="view-body">' + body + '</div><div class="report-slot">' + reportModalHtml() + arModalHtml() + '</div></main>';
+      syncBarHtml() + '<div class="view-body">' + body + '</div><div class="report-slot">' + reportModalHtml() + '</div></main>';
   }
 
   function setView(v) {
@@ -861,8 +744,7 @@
   var savedTitle = document.title;
   function printWithTitle() {
     var title = savedTitle;
-    if (state.arPop && state.arPop.data) title = 'Collections Report - ' + state.arPop.data.title + ' - ' + state.arPop.data.as_of_label;
-    else if (state.report && state.report.data) title = 'Commission Report - ' + state.report.data.rep.name + ' - ' + state.report.data.period_label + (state.report.cat && state.report.cat !== 'all' ? ' - ' + catLabel(state.report.cat) : '');
+    if (state.report && state.report.data) title = 'Commission Report - ' + state.report.data.rep.name + ' - ' + state.report.data.period_label + (state.report.cat && state.report.cat !== 'all' ? ' - ' + catLabel(state.report.cat) : '');
     else if (state.view === 'territories' && state.terr) title = 'Commissions by Territory - ' + state.terr.label;
     else if (state.view === 'trends' && state.trends) title = 'Commission Trend Review - ' + state.trends.rep.name;
     document.title = title;
@@ -874,7 +756,6 @@
     var el = e.target.closest('[data-action]');
     if (!el) return;
     var a = el.getAttribute('data-action');
-    if (a === 'close-ar-bg') { if (e.target === el) { state.arPop = null; render(); } return; }
     if (a === 'close-report-bg') { if (e.target === el) { state.report = null; render(); } return; }
     if (el.tagName === 'A') e.preventDefault();
     if (a === 'view') setView(el.getAttribute('data-view'));
@@ -882,10 +763,6 @@
     else if (a === 'sync') runSync(Number(el.getAttribute('data-months')) || 1, false);
     else if (a === 'sync-force') runSync(Number(el.getAttribute('data-months')) || 3, true);
     else if (a === 'open-report') openReport(el.getAttribute('data-rep'), el.getAttribute('data-bucket'), el.getAttribute('data-month'));
-    else if (a === 'open-ar') openAr(el.getAttribute('data-rep'), el.getAttribute('data-territory'));
-    else if (a === 'close-ar') { state.arPop = null; render(); }
-    else if (a === 'ar-email-toggle') { state.arPop.emailOpen = !state.arPop.emailOpen; state.arPop.msg = null; render(); }
-    else if (a === 'ar-email-send') sendArEmail();
     else if (a === 'close-report') { state.report = null; render(); }
     else if (a === 'print') printWithTitle();
     else if (a === 'trends-rep') { state.trendsRep = el.getAttribute('data-rep'); state.trends = null; loadTrends(); }
@@ -899,7 +776,6 @@
     var t = e.target;
     if (t.getAttribute && t.getAttribute('data-action') === 'toggle-loss') { state.report.lossOnly = t.checked; render(); return; }
     var c = t.getAttribute && t.getAttribute('data-change');
-    if (c === 'ar-to') { state.arPop.to = t.value.trim(); return; }
     if (c === 'hist-year') { state.histYear = t.value; render(); }
     else if (c === 'hist-month') { state.histMonth = t.value; render(); }
     else if (c === 'report-cat') { state.report.cat = t.value; render(); }

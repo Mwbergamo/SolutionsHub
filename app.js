@@ -4469,6 +4469,7 @@ class Component extends DCLogic {
       helpVM: helpVM,
       onOpenHelp: function () { self.openHelpModal(); },
       canViewCommissions: !!(this.props.user && this.props.user.can_view_commissions),
+      canViewCollections: !!(this.props.user && this.props.user.can_view_collections),
       onOpenInsideSales: function () { self.openInsideSalesModal(); },
       accentColor: accentColor,
       logoWhite: CBT_LOGO_WHITE,
