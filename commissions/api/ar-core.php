@@ -341,6 +341,17 @@ function commissions_ar_scope(PDO $pdo, string $repParam, string $territory = ''
     return ['rows' => $rows, 'title' => $title, 'rep' => $rep];
 }
 
+/**
+ * One customer (ConnectWise company id): used by the "Open Balance Report" link on a Relationships customer page.
+ * @return array{rows:list<array<string,mixed>>, title:string, rep:null}
+ */
+function commissions_ar_scope_customer(PDO $pdo, int $cwId, string $name = ''): array
+{
+    $rows = array_values(array_filter(commissions_ar_rows($pdo), static fn (array $r): bool => $r['company_id'] === $cwId));
+    $title = $name !== '' ? $name : ($rows !== [] ? (string) $rows[0]['customer'] : 'Customer');
+    return ['rows' => $rows, 'title' => $title, 'rep' => null];
+}
+
 function commissions_ar_money(float $v): string
 {
     return ($v < 0 ? '-' : '') . '$' . number_format(abs($v), 2);

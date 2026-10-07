@@ -204,7 +204,7 @@ if ($action === 'detail') {
     }
 
     $custStmt = $pdo->prepare(
-        'SELECT id, name, is_peoplefirst, last_client_checkin_at, last_client_checkin_by, last_risk_scan_at, last_risk_scan_by,
+        'SELECT id, connectwise_id, name, is_peoplefirst, last_client_checkin_at, last_client_checkin_by, last_risk_scan_at, last_risk_scan_by,
                 voip_hosted_elsewhere, voip_hosted_agreement_name, is_prospect_only, is_residential, cw_status_name, territory_name,
                 cx_issue_ticket_count_90d, cx_issue_synced_at
          FROM customers WHERE id = :id'

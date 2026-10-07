@@ -5083,6 +5083,7 @@
       '</div>' +
       '<div class="customer-header-right">' +
         '<button class="print-summary-btn" type="button" data-action="open-print-summary">Print Service Summary</button>' +
+        (detail.customer.connectwise_id ? '<a class="print-summary-btn" style="text-decoration:none;display:inline-block;" href="../collections/index.html?cw_company=' + encodeURIComponent(detail.customer.connectwise_id) + '" target="_blank" rel="noopener">Open Balance Report</a>' : '') +
         '<button class="change-customer-btn" type="button" data-action="change-customer">Search a different customer</button>' +
       '</div>' +
     '</div>';

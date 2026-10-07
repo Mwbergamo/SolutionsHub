@@ -7,6 +7,7 @@
 
   var API = '../commissions/api/ar.php';
   var root = document.getElementById('app-root');
+  var CW = (function () { try { var v = new URLSearchParams(window.location.search).get('cw_company') || ''; return /^\d+$/.test(v) ? v : ''; } catch (e) { return ''; } })();
   var state = { user: null, denied: false, error: null, ar: null, arPop: null, refreshing: false };
 
   function esc(s) {
@@ -47,6 +48,7 @@
       var u = r.data && r.data.user;
       if (!u) { window.location.href = 'login.html'; return; }
       state.user = u;
+      if (CW) { render(); loadCustomer(true); return; }   // client-level report: the API decides who may see this customer
       if (!u.can_view_collections) { state.denied = true; render(); return; }
       render();
       loadAr(true);
@@ -65,6 +67,35 @@
         state.error = (r.data && r.data.error) || 'Could not load collections.'; render();
       }
     }).catch(function () { state.error = 'Could not load collections.'; render(); });
+  }
+
+  // ---- one customer's open balance (linked from the Relationships customer page) ----
+  function loadCustomer(maybeRefresh) {
+    var p = state.arPop;
+    if (!p) { p = state.arPop = { loading: true, data: null, error: null, cwId: CW, customerMode: true, emailOpen: false, to: '', msg: null, msgOk: false, sending: false }; render(); }
+    api(API + '?action=customer&cw_id=' + encodeURIComponent(CW)).then(function (r) {
+      if (r.status === 401) { window.location.href = 'login.html'; return; }
+      p.loading = false;
+      if (r.data && r.data.ok) {
+        p.data = r.data; p.error = null;
+        var age = r.data.refreshed_at ? Date.now() - new Date(r.data.refreshed_at).getTime() : Infinity;
+        if (maybeRefresh && (age > 30 * 60 * 1000 || r.data.detail_pending)) refreshCustomer();
+      } else p.error = (r.data && r.data.error) || 'Could not load the open balance report.';
+      render();
+    }).catch(function () { p.loading = false; p.error = 'Could not load the open balance report.'; render(); });
+  }
+  function refreshCustomer() {
+    state.refreshing = true; render();
+    var done = function () { state.refreshing = false; loadCustomer(false); };
+    api(API + '?action=refresh', {}).then(function (r) {
+      if (!r.data || !r.data.ok || !(r.data.pending > 0)) return done();
+      var step = function () {
+        api(API + '?action=detail_step', {}).then(function (s2) {
+          if (s2.data && s2.data.ok && s2.data.pending > 0) step(); else done();
+        }).catch(done);
+      };
+      step();
+    }).catch(done);
   }
 
   // Re-read unpaid invoices from ConnectWise, then fill in agreement/ticket detail a few at a time.
@@ -176,6 +207,12 @@
         '<span class="hint">' + (p.data.rep && !p.data.rep.email ? 'No email saved for this rep — add one in Settings to prefill it. ' : '') + 'It is sent from the CodeBlue mailbox and replies come to you.</span></div>';
     }
     var msg = p.msg ? '<div class="banner ' + (p.msgOk ? 'info' : 'error') + ' no-print">' + esc(p.msg) + '</div>' : '';
+    if (p.customerMode) {
+      return '<div class="modal cust-report" style="max-width:1100px;margin:0 auto">' +
+        '<div class="modal-head no-print"><h3>' + (p.data ? 'Open balance — ' + esc(p.data.title) : 'Open balance report') + '</h3><div class="actions">' +
+        (p.data && p.data.customers.length ? '<button class="btn" type="button" data-action="ar-email-toggle">Email this report…</button>' : '') +
+        '<button class="btn secondary" type="button" data-action="print">Print / Save PDF</button></div></div>' + email + msg + body + '</div>';
+    }
     return '<div class="modal-backdrop" data-action="close-ar-bg"><div class="modal" role="dialog">' +
       '<div class="modal-head no-print"><h3>' + (p.data ? 'Open invoices — ' + esc(p.data.title) : 'Open invoices') + '</h3><div class="actions">' +
       (p.data && p.data.customers.length ? '<button class="btn" type="button" data-action="ar-email-toggle">Collections report…</button>' : '') +
@@ -189,7 +226,7 @@
     if (inp) p.to = inp.value.trim();
     if (!p.to) { p.msg = 'Enter an email address first.'; p.msgOk = false; render(); return; }
     p.sending = true; p.msg = null; render();
-    api(API + '?action=email', { rep_id: p.rep, territory: p.territory, to: p.to }).then(function (r) {
+    api(API + '?action=email', p.customerMode ? { cw_id: p.cwId, to: p.to } : { rep_id: p.rep, territory: p.territory, to: p.to }).then(function (r) {
       p.sending = false;
       if (r.data && r.data.ok) { p.msg = 'Collections report sent to ' + r.data.sent_to + ' (' + r.data.invoices + ' invoice' + (r.data.invoices === 1 ? '' : 's') + ', ' + money(r.data.balance) + ').'; p.msgOk = true; p.emailOpen = false; }
       else { p.msg = (r.data && r.data.error) || 'Could not send the email.'; p.msgOk = false; }
@@ -203,7 +240,7 @@
     return '<div class="topbar no-print"><div class="topbar-left"><div><div class="brand">Collections</div><div class="brand-sub">CodeBlue Technology</div></div></div>' +
       '<div class="topbar-nav"></div>' +
       '<div class="topbar-right"><button class="btn small secondary" type="button" data-action="refresh"' + (state.refreshing ? ' disabled' : '') + '>' + (state.refreshing ? 'Refreshing…' : 'Refresh from ConnectWise') + '</button> ' +
-      '<a class="back-to-hub" href="../index.html">← SolutionsHub</a></div></div>';
+      '<a class="back-to-hub" href="' + (CW ? '../relationships/index.html' : '../index.html') + '">' + (CW ? '← Relationships' : '← SolutionsHub') + '</a></div></div>';
   }
 
   function render() {
@@ -215,12 +252,12 @@
       root.innerHTML = state.error ? '<div class="empty">' + esc(state.error) + '</div>' : '<div class="loading">Loading…</div>';
       return;
     }
-    var body = state.ar ? arCardHtml() : '<div class="loading">Loading…</div>';
-    document.body.classList.toggle('has-report', !!state.arPop);
+    var body = CW ? '' : (state.ar ? arCardHtml() : '<div class="loading">Loading…</div>');
+    document.body.classList.toggle('has-report', !!state.arPop && !CW);
     root.innerHTML = topbarHtml() + '<main>' +
       (state.error ? '<div class="banner error no-print">' + esc(state.error) + ' <a href="#" data-action="dismiss">dismiss</a></div>' : '') +
-      (state.refreshing ? '<div class="banner info no-print"><b>Refreshing from ConnectWise…</b> The numbers below update as it finishes.</div>' : '') +
-      '<h2 class="view-title">Collections</h2><div class="view-body">' + body + '</div><div class="report-slot">' + arModalHtml() + '</div></main>';
+      (CW && state.arPop ? '<div class="cust-slot">' + arModalHtml() + '</div>' : '') + (state.refreshing ? '<div class="banner info no-print"><b>Refreshing from ConnectWise…</b> The numbers below update as it finishes.</div>' : '') +
+      (CW ? '' : '<h2 class="view-title">Collections</h2>') + '<div class="view-body">' + body + '</div><div class="report-slot">' + (CW ? '' : arModalHtml()) + '</div></main>';
   }
 
   var savedTitle = document.title;
@@ -237,7 +274,7 @@
     if (a === 'close-ar-bg') { if (e.target === el) { state.arPop = null; render(); } return; }
     if (el.tagName === 'A') e.preventDefault();
     if (a === 'dismiss') { state.error = null; render(); }
-    else if (a === 'refresh') refreshAr();
+    else if (a === 'refresh') { if (CW) refreshCustomer(); else refreshAr(); }
     else if (a === 'open-ar') openAr(el.getAttribute('data-rep'), el.getAttribute('data-territory'));
     else if (a === 'close-ar') { state.arPop = null; render(); }
     else if (a === 'ar-email-toggle') { state.arPop.emailOpen = !state.arPop.emailOpen; state.arPop.msg = null; render(); }

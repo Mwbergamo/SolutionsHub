@@ -21,6 +21,7 @@ require_once __DIR__ . '/calc.php';
 require_once __DIR__ . '/ar-core.php';
 
 $user = auth_current_user();
+$crcUserId = $_SESSION['crc_user_id'] ?? null; // set when the person has signed in to Relationships (every client relationship coordinator)
 if (session_status() === PHP_SESSION_ACTIVE) {
     session_write_close();
 }
@@ -28,7 +29,20 @@ if ($user === null) {
     commissions_respond(401, ['ok' => false, 'error' => 'Not signed in.']);
 }
 $access = collections_access_for($user['email'] ?? '');
-if ($access === null) {
+$bodyPeek = [];
+$cwId = 0;
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+    $bodyPeek = commissions_read_json_body();
+    $cwId = (int) ($bodyPeek['cw_id'] ?? 0);
+} else {
+    $cwId = (int) ($_GET['cw_id'] ?? 0);
+}
+// Client-level (single customer) reports are open to every client relationship coordinator as well as Collections users.
+$customerMode = $cwId > 0 && ($action0 = $_GET['action'] ?? '') !== '' && in_array($action0, ['customer', 'email', 'refresh', 'detail_step'], true);
+if ($access === null && !$customerMode && !in_array($_GET['action'] ?? '', ['refresh', 'detail_step'], true)) {
+    commissions_respond(403, ['ok' => false, 'error' => 'You do not have access to Collections.']);
+}
+if ($access === null && !is_int($crcUserId)) {
     commissions_respond(403, ['ok' => false, 'error' => 'You do not have access to Collections.']);
 }
 $user = ['name' => (string) ($user['name'] ?? ''), 'email' => (string) ($user['email'] ?? '')];
@@ -37,9 +51,48 @@ $pdo = commissions_db();
 $action = $_GET['action'] ?? 'summary';
 $today = commissions_ar_today();
 
+/**
+ * May this person see ONE customer's collections information?
+ *  - Collections admins: yes. Moe / Chester: only customers in their own territories.
+ *  - Any client relationship coordinator who can see that customer in Relationships (its territory rules).
+ */
+function ar_customer_allowed(?array $access, $crcUserId, string $email, int $cwId, ?string &$name): bool
+{
+    require_once __DIR__ . '/../../relationships/api/territory-access.php';
+    $name = null;
+    $territory = null;
+    $rpdo = relationships_db();
+    $q = $rpdo->prepare('SELECT name, territory_name FROM customers WHERE connectwise_id = :cw LIMIT 1');
+    $q->execute([':cw' => (string) $cwId]);
+    $c = $q->fetch(PDO::FETCH_ASSOC);
+    if ($c !== false) {
+        $name = (string) $c['name'];
+        $territory = $c['territory_name'] !== null ? (string) $c['territory_name'] : null;
+    }
+    if ($access !== null) {
+        if ($access['scope'] === 'all') {
+            return true;
+        }
+        $list = array_map('strtolower', COLLECTIONS_REP_TERRITORIES[$access['rep_name']] ?? []);
+        if ($territory !== null && in_array(strtolower(trim($territory)), $list, true)) {
+            return true;
+        }
+    }
+    if (!is_int($crcUserId)) {
+        return false;
+    }
+    $u = $rpdo->prepare('SELECT 1 FROM crc_users WHERE id = :id');
+    $u->execute([':id' => $crcUserId]);
+    if ($u->fetchColumn() === false) {
+        return false;
+    }
+    $allowed = relationships_allowed_territories_for_email($rpdo, $email);
+    return $allowed === null || ($territory !== null && in_array($territory, $allowed, true));
+}
+
 // Restricted viewers (Moe, Chester): resolve their rep id once; everything below is filtered to it.
 $onlyRepId = null;
-if ($access['scope'] === 'rep') {
+if ($access !== null && $access['scope'] === 'rep') {
     $q = $pdo->prepare('SELECT id FROM reps WHERE name = :n');
     $q->execute([':n' => $access['rep_name']]);
     $found = $q->fetchColumn();
@@ -48,7 +101,12 @@ if ($access['scope'] === 'rep') {
     }
     $onlyRepId = (int) $found;
 }
-$viewer = ['name' => $user['name'], 'scope' => $access['scope'], 'rep_name' => $access['rep_name']];
+$viewer = ['name' => $user['name'], 'scope' => $access['scope'] ?? 'customer', 'rep_name' => $access['rep_name'] ?? null];
+
+$customerName = null;
+if ($customerMode && !ar_customer_allowed($access, $crcUserId, $user['email'], $cwId, $customerName)) {
+    commissions_respond(403, ['ok' => false, 'error' => 'You do not have rights to this customer’s collections information.']);
+}
 
 try {
     if ($action === 'summary') {
@@ -111,6 +169,22 @@ try {
         ]);
     }
 
+    if ($action === 'customer') {
+        $scope = commissions_ar_scope_customer($pdo, $cwId, (string) $customerName);
+        commissions_respond(200, [
+            'ok' => true,
+            'title' => $scope['title'],
+            'rep' => null,
+            'as_of_label' => $today->format('F j, Y'),
+            'hold_days' => COMMISSIONS_AR_HOLD_DAYS,
+            'hold_note' => COMMISSIONS_AR_HOLD_NOTE,
+            'totals' => commissions_ar_totals($scope['rows']),
+            'customers' => commissions_ar_group($scope['rows']),
+            'refreshed_at' => commissions_state_get($pdo, 'ar_refreshed_at'),
+            'detail_pending' => commissions_ar_pending_detail($pdo),
+        ]);
+    }
+
     if ($action === 'refresh') {
         commissions_require_post();
         $last = commissions_state_get($pdo, 'ar_refreshed_at');
@@ -133,10 +207,12 @@ try {
         if ($to === '' || filter_var($to, FILTER_VALIDATE_EMAIL) === false) {
             commissions_respond(400, ['ok' => false, 'error' => 'Enter a valid email address to send the report to.']);
         }
-        if ($onlyRepId !== null && !preg_match('/@codebluetechnology\.com$/i', $to)) {
+        if (($onlyRepId !== null || $access === null) && !preg_match('/@codebluetechnology\.com$/i', $to)) {
             commissions_respond(403, ['ok' => false, 'error' => 'You can only send collections reports to a CodeBlue address.']);
         }
-        $scope = commissions_ar_scope($pdo, (string) ($body['rep_id'] ?? 'all'), trim((string) ($body['territory'] ?? '')), $onlyRepId);
+        $scope = $customerMode
+            ? commissions_ar_scope_customer($pdo, $cwId, (string) $customerName)
+            : commissions_ar_scope($pdo, (string) ($body['rep_id'] ?? 'all'), trim((string) ($body['territory'] ?? '')), $onlyRepId);
         if ($scope['rows'] === []) {
             commissions_respond(400, ['ok' => false, 'error' => 'There are no open invoices in this report.']);
         }
