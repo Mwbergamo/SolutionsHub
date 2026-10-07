@@ -866,6 +866,15 @@ function relationships_migrate(PDO $pdo): void
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_solution_cw_links_solution ON solution_cw_links(solution_id)');
 
+    // Per-rep customer-dashboard card layout (layout.php) -- 2026-10-07.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS user_dashboard_layouts (
+            user_id INTEGER PRIMARY KEY,
+            layout_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+
     // ---- Prospecting (prospecting.php / prospecting-agent.php) -- added
     // 2026-09-23 per Michael: a rep issues a "Prospect" command, a research
     // agent searches the public web, and the rep claims a candidate as a

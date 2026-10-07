@@ -565,6 +565,7 @@
       }
       state.user = r.data.user;
       render();
+      loadLayout();
       loadOverview();
       loadGlobalTodos();
       openFromLink();
@@ -5073,6 +5074,142 @@
     return html;
   }
 
+  // ---- Arrangeable dashboard cards (added 2026-10-07 per Michael) ---------
+  // "Edit view" lets a rep drag the cards between two columns; the arrangement is saved per rep
+  // (api/layout.php) and applied to every customer they open.
+  var LAYOUT_DEFAULT = { left: ['opportunity', 'contact', 'outgrow'], right: ['riskscans', 'documents', 'solutions'] };
+  var LAYOUT_CARD_NAMES = { opportunity: 'Opportunity/Risk Report', contact: 'Contacts', outgrow: 'Outgrow Last Touch', riskscans: 'Risk Scans', documents: 'Documents', solutions: 'Solutions' };
+
+  function normalizeLayout(l) {
+    var out = { left: [], right: [] }, seen = {};
+    ['left', 'right'].forEach(function (col) {
+      ((l && l[col]) || []).forEach(function (id) {
+        if (LAYOUT_CARD_NAMES[id] && !seen[id]) { seen[id] = true; out[col].push(id); }
+      });
+    });
+    ['left', 'right'].forEach(function (col) {
+      LAYOUT_DEFAULT[col].forEach(function (id) { if (!seen[id]) { seen[id] = true; out[col].push(id); } });
+    });
+    return out;
+  }
+
+  function currentLayout() { return normalizeLayout(state.layout || LAYOUT_DEFAULT); }
+
+  function loadLayout() {
+    apiGet('api/layout.php?action=get').then(function (r) {
+      if (r.data && r.data.ok) { state.layout = r.data.layout; render(); }
+    }).catch(function () { /* default layout is fine */ });
+  }
+
+  function saveLayout() {
+    state.layoutSaveError = null;
+    apiPost('api/layout.php?action=save', { layout: currentLayout() }).then(function (r) {
+      if (!r.data || !r.data.ok) { state.layoutSaveError = (r.data && r.data.error) || 'Could not save your layout.'; render(); }
+    }).catch(function () { state.layoutSaveError = 'Could not save your layout - check your connection.'; render(); });
+  }
+
+  function moveLayoutCard(id, toCol, beforeId) {
+    var l = currentLayout();
+    ['left', 'right'].forEach(function (c) { l[c] = l[c].filter(function (x) { return x !== id; }); });
+    var idx = beforeId ? l[toCol].indexOf(beforeId) : -1;
+    if (idx < 0) l[toCol].push(id); else l[toCol].splice(idx, 0, id);
+    state.layout = l;
+    render();
+    saveLayout();
+  }
+
+  function nudgeLayoutCard(id, dir) {
+    var l = currentLayout();
+    var col = l.left.indexOf(id) >= 0 ? 'left' : 'right';
+    var i = l[col].indexOf(id), j = i + dir;
+    if (j < 0 || j >= l[col].length) return;
+    var t = l[col][i]; l[col][i] = l[col][j]; l[col][j] = t;
+    state.layout = l;
+    render();
+    saveLayout();
+  }
+
+  function layoutCardInnerHtml(id, detail) {
+    if (id === 'opportunity') return opportunityReportPanelHtml(detail.customer);
+    if (id === 'contact') return contactCardHtml();
+    if (id === 'outgrow') return outgrowFieldHtml();
+    if (id === 'riskscans') return riskScansPanelHtml(detail.customer.id);
+    if (id === 'documents') return documentsPanelHtml(detail.customer.id);
+    if (id === 'solutions') return solutionsPanelHtml(detail.customer);
+    return '';
+  }
+
+  function dashboardCardsHtml(detail) {
+    var l = currentLayout();
+    var edit = !!state.layoutEdit;
+    var html = '';
+    if (edit) {
+      html += '<div class="layout-edit-banner"><span><strong>Edit view</strong> - drag a card by its bar (or use the arrows) to rearrange. Your layout is saved automatically and used for every customer.</span>' +
+        '<button type="button" class="layout-reset-btn" data-action="layout-reset">Reset to default</button>' +
+        (state.layoutSaveError ? '<span class="layout-edit-error">' + escapeHtml(state.layoutSaveError) + '</span>' : '') + '</div>';
+    }
+    html += '<div class="detail-cols' + (edit ? ' layout-editing' : '') + '">';
+    ['left', 'right'].forEach(function (col) {
+      html += '<div class="detail-col" data-layout-col="' + col + '">';
+      l[col].forEach(function (id, i) {
+        var inner = layoutCardInnerHtml(id, detail);
+        if (!edit) { html += inner; return; }
+        html += '<div class="layout-card" draggable="true" data-layout-card="' + id + '">' +
+          '<div class="layout-card-bar"><span class="layout-grip" aria-hidden="true">\u2807\u2807</span><span class="layout-card-title">' + escapeHtml(LAYOUT_CARD_NAMES[id]) + '</span>' +
+          '<span class="layout-card-btns">' +
+            '<button type="button" data-action="layout-nudge" data-card="' + id + '" data-dir="-1" title="Move up"' + (i === 0 ? ' disabled' : '') + '>\u25B2</button>' +
+            '<button type="button" data-action="layout-nudge" data-card="' + id + '" data-dir="1" title="Move down"' + (i === l[col].length - 1 ? ' disabled' : '') + '>\u25BC</button>' +
+            '<button type="button" data-action="layout-side" data-card="' + id + '" data-col="' + (col === 'left' ? 'right' : 'left') + '" title="Move to the ' + (col === 'left' ? 'right' : 'left') + ' column">' + (col === 'left' ? '\u25B6' : '\u25C0') + '</button>' +
+          '</span></div><div class="layout-card-body">' + inner + '</div></div>';
+      });
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function onLayoutDragStart(e) {
+    var card = e.target.closest && e.target.closest('[data-layout-card]');
+    if (!card) return;
+    state.layoutDragId = card.getAttribute('data-layout-card');
+    card.classList.add('layout-dragging');
+    try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', state.layoutDragId); } catch (x) {}
+  }
+  function layoutDropTarget(e) {
+    var col = e.target.closest && e.target.closest('[data-layout-col]');
+    if (!col) return null;
+    var before = null;
+    var cards = col.querySelectorAll('[data-layout-card]');
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i].getAttribute('data-layout-card') === state.layoutDragId) continue;
+      var r = cards[i].getBoundingClientRect();
+      if (e.clientY < r.top + r.height / 2) { before = cards[i].getAttribute('data-layout-card'); break; }
+    }
+    return { col: col.getAttribute('data-layout-col'), before: before };
+  }
+  function onLayoutDragOver(e) {
+    if (!state.layoutDragId) return;
+    var t = layoutDropTarget(e);
+    if (!t) return;
+    e.preventDefault();
+    var cols = root.querySelectorAll('[data-layout-col]');
+    for (var i = 0; i < cols.length; i++) cols[i].classList.toggle('layout-drop', cols[i].getAttribute('data-layout-col') === t.col);
+  }
+  function onLayoutDrop(e) {
+    if (!state.layoutDragId) return;
+    var t = layoutDropTarget(e);
+    var id = state.layoutDragId;
+    state.layoutDragId = null;
+    if (!t) return;
+    e.preventDefault();
+    moveLayoutCard(id, t.col, t.before);
+  }
+  function onLayoutDragEnd() {
+    state.layoutDragId = null;
+    var els = root.querySelectorAll('.layout-dragging, .layout-drop');
+    for (var i = 0; i < els.length; i++) els[i].classList.remove('layout-dragging', 'layout-drop');
+  }
+
   function customerDashboardHtml(detail) {
     var roster = missingRoster(detail);
     var html = '';
@@ -5086,11 +5223,11 @@
       '<div class="customer-header-right">' +
         '<button class="print-summary-btn" type="button" data-action="open-print-summary">Print Service Summary</button>' +
         (detail.customer.connectwise_id ? '<a class="print-summary-btn" style="text-decoration:none;display:inline-block;" href="../collections/index.html?cw_company=' + encodeURIComponent(detail.customer.connectwise_id) + '" target="_blank" rel="noopener">Open Balance Report</a>' : '') +
+        '<button class="change-customer-btn' + (state.layoutEdit ? ' layout-edit-on' : '') + '" type="button" data-action="layout-edit-toggle">' + (state.layoutEdit ? 'Done editing' : 'Edit view') + '</button>' +
         '<button class="change-customer-btn" type="button" data-action="change-customer">Search a different customer</button>' +
       '</div>' +
     '</div>';
 
-    var leftColHtml = opportunityReportPanelHtml(detail.customer) + contactCardHtml() + outgrowFieldHtml();
 
     if (detail.customer.is_peoplefirst) {
       html += '<div class="peoplefirst-note">PeopleFirst Support Members - Quarterly Risk Scans and Monthly Client Checkin\'s are required.</div>';
@@ -5110,9 +5247,7 @@
       html += '<div class="residential-note">Residential — ConnectWise Company status is Residential.</div>';
     }
 
-    // Two-column layout (2026-10-07, per Michael): account insight on the left, files/records on the right.
-    html += '<div class="detail-cols"><div class="detail-col">' + leftColHtml + '</div>' +
-      '<div class="detail-col">' + riskScansPanelHtml(detail.customer.id) + documentsPanelHtml(detail.customer.id) + solutionsPanelHtml(detail.customer) + '</div></div>';
+    html += dashboardCardsHtml(detail);
 
     html += activityPanelHtml(detail);
 
@@ -7665,6 +7800,17 @@
       uploadRiskScan(parseInt(el.getAttribute('data-customer'), 10));
     } else if (action === 'riskscan-retry-cw') {
       retryRiskScanCw(parseInt(el.getAttribute('data-scan'), 10));
+    } else if (action === 'layout-edit-toggle') {
+      state.layoutEdit = !state.layoutEdit;
+      render();
+    } else if (action === 'layout-reset') {
+      state.layout = null;
+      render();
+      apiPost('api/layout.php?action=reset', {});
+    } else if (action === 'layout-nudge') {
+      nudgeLayoutCard(el.getAttribute('data-card'), parseInt(el.getAttribute('data-dir'), 10));
+    } else if (action === 'layout-side') {
+      moveLayoutCard(el.getAttribute('data-card'), el.getAttribute('data-col'), null);
     } else if (action === 'solutions-toggle') {
       state.solutionsOpen = !state.solutionsOpen;
       render();
@@ -7762,6 +7908,10 @@
   // Bound once — root's contents are replaced on every render(), so these
   // rely on event delegation rather than being rebound each time.
   root.addEventListener('click', onRootClick);
+  root.addEventListener('dragstart', onLayoutDragStart);
+  root.addEventListener('dragover', onLayoutDragOver);
+  root.addEventListener('drop', onLayoutDrop);
+  root.addEventListener('dragend', onLayoutDragEnd);
   // Opportunity/Risk popover hover support (added 2026-10-06) -- mouseover/
   // mouseout don't bubble in the usual sense (they fire per-element, not
   // delegatable the way 'click' is), but their non-bubbling cousins
