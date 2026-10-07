@@ -130,7 +130,7 @@
   function openAr(rep, territory) {
     var p = state.arPop = { loading: true, data: null, error: null, rep: rep, territory: territory || '', emailOpen: false, to: '', msg: null, msgOk: false, sending: false };
     render();
-    var url = 'api/ar.php?action=detail&rep_id=' + encodeURIComponent(rep) + (territory ? '&territory=' + encodeURIComponent(territory) : '');
+    var url = API + '?action=detail&rep_id=' + encodeURIComponent(rep) + (territory ? '&territory=' + encodeURIComponent(territory) : '');
     api(url).then(function (r) {
       if (r.data && r.data.ok) { p.data = r.data; p.to = (r.data.rep && r.data.rep.email) || ''; } else p.error = (r.data && r.data.error) || 'Could not load the open invoices.';
       p.loading = false; render();
