@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<script>
+// Same theme logic as the Hub (index.html): saved choice, else the device preference, else dark.
+(function () {
+  var theme = 'dark';
+  try {
+    var saved = localStorage.getItem('cbt-theme');
+    if (saved === 'light' || saved === 'dark') theme = saved;
+    else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) theme = 'light';
+  } catch (e) {}
+  document.documentElement.setAttribute('data-theme', theme);
+})();
+</script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SolutionsHub Help Center</title>
+<link rel="icon" type="image/png" href="../assets/favicon.png">
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700&family=Libre+Franklin:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../styles.css?v=e241c2c">
+<link rel="stylesheet" href="help.css?v=1">
+</head>
+<body class="help">
+<header class="hbar">
+  <a class="back" href="../index.html">&larr; Solutions Hub</a>
+  <a class="brand" href="#/"><span class="bar"></span>Help Center</a>
+  <div class="searchbox">
+    <input id="q" type="search" placeholder="Search every feature... (press / to focus)" autocomplete="off" aria-label="Search the Help Center">
+  </div>
+  <span id="updated" class="upd"></span>
+  <button id="toc" class="tocbtn" type="button">Contents</button>
+</header>
+<div class="layout">
+  <nav id="side" class="side" aria-label="Help contents"></nav>
+  <main id="main" class="main"></main>
+</div>
+<!-- The Services section is generated from PILLARS in app.js. app.js normally boots the Hub itself; here it is only
+     loaded for its data, so a tiny stand-in for the Hub's base class lets it load quietly. -->
+<script>window.DCLogic = window.DCLogic || function () {};</script>
+<script src="../app.js"></script>
+<script src="help-content.js?v=1"></script>
+<script src="help-content-relationships.js?v=1"></script>
+<script src="help-content-apps.js?v=1"></script>
+<script src="help-changelog.js?v=1"></script>
+<script src="help.js?v=1"></script>
+</body>
+</html>

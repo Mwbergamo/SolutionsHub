@@ -1,0 +1,29 @@
+/*
+ * What's New -- newest first. Add one entry each time a feature is added or changed, in the same commit as the code.
+ * Fields: date (YYYY-MM-DD), title, text (1-2 sentences), articles [article ids to link].
+ */
+window.HELP_CHANGELOG = [
+  { date: '2026-10-07', title: 'Help Center launched', text: 'A searchable guide to every tool, with links straight to each feature. The Services section is built from the Hub catalog and stays current automatically.', articles: ['help-center'] },
+  { date: '2026-10-07', title: 'Arrange your dashboard cards', text: 'Edit view on a customer dashboard lets each rep drag the cards between two columns; the layout applies to every customer.', articles: ['rel-edit-view'] },
+  { date: '2026-10-07', title: 'Save solutions to a customer', text: 'Save a solution, with documents and images, to the customer\'s dashboard (Solutions card), then reopen, update or delete it. Each saved solution has a unique link.', articles: ['save-to-customer', 'rel-solutions-card'] },
+  { date: '2026-10-07', title: 'Link a solution to a ConnectWise project', text: 'Post a solution\'s link as a Comment on a Pre-Sales project, or copy the link, for a direct ConnectWise reference while you build.', articles: ['link-connectwise-project'] },
+  { date: '2026-10-07', title: 'Camera Placement Photos', text: 'Upload photos, drag cameras onto them, and the quantities and install labor follow. Marked-up photos go to the Quotes@ email as a four-wide grid and to the customer\'s ConnectWise company.', articles: ['camera-photo-plan', 'send-to-inside-sales'] },
+  { date: '2026-10-07', title: 'Collections and Open Balance Report', text: 'A new Collections app lists unpaid ConnectWise invoices by rep and territory, with printable and emailable reports; each customer has an Open Balance Report.', articles: ['coll-home', 'coll-report', 'coll-open-balance'] },
+  { date: '2026-10-07', title: 'Opportunity/Risk Report card on each customer', text: 'The score breakdown is now a permanent card on the customer dashboard.', articles: ['rel-opportunity-risk'] },
+  { date: '2026-10-06', title: 'Opportunity/Risk popover', text: 'Hover or click the badge to see why an account was flagged.', articles: ['rel-opportunity-risk'] },
+  { date: '2026-10-05', title: 'Commissions app', text: 'Live commissions from ConnectWise invoices, with dashboard, reports, history, trends and by-territory views (restricted access).', articles: ['comm-dashboard', 'comm-how-calculated', 'comm-reports'] },
+  { date: '2026-10-05', title: 'Opportunity/Risk badge and Company Counts', text: 'Accounts are ranked Likely to need services, Stable or Account in danger. Company Counts reconciles Hub totals with ConnectWise.', articles: ['rel-opportunity-risk', 'rel-cw-sync'] },
+  { date: '2026-10-05', title: 'Help / Suggestions button', text: 'Send a suggestion, issue report or question, with screenshots, from the Hub header.', articles: ['help-suggestions'] },
+  { date: '2026-10-03', title: 'Projects status graph', text: 'Projects can be collapsed and filtered by a status bar graph.', articles: ['rel-projects'] },
+  { date: '2026-10-02', title: 'Projects tab and Documents', text: 'Open Pre-Sales and Services projects with a follow-up checklist and notes; customer Documents upload also attaches to ConnectWise.', articles: ['rel-projects', 'rel-documents'] },
+  { date: '2026-09-30', title: 'Checklist icons before picking a contact', text: 'Cross-sell checklist step icons are visible before a contact is chosen; clicking one opens the contact picker first.', articles: ['rel-cross-sell'] },
+  { date: '2026-09-29', title: 'Risk scan assignment roster', text: 'Assign a risk scan from a roster dropdown.', articles: ['rel-risk-scans'] },
+  { date: '2026-09-26', title: 'Residential bucket and per-stage sync', text: 'Residential customers get their own list; ConnectWise Sync can run one stage at a time and retry failures.', articles: ['rel-front-tiles', 'rel-cw-sync'] },
+  { date: '2026-09-25', title: 'Retry a failed rate sheet sign-up', text: 'Failed sign-ups have a Retry button.', articles: ['rs-dashboard'] },
+  { date: '2026-09-23', title: 'Prospecting, Contacts card and Project Mode', text: 'Find and claim prospects with a 90-day clock; call or email a contact from the dashboard; Project Mode adds gold stars and a project tray in the Hub.', articles: ['rel-prospecting', 'rel-contacts-card', 'project-mode'] },
+  { date: '2026-09-22', title: 'Walk-In Rate Sheet Sign Up and computer builder', text: 'Counter sign-up page for walk-in customers; new Computer Configuration builder with preview.', articles: ['rs-walk-in', 'parts-and-computer-builder'] },
+  { date: '2026-09-17', title: 'Rate Sheet Sign Up', text: 'Send prospects a personal sign-up link and track them through to payment on file.', articles: ['rs-send', 'rs-dashboard'] },
+  { date: '2026-09-15', title: 'Microsoft 365 sign-in, meetings and to-dos', text: 'One shared sign-in for every tool; log meetings with ConnectWise activities and assign to-dos with email notices.', articles: ['sign-in', 'rel-meetings', 'rel-meeting-todos'] },
+  { date: '2026-09-14', title: 'Register tiles and Print Service Summary', text: 'The Register opens to four tiles with ConnectWise-backed customers; Relationships can print a one-page service summary.', articles: ['reg-home', 'rel-print-summary'] },
+  { date: '2026-09-10', title: 'Relationships dashboard', text: 'Customer search, front-page gauges, billing trends and the customer list.', articles: ['rel-search', 'rel-front-tiles', 'rel-customer-list'] }
+];
