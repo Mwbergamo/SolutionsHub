@@ -5090,9 +5090,7 @@
       '</div>' +
     '</div>';
 
-    html += opportunityReportPanelHtml(detail.customer);
-    html += contactCardHtml();
-    html += outgrowFieldHtml();
+    var leftColHtml = opportunityReportPanelHtml(detail.customer) + contactCardHtml() + outgrowFieldHtml();
 
     if (detail.customer.is_peoplefirst) {
       html += '<div class="peoplefirst-note">PeopleFirst Support Members - Quarterly Risk Scans and Monthly Client Checkin\'s are required.</div>';
@@ -5112,9 +5110,9 @@
       html += '<div class="residential-note">Residential — ConnectWise Company status is Residential.</div>';
     }
 
-    html += riskScansPanelHtml(detail.customer.id);
-    html += documentsPanelHtml(detail.customer.id);
-    html += solutionsPanelHtml(detail.customer);
+    // Two-column layout (2026-10-07, per Michael): account insight on the left, files/records on the right.
+    html += '<div class="detail-cols"><div class="detail-col">' + leftColHtml + '</div>' +
+      '<div class="detail-col">' + riskScansPanelHtml(detail.customer.id) + documentsPanelHtml(detail.customer.id) + solutionsPanelHtml(detail.customer) + '</div></div>';
 
     html += activityPanelHtml(detail);
 
