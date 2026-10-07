@@ -80,7 +80,7 @@ if (!empty($allowedOrigins)) {
 }
 
 // ---- parse + validate body --------------------------------------------------
-$raw = file_get_contents('php://input', false, null, 0, 786432); // 768 KB cap (HTML body runs larger than the old plain-text one)
+$raw = file_get_contents('php://input', false, null, 0, 6291456); // 6 MB cap: the HTML body plus, for Inside Sales, the inline camera-layout pictures
 $data = json_decode((string) $raw, true);
 if (!is_array($data)) {
     respond(400, ['ok' => false, 'error' => 'Invalid request body.']);
@@ -97,6 +97,35 @@ $to = trim((string) ($data['to'] ?? ''));
 $companyName = trim((string) ($data['companyName'] ?? ''));
 $subject = trim((string) ($data['subject'] ?? 'Your CodeBlue Technology Quote'));
 $html = (string) ($data['html'] ?? '');
+
+// Optional inline pictures (the camera-layout photo grid in the Inside Sales email). Each is
+// { cid, name, contentType:'image/jpeg', data:<base64> } and is referenced from the HTML as cid:<cid>.
+$attachments = [];
+$images = $data['images'] ?? [];
+if (is_array($images) && $images !== []) {
+    if (count($images) > 60) {
+        respond(400, ['ok' => false, 'error' => 'Too many photos to email (limit 60).']);
+    }
+    $totalBytes = 0;
+    foreach ($images as $img) {
+        if (!is_array($img)) {
+            continue;
+        }
+        $cid = preg_replace('/[^A-Za-z0-9_\-]/', '', (string) ($img['cid'] ?? ''));
+        $b64 = (string) ($img['data'] ?? '');
+        $bytes = base64_decode($b64, true);
+        if ($cid === '' || $bytes === false || $bytes === '' || substr($bytes, 0, 3) !== "\xFF\xD8\xFF") {
+            respond(400, ['ok' => false, 'error' => 'One of the photos could not be read.']);
+        }
+        $totalBytes += strlen($bytes);
+        $name = preg_replace('/[^A-Za-z0-9._\- ]/', '', (string) ($img['name'] ?? ($cid . '.jpg'))) ?: ($cid . '.jpg');
+        $attachments[] = ['name' => $name, 'contentType' => 'image/jpeg', 'contentBytes' => base64_encode($bytes), 'contentId' => $cid];
+    }
+    // Graph's sendMail request must stay well under its ~4 MB request limit.
+    if ($totalBytes > 2600000) {
+        respond(400, ['ok' => false, 'error' => 'The photos are too large to email. Remove some photos and try again.']);
+    }
+}
 
 if ($to === '' || !filter_var($to, FILTER_VALIDATE_EMAIL)) {
     respond(400, ['ok' => false, 'error' => 'A valid customer email address is required.']);
@@ -125,7 +154,7 @@ try {
     $fromName = (string) ($config['from_name'] ?? 'CodeBlue Technology');
     $bcc = trim((string) ($config['bcc'] ?? ''));
 
-    $mailer->send($to, $subject, $html, $bcc !== '' ? $bcc : null, $fromName, true);
+    $mailer->send($to, $subject, $html, $bcc !== '' ? $bcc : null, $fromName, true, $attachments);
 
     respond(200, ['ok' => true]);
 } catch (Throwable $e) {

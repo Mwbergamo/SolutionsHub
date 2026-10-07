@@ -417,5 +417,42 @@
   }
   if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
 
-  window.CameraPlanWidget = { refresh: render };
+
+  // ---- marked-up pictures (used by solution-save.js for ConnectWise + by the Inside Sales email) ----
+  // Draws each placed camera on its photo as a numbered white/black disc and returns a JPEG blob.
+  function renderMarked(photo, maxDim, quality) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () {
+        var w = img.naturalWidth, h = img.naturalHeight;
+        var scale = Math.min(1, maxDim / Math.max(w, h));
+        var cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+        var canvas = document.createElement('canvas');
+        canvas.width = cw; canvas.height = ch;
+        var g = canvas.getContext('2d');
+        g.drawImage(img, 0, 0, cw, ch);
+        var r = Math.max(11, Math.round(Math.min(cw, ch) * 0.045));
+        g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.font = '700 ' + Math.round(r * 1.15) + 'px Arial, Helvetica, sans-serif';
+        (photo.markers || []).forEach(function (m, i) {
+          var x = m.x / 100 * cw, y = m.y / 100 * ch;
+          var black = m.color === 'black';
+          g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2);
+          g.fillStyle = black ? '#1B2030' : '#FFFFFF'; g.fill();
+          g.lineWidth = Math.max(2, r * 0.18); g.strokeStyle = black ? '#FFFFFF' : '#1B2030'; g.stroke();
+          g.fillStyle = black ? '#FFFFFF' : '#1B2030';
+          g.fillText(String(i + 1), x, y + r * 0.06);
+        });
+        canvas.toBlob(function (blob) { blob ? resolve(blob) : reject(new Error('Could not render the marked photo.')); }, 'image/jpeg', quality || 0.85);
+      };
+      img.onerror = function () { reject(new Error('Could not load a photo to mark up.')); };
+      img.src = photo.src;
+    });
+  }
+  // "1 Bullet (White)", "2 Dome (Black)" ... in the same order as the numbers drawn on the picture
+  function describePhoto(photo) {
+    return (photo.markers || []).map(function (m, i) { return (i + 1) + ' ' + typeLabel(m.type) + ' (' + colorLabel(m.color) + ')'; });
+  }
+
+  window.CameraPlanWidget = { refresh: render, renderMarked: renderMarked, describePhoto: describePhoto };
 })();

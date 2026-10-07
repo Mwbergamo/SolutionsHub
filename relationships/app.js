@@ -5357,7 +5357,7 @@
       state.solutionFiles[id] = { loading: true, files: [], error: null };
       apiGet('api/solutions.php?action=get&id=' + id).then(function (r) {
         var slot = state.solutionFiles[id] = { loading: false, files: [], error: null };
-        if (r.data && r.data.ok) slot.files = r.data.solution.files || [];
+        if (r.data && r.data.ok) slot.files = solutionVisibleFiles(r.data.solution.files || []);
         else slot.error = (r.data && r.data.error) || 'Could not load the files.';
         render();
       }).catch(function () {
@@ -5386,6 +5386,40 @@
     }).catch(function () {
       state.solutionDeletingId = null;
       state.solutionsError = 'Could not delete the solution — check your connection and try again.';
+      render();
+    });
+  }
+
+  // The original of a camera photo is kept only so the layout can be re-edited; when its marked-up copy exists, show that one.
+  function solutionVisibleFiles(files) {
+    var marked = {};
+    files.forEach(function (f) { if (f.kind === 'camera_marked') marked[String(f.ref || '').split(':')[0]] = true; });
+    return files.filter(function (f) { return !(f.kind === 'camera_photo' && marked[f.ref]); });
+  }
+
+  function solutionFileCwHtml(f) {
+    if (f.kind !== 'camera_marked') return '';
+    var st = f.cw_upload_status;
+    if (st === 'uploaded') return '<div class="risk-scan-cw-status ok">\u2713 Attached to the ConnectWise company</div>';
+    if (st === 'skipped') return '<div class="risk-scan-cw-status muted">Not attached in ConnectWise \u2014 no ConnectWise company for this customer.</div>';
+    var retrying = state.solutionRetryingFile === f.id;
+    return '<div class="risk-scan-cw-status bad">' + (st === 'failed' ? 'ConnectWise attachment failed' + (f.cw_upload_error ? ': ' + escapeHtml(f.cw_upload_error) : '.') : 'Not yet attached in ConnectWise.') +
+      ' <button class="risk-scan-cw-retry" type="button" data-action="solution-file-retry" data-file="' + f.id + '" data-solution="' + f.solutionId + '"' + (retrying ? ' disabled' : '') + '>' + (retrying ? 'Retrying\u2026' : 'Retry') + '</button></div>';
+  }
+
+  function retrySolutionFile(fileId, solutionId) {
+    state.solutionRetryingFile = fileId;
+    render();
+    apiPost('api/solutions.php?action=retry_cw_file', { file_id: fileId }).then(function (r) {
+      state.solutionRetryingFile = null;
+      var slot = state.solutionFiles[solutionId];
+      if (r.data && r.data.ok && slot) slot.files = solutionVisibleFiles(r.data.files || []);
+      else if (slot) slot.error = (r.data && r.data.error) || 'Could not retry the ConnectWise attachment.';
+      render();
+    }).catch(function () {
+      state.solutionRetryingFile = null;
+      var slot = state.solutionFiles[solutionId];
+      if (slot) slot.error = 'Could not retry the ConnectWise attachment \u2014 check your connection.';
       render();
     });
   }
@@ -5446,11 +5480,12 @@
       else if (!slot.files.length) h += '<div class="roster-empty">No documents or images were saved with this solution.</div>';
       else {
         slot.files.forEach(function (f) {
+          f.solutionId = s.id;
           var href = escapeHtml(f.url);
           h += '<div class="solution-file">' +
             (f.is_image ? '<a href="' + href + '" target="_blank" rel="noopener"><img class="solution-thumb" src="' + href + '" alt="" loading="lazy"></a>' : '<span class="solution-doc-icon">📄</span>') +
-            '<div class="solution-file-main"><div class="risk-scan-item-name">' + escapeHtml(f.name) + (f.kind === 'camera_photo' ? ' <span class="document-category-tag">Camera layout photo</span>' : '') + '</div>' +
-            '<div class="risk-scan-item-meta">' + fmtFileSize(f.size_bytes) + '</div></div>' +
+            '<div class="solution-file-main"><div class="risk-scan-item-name">' + escapeHtml(f.name) + (f.kind === 'camera_marked' ? ' <span class="document-category-tag">Camera layout photo</span>' : (f.kind === 'camera_photo' ? ' <span class="document-category-tag">Camera photo</span>' : '')) + '</div>' +
+            '<div class="risk-scan-item-meta">' + fmtFileSize(f.size_bytes) + '</div>' + solutionFileCwHtml(f) + '</div>' +
             '<a class="risk-scan-download-btn" href="' + href + '"' + (f.is_image ? ' target="_blank" rel="noopener"' : '') + '>' + (f.is_image ? 'View' : 'Download') + '</a></div>';
         });
       }
@@ -7637,6 +7672,8 @@
       render();
     } else if (action === 'solution-files') {
       toggleSolutionFiles(parseInt(el.getAttribute('data-solution'), 10));
+    } else if (action === 'solution-file-retry') {
+      retrySolutionFile(parseInt(el.getAttribute('data-file'), 10), parseInt(el.getAttribute('data-solution'), 10));
     } else if (action === 'solution-copy') {
       copySolutionLink(parseInt(el.getAttribute('data-solution'), 10));
     } else if (action === 'solution-delete') {

@@ -77,12 +77,19 @@ class GraphMailer
         if ($attachments) {
             $message['attachments'] = [];
             foreach ($attachments as $att) {
-                $message['attachments'][] = [
+                $item = [
                     '@odata.type' => '#microsoft.graph.fileAttachment',
                     'name' => $att['name'],
                     'contentType' => $att['contentType'],
                     'contentBytes' => $att['contentBytes'],
                 ];
+                // Inline pictures (added 2026-10-07 for the camera-layout photo grid in the Inside Sales email):
+                // an attachment with a 'contentId' is shown where the HTML says <img src="cid:...">.
+                if (!empty($att['contentId'])) {
+                    $item['contentId'] = (string) $att['contentId'];
+                    $item['isInline'] = true;
+                }
+                $message['attachments'][] = $item;
             }
         }
         if ($fromDisplayName !== null && $fromDisplayName !== '') {

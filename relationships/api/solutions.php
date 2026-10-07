@@ -27,6 +27,11 @@
  *        state (JSON string), keep_file_ids (JSON array of existing file ids to keep),
  *        files[] + file_kinds[] ('attachment'|'camera_photo') + file_refs[] (camera photo id)
  * POST ?action=delete  { id }
+ * POST ?action=retry_cw_file { file_id }   re-attempts the ConnectWise attachment of one marked-up camera photo
+ *
+ * Camera photos: the Hub saves each photo twice -- the original (kind 'camera_photo', so the layout can be re-edited) and a
+ * marked-up copy with the numbered cameras drawn on it (kind 'camera_marked', ref '<photoId>:<signature>'). The marked-up
+ * copy is attached to the customer's ConnectWise company the first time it is saved (and again if the photo's cameras change).
  *
  * ConnectWise link (added 2026-10-07 per Michael: "a unique link ... added to a project (pre-sales) as a commented link"):
  *   every solution has a stable link (row.link = <site>/index.html?solution=ID -- opens it in the Hub after sign-in,
@@ -106,15 +111,58 @@ function relationships_solution_cw_links(PDO $pdo, int $solutionId): array
 
 const RELATIONSHIPS_SOLUTION_PRESALES_BOARD = 45; // same Pre-Sales board projects.php lists
 
+/**
+ * Attaches one marked-up camera photo to the customer's ConnectWise Company as a Document (same call Customer
+ * Documents use) and records the outcome on the row. Never throws -- the local save has already succeeded.
+ */
+function relationships_solution_file_push_to_cw(PDO $pdo, int $fileId, array $solution, string $uploaderName): void
+{
+    $fs = $pdo->prepare('SELECT * FROM solution_files WHERE id = :id');
+    $fs->execute([':id' => $fileId]);
+    $f = $fs->fetch(PDO::FETCH_ASSOC);
+    if ($f === false) {
+        return;
+    }
+    $set = static function (string $status, ?string $docId, ?string $err) use ($pdo, $fileId): void {
+        $pdo->prepare('UPDATE solution_files SET cw_upload_status = :s, cw_document_id = :d, cw_upload_error = :e WHERE id = :id')
+            ->execute([':s' => $status, ':d' => $docId, ':e' => $err, ':id' => $fileId]);
+    };
+    $cs = $pdo->prepare('SELECT connectwise_id, is_mock FROM customers WHERE id = :id');
+    $cs->execute([':id' => $solution['customer_id']]);
+    $c = $cs->fetch(PDO::FETCH_ASSOC);
+    if ($c === false || (int) ($c['is_mock'] ?? 0) === 1 || trim((string) ($c['connectwise_id'] ?? '')) === '') {
+        $set('skipped', null, 'This customer has no ConnectWise company to attach to.');
+        return;
+    }
+    $path = relationships_solution_dir((int) $solution['customer_id'], (int) $f['solution_id']) . '/' . $f['stored_filename'];
+    @set_time_limit(280);
+    try {
+        $cwDoc = relationships_cw_upload_document(
+            'Company',
+            (string) $c['connectwise_id'],
+            $solution['name'] . ' - ' . $f['original_filename'],
+            $path,
+            (string) $f['original_filename'],
+            'Camera layout photo (cameras numbered) from the Solutions Hub solution "' . $solution['name'] . '", saved by ' . $uploaderName . '. Open the solution: ' . relationships_solution_link((int) $solution['id']),
+            'image/jpeg'
+        );
+        $set('uploaded', (string) $cwDoc['id'], null);
+    } catch (Throwable $e) {
+        error_log('[relationships/solutions] ConnectWise attach failed for file ' . $fileId . ': ' . $e->getMessage());
+        $set('failed', null, mb_substr($e->getMessage(), 0, 500));
+    }
+}
+
 function relationships_solution_files(PDO $pdo, int $solutionId): array
 {
-    $stmt = $pdo->prepare('SELECT id, kind, ref, original_filename, size_bytes, uploaded_at FROM solution_files WHERE solution_id = :s ORDER BY id ASC');
+    $stmt = $pdo->prepare('SELECT id, kind, ref, original_filename, size_bytes, uploaded_at, cw_upload_status, cw_upload_error FROM solution_files WHERE solution_id = :s ORDER BY id ASC');
     $stmt->execute([':s' => $solutionId]);
     return array_map(static function (array $f): array {
         $ext = strtolower((string) pathinfo((string) $f['original_filename'], PATHINFO_EXTENSION));
         return [
             'id' => (int) $f['id'], 'kind' => $f['kind'], 'ref' => $f['ref'],
             'name' => $f['original_filename'], 'size_bytes' => (int) $f['size_bytes'], 'uploaded_at' => $f['uploaded_at'],
+            'cw_upload_status' => $f['cw_upload_status'], 'cw_upload_error' => $f['cw_upload_error'],
             'is_image' => in_array($ext, ['png', 'jpg', 'jpeg', 'gif', 'webp'], true),
             'url' => 'api/solutions.php?action=file&id=' . (int) $f['id'],
         ];
@@ -360,14 +408,16 @@ if ($action === 'save') {
             if (in_array($ext, ['docx', 'xlsx', 'xlsm', 'pptx', 'zip', 'odt', 'ods'], true) && substr($head, 0, 2) !== 'PK') {
                 relationships_respond(400, ['ok' => false, 'error' => '"' . $orig . '" doesn\'t look like a valid .' . $ext . ' file.']);
             }
-            $kind = ($kinds[$i] ?? 'attachment') === 'camera_photo' ? 'camera_photo' : 'attachment';
-            $uploads[] = ['tmp' => $fl['tmp_name'][$i], 'orig' => $orig, 'ext' => $ext, 'size' => $size, 'kind' => $kind, 'ref' => $kind === 'camera_photo' ? mb_substr((string) ($refs[$i] ?? ''), 0, 60) : null];
+            $kindIn = (string) ($kinds[$i] ?? 'attachment');
+            $kind = in_array($kindIn, ['camera_photo', 'camera_marked'], true) ? $kindIn : 'attachment';
+            $uploads[] = ['tmp' => $fl['tmp_name'][$i], 'orig' => $orig, 'ext' => $ext, 'size' => $size, 'kind' => $kind, 'ref' => $kind !== 'attachment' ? mb_substr((string) ($refs[$i] ?? ''), 0, 80) : null];
         }
     }
 
     $keepIn = json_decode((string) ($_POST['keep_file_ids'] ?? '[]'), true);
     $keep = array_values(array_filter(array_map('intval', is_array($keepIn) ? $keepIn : []), static fn (int $x): bool => $x > 0));
 
+    $newMarkedIds = [];
     $pdo->beginTransaction();
     try {
         if ($existing === null) {
@@ -409,6 +459,9 @@ if ($action === 'save') {
                 'INSERT INTO solution_files (solution_id, kind, ref, original_filename, stored_filename, size_bytes, uploaded_by_name)
                  VALUES (:s, :k, :r, :o, :st, :z, :un)'
             )->execute([':s' => $id, ':k' => $u['kind'], ':r' => $u['ref'], ':o' => $u['orig'], ':st' => $stored, ':z' => $u['size'], ':un' => $user['name']]);
+            if ($u['kind'] === 'camera_marked') {
+                $newMarkedIds[] = (int) $pdo->lastInsertId();
+            }
         }
         $pdo->commit();
         foreach ($toUnlink as $p) {
@@ -426,6 +479,10 @@ if ($action === 'save') {
     }
 
     $row = relationships_solution_load($pdo, $allowedTerritories, $id);
+    // Attach each NEW marked-up camera photo to the customer's ConnectWise company (unchanged photos keep their earlier attachment).
+    foreach ($newMarkedIds as $mid) {
+        relationships_solution_file_push_to_cw($pdo, $mid, $row, (string) $user['name']);
+    }
     relationships_respond(200, ['ok' => true, 'solution' => relationships_solution_row($pdo, $row, true, $user), 'created' => $existing === null]);
 }
 
@@ -460,6 +517,23 @@ if ($action === 'link_project') {
         $resp['cw_warning'] = $warning;
     }
     relationships_respond(200, $resp);
+}
+
+// ---------------------------------------------------------------- retry_cw_file
+if ($action === 'retry_cw_file') {
+    $data = relationships_read_json_body();
+    $fid = (int) ($data['file_id'] ?? 0);
+    $q = $pdo->prepare('SELECT f.id, f.kind, f.cw_upload_status, f.solution_id FROM solution_files f WHERE f.id = :id');
+    $q->execute([':id' => $fid]);
+    $f = $q->fetch(PDO::FETCH_ASSOC);
+    if ($f === false || $f['kind'] !== 'camera_marked') {
+        relationships_respond(404, ['ok' => false, 'error' => 'File not found.']);
+    }
+    $row = relationships_solution_load($pdo, $allowedTerritories, (int) $f['solution_id']);
+    if ($f['cw_upload_status'] !== 'uploaded') {
+        relationships_solution_file_push_to_cw($pdo, $fid, $row, (string) $user['name']);
+    }
+    relationships_respond(200, ['ok' => true, 'files' => relationships_solution_files($pdo, (int) $row['id'])]);
 }
 
 // ---------------------------------------------------------------- delete

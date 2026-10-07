@@ -257,6 +257,21 @@
         return { file: new File([b], base + '.jpg', { type: 'image/jpeg' }), kind: 'camera_photo', ref: p.id };
       }));
     });
+    // Marked-up copy of every photo (numbered cameras drawn on it): attached to the customer's ConnectWise
+    // company by the server. A photo whose cameras/name haven't changed since the last save keeps its earlier copy.
+    var W = window.CameraPlanWidget;
+    if (W && W.renderMarked) {
+      photos.forEach(function (p) {
+        var sig = photoSig(p);
+        var ref = p.id + ':' + sig;
+        var old = isUpdate ? meta.files.filter(function (f) { return f.kind === 'camera_marked' && f.ref === ref; })[0] : null;
+        if (old) { keep.push(old.id); return; }
+        pending.push(W.renderMarked(p, 1600, 0.85).then(function (b) {
+          var base = (p.name || 'Photo').replace(/[^\w\- ]+/g, '').trim() || 'Photo';
+          return { file: new File([b], base + ' (cameras marked).jpg', { type: 'image/jpeg' }), kind: 'camera_marked', ref: ref };
+        }));
+      });
+    }
     dlg.added.forEach(function (f) { pending.push(Promise.resolve({ file: f, kind: 'attachment', ref: '' })); });
 
     Promise.all(pending).then(function (items) {
@@ -279,12 +294,27 @@
       adoptServerPhotos(s.files || []);
       closeDialog();
       renderMount();
+      var failed = (s.files || []).filter(function (f) { return f.kind === 'camera_marked' && f.cw_upload_status === 'failed'; });
+      var skipped = (s.files || []).filter(function (f) { return f.kind === 'camera_marked' && f.cw_upload_status === 'skipped'; });
+      if (failed.length) {
+        toast('Saved, but ' + failed.length + (failed.length === 1 ? ' photo' : ' photos') + ' could not be attached in ConnectWise (' + (failed[0].cw_upload_error || 'unknown error').slice(0, 120) + '). Retry from the customer\'s dashboard.', true);
+      } else if (skipped.length) {
+        toast('Saved. This customer has no ConnectWise company, so the photos were not attached there.', true);
+      } else
       toast((r.created ? 'Saved' : 'Updated') + ' “' + s.name + '” on ' + s.customer_name + '’s dashboard.' + (r.created ? ' You can now copy its link or link it to a ConnectWise project.' : ''));
     }).catch(function (e) {
       dlg.busy = false;
       dlg.error = 'Could not save the solution: ' + (e && e.message ? e.message : 'network problem') + '. Check your connection and try again.';
       renderDialog();
     });
+  }
+
+  // short fingerprint of what a marked-up picture shows (its name, cameras and where they sit)
+  function photoSig(p) {
+    var str = (p.name || '') + '|' + (p.markers || []).map(function (m) { return [m.type, m.color, Math.round(m.x * 10), Math.round(m.y * 10)].join(','); }).join(';');
+    var h = 5381;
+    for (var i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
   }
 
   // After a save the camera photos exist on the server: point the Hub's copies at them so the next
@@ -301,12 +331,12 @@
     if (window.CameraPlanWidget) window.CameraPlanWidget.refresh();
   }
 
-  function toast(msg) {
+  function toast(msg, warn) {
     var t = document.createElement('div');
     t.textContent = msg;
-    t.style.cssText = 'position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2100;background:#16a34a;color:#fff;font:700 13.5px/1.3 system-ui,-apple-system,Segoe UI,sans-serif;padding:12px 18px;border-radius:999px;box-shadow:0 8px 28px rgba(0,0,0,.35);max-width:90vw;text-align:center';
+    t.style.cssText = 'position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:2100;background:' + (warn ? '#b45309' : '#16a34a') + ';color:#fff;font:700 13.5px/1.3 system-ui,-apple-system,Segoe UI,sans-serif;padding:12px 18px;border-radius:999px;box-shadow:0 8px 28px rgba(0,0,0,.35);max-width:90vw;text-align:center';
     document.body.appendChild(t);
-    setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 4200);
+    setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, warn ? 9000 : 4200);
   }
 
 

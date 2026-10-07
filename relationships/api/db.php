@@ -845,6 +845,10 @@ function relationships_migrate(PDO $pdo): void
         )
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_solution_files_solution ON solution_files(solution_id)');
+    // Marked-up camera photos are also attached to the customer's ConnectWise company (solutions.php).
+    relationships_add_column_if_missing($pdo, 'solution_files', 'cw_upload_status', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'solution_files', 'cw_document_id', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'solution_files', 'cw_upload_error', 'TEXT');
 
     // Solution -> ConnectWise project links: the solution's link posted as a Comment note on a pre-sales project.
     $pdo->exec(<<<'SQL'

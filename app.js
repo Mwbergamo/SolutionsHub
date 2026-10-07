@@ -1966,7 +1966,7 @@ class Component extends DCLogic {
   // scope-of-work (labor) rendering below, which stays the same for both
   // emails -- only sendToInsideSales() passes true; sendQuoteByEmail() (the
   // customer-facing quote) always gets the original bulleted BOM.
-  buildFullQuoteHtml(includeLogo, forInsideSales) {
+  buildFullQuoteHtml(includeLogo, forInsideSales, opts) {
     if (includeLogo === undefined) includeLogo = true;
     var co = this.state.checkout;
     var data = this.buildQuoteSectionsStructured();
@@ -1987,6 +1987,7 @@ class Component extends DCLogic {
       var itemsHtml = sec.items.map(function (it) {
         var head = '<div style="font-size:14px;font-family:Arial,Helvetica,sans-serif;color:#1B2030;font-weight:700;">' + esc(it.serviceName) + '</div>';
         var plan = it.planText ? '<div style="font-size:12.5px;font-family:Arial,Helvetica,sans-serif;color:#1B2030;margin-top:4px;"><strong>' + esc(it.planText) + '</strong></div>' : '';
+        var camGrid = (opts && opts.cameraGridHtml && it.planText) ? opts.cameraGridHtml : '';
         var note = it.note ? '<div style="font-size:12px;font-family:Arial,Helvetica,sans-serif;color:#6B7280;font-style:italic;margin-top:2px;">Rep Notes: ' + esc(it.note) + '</div>' : '';
 
         // Bill-of-materials list: one bullet per physical line item, Brand
@@ -2085,7 +2086,7 @@ class Component extends DCLogic {
             '<tr><td colspan="4" style="padding:8px 12px;font-size:12.5px;font-family:Arial,Helvetica,sans-serif;color:#33394A;text-align:right;font-weight:600;background:' + LIGHT + ';">Scope of Work Subtotal&nbsp;&nbsp;<span style="font-size:13px;color:' + NAVY + ';font-weight:700;">$' + it.scopeSubtotal.toFixed(2) + '</span></td></tr>' +
           '</table>';
         }
-        return '<div style="padding:12px 0;border-bottom:1px solid ' + BORDER + ';">' + head + plan + bom + note + table + '</div>';
+        return '<div style="padding:12px 0;border-bottom:1px solid ' + BORDER + ';">' + head + plan + camGrid + bom + note + table + '</div>';
       }).join('');
       return '<tr><td style="padding:0;">' +
         '<div style="background:' + NAVY + ';padding:8px 16px;">' +
@@ -2199,6 +2200,52 @@ class Component extends DCLogic {
     if (this.state.insideSales.status === 'sending') return;
     this.setState({ insideSales: { isOpen: false, status: 'idle', error: null } });
   }
+  // Marked-up camera photos -> { images: [{cid,name,contentType,data}], html: '<table>…4 per row…</table>' }.
+  // Pictures are shrunk until the whole set fits the email size budget (~2 MB).
+  buildCameraEmailPhotos() {
+    var photos = ((this.state.cameraPlan && this.state.cameraPlan.photos) || []).filter(function (p) { return p.src; });
+    var W = window.CameraPlanWidget;
+    var hasCam = (this.state.selections['ip-cameras::cam-cameras'] || {}).planText;
+    if (!photos.length || !W || !W.renderMarked || !hasCam) return Promise.resolve({ images: [], html: '' });
+    var toB64 = function (blob) {
+      return new Promise(function (res, rej) {
+        var fr = new FileReader();
+        fr.onload = function () { res(String(fr.result).split(',')[1] || ''); };
+        fr.onerror = function () { rej(fr.error); };
+        fr.readAsDataURL(blob);
+      });
+    };
+    var attempt = function (dim, q) {
+      return Promise.all(photos.map(function (p) { return W.renderMarked(p, dim, q); })).then(function (blobs) {
+        var total = blobs.reduce(function (n, b) { return n + b.size; }, 0);
+        if (total > 2000000 && dim > 360) return attempt(Math.round(dim * 0.75), 0.7);
+        return Promise.all(blobs.map(toB64));
+      });
+    };
+    return attempt(720, 0.78).then(function (b64s) {
+      var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+      var images = [];
+      var cells = photos.map(function (p, i) {
+        var cid = 'camphoto' + (i + 1);
+        images.push({ cid: cid, name: 'camera-layout-' + (i + 1) + '.jpg', contentType: 'image/jpeg', data: b64s[i] });
+        var lines = W.describePhoto(p).map(function (t) { return '<div style="font-size:10.5px;line-height:1.35;color:#33394A;">' + esc(t) + '</div>'; }).join('');
+        return '<td width="25%" valign="top" style="padding:5px;width:25%;">' +
+          '<img src="cid:' + cid + '" width="150" alt="' + esc(p.name) + '" style="display:block;width:100%;max-width:150px;height:auto;border:1px solid #D5D9E2;border-radius:4px;">' +
+          '<div style="margin-top:4px;font-size:11.5px;font-weight:700;color:#1B2030;">' + esc(p.name) + '</div>' +
+          '<div style="font-size:10.5px;color:#6B7280;margin-bottom:2px;">' + p.markers.length + (p.markers.length === 1 ? ' camera' : ' cameras') + '</div>' + lines + '</td>';
+      });
+      var rows = '';
+      for (var i = 0; i < cells.length; i += 4) {
+        var row = cells.slice(i, i + 4);
+        while (row.length < 4) row.push('<td width="25%" style="width:25%;"></td>');
+        rows += '<tr>' + row.join('') + '</tr>';
+      }
+      var html = '<div style="margin-top:8px;font-size:10.5px;font-family:Arial,Helvetica,sans-serif;color:#6B7280;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">Camera layout photos (numbers mark each camera)</div>' +
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;font-family:Arial,Helvetica,sans-serif;table-layout:fixed;">' + rows + '</table>';
+      return { images: images, html: html };
+    });
+  }
+
   sendToInsideSales() {
     var self = this;
     var companyName = (this.state.checkout.companyName || '').trim();
@@ -2208,17 +2255,21 @@ class Component extends DCLogic {
       return;
     }
     this.setState({ insideSales: { isOpen: true, status: 'sending', error: null } });
-    var payload = {
-      to: 'Quotes@codebluetechnology.com',
-      companyName: companyName,
-      subject: 'New Solution Request — ' + companyName + ' (Attn: ' + contactName + ')',
-      html: this.buildFullQuoteHtml(false, true),
-      website: '' // honeypot field — must stay empty
-    };
-    fetch('mail/send-quote.php', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+    // Camera layout photos (cameras marked on them) go in the email as a 4-wide grid of inline pictures.
+    this.buildCameraEmailPhotos().then(function (cam) {
+      var payload = {
+        to: 'Quotes@codebluetechnology.com',
+        companyName: companyName,
+        subject: 'New Solution Request — ' + companyName + ' (Attn: ' + contactName + ')',
+        html: self.buildFullQuoteHtml(false, true, cam.html ? { cameraGridHtml: cam.html } : null),
+        images: cam.images,
+        website: '' // honeypot field — must stay empty
+      };
+      return fetch('mail/send-quote.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
     }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (data) {
         if (!res.ok || !data || data.ok !== true) {
@@ -2901,9 +2952,8 @@ class Component extends DCLogic {
         if (n > 0) parts.push(n + ' × ' + (c === 'white' ? 'White' : 'Black') + ' ' + names[t]);
       });
     });
-    var perPhoto = totals.photos.filter(function (p) { return p.total > 0; }).map(function (p) { return p.name + ': ' + p.total; });
     return 'Camera layout: ' + totals.total + (totals.total === 1 ? ' camera' : ' cameras') + ' placed across ' + totals.photoCount +
-      (totals.photoCount === 1 ? ' photo' : ' photos') + ' (' + parts.join(', ') + ')' + (perPhoto.length > 1 ? ' — ' + perPhoto.join(', ') : '');
+      (totals.photoCount === 1 ? ' photo' : ' photos') + ' (' + parts.join(', ') + ')';
   }
 
   // Called by camera-plan.js whenever a photo or marker changes: keeps the six camera
