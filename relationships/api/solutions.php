@@ -176,6 +176,7 @@ function relationships_solution_row(PDO $pdo, array $r, bool $withFiles, ?array 
         'id' => (int) $r['id'],
         'customer_id' => (int) $r['customer_id'],
         'customer_name' => $r['customer_name'] ?? null,
+        'customer_cw_id' => $r['customer_cw_id'] ?? null,
         'name' => $r['name'],
         'pillars' => is_array($pillars) ? array_values($pillars) : [],
         'created_at' => $r['created_at'],
@@ -194,7 +195,7 @@ function relationships_solution_row(PDO $pdo, array $r, bool $withFiles, ?array 
 }
 
 const RELATIONSHIPS_SOLUTION_SELECT =
-    'SELECT s.*, c.name AS customer_name,
+    'SELECT s.*, c.name AS customer_name, c.connectwise_id AS customer_cw_id,
             (SELECT COUNT(*) FROM solution_files f WHERE f.solution_id = s.id AND f.kind = \'attachment\') AS file_count
      FROM customer_solutions s JOIN customers c ON c.id = s.customer_id';
 
@@ -231,7 +232,9 @@ if ($action === 'list') {
     $params = [];
     if ($customerId > 0) {
         relationships_solution_customer($pdo, $allowedTerritories, $customerId);
-        $where[] = 's.customer_id = :cid';
+        // also include solutions saved on another customer record with the same ConnectWise company id (duplicates)
+        $where[] = '(s.customer_id = :cid OR (c.connectwise_id IS NOT NULL AND c.connectwise_id <> \'\' AND c.connectwise_id = (SELECT connectwise_id FROM customers WHERE id = :cid2)))';
+        $params[':cid2'] = $customerId;
         $params[':cid'] = $customerId;
     } elseif ($allowedTerritories !== null) {
         $tf = relationships_territory_filter_sql($allowedTerritories, 'c');
