@@ -1373,6 +1373,9 @@ class Component extends DCLogic {
       categoryDeviceCounts: {},
       categoryGroupMode: {},
       partsSelections: {},
+      // Camera photo planner (Premise Security > IP Security Camera Systems > Cameras): photos with dropped camera markers.
+      cameraPlan: { photos: [] },
+      cameraPlanAutoScope: 0,
       partsBillingMode: {},
       phoneSelections: {},
       phoneExpandedInfo: {},
@@ -1941,6 +1944,7 @@ class Component extends DCLogic {
           optionLabel: s.optionLabel === 'Included in solution' ? '' : s.optionLabel,
           note: (s.note && s.note.trim()) ? s.note.trim() : '',
           partsLines: s.partsLines || [],
+          planText: s.planText || '',
           scopeLines: scopeComputed.lines,
           scopeSubtotal: scopeComputed.subtotal
         };
@@ -1982,6 +1986,7 @@ class Component extends DCLogic {
     var sectionsHtml = data.sections.map(function (sec) {
       var itemsHtml = sec.items.map(function (it) {
         var head = '<div style="font-size:14px;font-family:Arial,Helvetica,sans-serif;color:#1B2030;font-weight:700;">' + esc(it.serviceName) + '</div>';
+        var plan = it.planText ? '<div style="font-size:12.5px;font-family:Arial,Helvetica,sans-serif;color:#1B2030;margin-top:4px;"><strong>' + esc(it.planText) + '</strong></div>' : '';
         var note = it.note ? '<div style="font-size:12px;font-family:Arial,Helvetica,sans-serif;color:#6B7280;font-style:italic;margin-top:2px;">Rep Notes: ' + esc(it.note) + '</div>' : '';
 
         // Bill-of-materials list: one bullet per physical line item, Brand
@@ -2080,7 +2085,7 @@ class Component extends DCLogic {
             '<tr><td colspan="4" style="padding:8px 12px;font-size:12.5px;font-family:Arial,Helvetica,sans-serif;color:#33394A;text-align:right;font-weight:600;background:' + LIGHT + ';">Scope of Work Subtotal&nbsp;&nbsp;<span style="font-size:13px;color:' + NAVY + ';font-weight:700;">$' + it.scopeSubtotal.toFixed(2) + '</span></td></tr>' +
           '</table>';
         }
-        return '<div style="padding:12px 0;border-bottom:1px solid ' + BORDER + ';">' + head + bom + note + table + '</div>';
+        return '<div style="padding:12px 0;border-bottom:1px solid ' + BORDER + ';">' + head + plan + bom + note + table + '</div>';
       }).join('');
       return '<tr><td style="padding:0;">' +
         '<div style="background:' + NAVY + ';padding:8px 16px;">' +
@@ -2814,6 +2819,117 @@ class Component extends DCLogic {
     this.setState({ scopeHourlyRate: next });
   }
 
+  // ---- Saved Solutions (solution-save.js + relationships/api/solutions.php) ---------------
+  // The working state that makes up a solution. Photo pictures are NOT in the snapshot (they are
+  // blob: URLs); solution-save.js uploads them as files and refills `src` when a solution is reopened.
+  getSolutionSnapshot() {
+    var s = this.state;
+    var clean = function (v) { return JSON.parse(JSON.stringify(v == null ? null : v)); };
+    var managedIT = clean(s.managedIT) || {};
+    managedIT.currentInvoice = { fileName: '', status: 'idle', error: null, data: null };
+    var photos = ((s.cameraPlan && s.cameraPlan.photos) || []).map(function (p) {
+      return { id: p.id, name: p.name, markers: clean(p.markers) || [] };
+    });
+    return {
+      v: 1,
+      selections: clean(s.selections) || {}, partsSelections: clean(s.partsSelections) || {}, scopeSelections: clean(s.scopeSelections) || {},
+      categoryNotes: clean(s.categoryNotes) || {}, partsBillingMode: clean(s.partsBillingMode) || {}, phoneSelections: clean(s.phoneSelections) || {},
+      categoryProducts: clean(s.categoryProducts) || {}, categoryDeviceCounts: clean(s.categoryDeviceCounts) || {}, categoryGroupMode: clean(s.categoryGroupMode) || {},
+      managedIT: managedIT, vcio: clean(s.vcio) || { hours: 2 }, scopeHourlyRate: s.scopeHourlyRate, checkout: clean(s.checkout) || {},
+      projectStars: clean(s.projectStars) || {},
+      cameraPlan: { photos: photos }, cameraPlanAutoScope: s.cameraPlanAutoScope || 0
+    };
+  }
+
+  loadSolutionSnapshot(snap) {
+    if (!snap || typeof snap !== 'object') return;
+    var d = new Component({}).state;
+    var pick = function (k) { return snap[k] !== undefined && snap[k] !== null ? snap[k] : d[k]; };
+    this.setState({
+      selections: pick('selections'), partsSelections: pick('partsSelections'), scopeSelections: pick('scopeSelections'),
+      categoryNotes: pick('categoryNotes'), partsBillingMode: pick('partsBillingMode'), phoneSelections: pick('phoneSelections'),
+      categoryProducts: pick('categoryProducts'), categoryDeviceCounts: pick('categoryDeviceCounts'), categoryGroupMode: pick('categoryGroupMode'),
+      managedIT: pick('managedIT'), vcio: pick('vcio'), scopeHourlyRate: pick('scopeHourlyRate'), checkout: pick('checkout'),
+      projectStars: pick('projectStars'), cameraPlan: pick('cameraPlan'), cameraPlanAutoScope: snap.cameraPlanAutoScope || 0,
+      returnView: 'overview', returnPillarId: null, pillarId: null, serviceId: null, categoryId: null, view: 'summary'
+    });
+  }
+
+  // Pillar names + searchable text for the saved-solution repository.
+  solutionSaveInfo() {
+    var sel = this.state.selections || {};
+    var pillars = [];
+    var text = [];
+    Object.keys(sel).forEach(function (k) {
+      var s = sel[k];
+      if (!s) return;
+      if (s.pillarName && pillars.indexOf(s.pillarName) < 0) pillars.push(s.pillarName);
+      text.push([s.pillarName, s.serviceName, s.optionLabel, s.note].filter(Boolean).join(' — '));
+    });
+    var co = (this.state.checkout || {}).companyName || '';
+    if (co) text.unshift(co);
+    return { count: Object.keys(sel).length, pillars: pillars, searchText: text.join('\n'), companyName: co };
+  }
+
+  // ---- Camera photo planner -------------------------------------------------
+  // plan = { photos: [{ id, name, src, markers: [{ id, x, y, type, color }] }] }
+  cameraPlanTotals(plan) {
+    var photos = (plan && plan.photos) || [];
+    var out = { total: 0, photoCount: photos.length, byProduct: {}, byType: { bullet: 0, dome: 0, turret: 0 }, photos: [] };
+    photos.forEach(function (ph) {
+      var n = 0;
+      (ph.markers || []).forEach(function (m) {
+        var t = (m.type === 'bullet' || m.type === 'turret') ? m.type : 'dome';
+        var c = m.color === 'black' ? 'black' : 'white';
+        out.byProduct[t + '-' + c] = (out.byProduct[t + '-' + c] || 0) + 1;
+        out.byType[t] += 1;
+        out.total += 1;
+        n += 1;
+      });
+      out.photos.push({ name: ph.name || 'Photo', total: n });
+    });
+    return out;
+  }
+
+  cameraPlanText(totals) {
+    if (!totals || !totals.total) return '';
+    var names = { bullet: 'Bullet', dome: 'Dome', turret: 'Turret' };
+    var parts = [];
+    ['bullet', 'dome', 'turret'].forEach(function (t) {
+      ['white', 'black'].forEach(function (c) {
+        var n = totals.byProduct[t + '-' + c] || 0;
+        if (n > 0) parts.push(n + ' × ' + (c === 'white' ? 'White' : 'Black') + ' ' + names[t]);
+      });
+    });
+    var perPhoto = totals.photos.filter(function (p) { return p.total > 0; }).map(function (p) { return p.name + ': ' + p.total; });
+    return 'Camera layout: ' + totals.total + (totals.total === 1 ? ' camera' : ' cameras') + ' placed across ' + totals.photoCount +
+      (totals.photoCount === 1 ? ' photo' : ' photos') + ' (' + parts.join(', ') + ')' + (perPhoto.length > 1 ? ' — ' + perPhoto.join(', ') : '');
+  }
+
+  // Called by camera-plan.js whenever a photo or marker changes: keeps the six camera
+  // quantities (and the New IP Security Camera Installation scope qty) in step with the photos.
+  setCameraPlan(photos) {
+    var totals = this.cameraPlanTotals({ photos: photos });
+    var parts = Object.assign({}, this.state.partsSelections);
+    var cat = Object.assign({}, parts['cam-cameras'] || {});
+    ['dome', 'turret', 'bullet'].forEach(function (t) {
+      ['white', 'black'].forEach(function (c) {
+        var id = t + '-' + c;
+        var prev = cat[id] || { qty: 0, chips: {}, ranges: {} };
+        cat[id] = Object.assign({}, prev, { qty: Math.min(999, totals.byProduct[id] || 0) });
+      });
+    });
+    parts['cam-cameras'] = cat;
+    var scopes = Object.assign({}, this.state.scopeSelections);
+    var sc = Object.assign({}, scopes['cam-cameras'] || {});
+    var SID = 'new-ip-security-camera-installation-and-configuration';
+    var auto = this.state.cameraPlanAutoScope || 0;
+    var newAuto = Math.min(totals.total, 99);
+    // Only drive the scope qty while the rep hasn't changed it by hand.
+    if ((sc[SID] || 0) === auto) { sc[SID] = newAuto; scopes['cam-cameras'] = sc; } else { newAuto = auto; }
+    this.setState({ cameraPlan: { photos: photos }, partsSelections: parts, scopeSelections: scopes, cameraPlanAutoScope: newAuto });
+  }
+
   addPartsCategoryToSolution(pillarId, serviceId, categoryId) {
     var pillarObj = this.findPillar(pillarId);
     var svc = this.findService(pillarId, serviceId);
@@ -2945,13 +3061,24 @@ class Component extends DCLogic {
     var hasScopeSelections = Object.keys(scopeQtyMap).length > 0;
     if (!lines.length && !hasScopeSelections) return;
     var optionLabel = lines.length ? lines.join('; ') : 'Scope of work only';
+    // Camera photo planner: when the camera quantities came from the placed cameras, summarize them as one job.
+    var planText = '';
+    if (categoryId === 'cam-cameras') {
+      var planTotals = this.cameraPlanTotals(this.state.cameraPlan);
+      var camQtySum = 0;
+      cat.products.forEach(function (p) { camQtySum += ((byCategory[p.id] || {}).qty || 0); });
+      if (planTotals.total > 0 && planTotals.total === camQtySum) {
+        planText = this.cameraPlanText(planTotals);
+        optionLabel = planText + (lines.length ? ' | ' + optionLabel : '');
+      }
+    }
     var sel = Object.assign({}, this.state.selections);
     var key = serviceId + '::' + categoryId;
     sel[key] = {
       pillarId: pillarObj.id, pillarName: pillarObj.name, serviceName: cat.solutionHeading || cat.name,
       optionId: 'category', optionLabel: optionLabel, optionDetail: optionLabel,
       outcomeTags: svc.outcome,
-      categoryId: categoryId, scopeQtyMap: scopeQtyMap, partsLines: partsLines,
+      categoryId: categoryId, scopeQtyMap: scopeQtyMap, partsLines: partsLines, planText: planText,
       hasComputerVisual: !!computerVisual, computerVisual: computerVisual,
       note: this.state.categoryNotes[key] || ''
     };
@@ -3983,7 +4110,7 @@ class Component extends DCLogic {
           hasProducts: visibleProducts.length > 0,
           noProducts: visibleProducts.length === 0,
           hasDeviceCountFeature: false,
-          hasBillingToggle: hasBillingToggle, billingToggle: billingToggleVM,
+          hasBillingToggle: hasBillingToggle, billingToggle: billingToggleVM, hasCameraPlan: catCategoryId === 'cam-cameras',
           partsProducts: partsProducts,
           hasSelections: partsHasSelections,
           hasPhonePicker: !!phonePickerVM,
@@ -4608,6 +4735,8 @@ class Component extends DCLogic {
 // Kept intentionally tiny: all real behavior lives in Component above.
 window.SolutionsHubApp = {
   createComponent: function (props) {
-    return new Component(props);
+    var component = new Component(props);
+    window.SolutionsHubApp.instance = component;
+    return component;
   }
 };

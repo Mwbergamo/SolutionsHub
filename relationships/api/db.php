@@ -809,6 +809,59 @@ function relationships_migrate(PDO $pdo): void
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_customer_documents_customer ON customer_documents(customer_id, uploaded_at DESC)');
 
+    // Saved Solutions -- added 2026-10-07 per Michael: a solution built in the Solutions Hub is saved
+    // to a customer with its documents and images (solutions.php). state_json is the Hub's working
+    // state so it can be reopened and edited; search_text feeds the central repository search.
+    // Files on disk under data/solutions/<customer_id>/<solution_id>/ (blocked from direct HTTP by data/.htaccess).
+    // solution_files.kind: 'attachment' (rep-added document/image) | 'camera_photo' (camera-layout photo; ref = photo id in state_json).
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS customer_solutions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            pillars TEXT NOT NULL DEFAULT '[]',
+            search_text TEXT NOT NULL DEFAULT '',
+            state_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_by_user_id INTEGER REFERENCES crc_users(id),
+            created_by_name TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_by_user_id INTEGER REFERENCES crc_users(id),
+            updated_by_name TEXT NOT NULL
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_customer_solutions_customer ON customer_solutions(customer_id, created_at DESC)');
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS solution_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            solution_id INTEGER NOT NULL REFERENCES customer_solutions(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL DEFAULT 'attachment',
+            ref TEXT,
+            original_filename TEXT NOT NULL,
+            stored_filename TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            uploaded_by_name TEXT NOT NULL,
+            uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_solution_files_solution ON solution_files(solution_id)');
+
+    // Solution -> ConnectWise project links: the solution's link posted as a Comment note on a pre-sales project.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS solution_cw_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            solution_id INTEGER NOT NULL REFERENCES customer_solutions(id) ON DELETE CASCADE,
+            cw_project_id INTEGER NOT NULL,
+            project_name TEXT NOT NULL DEFAULT '',
+            cw_note_id TEXT,
+            push_status TEXT NOT NULL DEFAULT 'pushed',
+            push_error TEXT,
+            linked_by_name TEXT NOT NULL,
+            linked_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_solution_cw_links_solution ON solution_cw_links(solution_id)');
+
     // ---- Prospecting (prospecting.php / prospecting-agent.php) -- added
     // 2026-09-23 per Michael: a rep issues a "Prospect" command, a research
     // agent searches the public web, and the rep claims a candidate as a

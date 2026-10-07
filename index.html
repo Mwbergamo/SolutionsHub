@@ -1072,6 +1072,9 @@
                   <button data-on-click="{{currentCategory.billingToggle.onSetB}}" style="{{currentCategory.billingToggle.bBtnStyle}}">{{currentCategory.billingToggle.bLabel}}</button>
                 </div>
               </sc-if>
+              <sc-if value="{{currentCategory.hasCameraPlan}}" hint-placeholder-val="{{false}}">
+                <div id="camera-plan-mount" style="margin-top:14px;"></div>
+              </sc-if>
               <div style="margin-top:14px;display:flex;flex-direction:column;gap:10px;">
                 <sc-for list="{{currentCategory.partsProducts}}" as="prod" hint-placeholder-count="4">
                   <sc-if value="{{prod.hasSectionBreak}}" hint-placeholder-val="{{false}}">
@@ -1555,6 +1558,7 @@
             <button data-on-click="{{onSendQuoteEmail}}" style="background:var(--cbt-success-text);border:none;color:white;font-size:13.5px;font-weight:700;padding:11px 20px;border-radius:999px;cursor:pointer;">{{sendQuoteLabel}}</button>
             <button data-on-click="{{onPrintQuote}}" style="background:var(--cbt-bg-control-2);border:1px solid var(--cbt-border-control);color:var(--cbt-text-on-dark-primary);font-size:13.5px;font-weight:700;padding:11px 20px;border-radius:999px;cursor:pointer;">Print Quote</button>
             <button data-on-click="{{onOpenInsideSales}}" style="background:var(--cbt-purple-inside-sales);border:none;color:white;font-size:13.5px;font-weight:700;padding:11px 20px;border-radius:999px;cursor:pointer;">Send to Inside Sales</button>
+            <span id="solution-save-mount" style="display:contents"></span>
           </div>
           <sc-if value="{{sendQuoteHasError}}" hint-placeholder-val="{{false}}">
             <div style="margin-top:8px;font-size:12.5px;font-weight:600;color:var(--cbt-danger-text);">{{sendQuoteErrorText}}</div>
@@ -2060,7 +2064,9 @@
 </script>
 
 <script src="assets/clyde/clyde-season.js?v=1"></script>
-<script src="app.js?v=coll1"></script>
+<script src="app.js?v=sol1"></script>
+<script src="camera-plan.js?v=1"></script>
+<script src="solution-save.js?v=2"></script>
 <script src="runtime.js?v=62c06d5"></script>
 <script>
   // Sign-in gate (added 2026-09-15) -- app.js/runtime.js load unconditionally

@@ -3452,3 +3452,50 @@ a { color: inherit; }
 .company-counts-table td { padding: 4px 6px; border-bottom: 1px solid oklch(0.22 0.015 255); }
 .company-counts-table td:last-child, .company-counts-table th:last-child { text-align: right; }
 
+/* Saved Solutions card on the customer dashboard -- added 2026-10-07 per Michael. Reuses .risk-scans-panel. */
+.solutions-toggle {
+  display: inline-flex; align-items: center; gap: 10px; background: none; border: none; color: inherit;
+  cursor: pointer; padding: 0; font: inherit;
+}
+.solutions-toggle .view-title { margin: 0; }
+.solutions-chevron { font-size: 14px; color: oklch(0.7 0.01 255); width: 14px; }
+.solutions-count {
+  font-size: 11px; font-weight: 700; color: #8fc3ff; background: oklch(0.4 0.08 255 / 0.2);
+  border-radius: 999px; padding: 2px 9px;
+}
+.solutions-list { margin-top: 14px; display: flex; flex-direction: column; }
+.solution-row {
+  display: grid; grid-template-columns: minmax(150px, 2fr) minmax(120px, 1.4fr) minmax(110px, 1fr) minmax(100px, 1fr) auto;
+  gap: 12px; align-items: center; padding: 11px 4px; border-top: 1px solid oklch(0.25 0.02 255);
+}
+.solution-row.solution-head { border-top: none; padding-top: 0; padding-bottom: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: oklch(0.55 0.015 255); }
+.solution-cell { min-width: 0; text-align: left; font-size: 12.5px; color: oklch(0.82 0.006 255); }
+.solution-name { font-weight: 700; overflow-wrap: anywhere; }
+.solution-pillars { display: flex; flex-wrap: wrap; gap: 5px; }
+.solution-pillar-tag {
+  font-size: 10.5px; font-weight: 700; color: oklch(0.78 0.15 85); background: oklch(0.78 0.15 85 / 0.14);
+  border: 1px solid oklch(0.78 0.15 85 / 0.35); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+}
+.solution-pillar-tag.muted { color: oklch(0.55 0.015 255); background: none; border-color: oklch(0.3 0.02 255); }
+.solution-edited { font-size: 10.5px; color: oklch(0.55 0.015 255); white-space: nowrap; }
+.solution-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.solution-btn {
+  font-size: 11px; font-weight: 700; color: #8fc3ff; text-decoration: none; background: none; cursor: pointer;
+  border: 1px solid oklch(0.4 0.08 255 / 0.5); border-radius: 7px; padding: 5px 10px; font-family: inherit;
+}
+.solution-btn:hover { background: oklch(0.4 0.08 255 / 0.14); }
+.solution-btn.primary { background: oklch(0.78 0.15 85 / 0.16); border-color: oklch(0.78 0.15 85 / 0.4); color: oklch(0.78 0.15 85); }
+.solution-btn.primary:hover { background: oklch(0.78 0.15 85 / 0.26); }
+.solution-btn.danger { color: #ff8b8b; border-color: oklch(0.55 0.18 25 / 0.5); }
+.solution-btn:disabled { opacity: .5; cursor: default; }
+.solution-files { grid-column: 1 / -1; margin: 2px 0 4px; padding: 8px 10px; border-radius: 10px; background: oklch(0.16 0.012 255); display: flex; flex-direction: column; gap: 8px; }
+.solution-file { display: flex; align-items: center; gap: 12px; }
+.solution-file-main { flex: 1; min-width: 0; }
+.solution-thumb { width: 56px; height: 42px; object-fit: cover; border-radius: 6px; border: 1px solid oklch(0.3 0.02 255); display: block; }
+.solution-doc-icon { width: 56px; text-align: center; font-size: 22px; }
+@media (max-width: 760px) {
+  .solution-row { grid-template-columns: 1fr; gap: 4px; }
+  .solution-row.solution-head { display: none; }
+  .solution-actions { justify-content: flex-start; margin-top: 4px; }
+}
+.solution-cwlinks { margin-top: 3px; font-size: 10.5px; font-weight: 600; color: oklch(0.55 0.18 145); }

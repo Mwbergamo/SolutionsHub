@@ -1717,6 +1717,8 @@
         loadRiskScans(id);
         resetDocumentsState();
         loadDocuments(id);
+        resetSolutionsState();
+        loadSolutions(id);
         if (state.pendingFocus) {
           var pf = state.pendingFocus;
           state.pendingFocus = null;
@@ -5112,6 +5114,7 @@
 
     html += riskScansPanelHtml(detail.customer.id);
     html += documentsPanelHtml(detail.customer.id);
+    html += solutionsPanelHtml(detail.customer);
 
     html += activityPanelHtml(detail);
 
@@ -5313,6 +5316,173 @@
         '</button>' +
       '</div>' +
     '</div>';
+  }
+
+  // ---- Saved Solutions card (api/solutions.php) --------------------------
+  // Added 2026-10-07 per Michael: solutions built in the Solutions Hub are saved to a customer (with
+  // documents and images) and listed here in a collapsible "Solutions" card -- name, date created,
+  // the rep who saved it and its pillar(s) of service. "Open / Edit" reopens it in the Hub
+  // (../index.html?solution=ID); "Delete" is offered only to the rep who saved it (or an admin).
+
+  function resetSolutionsState() {
+    state.solutions = null;
+    state.solutionsLoading = false;
+    state.solutionsError = null;
+    state.solutionsOpen = false;
+    state.solutionFiles = {}; // solution id -> { loading, files, error } once its Files list has been opened
+    state.solutionFilesOpen = {};
+    state.solutionDeletingId = null;
+  }
+
+  function loadSolutions(customerId) {
+    state.solutionsLoading = true;
+    var requestFor = Number(customerId);
+    apiGet('api/solutions.php?action=list&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.solutionsLoading = false;
+      if (r.data && r.data.ok) state.solutions = r.data.solutions;
+      else state.solutionsError = (r.data && r.data.error) || 'Could not load solutions.';
+      render();
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.solutionsLoading = false;
+      state.solutionsError = 'Could not load solutions — check your connection and try again.';
+      render();
+    });
+  }
+
+  function toggleSolutionFiles(id) {
+    state.solutionFilesOpen[id] = !state.solutionFilesOpen[id];
+    if (state.solutionFilesOpen[id] && !state.solutionFiles[id]) {
+      state.solutionFiles[id] = { loading: true, files: [], error: null };
+      apiGet('api/solutions.php?action=get&id=' + id).then(function (r) {
+        var slot = state.solutionFiles[id] = { loading: false, files: [], error: null };
+        if (r.data && r.data.ok) slot.files = r.data.solution.files || [];
+        else slot.error = (r.data && r.data.error) || 'Could not load the files.';
+        render();
+      }).catch(function () {
+        state.solutionFiles[id] = { loading: false, files: [], error: 'Could not load the files — check your connection.' };
+        render();
+      });
+    }
+    render();
+  }
+
+  function deleteSolution(id) {
+    var s = (state.solutions || []).filter(function (x) { return x.id === id; })[0];
+    if (!s) return;
+    if (!window.confirm('Delete the saved solution “' + s.name + '” and its files? This can’t be undone.')) return;
+    state.solutionDeletingId = id;
+    state.solutionsError = null;
+    render();
+    apiPost('api/solutions.php?action=delete', { id: id }).then(function (r) {
+      state.solutionDeletingId = null;
+      if (r.data && r.data.ok) {
+        state.solutions = (state.solutions || []).filter(function (x) { return x.id !== id; });
+      } else {
+        state.solutionsError = (r.data && r.data.error) || 'Could not delete the solution.';
+      }
+      render();
+    }).catch(function () {
+      state.solutionDeletingId = null;
+      state.solutionsError = 'Could not delete the solution — check your connection and try again.';
+      render();
+    });
+  }
+
+  function solutionDate(raw) {
+    if (!raw) return '';
+    var d = new Date(raw.indexOf('T') === -1 ? raw.replace(' ', 'T') + 'Z' : raw);
+    return isNaN(d.getTime()) ? raw : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function solutionCwLinksHtml(s) {
+    var links = (s.cw_links || []).filter(function (l) { return l.status !== 'failed'; });
+    if (!links.length) return '';
+    return '<div class="solution-cwlinks">ConnectWise: ' + links.map(function (l) { return escapeHtml(l.project_name || ('Project #' + l.project_id)); }).join(', ') + '</div>';
+  }
+
+  function copySolutionLink(id) {
+    var s = (state.solutions || []).filter(function (x) { return x.id === id; })[0];
+    if (!s || !s.link) return;
+    var done = function (ok) {
+      if (!ok) { window.prompt('Copy this solution link:', s.link); return; }
+      state.solutionCopiedId = id; render();
+      setTimeout(function () { if (state.solutionCopiedId === id) { state.solutionCopiedId = null; render(); } }, 2000);
+    };
+    var fallback = function () {
+      var ta = document.createElement('textarea');
+      ta.value = s.link; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+      document.body.appendChild(ta); ta.select();
+      var ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(ta); done(ok);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(s.link).then(function () { done(true); }, fallback);
+    else fallback();
+  }
+
+  function solutionRowHtml(s) {
+    var open = !!state.solutionFilesOpen[s.id];
+    var pillars = (s.pillars || []).map(function (p) { return '<span class="solution-pillar-tag">' + escapeHtml(p) + '</span>'; }).join('') ||
+      '<span class="solution-pillar-tag muted">—</span>';
+    var edited = s.updated_at && s.updated_at !== s.created_at
+      ? ' <span class="solution-edited" title="Last updated by ' + escapeHtml(s.updated_by_name) + ' on ' + escapeHtml(fmtTimestamp(s.updated_at)) + '">(edited ' + escapeHtml(solutionDate(s.updated_at)) + ')</span>' : '';
+    var h = '<div class="solution-row" data-solution-row="' + s.id + '">' +
+      '<div class="solution-cell solution-name">' + escapeHtml(s.name) + solutionCwLinksHtml(s) + '</div>' +
+      '<div class="solution-cell solution-pillars">' + pillars + '</div>' +
+      '<div class="solution-cell solution-created">' + escapeHtml(solutionDate(s.created_at)) + edited + '</div>' +
+      '<div class="solution-cell solution-rep">' + escapeHtml(s.created_by_name) + '</div>' +
+      '<div class="solution-cell solution-actions">' +
+        '<button type="button" class="solution-btn" data-action="solution-files" data-solution="' + s.id + '">' + (open ? 'Hide files' : 'Files') + '</button>' +
+        '<button type="button" class="solution-btn" data-action="solution-copy" data-solution="' + s.id + '" title="Copy this solution\'s unique link (to paste into ConnectWise)">' + (state.solutionCopiedId === s.id ? 'Copied \u2713' : 'Copy link') + '</button>' +
+        '<a class="solution-btn primary" href="../index.html?solution=' + s.id + '" target="_blank" rel="noopener">Open / Edit</a>' +
+        (s.can_delete ? '<button type="button" class="solution-btn danger" data-action="solution-delete" data-solution="' + s.id + '"' + (state.solutionDeletingId === s.id ? ' disabled' : '') + '>' + (state.solutionDeletingId === s.id ? 'Deleting…' : 'Delete') + '</button>' : '') +
+      '</div>';
+    if (open) {
+      var slot = state.solutionFiles[s.id];
+      h += '<div class="solution-files">';
+      if (!slot || slot.loading) h += '<div class="loading">Loading…</div>';
+      else if (slot.error) h += '<div class="error-banner">' + escapeHtml(slot.error) + '</div>';
+      else if (!slot.files.length) h += '<div class="roster-empty">No documents or images were saved with this solution.</div>';
+      else {
+        slot.files.forEach(function (f) {
+          var href = escapeHtml(f.url);
+          h += '<div class="solution-file">' +
+            (f.is_image ? '<a href="' + href + '" target="_blank" rel="noopener"><img class="solution-thumb" src="' + href + '" alt="" loading="lazy"></a>' : '<span class="solution-doc-icon">📄</span>') +
+            '<div class="solution-file-main"><div class="risk-scan-item-name">' + escapeHtml(f.name) + (f.kind === 'camera_photo' ? ' <span class="document-category-tag">Camera layout photo</span>' : '') + '</div>' +
+            '<div class="risk-scan-item-meta">' + fmtFileSize(f.size_bytes) + '</div></div>' +
+            '<a class="risk-scan-download-btn" href="' + href + '"' + (f.is_image ? ' target="_blank" rel="noopener"' : '') + '>' + (f.is_image ? 'View' : 'Download') + '</a></div>';
+        });
+      }
+      h += '</div>';
+    }
+    return h + '</div>';
+  }
+
+  function solutionsPanelHtml(customer) {
+    var open = !!state.solutionsOpen;
+    var count = state.solutions ? state.solutions.length : null;
+    var h = '<div class="risk-scans-panel solutions-panel">' +
+      '<div class="risk-scans-panel-header">' +
+        '<button type="button" class="solutions-toggle" data-action="solutions-toggle" aria-expanded="' + open + '">' +
+          '<span class="solutions-chevron">' + (open ? '▾' : '▸') + '</span>' +
+          '<span class="view-title">Solutions</span>' +
+          (count !== null ? '<span class="solutions-count">' + count + '</span>' : '') +
+        '</button>' +
+        '<a class="solution-btn primary" href="../index.html?customer_id=' + customer.id + '&customer_name=' + encodeURIComponent(customer.name || '') + '" target="_blank" rel="noopener">+ New solution</a>' +
+      '</div>';
+    if (open) {
+      if (state.solutionsError) h += '<div class="error-banner">' + escapeHtml(state.solutionsError) + '</div>';
+      if (state.solutionsLoading && !state.solutions) h += '<div class="loading">Loading…</div>';
+      else if (!state.solutions || !state.solutions.length) {
+        h += '<div class="roster-empty">No solutions saved for this customer yet. Build one in the Solutions Hub and choose “Save to customer” on the Solution Summary.</div>';
+      } else {
+        h += '<div class="solutions-list"><div class="solution-row solution-head"><div class="solution-cell">Solution</div><div class="solution-cell">Pillar of service</div><div class="solution-cell">Created</div><div class="solution-cell">Saved by</div><div class="solution-cell"></div></div>';
+        state.solutions.forEach(function (s) { h += solutionRowHtml(s); });
+        h += '</div>';
+      }
+    }
+    return h + '</div>';
   }
 
   // ---- Customer Documents panel ------------------------------------------
@@ -7462,6 +7632,15 @@
       uploadRiskScan(parseInt(el.getAttribute('data-customer'), 10));
     } else if (action === 'riskscan-retry-cw') {
       retryRiskScanCw(parseInt(el.getAttribute('data-scan'), 10));
+    } else if (action === 'solutions-toggle') {
+      state.solutionsOpen = !state.solutionsOpen;
+      render();
+    } else if (action === 'solution-files') {
+      toggleSolutionFiles(parseInt(el.getAttribute('data-solution'), 10));
+    } else if (action === 'solution-copy') {
+      copySolutionLink(parseInt(el.getAttribute('data-solution'), 10));
+    } else if (action === 'solution-delete') {
+      deleteSolution(parseInt(el.getAttribute('data-solution'), 10));
     } else if (action === 'document-upload') {
       uploadDocuments(parseInt(el.getAttribute('data-customer'), 10));
     } else if (action === 'document-retry-cw') {
