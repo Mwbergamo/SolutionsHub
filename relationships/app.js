@@ -593,7 +593,7 @@
   }
 
   // Deep link from the Hub's Sales / Project Management cards: index.html?view=report|prospecting|projects&section=sales|projects
-  // (and ?view=marketing for the Marketing placeholder). Views that moved to Hub cards always show their own section's top bar.
+  // Views that moved to Hub cards always show their own section's top bar.
   function openViewFromLink() {
     var v = '', sec = '';
     try {
@@ -604,7 +604,7 @@
       state.section = 'sales';
     } else if (v === 'projects') {
       state.section = 'projects';
-    } else if (v !== 'marketing') {
+    } else {
       return;
     }
     state.view = v;
@@ -3151,15 +3151,6 @@
     );
   }
 
-  // Marketing sub-app placeholder (added 2026-10-07): announced under Relationships, not built yet.
-  function marketingHtml() {
-    return '<div class="view-header"><div class="view-header-text">' +
-      '<div class="view-title">Marketing <span class="soon-pill">Coming soon</span></div>' +
-      '<div class="view-sub">Marketing is a new Relationships sub-app that is coming soon.</div>' +
-      '</div></div>' +
-      '<div class="empty-state">Marketing is coming soon. Nothing to use here yet.</div>';
-  }
-
   function mainHtml() {
     if (!state.user) return '<div class="loading">Loading…</div>';
 
@@ -3186,9 +3177,6 @@
     }
     if (state.view === 'projects') {
       return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + projectsHtml();
-    }
-    if (state.view === 'marketing') {
-      return marketingHtml();
     }
 
     var html;
@@ -4198,19 +4186,8 @@
   // whenever no customer is selected. Reads only state.overview
   // (api/dashboard.php), which loadOverview() populates; this function
   // itself never triggers a fetch, so it's safe to call from render().
-  // Sub-app cards on the Relationships main screen (added 2026-10-07). Marketing is announced here, not built yet.
-  function subAppsHtml() {
-    return '<div class="subapp-grid">' +
-      '<button type="button" class="subapp-card" data-action="show-marketing">' +
-        '<span class="subapp-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"></path><path d="M15 9a4 4 0 0 1 0 6"></path><path d="M18 6.5a8 8 0 0 1 0 11"></path></svg></span>' +
-        '<span class="subapp-text"><span class="subapp-title">Marketing <span class="soon-pill">Coming soon</span></span>' +
-        '<span class="subapp-sub">A new Relationships sub-app. Coming soon.</span></span>' +
-      '</button>' +
-    '</div>';
-  }
-
   function overviewHtml() {
-    return subAppsHtml() + overviewBodyHtml();
+    return overviewBodyHtml();
   }
 
   function overviewBodyHtml() {
@@ -7485,10 +7462,6 @@
       render();
       if (!state.selectedCustomer && !state.overview) loadOverview();
       if (!state.selectedCustomer) loadGlobalTodos();
-    } else if (action === 'show-marketing') {
-      state.view = 'marketing';
-      state.error = null;
-      render();
     } else if (action === 'show-prospecting') {
       state.view = 'prospecting';
       state.error = null;

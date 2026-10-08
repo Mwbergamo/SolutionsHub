@@ -4,7 +4,7 @@
  */
 window.HELP_CHANGELOG = [
   { date: '2026-10-07', title: 'Hub reorganized into Finance, Sales, Project Management and Retail', text: 'Commissions and Collections now live under Finance, Cross-Sell Report and Prospecting under Sales, Projects under Project Management, and Register under Retail. Customer Rate Sheet keeps its own tile.', articles: ['home-screen'] },
-  { date: '2026-10-07', title: 'Marketing added to Relationships (coming soon)', text: 'A Marketing card is announced on the Relationships main screen. It is not built yet.', articles: ['rel-marketing'] },
+  { date: '2026-10-07', title: 'Marketing tile added to the Hub (coming soon)', text: 'A Marketing tile for internal marketing material is on the Hub home screen with a Coming soon badge. It is not built yet.', articles: ['hub-marketing'] },
   { date: '2026-10-07', title: 'Rate Sheet: Clear Test Data removed', text: 'The admin-only Clear Test Data button and its server action are gone now that the Rate Sheet is live.', articles: [] },
   { date: '2026-10-07', title: 'Clyde Support and Help Center in the header', text: 'The Help / Suggestions button is now Clyde Support, and the Help Center sits beside it in the Hub header instead of on the home tiles.', articles: ['help-suggestions', 'help-center'] },
   { date: '2026-10-07', title: 'Help Center launched', text: 'A searchable guide to every tool, with links straight to each feature. The Services section is built from the Hub catalog and stays current automatically.', articles: ['help-center'] },
