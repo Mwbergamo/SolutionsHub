@@ -26,20 +26,6 @@
  *   ratesheet_rate_email_html()'s docblock for that specific call.
  *   -> { ok: true, request: {...} }
  *
- * POST /ratesheet/api/requests.php?action=clear-test-data
- *   { confirm: true }
- *   Admin-only (ratesheet_is_admin()) -- added 2026-09-18, per Michael, to
- *   wipe out the development/testing rate sheets sent while this app was
- *   being built, so the dashboard starts clean for real customers. Deletes
- *   EVERY row in rate_sheet_requests (there's no way to distinguish "test"
- *   from "real" rows -- this app hadn't gone live yet at the time this was
- *   added, so a full wipe is what was actually meant). Requires a literal
- *   { confirm: true } in the body (not just the admin gate) so this can
- *   never fire from a stray/retried request -- see app.js's confirm()
- *   dialog before this is ever called. Does NOT touch ratesheet_users
- *   (real rep logins, not test data).
- *   -> { ok: true, deleted: <int> }
- *
  * POST /ratesheet/api/requests.php?action=retry
  *   { id: <int> }
  *   Added 2026-09-25, per Michael: "can we make a feature for
@@ -650,21 +636,6 @@ if ($action === 'send') {
     $stmt = $pdo->prepare('SELECT * FROM rate_sheet_requests WHERE id = :id');
     $stmt->execute([':id' => $requestId]);
     ratesheet_respond(200, ['ok' => true, 'request' => ratesheet_request_row($stmt->fetch(PDO::FETCH_ASSOC), true)]);
-}
-
-if ($action === 'clear-test-data') {
-    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-        ratesheet_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
-    }
-    if (!ratesheet_is_admin($user)) {
-        ratesheet_respond(403, ['ok' => false, 'error' => 'Only an admin can clear rate sheet data.']);
-    }
-    $input = ratesheet_read_json_body();
-    if (empty($input['confirm'])) {
-        ratesheet_respond(400, ['ok' => false, 'error' => 'Missing confirmation.']);
-    }
-    $deleted = $pdo->exec('DELETE FROM rate_sheet_requests');
-    ratesheet_respond(200, ['ok' => true, 'deleted' => (int) $deleted]);
 }
 
 ratesheet_respond(400, ['ok' => false, 'error' => 'Unknown action.']);

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<script>
+(function () {
+  var theme = 'dark';
+  try {
+    var saved = localStorage.getItem('cbt-theme');
+    if (saved === 'light' || saved === 'dark') theme = saved;
+    else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) theme = 'light';
+  } catch (e) {}
+  document.documentElement.setAttribute('data-theme', theme);
+})();
+</script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Finance - SolutionsHub</title>
+<link rel="icon" type="image/png" href="../assets/favicon.png">
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700&family=Libre+Franklin:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../styles.css?v=e241c2c">
+<link rel="stylesheet" href="../sections/section.css?v=1">
+</head>
+<body class="sect">
+<header class="sbar">
+  <a class="back" href="../index.html">&larr; Solutions Hub</a>
+  <span class="brand"><span class="bar"></span>Finance</span>
+</header>
+<div id="sect-root"></div>
+<script>
+window.SECTION = {
+  "title": "Finance",
+  "lead": "Commission reporting and open-invoice collections, pulled live from ConnectWise.",
+  "cards": [
+    {
+      "title": "Commissions",
+      "desc": "Live sales commissions from ConnectWise invoices, by rep.",
+      "href": "../commissions/",
+      "go": "COMMISSION REPORTS",
+      "icon": "<line x1=\"12\" y1=\"3\" x2=\"12\" y2=\"21\"></line><path d=\"M16.5 7.5c0-1.7-2-3-4.5-3s-4.5 1.3-4.5 3 2 2.7 4.5 3 4.5 1.3 4.5 3-2 3-4.5 3-4.5-1.3-4.5-3\"></path>",
+      "needs": "can_view_commissions"
+    },
+    {
+      "title": "Collections",
+      "desc": "Unpaid ConnectWise invoices by rep and territory, with an emailable collections report.",
+      "href": "../collections/",
+      "go": "OPEN INVOICES",
+      "icon": "<rect x=\"3\" y=\"6\" width=\"18\" height=\"12\" rx=\"2\"></rect><circle cx=\"12\" cy=\"12\" r=\"2.5\"></circle><path d=\"M6 9v0M18 15v0\"></path>",
+      "needs": "can_view_collections"
+    }
+  ]
+};
+</script>
+<script src="../sections/section.js?v=1"></script>
+</body>
+</html>

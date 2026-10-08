@@ -2,16 +2,17 @@
 (function () {
   window.HELP_SECTIONS = window.HELP_SECTIONS || [];
   var R = '../relationships/';
+  function LV(label, view, section) { return L(label, 'index.html?view=' + view + '&section=' + section); }
   function L(label, q) { return { href: R + (q || ''), label: label || 'Open Relationships' }; }
   window.HELP_SECTIONS.push({
     id: 'relationships', title: 'Relationships (CRC Dashboard)',
     intro: 'See what each customer has, what is worth a conversation, and keep track of meetings, to-dos, documents and prospects.',
     articles: [
       { id: 'rel-nav', title: 'Relationships navigation and links',
-        def: 'The top bar switches between Dashboard, Cross-Sell Report, Prospecting, ConnectWise Sync and Projects (plus Territory Admin for admins).',
+        def: 'The top bar switches between Dashboard, Marketing (coming soon) and ConnectWise Sync (plus Territory Admin for admins). Cross-Sell Report, Prospecting and Projects moved to the Hub\'s Sales and Project Management cards on 2026-10-07.',
         where: 'Top bar of the Relationships app. The Solutions Hub link next to it returns to the Hub.',
         link: L(), why: 'Move between the main screens, or open a customer directly from a link.',
-        steps: ['Click a tab to switch screens.', 'To open a customer straight from a link, use index.html?cw_company=<ConnectWise company number>.'],
+        steps: ['Click a tab to switch screens. The Cross-Sell Report and Prospecting tabs now live under Hub home > Sales; Projects under Hub home > Project Management.', 'To open a customer straight from a link, use index.html?cw_company=<ConnectWise company number>.'],
         notes: ['If no matching customer is found, an error banner appears.', 'Open in Solutions Hub, Open Balance Report and Open / Edit links jump out to the other apps.'],
         added: '2026-09-10', updated: '2026-10-07', kw: ['tabs', 'menu', 'deep link', 'url'] },
       { id: 'rel-search', title: 'Customer search',
@@ -133,36 +134,54 @@
         where: 'Customer dashboard header, Print Service Summary.', link: L(), why: 'A ready handout for CRC check-in meetings.',
         steps: ['Click Print Service Summary.', 'Review the preview and click Print.'],
         notes: ['Ticket detail shows Not available for customers with no ConnectWise record.'], added: '2026-09-14', updated: '2026-09-14', kw: ['handout', 'one page', 'check in', 'pdf'] },
-      { id: 'rel-cross-sell-report', title: 'Cross-Sell Report',
-        def: 'Shows how many customers are at each of the seven checklist steps for every missing service, grouped by pillar, plus a PeopleFirst checkin and risk-scan summary.',
-        where: 'Cross-Sell Report tab.', link: L(), why: 'See the whole cross-sell pipeline and who is due on PeopleFirst commitments.',
-        steps: ['Click a non-zero count.', 'Click a customer to open their checklist.', 'In the PeopleFirst banner, click a count for who still needs a checkin this month or a scan this quarter.'],
-        notes: ['Killed opportunities are excluded; Closed counts customers who finished all seven steps and are to be re-addressed in 180 days.'], added: '2026-09-15', updated: '2026-09-15', kw: ['pipeline', 'report', 'steps', 'peoplefirst'] },
-      { id: 'rel-prospecting', title: 'Prospecting: Find, profile and claim',
-        def: 'A research agent searches the public web for target businesses within a radius of a location, builds a profile and lets you claim a prospect.',
-        where: 'Prospecting tab > Find Prospects.', link: L(), why: 'Generates new leads and starts a 90-day clock when you claim one.',
-        steps: ['Choose an Industry, enter a City or ZIP and a Radius (10 to 150 miles), then click Prospect.', 'Wait for the research (a few minutes; you can leave and come back).', 'Click a result to open its panel, build a profile, and fix any missing details.', 'Click Claim as Prospect, then Open in Relationships.'],
-        notes: ['Each rep has a daily search limit.', 'Claiming creates the company, primary contact and team assignment in ConnectWise as a Prospect in your territory, so confirm details first.', 'Uses public web data only.'], added: '2026-09-23', updated: '2026-09-23', kw: ['prospect', 'leads', 'research', 'claim', 'new business'] },
-      { id: 'rel-my-prospects', title: 'My Prospects and the 90-day clock',
-        def: 'Lists claimed prospects with who claimed them, the date and a days-left badge.',
-        where: 'Prospecting tab > My Prospects.', link: L(), why: 'Keeps claimed prospects moving forward.',
-        steps: ['Choose My prospects or Everyone\'s in the Show menu.', 'Click a prospect to open its dashboard.'],
-        notes: ['Badge colors: green above 30 days, amber at 30 or fewer, red at 7 or fewer, and overdue after the deadline.', 'Prospects with 14 or fewer days left appear on the Global To-Do panel.'], added: '2026-09-23', updated: '2026-09-23', kw: ['claim', 'deadline', 'days left'] },
       { id: 'rel-cw-sync', title: 'ConnectWise Sync and Company Counts',
         def: 'Pulls data from ConnectWise into the dashboard: agreements, billing, company status, ticket history, contacts and territories. A nightly job also runs it.',
         where: 'ConnectWise Sync tab.', link: L(), why: 'Keeps the dashboard in step with ConnectWise.',
         steps: ['Click Run Sync Now and watch the progress bar.', 'For one stage only, click Run Only next to it.', 'If a stage shows failures, click Retry Failed.', 'Use Company Counts > Refresh to reconcile the totals with ConnectWise.'],
         notes: ['Company status mapping: Active, Delinquent and Special Info are Active; Inactive statuses are Prospect; Residential is Residential.', 'Do not run it needlessly; billing for all customers is refreshed.'], added: '2026-09-10', updated: '2026-10-05', kw: ['sync', 'refresh', 'connectwise', 'nightly', 'counts', 'reconcile'] },
-      { id: 'rel-projects', title: 'Projects and the follow-up checklist',
-        def: 'Every open ConnectWise project on the Pre-Sales and Services Projects boards, with a status graph, sorting, assignment, notes and a five-step customer communication checklist.',
-        where: 'Projects tab.', link: L(), why: 'Keeps customers informed from order to kickoff.',
-        steps: ['Choose My Projects or All Projects.', 'Filter by status or sort by Start Date or Company Name.', 'Click a project to expand it; assign a coordinator with Assign.', 'Work the checklist: announce order, shipment, receipt, confirm kickoff (with a date) and send the team communication.', 'Use Notes to add real ConnectWise project notes.'],
-        notes: ['The list is read live from ConnectWise; closed projects are dropped.', 'Assignment and checklist completion are saved in Relationships, not ConnectWise.', 'Email and call icons need a project contact in ConnectWise.'], added: '2026-10-02', updated: '2026-10-03', kw: ['project', 'kickoff', 'order', 'shipment', 'pre-sales', 'checklist'] },
+      { id: 'rel-marketing', title: 'Marketing (coming soon)',
+        def: 'A new Relationships sub-app. It is announced in the Relationships top bar with a Soon badge and is not built yet.',
+        where: 'Relationships > Marketing tab (top bar).', link: L('Open Relationships'),
+        why: 'Marks where Marketing will live once it is ready.',
+        steps: ['Click Marketing in the Relationships top bar to see the Coming soon page.'],
+        notes: ['There is nothing to use yet. This article will be updated when Marketing launches.'], added: '2026-10-07', updated: '2026-10-07', kw: ['marketing', 'campaigns', 'coming soon'] },
       { id: 'rel-territory', title: 'Territory visibility and Territory Admin',
         def: 'A rep with territory assignments only sees customers in those ConnectWise territories; a rep with no assignments sees everyone.',
         where: 'Automatic. Admins manage it in the Territory Admin tab.', link: L(), why: 'Keeps each rep focused on their own accounts.',
         steps: ['Nothing to do as a rep.', 'Admins: open Territory Admin, enter the rep\'s email and territory, and click + Add.'],
         notes: ['Territory names must match ConnectWise exactly; a typo shows that rep no customers.', 'Territory Admin is limited to an administrator.'], added: '2026-09-16', updated: '2026-09-16', kw: ['territory', 'access', 'permissions', 'admin', 'restrict'] }
+    ]
+  });
+  window.HELP_SECTIONS.push({
+    id: 'sales', title: 'Sales',
+    intro: 'Find cross-sell opportunities across the customer base and prospect for new business. Opens from the Sales card on the Hub home screen.',
+    articles: [
+      { id: 'rel-cross-sell-report', title: 'Cross-Sell Report',
+        def: 'Shows how many customers are at each of the seven checklist steps for every missing service, grouped by pillar, plus a PeopleFirst checkin and risk-scan summary.',
+        where: 'Hub home > Sales > Cross-Sell Report.', link: LV('Open the Cross-Sell Report', 'report', 'sales'), why: 'See the whole cross-sell pipeline and who is due on PeopleFirst commitments.',
+        steps: ['Click a non-zero count.', 'Click a customer to open their checklist.', 'In the PeopleFirst banner, click a count for who still needs a checkin this month or a scan this quarter.'],
+        notes: ['Killed opportunities are excluded; Closed counts customers who finished all seven steps and are to be re-addressed in 180 days.'], added: '2026-09-15', updated: '2026-09-15', kw: ['pipeline', 'report', 'steps', 'peoplefirst'] },
+      { id: 'rel-prospecting', title: 'Prospecting: Find, profile and claim',
+        def: 'A research agent searches the public web for target businesses within a radius of a location, builds a profile and lets you claim a prospect.',
+        where: 'Hub home > Sales > Prospecting > Find Prospects.', link: LV('Open Prospecting', 'prospecting', 'sales'), why: 'Generates new leads and starts a 90-day clock when you claim one.',
+        steps: ['Choose an Industry, enter a City or ZIP and a Radius (10 to 150 miles), then click Prospect.', 'Wait for the research (a few minutes; you can leave and come back).', 'Click a result to open its panel, build a profile, and fix any missing details.', 'Click Claim as Prospect, then Open in Relationships.'],
+        notes: ['Each rep has a daily search limit.', 'Claiming creates the company, primary contact and team assignment in ConnectWise as a Prospect in your territory, so confirm details first.', 'Uses public web data only.'], added: '2026-09-23', updated: '2026-09-23', kw: ['prospect', 'leads', 'research', 'claim', 'new business'] },
+      { id: 'rel-my-prospects', title: 'My Prospects and the 90-day clock',
+        def: 'Lists claimed prospects with who claimed them, the date and a days-left badge.',
+        where: 'Hub home > Sales > Prospecting > My Prospects.', link: LV('Open Prospecting', 'prospecting', 'sales'), why: 'Keeps claimed prospects moving forward.',
+        steps: ['Choose My prospects or Everyone\'s in the Show menu.', 'Click a prospect to open its dashboard.'],
+        notes: ['Badge colors: green above 30 days, amber at 30 or fewer, red at 7 or fewer, and overdue after the deadline.', 'Prospects with 14 or fewer days left appear on the Global To-Do panel.'], added: '2026-09-23', updated: '2026-09-23', kw: ['claim', 'deadline', 'days left'] }
+    ]
+  });
+  window.HELP_SECTIONS.push({
+    id: 'project-mgmt', title: 'Project Management',
+    intro: 'Follow every ConnectWise project from order to kickoff. Opens from the Project Management card on the Hub home screen.',
+    articles: [
+      { id: 'rel-projects', title: 'Projects and the follow-up checklist',
+        def: 'Every open ConnectWise project on the Pre-Sales and Services Projects boards, with a status graph, sorting, assignment, notes and a five-step customer communication checklist.',
+        where: 'Hub home > Project Management > Projects.', link: LV('Open Projects', 'projects', 'projects'), why: 'Keeps customers informed from order to kickoff.',
+        steps: ['Choose My Projects or All Projects.', 'Filter by status or sort by Start Date or Company Name.', 'Click a project to expand it; assign a coordinator with Assign.', 'Work the checklist: announce order, shipment, receipt, confirm kickoff (with a date) and send the team communication.', 'Use Notes to add real ConnectWise project notes.'],
+        notes: ['The list is read live from ConnectWise; closed projects are dropped.', 'Assignment and checklist completion are saved in Relationships, not ConnectWise.', 'Email and call icons need a project contact in ConnectWise.'], added: '2026-10-02', updated: '2026-10-03', kw: ['project', 'kickoff', 'order', 'shipment', 'pre-sales', 'checklist'] }
     ]
   });
 })();

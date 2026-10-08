@@ -14,7 +14,7 @@
   'use strict';
 
   // SolutionsHub site root is one level up from /register/.
-  var HUB_URL = '../index.html';
+  var HUB_URL = '../retail/';
 
   // ---- Computer upsell builder (added 2026-09-16, per Michael) --------
   //
@@ -1934,7 +1934,7 @@
               '<span class="tile-btn-icon">🧾</span><span class="tile-btn-label">Past Sales</span>' +
             '</button>' +
           '</div>' +
-          '<a class="back-to-hub" href="' + HUB_URL + '">← Solutions Hub</a>' +
+          '<a class="back-to-hub" href="' + HUB_URL + '">← Retail</a>' +
         '</div>' +
         '<div class="topbar-right">' +
           '<span>' + escapeHtml(state.user.name) + '</span>' +

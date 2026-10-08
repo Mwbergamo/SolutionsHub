@@ -3525,3 +3525,7 @@ a { color: inherit; }
 .layout-card-btns button:hover:not(:disabled) { border-color: #2f8fef; color: #8fc3ff; }
 .layout-card-btns button:disabled { opacity: .3; cursor: default; }
 .layout-card-body { pointer-events: none; max-height: 220px; overflow: hidden; opacity: .75; }
+
+/* Marketing placeholder (2026-10-07) */
+.nav-soon { margin-left: 6px; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 1px 6px; border-radius: 999px; background: oklch(0.45 0.05 255 / 0.35); }
+.soon-pill { margin-left: 10px; vertical-align: middle; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 3px 10px; border-radius: 999px; background: oklch(0.55 0.12 150 / 0.25); }

@@ -3,13 +3,13 @@
   window.HELP_SECTIONS = window.HELP_SECTIONS || [];
   window.HELP_SECTIONS.push(
     {
-      id: 'commissions', title: 'Commissions (restricted)',
+      id: 'commissions', title: 'Finance: Commissions (restricted)',
       intro: 'Live sales commissions built from ConnectWise invoices. Only people on the Commissions access list can open it. Individual rates and amounts are not described here.',
       articles: [
         { id: 'comm-access', title: 'Who can open Commissions',
           def: 'Commissions is limited to a short list of named people, enforced on the server.',
-          where: 'Hub home, the Commissions tile (only visible if you have access).', link: { href: '../commissions/', label: 'Open Commissions' },
-          why: 'Keeps commission data private.', steps: ['Sign in, then click the Commissions tile.'], notes: ['If you do not have access you will see a message to ask Michael Bergamo.', 'Changing the list is a code change.'],
+          where: 'Hub home > Finance > Commissions (the Finance tile only shows if you have access).', link: { href: '../commissions/', label: 'Open Commissions' },
+          why: 'Keeps commission data private.', steps: ['Sign in, click the Finance tile, then click Commissions.'], notes: ['If you do not have access you will see a message to ask Michael Bergamo.', 'Changing the list is a code change.'],
           added: '2026-10-05', updated: '2026-10-05', kw: ['access', 'permission', 'restricted'] },
         { id: 'comm-sync', title: 'ConnectWise sync (automatic, Sync now, backfill)',
           def: 'Commissions pulls invoices from ConnectWise and turns each into commission lines. It runs on its own when the Dashboard opens and the data is more than 30 minutes old.',
@@ -40,12 +40,12 @@
       ]
     },
     {
-      id: 'collections', title: 'Collections (restricted)',
+      id: 'collections', title: 'Finance: Collections (restricted)',
       intro: 'Unpaid ConnectWise invoices by rep and territory, with printable and emailable collections reports.',
       articles: [
         { id: 'coll-home', title: 'Collections home screen',
           def: 'Two tables of closed, unpaid ConnectWise invoices as of today: one by rep (plus house accounts and a total) and one by territory.',
-          where: 'Hub home, the Collections tile (only visible if you have access).', link: { href: '../collections/', label: 'Open Collections' },
+          where: 'Hub home > Finance > Collections (the Finance tile only shows if you have access).', link: { href: '../collections/', label: 'Open Collections' },
           why: 'See who owes what and how old it is.',
           steps: ['Open Collections and read the rep and territory tables.', 'Click an amount to open that group\'s invoices.'],
           notes: ['Some reps see only their own territories; others see everyone.', 'Columns: open invoices, outstanding, 0-30 days, 31-60 days and over 60 days.'], added: '2026-10-07', updated: '2026-10-07', kw: ['open invoices', 'unpaid', 'ar', 'receivables', 'aging'] },
@@ -76,12 +76,12 @@
       ]
     },
     {
-      id: 'register', title: 'Register (Retail Checkout)',
+      id: 'register', title: 'Retail: Register (Checkout)',
       intro: 'Ring up in-stock products, record payment and print a receipt for walk-in customers.',
       articles: [
         { id: 'reg-home', title: 'Register home screen',
           def: 'The retail checkout screen. With an empty cart it shows four tiles: New Customer Sign Up, Existing Customer Look Up, Returns and Pending Service Tickets.',
-          where: 'Hub home, the Register tile.', link: { href: '../register/', label: 'Open Register' },
+          where: 'Hub home > Retail > Register.', link: { href: '../register/', label: 'Open Register' },
           why: 'The starting point for every counter transaction.',
           steps: ['Pick a tile, or scan or search for a product.', 'Back returns to this screen.'],
           notes: ['Search is the only way to find parts; backing out of a sign-up or look-up clears the selected customer.', 'The top bar has Metrics and Past Sales.'], added: '2026-09-14', updated: '2026-09-16', kw: ['pos', 'point of sale', 'counter', 'retail'] },
@@ -136,7 +136,7 @@
       ]
     },
     {
-      id: 'ratesheet', title: 'Customer Rate Sheet Sign Up and Walk-In',
+      id: 'ratesheet', title: 'Customer Rate Sheet and Walk-In',
       intro: 'Get new customers to sign CodeBlue\'s rate sheet and terms, and track each one through to payment on file.',
       articles: [
         { id: 'rs-send', title: 'Send Rate Sheet',

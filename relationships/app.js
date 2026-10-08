@@ -47,6 +47,7 @@
 
     // 'dashboard' | 'report' | 'queue' | 'sync'
     view: 'dashboard',
+    section: null, // null = Relationships itself; 'sales' | 'projects' when opened from the Hub's Sales / Project Management cards (?view=...&section=...)
 
     // ConnectWise sync (api/sync.php) -- see runFullSync()/stepSyncLoop().
     syncRunning: false,
@@ -568,7 +569,7 @@
       loadLayout();
       loadOverview();
       loadGlobalTodos();
-      openFromLink();
+      if (!openFromLink()) openViewFromLink();
     }).catch(function () {
       window.location.href = 'login.html?next=' + encodeURIComponent('index.html');
     });
@@ -579,7 +580,7 @@
   function openFromLink() {
     var cw = '';
     try { cw = new URLSearchParams(window.location.search).get('cw_company') || ''; } catch (e) { cw = ''; }
-    if (!/^\d+$/.test(cw)) return;
+    if (!/^\d+$/.test(cw)) return false;
     apiGet('api/customers.php?action=resolve&cw_id=' + encodeURIComponent(cw)).then(function (r) {
       if (r.data && r.data.ok && r.data.id) {
         selectCustomer(r.data.id);
@@ -588,6 +589,33 @@
         render();
       }
     }).catch(function () {});
+    return true;
+  }
+
+  // Deep link from the Hub's Sales / Project Management cards: index.html?view=report|prospecting|projects&section=sales|projects
+  // (and ?view=marketing for the Marketing placeholder). Views that moved to Hub cards always show their own section's top bar.
+  function openViewFromLink() {
+    var v = '', sec = '';
+    try {
+      var q = new URLSearchParams(window.location.search);
+      v = q.get('view') || ''; sec = q.get('section') || '';
+    } catch (e) { return; }
+    if (v === 'report' || v === 'prospecting') {
+      state.section = 'sales';
+    } else if (v === 'projects') {
+      state.section = 'projects';
+    } else if (v !== 'marketing') {
+      return;
+    }
+    state.view = v;
+    state.error = null;
+    render();
+    if (v === 'report') { loadReport(); loadPeopleFirstSummary(); }
+    else if (v === 'prospecting') {
+      if (!state.prospecting.loaded) loadProspecting();
+      if (state.prospecting.tab === 'mine' && !state.prospecting.claims) loadProspectClaims();
+    }
+    else if (v === 'projects') { loadProjects(); }
   }
 
   // Front-page gauges + per-customer trend list (api/dashboard.php) --
@@ -3066,26 +3094,55 @@
     return '<div class="view-header view-header--clyde">' + clydeImgHtml(name, alt) + '<div class="view-header-text">' + innerHtml + '</div></div>';
   }
 
+  // Tools that used to be Relationships tabs now live on Hub cards (reorganized 2026-10-07):
+  //   Sales              -> Cross-Sell Report, Prospecting
+  //   Project Management -> Projects
+  // They still run inside this app (same code, same data); the page is opened with ?view=...&section=...
+  // and the top bar shows that section's tabs and a link back to its Hub card instead of the Relationships tabs.
+  var SECTIONS = {
+    sales: {
+      brand: 'Sales', sub: 'CodeBlue Technology — Cross-Sell and Prospecting', back: '../sales/', backLabel: '← Sales',
+      tabs: [
+        { label: 'Cross-Sell Report', action: 'show-report', views: ['report', 'queue', 'pf-queue'] },
+        { label: 'Prospecting', action: 'show-prospecting', views: ['prospecting'] }
+      ]
+    },
+    projects: {
+      brand: 'Project Management', sub: 'CodeBlue Technology — Projects', back: '../projects/', backLabel: '← Project Management',
+      tabs: [ { label: 'Projects', action: 'show-projects', views: ['projects'] } ]
+    }
+  };
+
   function topbarHtml() {
     if (!state.user) return '';
+    var sec = state.section && SECTIONS[state.section] ? SECTIONS[state.section] : null;
+    var nav, brand, sub, back;
+    if (sec) {
+      brand = sec.brand; sub = sec.sub;
+      back = '<a class="back-to-hub" href="' + sec.back + '">' + sec.backLabel + '</a>';
+      nav = sec.tabs.map(function (t) {
+        return '<button class="nav-btn ' + (t.views.indexOf(state.view) >= 0 ? 'active' : '') + '" type="button" data-action="' + t.action + '">' + t.label + '</button>';
+      }).join('');
+    } else {
+      brand = 'Relationships'; sub = 'CodeBlue Technology — Client Relationship Dashboard';
+      back = '<a class="back-to-hub" href="' + HUB_URL + '">← Solutions Hub</a>';
+      nav =
+        '<button class="nav-btn ' + (state.view === 'dashboard' ? 'active' : '') + '" type="button" data-action="show-dashboard">Dashboard</button>' +
+        '<button class="nav-btn ' + (state.view === 'marketing' ? 'active' : '') + '" type="button" data-action="show-marketing">Marketing <span class="nav-soon">Soon</span></button>' +
+        '<button class="nav-btn ' + (state.view === 'sync' ? 'active' : '') + '" type="button" data-action="show-sync">ConnectWise Sync</button>' +
+        (state.user.is_territory_admin
+          ? '<button class="nav-btn ' + (state.view === 'territory-admin' ? 'active' : '') + '" type="button" data-action="show-territory-admin">Territory Admin</button>'
+          : '');
+    }
     return (
       '<div class="topbar">' +
         '<div class="topbar-left">' +
           '<div>' +
-            '<div class="brand">Relationships</div>' +
-            '<div class="brand-sub">CodeBlue Technology — Client Relationship Dashboard</div>' +
+            '<div class="brand">' + brand + '</div>' +
+            '<div class="brand-sub">' + sub + '</div>' +
           '</div>' +
-          '<nav class="topbar-nav">' +
-            '<button class="nav-btn ' + (state.view === 'dashboard' ? 'active' : '') + '" type="button" data-action="show-dashboard">Dashboard</button>' +
-            '<button class="nav-btn ' + (state.view === 'report' || state.view === 'queue' ? 'active' : '') + '" type="button" data-action="show-report">Cross-Sell Report</button>' +
-            '<button class="nav-btn ' + (state.view === 'prospecting' ? 'active' : '') + '" type="button" data-action="show-prospecting">Prospecting</button>' +
-            '<button class="nav-btn ' + (state.view === 'sync' ? 'active' : '') + '" type="button" data-action="show-sync">ConnectWise Sync</button>' +
-            '<button class="nav-btn ' + (state.view === 'projects' ? 'active' : '') + '" type="button" data-action="show-projects">Projects</button>' +
-            (state.user.is_territory_admin
-              ? '<button class="nav-btn ' + (state.view === 'territory-admin' ? 'active' : '') + '" type="button" data-action="show-territory-admin">Territory Admin</button>'
-              : '') +
-          '</nav>' +
-          '<a class="back-to-hub" href="' + HUB_URL + '">← Solutions Hub</a>' +
+          '<nav class="topbar-nav">' + nav + '</nav>' +
+          back +
         '</div>' +
         '<div class="topbar-right">' +
           '<span>' + escapeHtml(state.user.name) + '</span>' +
@@ -3093,6 +3150,15 @@
         '</div>' +
       '</div>'
     );
+  }
+
+  // Marketing sub-app placeholder (added 2026-10-07): announced under Relationships, not built yet.
+  function marketingHtml() {
+    return '<div class="view-header"><div class="view-header-text">' +
+      '<div class="view-title">Marketing <span class="soon-pill">Coming soon</span></div>' +
+      '<div class="view-sub">Marketing is a new Relationships sub-app that is coming soon.</div>' +
+      '</div></div>' +
+      '<div class="empty-state">Marketing is coming soon. Nothing to use here yet.</div>';
   }
 
   function mainHtml() {
@@ -3121,6 +3187,9 @@
     }
     if (state.view === 'projects') {
       return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + projectsHtml();
+    }
+    if (state.view === 'marketing') {
+      return marketingHtml();
     }
 
     var html;
@@ -7402,6 +7471,10 @@
       render();
       if (!state.selectedCustomer && !state.overview) loadOverview();
       if (!state.selectedCustomer) loadGlobalTodos();
+    } else if (action === 'show-marketing') {
+      state.view = 'marketing';
+      state.error = null;
+      render();
     } else if (action === 'show-prospecting') {
       state.view = 'prospecting';
       state.error = null;

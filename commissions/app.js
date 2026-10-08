@@ -170,7 +170,7 @@
     };
     return '<div class="topbar no-print"><div class="topbar-left"><div><div class="brand">Commissions</div><div class="brand-sub">CodeBlue Technology</div></div></div>' +
       '<div class="topbar-nav">' + tab('dashboard', 'Dashboard') + tab('history', 'History') + tab('trends', 'Rep Trends') + tab('territories', 'By Territory') + tab('settings', 'Settings') + '</div>' +
-      '<div class="topbar-right"><a class="back-to-hub" href="../index.html">← SolutionsHub</a></div></div>';
+      '<div class="topbar-right"><a class="back-to-hub" href="../finance/">← Finance</a></div></div>';
   }
 
   function syncBarHtml() {
@@ -712,7 +712,7 @@
 
   function render() {
     if (state.denied) {
-      root.innerHTML = '<div class="empty"><h2>No access</h2>Commissions is limited to a few people. If you need access, ask Michael Bergamo.<br><br><a class="back-to-hub" href="../index.html">← SolutionsHub</a></div>';
+      root.innerHTML = '<div class="empty"><h2>No access</h2>Commissions is limited to a few people. If you need access, ask Michael Bergamo.<br><br><a class="back-to-hub" href="../finance/">← Finance</a></div>';
       return;
     }
     if (!state.user) {

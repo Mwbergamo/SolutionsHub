@@ -1,0 +1,22 @@
+/* Hub section pages (Finance, Sales, Project Management, Retail). Uses the Hub theme tokens from ../styles.css. */
+body.sect { margin: 0; background: var(--cbt-bg-page); color: var(--cbt-text-on-dark-secondary); font-family: 'Libre Franklin', sans-serif; height: auto; }
+.sbar { display: flex; align-items: center; gap: 18px; padding: 12px 24px; background: var(--cbt-bg-header); border-bottom: 1px solid var(--cbt-border-header); }
+.sbar a.back { color: var(--cbt-text-on-dark-tertiary); text-decoration: none; font-size: 13px; }
+.sbar a.back:hover { color: var(--cbt-text-on-dark-primary); }
+.sbar .brand { display: flex; align-items: center; gap: 10px; font-family: 'Jost', sans-serif; font-size: 20px; font-weight: 700; color: var(--cbt-text-on-dark-primary); }
+.sbar .bar { width: 26px; height: 3px; border-radius: 999px; background: linear-gradient(90deg, var(--cbt-brand-green), var(--cbt-brand-blue)); }
+.swrap { padding: 44px 56px 60px; }
+.swrap .eyebrow { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.swrap .eyebrow i { display: inline-block; width: 34px; height: 3px; border-radius: 999px; background: linear-gradient(90deg, var(--cbt-brand-green), var(--cbt-brand-blue)); }
+.swrap .eyebrow span { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: .08em; color: var(--cbt-brand-green); text-transform: uppercase; }
+.swrap h1 { font-family: 'Jost', sans-serif; font-size: 32px; font-weight: 700; color: var(--cbt-text-on-dark-primary); margin: 0; line-height: 1.15; }
+.swrap .lead { margin: 10px 0 0; font-size: 15px; color: var(--cbt-text-on-dark-tertiary); max-width: 620px; }
+.sgrid { margin-top: 36px; display: flex; flex-wrap: wrap; gap: 24px; }
+.scard { width: 322px; height: 206px; box-sizing: border-box; background: var(--cbt-card-bg); border-radius: 20px; padding: 24px; display: flex; flex-direction: column; justify-content: space-between; text-decoration: none; cursor: pointer; }
+.scard .ico { width: 46px; height: 46px; border-radius: 13px; background: var(--cbt-brand-blue); display: flex; align-items: center; justify-content: center; }
+.scard .num { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--cbt-brand-green); background: var(--cbt-brand-green-tint); padding: 2px 8px; border-radius: 6px; margin-bottom: 8px; }
+.scard .ttl { font-family: 'Jost', sans-serif; font-size: 19px; font-weight: 700; color: var(--cbt-text-on-light-primary); }
+.scard .dsc { margin-top: 6px; font-size: 13px; line-height: 1.4; color: var(--cbt-text-on-light-secondary); }
+.scard .go { font-size: 11.5px; color: var(--cbt-text-on-dark-muted); font-weight: 700; letter-spacing: .03em; }
+.snone { margin-top: 30px; padding: 18px 22px; border-radius: 14px; background: var(--cbt-bg-control); border: 1px solid var(--cbt-border-control); max-width: 560px; font-size: 14px; color: var(--cbt-text-on-dark-secondary); }
+@media (max-width: 720px) { .swrap { padding: 28px 16px 40px; } .scard { width: 100%; } }

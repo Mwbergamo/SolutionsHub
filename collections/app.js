@@ -240,12 +240,12 @@
     return '<div class="topbar no-print"><div class="topbar-left"><div><div class="brand">Collections</div><div class="brand-sub">CodeBlue Technology</div></div></div>' +
       '<div class="topbar-nav"></div>' +
       '<div class="topbar-right"><button class="btn small secondary" type="button" data-action="refresh"' + (state.refreshing ? ' disabled' : '') + '>' + (state.refreshing ? 'Refreshing…' : 'Refresh from ConnectWise') + '</button> ' +
-      '<a class="back-to-hub" href="' + (CW ? '../relationships/index.html' : '../index.html') + '">' + (CW ? '← Relationships' : '← SolutionsHub') + '</a></div></div>';
+      '<a class="back-to-hub" href="' + (CW ? '../relationships/index.html' : '../finance/') + '">' + (CW ? '← Relationships' : '← Finance') + '</a></div></div>';
   }
 
   function render() {
     if (state.denied) {
-      root.innerHTML = '<div class="empty"><h2>No access</h2>Collections is limited to a few people. If you need access, ask Michael Bergamo.<br><br><a class="back-to-hub" href="../index.html">← SolutionsHub</a></div>';
+      root.innerHTML = '<div class="empty"><h2>No access</h2>Collections is limited to a few people. If you need access, ask Michael Bergamo.<br><br><a class="back-to-hub" href="../finance/">← Finance</a></div>';
       return;
     }
     if (!state.user) {

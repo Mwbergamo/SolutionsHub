@@ -133,18 +133,36 @@
             <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">CRC DASHBOARD →</div>
           </a>
 
-          <a href="register/" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
+          <!-- Finance (reorganized 2026-10-07) -- holds Commissions and Collections. Shown only to people who can open at least one of them
+               (auth/me.php sets can_view_commissions / can_view_collections); each tool still enforces its own access. -->
+          <sc-if value="{{canViewFinance}}" hint-placeholder-val="{{false}}">
+          <a href="finance/" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
             <div style="display:flex;align-items:center;justify-content:space-between;">
               <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1.4"></circle><circle cx="18" cy="20" r="1.4"></circle><path d="M2 3h2.5l2.6 12.6a2 2 0 0 0 2 1.6h8.2a2 2 0 0 0 2-1.6L21 7H6"></path></svg>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="3" x2="12" y2="21"></line><path d="M16.5 7.5c0-1.7-2-3-4.5-3s-4.5 1.3-4.5 3 2 2.7 4.5 3 4.5 1.3 4.5 3-2 3-4.5 3-4.5-1.3-4.5-3"></path></svg>
               </div>
             </div>
             <div>
               <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">03</div>
-              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Register</div>
-              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">Ring up in-stock products, record payment, and print a receipt.</div>
+              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Finance</div>
+              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">Commissions and open-invoice collections from ConnectWise.</div>
             </div>
-            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">CUSTOMER CHECKOUT →</div>
+            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">OPEN FINANCE &rarr;</div>
+          </a>
+          </sc-if>
+
+          <a href="sales/" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18l5-6 4 3 7-9"></path><path d="M15 6h5v5"></path></svg>
+              </div>
+            </div>
+            <div>
+              <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">04</div>
+              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Sales</div>
+              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">Cross-Sell Report and Prospecting.</div>
+            </div>
+            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">OPEN SALES &rarr;</div>
           </a>
 
           <a href="ratesheet/" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
@@ -154,49 +172,40 @@
               </div>
             </div>
             <div>
-              <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">04</div>
-              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Customer Rate Sheet Sign Up</div>
+              <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">05</div>
+              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Customer Rate Sheet</div>
               <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">Send a prospect a rate sheet to sign, and track it through submission.</div>
             </div>
             <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">SEND A RATE SHEET →</div>
           </a>
 
-          <!-- Commissions (added 2026-10-05) -- visible ONLY to the four people on the allow-list in
-               auth/commissions-access.php (auth/me.php sets can_view_commissions); the API enforces it too. -->
-          <sc-if value="{{canViewCommissions}}" hint-placeholder-val="{{false}}">
-          <a href="commissions/" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
+          <a href="projects/" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
             <div style="display:flex;align-items:center;justify-content:space-between;">
               <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="3" x2="12" y2="21"></line><path d="M16.5 7.5c0-1.7-2-3-4.5-3s-4.5 1.3-4.5 3 2 2.7 4.5 3 4.5 1.3 4.5 3-2 3-4.5 3-4.5-1.3-4.5-3"></path></svg>
-              </div>
-            </div>
-            <div>
-              <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">05</div>
-              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Commissions</div>
-              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">Live sales commissions from ConnectWise invoices, by rep.</div>
-            </div>
-            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">COMMISSION REPORTS →</div>
-          </a>
-          </sc-if>
-
-          <!-- Collections (added 2026-10-07) -- open ConnectWise invoices to collect. Courtney, Trey, Michael and Kasie see
-               everyone; Moe and Chester only their own territories (auth/collections-access.php sets can_view_collections;
-               commissions/api/ar.php enforces the scoping). -->
-          <sc-if value="{{canViewCollections}}" hint-placeholder-val="{{false}}">
-          <a href="collections/" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"></rect><circle cx="12" cy="12" r="2.5"></circle><path d="M6 9v0M18 15v0"></path></svg>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18"></path><path d="M8 13h3M8 16h6"></path></svg>
               </div>
             </div>
             <div>
               <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">06</div>
-              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Collections</div>
-              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">Unpaid ConnectWise invoices by rep and territory, with an emailable collections report.</div>
+              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Project Management</div>
+              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">ConnectWise projects, checklists and notes.</div>
             </div>
-            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">OPEN INVOICES →</div>
+            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">OPEN PROJECTS &rarr;</div>
           </a>
-          </sc-if>
+
+          <a href="retail/" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1.4"></circle><circle cx="18" cy="20" r="1.4"></circle><path d="M2 3h2.5l2.6 12.6a2 2 0 0 0 2 1.6h8.2a2 2 0 0 0 2-1.6L21 7H6"></path></svg>
+              </div>
+            </div>
+            <div>
+              <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">07</div>
+              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Retail</div>
+              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">The walk-in store, starting with the Register.</div>
+            </div>
+            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">OPEN RETAIL &rarr;</div>
+          </a>
 
 
         </div>
