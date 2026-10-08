@@ -150,11 +150,11 @@ try {
         $customerId = (int) ($_GET['customer_id'] ?? 0);
         $cwId = trim((string) ($_GET['cw_company'] ?? ''));
         if ($customerId > 0) {
-            $stmt = $pdo->prepare('SELECT id, name, territory_name FROM customers WHERE id = :id');
+            $stmt = $pdo->prepare('SELECT id, name, territory_name, connectwise_id FROM customers WHERE id = :id');
             $stmt->execute([':id' => $customerId]);
         } else {
             // same ConnectWise company number the ?cw_company=6216 dashboard links use
-            $stmt = $pdo->prepare('SELECT id, name, territory_name FROM customers WHERE connectwise_id = :cw ORDER BY id ASC LIMIT 1');
+            $stmt = $pdo->prepare('SELECT id, name, territory_name, connectwise_id FROM customers WHERE connectwise_id = :cw ORDER BY id ASC LIMIT 1');
             $stmt->execute([':cw' => $cwId]);
         }
         $cust = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -166,20 +166,51 @@ try {
             relationships_respond(403, ['ok' => false, 'error' => 'That customer is not in your territory.']);
         }
         $clients = relationships_automate_get('clients', ['pageSize' => 1000]);
-        $want = mb_strtolower(trim((string) $cust['name']));
+        // Normalise names: lower-case, "&" -> "and", drop punctuation and company suffixes (LLC, Inc, ...).
+        $norm = static function (string $n): string {
+            $n = mb_strtolower(trim($n));
+            $n = str_replace('&', ' and ', $n);
+            $n = preg_replace('/[^a-z0-9 ]+/', ' ', $n);
+            $n = preg_replace('/\b(llc|inc|incorporated|corp|corporation|co|company|ltd|pllc|pc|llp|the)\b/', ' ', (string) $n);
+            return trim((string) preg_replace('/\s+/', ' ', (string) $n));
+        };
+        $want = $norm((string) $cust['name']);
         $match = null;
-        foreach ($clients as $c) {
-            $n = mb_strtolower(trim((string) relationships_automate_pick((array) $c, ['Name', 'name'], '')));
-            if ($n === $want) { $match = (array) $c; break; }
+        // 1) Automate's own link to the ConnectWise company, when the Manage plugin filled it in.
+        $cwKey = trim((string) ($cwId !== '' ? $cwId : ($cust['connectwise_id'] ?? '')));
+        if ($cwKey !== '') {
+            foreach ($clients as $c) {
+                $ext = trim((string) relationships_automate_pick((array) $c, ['ExternalId', 'externalId'], ''));
+                if ($ext !== '' && $ext === $cwKey) { $match = (array) $c; break; }
+            }
         }
+        // 2) exact normalised name, then 3) one name contains the other.
         if ($match === null) {
             foreach ($clients as $c) {
-                $n = mb_strtolower(trim((string) relationships_automate_pick((array) $c, ['Name', 'name'], '')));
-                if ($n !== '' && ($n === $want || strpos($n, $want) !== false || strpos($want, $n) !== false)) { $match = (array) $c; break; }
+                if ($want !== '' && $norm((string) relationships_automate_pick((array) $c, ['Name', 'name'], '')) === $want) { $match = (array) $c; break; }
+            }
+        }
+        if ($match === null && $want !== '') {
+            foreach ($clients as $c) {
+                $n = $norm((string) relationships_automate_pick((array) $c, ['Name', 'name'], ''));
+                if ($n !== '' && (strpos($n, $want) !== false || strpos($want, $n) !== false)) { $match = (array) $c; break; }
             }
         }
         if ($match === null) {
-            relationships_respond(200, ['ok' => true, 'matched_client' => null, 'computers' => []]);
+            // Help find out why: the closest Automate client names, with their ExternalId.
+            $scored = [];
+            foreach ($clients as $c) {
+                $c = (array) $c;
+                $name = (string) relationships_automate_pick($c, ['Name', 'name'], '');
+                similar_text($want, $norm($name), $pct);
+                $scored[] = ['name' => $name, 'external_id' => (string) relationships_automate_pick($c, ['ExternalId', 'externalId'], ''), 'score' => round($pct)];
+            }
+            usort($scored, static fn (array $x, array $y): int => $y['score'] <=> $x['score']);
+            relationships_respond(200, [
+                'ok' => true, 'matched_client' => null, 'computers' => [],
+                'customer' => ['name' => (string) $cust['name'], 'connectwise_id' => $cwKey],
+                'closest_automate_clients' => array_slice($scored, 0, 5),
+            ]);
         }
         $cid = (int) relationships_automate_pick($match, ['Id', 'id'], 0);
         $rows = relationships_automate_get('computers', ['condition' => 'Client.Id=' . $cid, 'pageSize' => 1000]);
