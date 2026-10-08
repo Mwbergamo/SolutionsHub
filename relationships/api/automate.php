@@ -13,7 +13,7 @@
  *   Admin only (Territory Admin list). Signs in and counts Automate clients -> { ok, clients, sample: [names] }.
  *   Use this once after creating automate-config.php to prove the connection works.
  *
- * GET ?action=computers&customer_id=N
+ * GET ?action=computers&customer_id=N   (or &cw_company=<ConnectWise company number>)
  *   Any signed-in user who can see customer N. Finds the Automate client whose name matches the
  *   customer's name (exact, case-insensitive; falls back to "contains") and lists its computers.
  *   -> { ok, matched_client: {id,name}|null, computers: [ { id, name, os, status, last_contact, ... } ] }
@@ -148,8 +148,15 @@ try {
 
     if ($action === 'computers') {
         $customerId = (int) ($_GET['customer_id'] ?? 0);
-        $stmt = $pdo->prepare('SELECT id, name, territory_name FROM customers WHERE id = :id');
-        $stmt->execute([':id' => $customerId]);
+        $cwId = trim((string) ($_GET['cw_company'] ?? ''));
+        if ($customerId > 0) {
+            $stmt = $pdo->prepare('SELECT id, name, territory_name FROM customers WHERE id = :id');
+            $stmt->execute([':id' => $customerId]);
+        } else {
+            // same ConnectWise company number the ?cw_company=6216 dashboard links use
+            $stmt = $pdo->prepare('SELECT id, name, territory_name FROM customers WHERE connectwise_id = :cw ORDER BY id ASC LIMIT 1');
+            $stmt->execute([':cw' => $cwId]);
+        }
         $cust = $stmt->fetch(PDO::FETCH_ASSOC);
         if ($cust === false) {
             relationships_respond(404, ['ok' => false, 'error' => 'Customer not found.']);
