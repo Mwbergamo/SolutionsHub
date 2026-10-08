@@ -376,9 +376,12 @@ if ($action === 'save') {
         relationships_respond(400, ['ok' => false, 'error' => 'Choose the customer this solution is for.']);
     }
     relationships_solution_customer($pdo, $allowedTerritories, $customerId);
-    if ($existing !== null && (int) $existing['customer_id'] !== $customerId) {
-        relationships_respond(400, ['ok' => false, 'error' => 'A saved solution can\'t be moved to a different customer. Save it as a new solution instead.']);
-    }
+    // Moving a saved solution to a different customer (2026-10-07): allowed when the user can see BOTH customers
+    // (relationships_solution_load checked the old one, relationships_solution_customer the new one). The stored files
+    // move with it; see the $moving handling below.
+    $moving = $existing !== null && (int) $existing['customer_id'] !== $customerId;
+    $oldCustomerId = $existing !== null ? (int) $existing['customer_id'] : 0;
+    $movedDirs = null;
 
     // Validate the uploads first so a bad file doesn't leave a half-saved solution behind.
     $types = relationships_solution_types();
@@ -431,9 +434,24 @@ if ($action === 'save') {
             $id = (int) $pdo->lastInsertId();
         } else {
             $pdo->prepare(
-                'UPDATE customer_solutions SET name = :n, pillars = :p, search_text = :s, state_json = :j,
+                'UPDATE customer_solutions SET customer_id = :c, name = :n, pillars = :p, search_text = :s, state_json = :j,
                         updated_at = datetime(\'now\'), updated_by_user_id = :u, updated_by_name = :un WHERE id = :id'
-            )->execute([':n' => $name, ':p' => json_encode($pillars), ':s' => $searchText, ':j' => $stateRaw, ':u' => $user['id'], ':un' => $user['name'], ':id' => $id]);
+            )->execute([':c' => $customerId, ':n' => $name, ':p' => json_encode($pillars), ':s' => $searchText, ':j' => $stateRaw, ':u' => $user['id'], ':un' => $user['name'], ':id' => $id]);
+            if ($moving) {
+                // Files live under data/solutions/<customer_id>/<solution_id>/, so the folder follows the solution.
+                $oldDir = relationships_solution_dir($oldCustomerId, $id);
+                $newDir = relationships_solution_dir($customerId, $id);
+                if (is_dir($oldDir)) {
+                    $parent = dirname($newDir);
+                    if (!is_dir($parent) && !mkdir($parent, 0700, true) && !is_dir($parent)) {
+                        throw new RuntimeException('Could not create the storage folder for the new customer.');
+                    }
+                    if (!rename($oldDir, $newDir)) {
+                        throw new RuntimeException('Could not move the saved files to the new customer.');
+                    }
+                    $movedDirs = [$oldDir, $newDir];
+                }
+            }
         }
 
         // Drop files that are no longer wanted (removed attachments, replaced / deleted camera photos).
@@ -477,6 +495,9 @@ if ($action === 'save') {
         foreach ($newPaths ?? [] as $p) {
             @unlink($p);
         }
+        if ($movedDirs !== null && is_dir($movedDirs[1]) && !is_dir($movedDirs[0])) {
+            @rename($movedDirs[1], $movedDirs[0]); // put the files back where the database still says they are
+        }
         error_log('[solutions-save] ' . $e->getMessage());
         relationships_respond(500, ['ok' => false, 'error' => 'Could not save the solution: ' . $e->getMessage()]);
     }
@@ -486,7 +507,18 @@ if ($action === 'save') {
     foreach ($newMarkedIds as $mid) {
         relationships_solution_file_push_to_cw($pdo, $mid, $row, (string) $user['name']);
     }
-    relationships_respond(200, ['ok' => true, 'solution' => relationships_solution_row($pdo, $row, true, $user), 'created' => $existing === null]);
+    if ($moving) {
+        // Marked-up photos kept from earlier saves are attached to the OLD customer's ConnectWise company;
+        // attach them to the new customer's company too (the old company's copies are left alone).
+        $km = $pdo->prepare('SELECT id FROM solution_files WHERE solution_id = :s AND kind = \'camera_marked\'');
+        $km->execute([':s' => $id]);
+        foreach ($km->fetchAll(PDO::FETCH_COLUMN) as $mid) {
+            if (!in_array((int) $mid, $newMarkedIds, true)) {
+                relationships_solution_file_push_to_cw($pdo, (int) $mid, $row, (string) $user['name']);
+            }
+        }
+    }
+    relationships_respond(200, ['ok' => true, 'solution' => relationships_solution_row($pdo, $row, true, $user), 'created' => $existing === null, 'moved' => $moving]);
 }
 
 // ---------------------------------------------------------------- link_project

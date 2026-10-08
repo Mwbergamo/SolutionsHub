@@ -64,6 +64,12 @@
       '.ss-lbl{margin-top:16px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--cbt-text-on-dark-faint,#7b839a)}',
       '.ss-in,.ss-btn,.ss-res,.ss-link{font-family:inherit}',
       '.ss-in{margin-top:6px;width:100%;box-sizing:border-box;font-size:14px;padding:10px 12px;border-radius:8px;border:1px solid var(--cbt-bg-control-5,#3a4258);background:var(--cbt-bg-panel,#0c1018);color:inherit}',
+      // The dialog card is always light (like the Hub tiles), so its fields and Cancel button use the dark-on-light colours.
+      '.ss-modal .ss-in{background:#fff;border:1px solid #c3cbdb;color:var(--cbt-text-on-light-primary,#0f1729)}',
+      '.ss-modal .ss-in::placeholder{color:#7b839a}',
+      '.ss-modal .ss-btn.alt{background:#fff;border:1px solid #b8c1d3;color:var(--cbt-text-on-light-primary,#0f1729)}',
+      '.ss-modal .ss-btn.alt:hover{background:#eef2f9}',
+      '.ss-note{margin-top:8px;font-size:12.5px;font-weight:600;color:#b45309;line-height:1.4}',
       '.ss-chip{margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;border-radius:8px;border:1px solid #2f8fef;font-size:14px;font-weight:700}',
       '.ss-link{border:none;background:none;color:#2f8fef;font-weight:700;font-size:12.5px;cursor:pointer;padding:2px 4px}',
       '.ss-results{margin-top:4px;border:1px solid var(--cbt-card-border,#2a3144);border-radius:8px;max-height:190px;overflow:auto}',
@@ -155,9 +161,7 @@
       '<div class="ss-sub">' + info.count + (info.count === 1 ? ' item' : ' items') + ' across ' + (info.pillars.join(', ') || 'no service') + '. It will appear on the customer\'s dashboard under Solutions.</div>';
 
     h += '<div class="ss-lbl">Customer</div>';
-    if (dlg.customerId && dlg.mode === 'update') {
-      h += '<div class="ss-chip"><span>' + esc(dlg.customerName) + '</span></div>';
-    } else if (dlg.customerId) {
+    if (dlg.customerId) {
       h += '<div class="ss-chip"><span>' + esc(dlg.customerName) + '</span><button type="button" class="ss-link" data-ss="change-customer">Change</button></div>';
     } else {
       h += '<input class="ss-in" id="ss-cust" type="text" placeholder="Search customers by name or contact…" value="' + esc(dlg.query) + '" autocomplete="off">';
@@ -170,6 +174,9 @@
       }
     }
 
+    if (dlg.mode === 'update' && meta.id && dlg.customerId && dlg.customerId !== meta.customerId) {
+      h += '<div class="ss-note">This will move the saved solution from <b>' + esc(meta.customerName) + '</b> to <b>' + esc(dlg.customerName) + '</b>. It will no longer appear on ' + esc(meta.customerName) + '\'s dashboard. Its files move with it, and the marked-up camera photos are attached to the new customer\'s ConnectWise company (copies already on ' + esc(meta.customerName) + '\'s company stay there).</div>';
+    }
     h += '<div class="ss-lbl">Solution name</div><input class="ss-in" id="ss-name" type="text" maxlength="200" value="' + esc(dlg.name) + '">';
 
     h += '<div class="ss-lbl">Documents &amp; images</div>';
@@ -301,7 +308,7 @@
       } else if (skipped.length) {
         toast('Saved. This customer has no ConnectWise company, so the photos were not attached there.', true);
       } else
-      toast((r.created ? 'Saved' : 'Updated') + ' “' + s.name + '” on ' + s.customer_name + '’s dashboard.' + (r.created ? ' You can now copy its link or link it to a ConnectWise project.' : ''));
+      toast((r.created ? 'Saved' : (r.moved ? 'Moved and updated' : 'Updated')) + ' “' + s.name + '” on ' + s.customer_name + '’s dashboard.' + (r.created ? ' You can now copy its link or link it to a ConnectWise project.' : ''));
     }).catch(function (e) {
       dlg.busy = false;
       dlg.error = 'Could not save the solution: ' + (e && e.message ? e.message : 'network problem') + '. Check your connection and try again.';

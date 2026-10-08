@@ -9,7 +9,7 @@
     intro: 'See what each customer has, what is worth a conversation, and keep track of meetings, to-dos, documents and prospects.',
     articles: [
       { id: 'rel-nav', title: 'Relationships navigation and links',
-        def: 'The top bar switches between Dashboard and ConnectWise Sync (plus Territory Admin for admins). Marketing is a card on the main screen. Cross-Sell Report, Prospecting and Projects moved to the Hub\'s Sales and Project Management cards on 2026-10-07.',
+        def: 'The top bar switches between Dashboard and ConnectWise Sync (plus Territory Admin for admins). Cross-Sell Report, Prospecting and Projects moved to the Hub\'s Sales and Project Management cards on 2026-10-07.',
         where: 'Top bar of the Relationships app. The Solutions Hub link next to it returns to the Hub.',
         link: L(), why: 'Move between the main screens, or open a customer directly from a link.',
         steps: ['Click a tab to switch screens. The Cross-Sell Report and Prospecting tabs now live under Hub home > Sales; Projects under Hub home > Project Management.', 'To open a customer straight from a link, use index.html?cw_company=<ConnectWise company number>.'],

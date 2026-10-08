@@ -3,6 +3,7 @@
  * Fields: date (YYYY-MM-DD), title, text (1-2 sentences), articles [article ids to link].
  */
 window.HELP_CHANGELOG = [
+  { date: '2026-10-07', title: 'Saved solutions can be moved to another customer', text: 'Reopen a saved solution, click Update saved solution, then Change next to the customer. The Update dialog is also easier to read (field text and Cancel button).', articles: ['save-to-customer'] },
   { date: '2026-10-07', title: 'Hub reorganized into Finance, Sales, Project Management and Retail', text: 'Commissions and Collections now live under Finance, Cross-Sell Report and Prospecting under Sales, Projects under Project Management, and Register under Retail. Customer Rate Sheet keeps its own tile.', articles: ['home-screen'] },
   { date: '2026-10-07', title: 'Marketing tile added to the Hub (coming soon)', text: 'A Marketing tile for internal marketing material is on the Hub home screen with a Coming soon badge. It is not built yet.', articles: ['hub-marketing'] },
   { date: '2026-10-07', title: 'Rate Sheet: Clear Test Data removed', text: 'The admin-only Clear Test Data button and its server action are gone now that the Rate Sheet is live.', articles: [] },
