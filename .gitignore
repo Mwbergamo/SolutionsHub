@@ -72,3 +72,4 @@ Thumbs.db
 /relationships/api/automate-config.php
 /relationships/data/automate-token.json
 /relationships/data/automate-clients.json
+/relationships/data/automate-detail-*.json

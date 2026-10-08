@@ -5565,6 +5565,7 @@
           '<span class="view-title">Computers</span>' +
           (sum ? '<span class="solutions-count">' + sum.total + '</span><span class="automate-online">' + sum.online + ' online</span>' : '') +
         '</button>' +
+        (found ? '<a class="solution-btn" href="network.html?customer=' + encodeURIComponent(customer.id) + '" target="_blank" rel="noopener">Show Customer Network</a>' : '') +
         (found && d.console_url ? '<a class="solution-btn" href="' + escapeHtml(d.console_url) + '" target="_blank" rel="noopener">Open in Automate ↗</a>' : '') +
       '</div>';
     if (!open) return h + '</div>';
