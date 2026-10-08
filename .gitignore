@@ -66,3 +66,8 @@ Thumbs.db
 /commissions/data/*.sqlite
 /commissions/data/*.sqlite-wal
 /commissions/data/*.sqlite-shm
+
+# ConnectWise Automate (RMM) API credentials + cached token -- copy
+# relationships/api/automate-config.sample.php to automate-config.php on the server.
+/relationships/api/automate-config.php
+/relationships/data/automate-token.json
