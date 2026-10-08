@@ -630,3 +630,39 @@ body { overflow-x: hidden; }
   color: oklch(0.55 0.1 85);
   font-weight: 600;
 }
+
+/* ---- Home screen tiles (switchboard style, 2026-10-07): dark panels, lit edge, status light, heartbeat on hover ---- */
+.hub-tiles { margin-top: 36px; display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 22px; max-width: 1380px; }
+.hub-tile { --c: #4d7bd6; position: relative; display: flex; flex-direction: column; min-height: 252px; padding: 26px; border-radius: 22px; overflow: hidden; text-decoration: none; color: #eef0f5; cursor: pointer;
+  background: linear-gradient(160deg, #1d2a4d, #0f1830); border: 1px solid rgba(255,255,255,.08); box-shadow: 0 1px 2px rgba(15,24,48,.15), 0 14px 30px -16px rgba(15,24,48,.55); transition: transform .25s, border-color .25s; }
+.hub-tile::before { content: ''; position: absolute; inset: 0; background-image: radial-gradient(rgba(255,255,255,.07) 1px, transparent 1px); background-size: 16px 16px; -webkit-mask-image: linear-gradient(180deg, transparent 20%, #000); mask-image: linear-gradient(180deg, transparent 20%, #000); pointer-events: none; }
+.hub-tile::after { content: ''; position: absolute; left: 26px; right: 26px; top: 0; height: 3px; border-radius: 0 0 3px 3px; background: var(--c); box-shadow: 0 0 18px 1px var(--c); opacity: .8; transition: opacity .25s, left .3s, right .3s; }
+.hub-tile-top { display: flex; justify-content: space-between; align-items: flex-start; position: relative; }
+.hub-tile-chip { flex: none; width: 56px; height: 56px; border-radius: 16px; border: 1.5px solid var(--c); color: var(--c); display: grid; place-items: center; background: rgba(255,255,255,.03); }
+.hub-tile-chip svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.hub-tile-led { width: 11px; height: 11px; border-radius: 50%; margin-top: 6px; background: #9dc22c; box-shadow: 0 0 10px 2px rgba(157,194,44,.7); }
+.hub-tile-badge { background: var(--c); color: #fff; font-size: 12.5px; font-weight: 700; padding: 4px 12px; border-radius: 999px; }
+.hub-tile-soon { font-size: 13px; font-weight: 600; padding: 4px 12px; border-radius: 999px; background: rgba(227,176,75,.15); color: #f0c870; }
+.hub-tile-txt { margin-top: auto; padding-top: 34px; position: relative; }
+.hub-tile-title { font-family: 'Jost', sans-serif; font-size: 26px; font-weight: 700; line-height: 1.1; letter-spacing: -.01em; color: #fff; }
+.hub-tile-desc { margin-top: 8px; font-size: 16.5px; line-height: 1.45; color: #c4cadb; }
+.hub-beat { display: block; width: 100%; height: 30px; margin-top: 16px; position: relative; overflow: visible; }
+.hub-beat path { fill: none; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.hub-beat .base { stroke: rgba(255,255,255,.16); stroke-width: 1.5; transition: stroke .25s; }
+.hub-beat .pulse { stroke: var(--c); stroke-width: 2.4; stroke-dasharray: 16 84; stroke-dashoffset: 16; opacity: 0; filter: drop-shadow(0 0 3px var(--c)); animation: hub-sweep 1.35s linear infinite paused; transition: opacity .2s; }
+.hub-tile:hover, .hub-tile:focus-visible { transform: translateY(-4px); border-color: color-mix(in srgb, var(--c) 60%, transparent); }
+.hub-tile:hover::after, .hub-tile:focus-visible::after { opacity: 1; left: 14px; right: 14px; }
+.hub-tile:hover .hub-beat .pulse, .hub-tile:focus-visible .hub-beat .pulse { opacity: 1; stroke-width: 2.8; filter: drop-shadow(0 0 6px var(--c)); animation-play-state: running; }
+.hub-tile:hover .hub-beat .base, .hub-tile:focus-visible .hub-beat .base { stroke: color-mix(in srgb, var(--c) 40%, transparent); }
+.hub-tile:focus-visible { outline: 3px solid #4d7bd6; outline-offset: 3px; }
+.hub-tile--soon { --c: #e3b04b; cursor: default; }
+.hub-tile--soon .hub-tile-led { background: #e3b04b; box-shadow: 0 0 10px 2px rgba(227,176,75,.6); animation: hub-blink 2.4s ease-in-out infinite; }
+.hub-tile--soon:hover { transform: none; border-color: rgba(255,255,255,.08); }
+.hub-tile--soon:hover::after { left: 26px; right: 26px; opacity: .8; }
+.hub-tile--soon .hub-beat .pulse, .hub-tile--soon:hover .hub-beat .pulse { opacity: 0; animation: none; }
+.hub-tile--soon:hover .hub-beat .base { stroke: rgba(255,255,255,.16); }
+:root[data-theme="dark"] .hub-tile { background: linear-gradient(160deg, #222f55, #1a2447); border-color: rgba(255,255,255,.12); }
+@keyframes hub-sweep { from { stroke-dashoffset: 16; } to { stroke-dashoffset: -84; } }
+@keyframes hub-blink { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .hub-tile, .hub-tile::after { transition: none; } .hub-tile--soon .hub-tile-led { animation: none; } .hub-beat .pulse { animation: none; stroke-dasharray: none; } }
+button.hub-tile { font: inherit; text-align: left; width: 100%; }

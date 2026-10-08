@@ -24,7 +24,7 @@
 <meta name="description" content="CodeBlue Technology solutions-consulting quoting tool.">
 <link rel="icon" type="image/png" href="assets/favicon.png">
 <link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700&family=Libre+Franklin:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=e241c2c">
+<link rel="stylesheet" href="styles.css?v=e241c2c-b1">
 </head>
 <body>
 <div id="app-root"></div>
@@ -100,127 +100,49 @@
           </div>
         </div>
 
-        <div style="margin-top:36px;display:flex;flex-wrap:wrap;gap:24px;justify-content:flex-start;">
-
-          <div data-on-click="{{goToSolutionsCreator}}" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>
-              </div>
-              <sc-if value="{{scHasSelections}}" hint-placeholder-val="{{false}}">
-                <div style="background:{{accentColor}};color:white;font-size:12px;font-weight:700;padding:4px 11px;border-radius:999px;">{{scSelectedCount}} selected</div>
-              </sc-if>
-            </div>
-            <div>
-              <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">01</div>
-              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Solutions Creator</div>
-              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">Search or browse every service area and build out a solution.</div>
-            </div>
-            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">START BUILDING →</div>
-          </div>
-
-          <a href="relationships/" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.4"></circle><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7"></path></svg>
-              </div>
-            </div>
-            <div>
-              <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">02</div>
-              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Relationships</div>
-              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">CRC dashboard — see what each customer has, and what's worth a conversation.</div>
-            </div>
-            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">CRC DASHBOARD →</div>
+        <div class="hub-tiles">
+          <button type="button" data-on-click="{{goToSolutionsCreator}}" class="hub-tile" style="--c:#4d7bd6">
+            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg></div><sc-if value="{{scHasSelections}}" hint-placeholder-val="{{false}}"><span class="hub-tile-badge">{{scSelectedCount}} selected</span></sc-if><sc-if value="{{scNoSelections}}" hint-placeholder-val="{{true}}"><span class="hub-tile-led" title="Ready"></span></sc-if></div>
+            <div class="hub-tile-txt"><div class="hub-tile-title">Solutions Creator</div><div class="hub-tile-desc">Search or browse every service area and build out a solution.</div></div>
+            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
+          </button>
+          <a href="relationships/" class="hub-tile" style="--c:#7a5cd6">
+            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.4"></circle><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7"></path></svg></div><span class="hub-tile-led" title="Ready"></span></div>
+            <div class="hub-tile-txt"><div class="hub-tile-title">Relationships</div><div class="hub-tile-desc">CRC dashboard — see what each customer has, and what’s worth a conversation.</div></div>
+            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
           </a>
-
-          <!-- Finance (reorganized 2026-10-07) -- holds Commissions and Collections. Shown only to people who can open at least one of them
-               (auth/me.php sets can_view_commissions / can_view_collections); each tool still enforces its own access. -->
           <sc-if value="{{canViewFinance}}" hint-placeholder-val="{{false}}">
-          <a href="finance/" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="3" x2="12" y2="21"></line><path d="M16.5 7.5c0-1.7-2-3-4.5-3s-4.5 1.3-4.5 3 2 2.7 4.5 3 4.5 1.3 4.5 3-2 3-4.5 3-4.5-1.3-4.5-3"></path></svg>
-              </div>
-            </div>
-            <div>
-              <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">03</div>
-              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Finance</div>
-              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">Commissions and open-invoice collections from ConnectWise.</div>
-            </div>
-            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">OPEN FINANCE &rarr;</div>
+          <a href="finance/" class="hub-tile" style="--c:#2e9d6b">
+            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="3" x2="12" y2="21"></line><path d="M16.5 7.5c0-1.7-2-3-4.5-3s-4.5 1.3-4.5 3 2 2.7 4.5 3 4.5 1.3 4.5 3-2 3-4.5 3-4.5-1.3-4.5-3"></path></svg></div><span class="hub-tile-led" title="Ready"></span></div>
+            <div class="hub-tile-txt"><div class="hub-tile-title">Finance</div><div class="hub-tile-desc">Commissions and open-invoice collections from ConnectWise.</div></div>
+            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
           </a>
           </sc-if>
-
-          <a href="sales/" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18l5-6 4 3 7-9"></path><path d="M15 6h5v5"></path></svg>
-              </div>
-            </div>
-            <div>
-              <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">04</div>
-              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Sales</div>
-              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">Cross-Sell Report and Prospecting.</div>
-            </div>
-            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">OPEN SALES &rarr;</div>
+          <a href="sales/" class="hub-tile" style="--c:#e0833a">
+            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18l5-6 4 3 7-9"></path><path d="M15 6h5v5"></path></svg></div><span class="hub-tile-led" title="Ready"></span></div>
+            <div class="hub-tile-txt"><div class="hub-tile-title">Sales</div><div class="hub-tile-desc">Cross-Sell Report and Prospecting.</div></div>
+            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
           </a>
-
-          <a href="ratesheet/" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v4H4z"></path><path d="M4 12h7v8H4z"></path><path d="M15 12h5v8h-5z"></path><path d="M9 16h0"></path></svg>
-              </div>
-            </div>
-            <div>
-              <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">05</div>
-              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Customer Rate Sheet</div>
-              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">Send a prospect a rate sheet to sign, and track it through submission.</div>
-            </div>
-            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">SEND A RATE SHEET →</div>
+          <a href="ratesheet/" class="hub-tile" style="--c:#d5636d">
+            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v4H4z"></path><path d="M4 12h7v8H4z"></path><path d="M15 12h5v8h-5z"></path></svg></div><span class="hub-tile-led" title="Ready"></span></div>
+            <div class="hub-tile-txt"><div class="hub-tile-title">Customer Rate Sheet</div><div class="hub-tile-desc">Send a prospect a rate sheet to sign, and track it through submission.</div></div>
+            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
           </a>
-
-          <a href="projects/" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18"></path><path d="M8 13h3M8 16h6"></path></svg>
-              </div>
-            </div>
-            <div>
-              <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">06</div>
-              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Project Management</div>
-              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">ConnectWise projects, checklists and notes.</div>
-            </div>
-            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">OPEN PROJECTS &rarr;</div>
+          <a href="projects/" class="hub-tile" style="--c:#2aa3b8">
+            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18"></path><path d="M8 13h3M8 16h6"></path></svg></div><span class="hub-tile-led" title="Ready"></span></div>
+            <div class="hub-tile-txt"><div class="hub-tile-title">Project Management</div><div class="hub-tile-desc">ConnectWise projects, checklists and notes.</div></div>
+            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
           </a>
-
-          <a href="retail/" style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;text-decoration:none;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1.4"></circle><circle cx="18" cy="20" r="1.4"></circle><path d="M2 3h2.5l2.6 12.6a2 2 0 0 0 2 1.6h8.2a2 2 0 0 0 2-1.6L21 7H6"></path></svg>
-              </div>
-            </div>
-            <div>
-              <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">07</div>
-              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Retail</div>
-              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">The walk-in store, starting with the Register.</div>
-            </div>
-            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">OPEN RETAIL &rarr;</div>
+          <a href="retail/" class="hub-tile" style="--c:#9dc22c">
+            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="20" r="1.4"></circle><circle cx="18" cy="20" r="1.4"></circle><path d="M2 3h2.5l2.6 12.6a2 2 0 0 0 2 1.6h8.2a2 2 0 0 0 2-1.6L21 7H6"></path></svg></div><span class="hub-tile-led" title="Ready"></span></div>
+            <div class="hub-tile-txt"><div class="hub-tile-title">Retail</div><div class="hub-tile-desc">The walk-in store, starting with the Register.</div></div>
+            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
           </a>
-
-          <!-- Marketing (added 2026-10-07) -- placeholder tile, not built yet. Becomes an <a href> when the app exists. -->
-          <div style="width:322px;height:206px;background:var(--cbt-card-bg);border-radius:20px;padding:24px;display:flex;flex-direction:column;justify-content:space-between;cursor:default;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <div style="width:46px;height:46px;border-radius:13px;background:{{accentColor}};display:flex;align-items:center;justify-content:center;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"></path><path d="M15 9a4 4 0 0 1 0 6"></path><path d="M18 6.5a8 8 0 0 1 0 11"></path></svg>
-              </div>
-              <div style="background:{{accentColor}};color:white;font-size:12px;font-weight:700;padding:4px 11px;border-radius:999px;letter-spacing:.02em;">Coming soon</div>
-            </div>
-            <div>
-              <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--cbt-brand-green);background:var(--cbt-brand-green-tint);padding:2px 8px;border-radius:6px;margin-bottom:8px;">08</div>
-              <div style="font-family:'Jost',sans-serif;font-size:19px;font-weight:700;color:var(--cbt-text-on-light-primary);">Marketing</div>
-              <div style="margin-top:6px;font-size:13px;line-height:1.4;color:var(--cbt-text-on-light-secondary);">Internal marketing material for the team.</div>
-            </div>
-            <div style="font-size:11.5px;color:var(--cbt-text-on-dark-muted);font-weight:700;letter-spacing:.03em;">COMING SOON</div>
+          <!-- Marketing -- placeholder tile, not built yet. Becomes an <a href> (and loses hub-tile--soon) when the app exists. -->
+          <div  class="hub-tile hub-tile--soon" style="--c:#e3b04b">
+            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"></path><path d="M15 9a4 4 0 0 1 0 6"></path><path d="M18 6.5a8 8 0 0 1 0 11"></path></svg></div><span class="hub-tile-soon">Coming soon</span></div>
+            <div class="hub-tile-txt"><div class="hub-tile-title">Marketing</div><div class="hub-tile-desc">Internal marketing material for the team.</div></div>
+            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
           </div>
 
 

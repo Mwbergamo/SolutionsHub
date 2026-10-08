@@ -4733,7 +4733,7 @@ class Component extends DCLogic {
       voipHasSelections: voipCount > 0, voipSelectedCount: voipCount,
       cablingHasSelections: cablingCount > 0, cablingSelectedCount: cablingCount,
       securityHasSelections: securityCount > 0, securitySelectedCount: securityCount,
-      scHasSelections: scCount > 0, scSelectedCount: scCount,
+      scHasSelections: scCount > 0, scNoSelections: scCount === 0, scSelectedCount: scCount,
       // Renamed from backToOverview 2026-09-16 -- the Pillar view's back
       // arrow now returns to Solutions Creator, not the true Overview
       // (per Michael's AskUserQuestion answer).
