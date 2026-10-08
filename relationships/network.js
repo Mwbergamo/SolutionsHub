@@ -34,10 +34,11 @@
     laptop: '<svg viewBox="0 0 52 40"><rect class="fill stroke" x="9" y="5" width="34" height="23" rx="2" stroke-width="2"/><path class="stroke" d="M3 33h46l-4-5H7z" fill="none" stroke-width="2" stroke-linejoin="round"/></svg>',
     desktop: '<svg viewBox="0 0 52 40"><rect class="fill stroke" x="8" y="3" width="36" height="25" rx="2" stroke-width="2"/><path class="stroke" d="M26 28v6M17 36h18" stroke-width="2" fill="none" stroke-linecap="round"/></svg>',
     server: '<svg viewBox="0 0 52 40"><rect class="fill stroke" x="12" y="2" width="28" height="10" rx="2" stroke-width="2"/><rect class="fill stroke" x="12" y="14" width="28" height="10" rx="2" stroke-width="2"/><rect class="fill stroke" x="12" y="26" width="28" height="10" rx="2" stroke-width="2"/><circle class="stroke" cx="18" cy="7" r="1.5"/><circle class="stroke" cx="18" cy="19" r="1.5"/><circle class="stroke" cx="18" cy="31" r="1.5"/></svg>',
-    firewall: '<svg viewBox="0 0 52 40"><path class="fill stroke" d="M26 3l15 5v11c0 9-6 15-15 18C17 34 11 28 11 19V8z" stroke-width="2" stroke-linejoin="round"/><path class="stroke" d="M18 20h16M18 14h16M22 26h8" stroke-width="1.6" fill="none"/></svg>',
+    firewall: '<svg viewBox="0 0 52 40"><rect class="fill stroke" x="5" y="15" width="42" height="22" rx="2" stroke-width="2"/><path class="stroke" d="M5 22h42M5 29.5h42M16 15v7M30 15v7M38 22v7.5M22 22v7.5M12 29.5v7.5M30 29.5v7.5" fill="none" stroke-width="1.6"/><path class="stroke" d="M26 2c1 4 6 6 6 10a6 6 0 0 1-12 0c0-2 1-3 2-4 0 2 1 3 2 3 0-3-1-5 2-9z" fill="#ffd7a1" stroke-width="1.8" stroke-linejoin="round"/></svg>',
     switch: '<svg viewBox="0 0 52 40"><rect class="fill stroke" x="3" y="12" width="46" height="16" rx="2" stroke-width="2"/><path class="stroke" d="M10 18h4v6h-4zM17 18h4v6h-4zM24 18h4v6h-4zM31 18h4v6h-4zM38 18h4v6h-4z" fill="none" stroke-width="1.5"/></svg>',
     wifi: '<svg viewBox="0 0 52 40"><path class="stroke" d="M8 17a26 26 0 0 1 36 0M14 23a17 17 0 0 1 24 0M20 29a8 8 0 0 1 12 0" fill="none" stroke-width="2.2" stroke-linecap="round"/><circle class="stroke" cx="26" cy="34" r="2.4"/></svg>',
     router: '<svg viewBox="0 0 52 40"><rect class="fill stroke" x="5" y="18" width="42" height="14" rx="3" stroke-width="2"/><path class="stroke" d="M14 18L10 6M38 18l4-12M26 18V5" stroke-width="2" fill="none" stroke-linecap="round"/><circle class="stroke" cx="14" cy="25" r="1.6"/><circle class="stroke" cx="21" cy="25" r="1.6"/></svg>',
+    phone: '<svg viewBox="0 0 52 40"><path class="fill stroke" d="M6 12c0-4 8-7 20-7s20 3 20 7v3c0 1-1 2-2 2h-6c-1 0-2-1-2-2v-2c-4-1-8-1-12-1s-8 0-12 1v2c0 1-1 2-2 2H8c-1 0-2-1-2-2z" stroke-width="2" stroke-linejoin="round"/><rect class="fill stroke" x="12" y="20" width="28" height="16" rx="3" stroke-width="2"/><path class="stroke" d="M19 25h2M25 25h2M31 25h2M19 30h2M25 30h2M31 30h2" stroke-width="2.4" stroke-linecap="round"/></svg>',
     printer: '<svg viewBox="0 0 52 40"><rect class="fill stroke" x="8" y="14" width="36" height="16" rx="2" stroke-width="2"/><path class="stroke" d="M15 14V5h22v9M15 24h22v10H15z" fill="none" stroke-width="2" stroke-linejoin="round"/></svg>',
     generic: '<svg viewBox="0 0 52 40"><rect class="fill stroke" x="6" y="9" width="40" height="22" rx="3" stroke-width="2"/><circle class="stroke" cx="14" cy="20" r="2"/></svg>'
   };
@@ -45,6 +46,7 @@
     if (d.kind === 'server') return 'server';
     if (d.kind === 'net') {
       var t = (d.type + ' ' + d.template).toLowerCase();
+      if (/voip|phone|telephon|\bsip\b|polycom|yealink|grandstream|cisco spa/.test(t)) return 'phone';
       if (/firewall/.test(t)) return 'firewall';
       if (/switch|bridge/.test(t)) return 'switch';
       if (/wireless|access point|wifi|wi-fi|\bap\b/.test(t)) return 'wifi';
@@ -56,6 +58,13 @@
     if (/-lt|lap|book|thinkpad|latitude|elitebook|probook|surface|\bnb\b/.test(s)) return 'laptop';
     return 'desktop';
   }
+  function prettyUser(u) {
+    u = String(u || '').replace(/^.*[\\\/]/, '').replace(/@.*$/, '');
+    if (/[._-]/.test(u)) u = u.replace(/[._-]+/g, ' ');
+    else u = u.replace(/([a-z])([A-Z])/g, '$1 $2');
+    return u.replace(/\b([a-z])/g, function (c) { return c.toUpperCase(); }).trim();
+  }
+  function friendly(d) { return prettyUser(d.last_user) || d.friendly || ''; }
   function modelLine(d) {
     if (d.kind === 'net') return d.template || d.type;
     var m = [d.make, d.model].filter(Boolean).join(' ');
@@ -70,7 +79,7 @@
 
   function tile(d) {
     var flags = d.flags || [];
-    var who = d.kind === 'net' ? d.ip : (d.friendly || d.last_user);
+    var who = d.kind === 'net' ? d.ip : friendly(d);
     var tip = flags.map(function (f) { return data.flag_labels[f]; }).join(', ');
     return '<div class="net-tile ' + (d.online ? 'on' : 'off') + (flags.length ? ' flag' : '') + '" data-flags="' + esc(flags.join(' ')) + '" title="' + esc(d.name + (tip ? ' - ' + tip : '')) + '">' +
       '<span class="no">' + d.no + '</span><span class="st ' + (d.online ? 'on' : 'off') + '"></span>' +
@@ -107,7 +116,7 @@
     return '<tr data-flags="' + esc((d.flags || []).join(' ')) + '">' +
       '<td class="n">' + d.no + '</td>' +
       '<td><div class="nm">' + esc(d.name) + '</div><div class="sub">' + (d.online ? '<span class="status-on">Online</span>' : '<span class="status-off">Offline' + (d.offline_days >= 1 ? ' ' + d.offline_days + ' days' : '') + '</span>') + (d.kind === 'server' ? ' · Server' : '') + '</div></td>' +
-      '<td>' + (d.friendly ? esc(d.friendly) : '<span class="sub">-</span>') + '</td>' +
+      '<td>' + (friendly(d) ? esc(friendly(d)) : '<span class="sub">-</span>') + '</td>' +
       '<td>' + esc(d.last_user || '-') + '</td>' +
       '<td><span class="' + ((d.flags || []).indexOf('os_old') >= 0 ? 'warn' : '') + '">' + esc(d.os || '-') + '</span></td>' +
       '<td>' + esc(d.av || '-') + '</td>' +
