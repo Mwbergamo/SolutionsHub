@@ -200,6 +200,90 @@ try {
         relationships_respond(200, ['ok' => true, 'clients' => count($clients), 'sample' => array_slice($names, 0, 5)]);
     }
 
+    if ($action === 'discover') {
+        // Admin-only exploration of what this Automate server exposes, so the customer network page can be built on
+        // real field names (make/model, storage, CPU, network devices...). Read-only; trims long values.
+        if (!relationships_current_user_is_territory_admin($pdo)) {
+            relationships_respond(403, ['ok' => false, 'error' => 'Only an administrator can run discovery.']);
+        }
+        $cid = (int) ($_GET['automate_client'] ?? 0);
+        if ($cid <= 0) {
+            relationships_respond(400, ['ok' => false, 'error' => 'Add &automate_client=<Automate client Id>.']);
+        }
+        $trim = static function ($v) use (&$trim) {
+            if (is_array($v)) { return array_map($trim, array_slice($v, 0, 12, true)); }
+            return is_string($v) && strlen($v) > 160 ? substr($v, 0, 160) . '...' : $v;
+        };
+        $probe = static function (string $path, array $q = []) use ($trim): array {
+            try {
+                $d = relationships_automate_get($path, $q);
+                return ['path' => $path, 'ok' => true, 'count' => count($d), 'sample' => $trim(array_slice($d, 0, 2, true))];
+            } catch (Throwable $e) {
+                return ['path' => $path, 'ok' => false, 'error' => $e->getMessage()];
+            }
+        };
+        $rows = relationships_automate_get('computers', ['condition' => 'Client.Id=' . $cid, 'pageSize' => 1000]);
+        $hist = static function (array $rows, array $keys): array {
+            $h = [];
+            foreach ($rows as $r) {
+                $v = (string) relationships_automate_pick((array) $r, $keys, '(blank)');
+                $h[$v] = ($h[$v] ?? 0) + 1;
+            }
+            arsort($h);
+            return array_slice($h, 0, 15, true);
+        };
+        $pickId = (int) ($_GET['computer'] ?? 0);
+        $one = null;
+        foreach ($rows as $r) {
+            $r = (array) $r;
+            if ($pickId ? (int) ($r['Id'] ?? 0) === $pickId : strcasecmp((string) ($r['Status'] ?? ''), 'Online') === 0) { $one = $r; break; }
+        }
+        $one = $one ?? ($rows ? (array) $rows[0] : []);
+        $skip = ['UserAccounts', 'OpenPortsTCP', 'OpenPortsUDP', 'PowerProfiles', 'DomainNameServers'];
+        $oneOut = [];
+        foreach ($one as $k => $v) { if (!in_array($k, $skip, true)) { $oneOut[$k] = $trim($v); } }
+        $id = (int) ($one['Id'] ?? 0);
+        $paths = [];
+        foreach (['/cwa/api/swagger/v1/swagger.json', '/cwa/api/v1/swagger.json', '/cwa/api/swagger.json', '/cwa/api/v1/docs/swagger.json'] as $sp) {
+            try {
+                $ch = curl_init(relationships_automate_config()['base_url'] . $sp);
+                curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 20, CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . relationships_automate_token(), 'ClientId: ' . relationships_automate_config()['client_id']]]);
+                $body = curl_exec($ch); $st = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+                $j = json_decode((string) $body, true);
+                if ($st === 200 && is_array($j) && isset($j['paths'])) {
+                    $paths = array_values(array_filter(array_keys($j['paths']), static fn ($p) => (bool) preg_match('/device|network|drive|processor|bios|software|antivirus|hardware|monitor|probe|asset|warranty|patch|disk|memory|inventory/i', $p)));
+                    $paths = ['swagger_url' => $sp, 'interesting_paths' => array_slice($paths, 0, 120), 'total_paths' => count($j['paths'])];
+                    break;
+                }
+            } catch (Throwable $e) { /* try the next URL */ }
+        }
+        relationships_respond(200, [
+            'ok' => true,
+            'automate_client_id' => $cid,
+            'computer_count' => count($rows),
+            'type_counts' => $hist($rows, ['Type', 'type']),
+            'os_counts' => $hist($rows, ['OperatingSystemName']),
+            'virus_scanner_counts' => $hist($rows, ['VirusScanner']),
+            'comment_samples' => array_slice(array_values(array_filter(array_map(static fn ($r) => (string) (((array) $r)['Comment'] ?? ''), $rows))), 0, 6),
+            'location_samples' => array_slice(array_values(array_unique(array_map(static fn ($r) => json_encode(((array) $r)['Location'] ?? null), $rows))), 0, 3),
+            'one_computer_all_fields' => $oneOut,
+            'probes' => [
+                $probe('computers/' . $id . '/drives'),
+                $probe('computers/' . $id . '/processors'),
+                $probe('computers/' . $id . '/bios'),
+                $probe('computers/' . $id . '/software', ['pageSize' => 3]),
+                $probe('computers/' . $id . '/networkadapters'),
+                $probe('computers/' . $id . '/patches', ['pageSize' => 3]),
+                $probe('networkdevices', ['pageSize' => 3]),
+                $probe('networking/devices', ['pageSize' => 3]),
+                $probe('devices', ['pageSize' => 3]),
+                $probe('probes'),
+                $probe('locations', ['pageSize' => 3, 'condition' => 'Client.Id=' . $cid]),
+            ],
+            'swagger' => $paths,
+        ]);
+    }
+
     if ($action === 'computers' && isset($_GET['automate_client'])) {
         // Admin-only direct lookup by Automate's own client Id (the companyId in Automate's browse URLs), for testing.
         if (!relationships_current_user_is_territory_admin($pdo)) {
