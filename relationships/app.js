@@ -3128,7 +3128,6 @@
       back = '<a class="back-to-hub" href="' + HUB_URL + '">← Solutions Hub</a>';
       nav =
         '<button class="nav-btn ' + (state.view === 'dashboard' ? 'active' : '') + '" type="button" data-action="show-dashboard">Dashboard</button>' +
-        '<button class="nav-btn ' + (state.view === 'marketing' ? 'active' : '') + '" type="button" data-action="show-marketing">Marketing <span class="nav-soon">Soon</span></button>' +
         '<button class="nav-btn ' + (state.view === 'sync' ? 'active' : '') + '" type="button" data-action="show-sync">ConnectWise Sync</button>' +
         (state.user.is_territory_admin
           ? '<button class="nav-btn ' + (state.view === 'territory-admin' ? 'active' : '') + '" type="button" data-action="show-territory-admin">Territory Admin</button>'
@@ -4199,7 +4198,22 @@
   // whenever no customer is selected. Reads only state.overview
   // (api/dashboard.php), which loadOverview() populates; this function
   // itself never triggers a fetch, so it's safe to call from render().
+  // Sub-app cards on the Relationships main screen (added 2026-10-07). Marketing is announced here, not built yet.
+  function subAppsHtml() {
+    return '<div class="subapp-grid">' +
+      '<button type="button" class="subapp-card" data-action="show-marketing">' +
+        '<span class="subapp-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"></path><path d="M15 9a4 4 0 0 1 0 6"></path><path d="M18 6.5a8 8 0 0 1 0 11"></path></svg></span>' +
+        '<span class="subapp-text"><span class="subapp-title">Marketing <span class="soon-pill">Coming soon</span></span>' +
+        '<span class="subapp-sub">A new Relationships sub-app. Coming soon.</span></span>' +
+      '</button>' +
+    '</div>';
+  }
+
   function overviewHtml() {
+    return subAppsHtml() + overviewBodyHtml();
+  }
+
+  function overviewBodyHtml() {
     if (state.overviewLoading && !state.overview) {
       return '<div class="loading">Loading dashboard…</div>';
     }
