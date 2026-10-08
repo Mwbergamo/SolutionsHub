@@ -13,6 +13,8 @@
  *   Admin only (Territory Admin list). Signs in and counts Automate clients -> { ok, clients, sample: [names] }.
  *   Use this once after creating automate-config.php to prove the connection works.
  *
+ * GET ?action=computers&automate_client=<Automate client Id>   (admin only, for testing; also lists the field names Automate returned)
+ *
  * GET ?action=computers&customer_id=N   (or &cw_company=<ConnectWise company number>)
  *   Any signed-in user who can see customer N. Finds the Automate client whose name matches the
  *   customer's name (exact, case-insensitive; falls back to "contains") and lists its computers.
@@ -144,6 +146,28 @@ try {
             $names[] = (string) relationships_automate_pick((array) $c, ['Name', 'name'], '');
         }
         relationships_respond(200, ['ok' => true, 'clients' => count($clients), 'sample' => array_slice($names, 0, 5)]);
+    }
+
+    if ($action === 'computers' && isset($_GET['automate_client'])) {
+        // Admin-only direct lookup by Automate's own client Id (the companyId in Automate's browse URLs), for testing.
+        if (!relationships_current_user_is_territory_admin($pdo)) {
+            relationships_respond(403, ['ok' => false, 'error' => 'Only an administrator can look up an Automate client directly.']);
+        }
+        $cid = (int) $_GET['automate_client'];
+        $rows = relationships_automate_get('computers', ['condition' => 'Client.Id=' . $cid, 'pageSize' => 1000]);
+        $out = [];
+        foreach ($rows as $r) {
+            $r = (array) $r;
+            $out[] = [
+                'id' => (int) relationships_automate_pick($r, ['Id', 'id'], 0),
+                'name' => (string) relationships_automate_pick($r, ['ComputerName', 'computerName', 'Name', 'name'], ''),
+                'os' => (string) relationships_automate_pick($r, ['OperatingSystemName', 'operatingSystemName', 'Os', 'os'], ''),
+                'status' => (string) relationships_automate_pick($r, ['Status', 'status'], ''),
+                'last_contact' => (string) relationships_automate_pick($r, ['RemoteAgentLastContact', 'LastContact', 'lastContact'], ''),
+            ];
+        }
+        $first = $rows ? (array) $rows[0] : [];
+        relationships_respond(200, ['ok' => true, 'automate_client_id' => $cid, 'count' => count($out), 'computers' => $out, 'raw_fields_of_first' => array_keys($first)]);
     }
 
     if ($action === 'computers') {
