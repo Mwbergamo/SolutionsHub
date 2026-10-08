@@ -17,7 +17,7 @@ $pdo = relationships_db();
 $user = relationships_require_login($pdo);
 $action = $_GET['action'] ?? '';
 
-const RELATIONSHIPS_LAYOUT_CARDS = ['opportunity', 'contact', 'outgrow', 'riskscans', 'documents', 'solutions'];
+const RELATIONSHIPS_LAYOUT_CARDS = ['opportunity', 'contact', 'outgrow', 'riskscans', 'documents', 'solutions', 'computers'];
 
 if ($action === 'get') {
     $stmt = $pdo->prepare('SELECT layout_json FROM user_dashboard_layouts WHERE user_id = :u');

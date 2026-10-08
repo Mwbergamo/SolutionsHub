@@ -130,6 +130,58 @@ function relationships_automate_pick(array $row, array $keys, $default = null)
     return $default;
 }
 
+/** Clients list, cached for 10 minutes (it is ~300 rows and every dashboard open needs it). */
+function relationships_automate_clients(): array
+{
+    $cache = __DIR__ . '/../data/automate-clients.json';
+    if (is_file($cache) && (time() - (int) @filemtime($cache)) < 600) {
+        $c = json_decode((string) @file_get_contents($cache), true);
+        if (is_array($c)) {
+            return $c;
+        }
+    }
+    $clients = relationships_automate_get('clients', ['pageSize' => 1000]);
+    @file_put_contents($cache, json_encode($clients), LOCK_EX);
+    @chmod($cache, 0600);
+    return $clients;
+}
+
+/** One Automate computer, trimmed to what the dashboard card shows. */
+function relationships_automate_computer_row(array $r): array
+{
+    $osFull = (string) relationships_automate_pick($r, ['OperatingSystemName', 'operatingSystemName', 'Os', 'os'], '');
+    $os = trim((string) preg_replace('/\s*x(64|86)\s*$/i', '', str_replace('Microsoft ', '', $osFull)));
+    return [
+        'id' => (int) relationships_automate_pick($r, ['Id', 'id'], 0),
+        'name' => (string) relationships_automate_pick($r, ['ComputerName', 'computerName', 'Name', 'name'], ''),
+        'os' => $os,
+        'os_full' => $osFull,
+        'status' => (string) relationships_automate_pick($r, ['Status', 'status'], ''),
+        'last_contact' => (string) relationships_automate_pick($r, ['RemoteAgentLastContact', 'LastContact', 'lastContact'], ''),
+        'last_user' => (string) relationships_automate_pick($r, ['LastUserName', 'lastUserName'], ''),
+        'ip' => (string) relationships_automate_pick($r, ['LocalIPAddress', 'localIPAddress'], ''),
+        'type' => (string) relationships_automate_pick($r, ['Type', 'type'], ''),
+        'reboot_needed' => (bool) relationships_automate_pick($r, ['IsRebootNeeded', 'isRebootNeeded'], false),
+        'windows_update' => (string) relationships_automate_pick($r, ['WindowsUpdateDate', 'windowsUpdateDate'], ''),
+        'av_date' => (string) relationships_automate_pick($r, ['AntivirusDefinitionDate', 'antivirusDefinitionDate'], ''),
+        'warranty_end' => (string) relationships_automate_pick($r, ['WarrantyEndDate', 'warrantyEndDate'], ''),
+        'serial' => (string) relationships_automate_pick($r, ['SerialNumber', 'serialNumber'], ''),
+    ];
+}
+
+/** Online first, then by name; plus the counts the card header shows. */
+function relationships_automate_computers_payload(array $rows): array
+{
+    $out = array_map(static fn ($r): array => relationships_automate_computer_row((array) $r), $rows);
+    usort($out, static function (array $a, array $b): int {
+        $oa = strcasecmp($a['status'], 'Online') === 0 ? 0 : 1;
+        $ob = strcasecmp($b['status'], 'Online') === 0 ? 0 : 1;
+        return $oa <=> $ob ?: strcasecmp($a['name'], $b['name']);
+    });
+    $online = count(array_filter($out, static fn (array $c): bool => strcasecmp($c['status'], 'Online') === 0));
+    return ['computers' => $out, 'summary' => ['total' => count($out), 'online' => $online, 'offline' => count($out) - $online, 'reboot_needed' => count(array_filter($out, static fn (array $c): bool => $c['reboot_needed']))]];
+}
+
 // ------------------------------------------------------------------ requests
 $pdo = relationships_db();
 relationships_require_login($pdo);
@@ -155,19 +207,8 @@ try {
         }
         $cid = (int) $_GET['automate_client'];
         $rows = relationships_automate_get('computers', ['condition' => 'Client.Id=' . $cid, 'pageSize' => 1000]);
-        $out = [];
-        foreach ($rows as $r) {
-            $r = (array) $r;
-            $out[] = [
-                'id' => (int) relationships_automate_pick($r, ['Id', 'id'], 0),
-                'name' => (string) relationships_automate_pick($r, ['ComputerName', 'computerName', 'Name', 'name'], ''),
-                'os' => (string) relationships_automate_pick($r, ['OperatingSystemName', 'operatingSystemName', 'Os', 'os'], ''),
-                'status' => (string) relationships_automate_pick($r, ['Status', 'status'], ''),
-                'last_contact' => (string) relationships_automate_pick($r, ['RemoteAgentLastContact', 'LastContact', 'lastContact'], ''),
-            ];
-        }
         $first = $rows ? (array) $rows[0] : [];
-        relationships_respond(200, ['ok' => true, 'automate_client_id' => $cid, 'count' => count($out), 'computers' => $out, 'raw_fields_of_first' => array_keys($first)]);
+        relationships_respond(200, ['ok' => true, 'automate_client_id' => $cid, 'raw_fields_of_first' => array_keys($first)] + relationships_automate_computers_payload($rows));
     }
 
     if ($action === 'computers') {
@@ -189,7 +230,7 @@ try {
         if ($allowed !== null && !in_array((string) $cust['territory_name'], $allowed, true)) {
             relationships_respond(403, ['ok' => false, 'error' => 'That customer is not in your territory.']);
         }
-        $clients = relationships_automate_get('clients', ['pageSize' => 1000]);
+        $clients = relationships_automate_clients();
         // Normalise names: lower-case, "&" -> "and", drop punctuation and company suffixes (LLC, Inc, ...).
         $norm = static function (string $n): string {
             $n = mb_strtolower(trim($n));
@@ -238,24 +279,16 @@ try {
         }
         $cid = (int) relationships_automate_pick($match, ['Id', 'id'], 0);
         $rows = relationships_automate_get('computers', ['condition' => 'Client.Id=' . $cid, 'pageSize' => 1000]);
-        $out = [];
-        foreach ($rows as $r) {
-            $r = (array) $r;
-            $out[] = [
-                'id' => (int) relationships_automate_pick($r, ['Id', 'id'], 0),
-                'name' => (string) relationships_automate_pick($r, ['ComputerName', 'computerName', 'Name', 'name'], ''),
-                'os' => (string) relationships_automate_pick($r, ['OperatingSystemName', 'operatingSystemName', 'Os', 'os'], ''),
-                'status' => (string) relationships_automate_pick($r, ['Status', 'status'], ''),
-                'last_contact' => (string) relationships_automate_pick($r, ['RemoteAgentLastContact', 'LastContact', 'lastContact'], ''),
-            ];
-        }
         relationships_respond(200, [
             'ok' => true,
             'matched_client' => ['id' => $cid, 'name' => (string) relationships_automate_pick($match, ['Name', 'name'], '')],
-            'computers' => $out,
-        ]);
+            'console_url' => relationships_automate_config()['base_url'] . '/automate/browse/companies/computers?companyId=' . $cid,
+        ] + relationships_automate_computers_payload($rows));
     }
 } catch (RelationshipsAutomateError $e) {
+    if (strpos($e->getMessage(), 'automate-config.php is missing') === 0) {
+        relationships_respond(200, ['ok' => true, 'configured' => false, 'matched_client' => null, 'computers' => []]);
+    }
     error_log('[relationships/automate] ' . $e->getMessage());
     relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
 }

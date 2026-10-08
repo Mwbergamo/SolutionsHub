@@ -1748,6 +1748,8 @@
         loadDocuments(id);
         resetSolutionsState();
         loadSolutions(id);
+        resetAutomateState();
+        loadAutomate(id);
         if (state.pendingFocus) {
           var pf = state.pendingFocus;
           state.pendingFocus = null;
@@ -5137,8 +5139,8 @@
   // ---- Arrangeable dashboard cards (added 2026-10-07 per Michael) ---------
   // "Edit view" lets a rep drag the cards between two columns; the arrangement is saved per rep
   // (api/layout.php) and applied to every customer they open.
-  var LAYOUT_DEFAULT = { left: ['opportunity', 'contact', 'outgrow'], right: ['riskscans', 'documents', 'solutions'] };
-  var LAYOUT_CARD_NAMES = { opportunity: 'Opportunity/Risk Report', contact: 'Contacts', outgrow: 'Outgrow Last Touch', riskscans: 'Risk Scans', documents: 'Documents', solutions: 'Solutions' };
+  var LAYOUT_DEFAULT = { left: ['opportunity', 'contact', 'outgrow'], right: ['riskscans', 'documents', 'solutions', 'computers'] };
+  var LAYOUT_CARD_NAMES = { opportunity: 'Opportunity/Risk Report', contact: 'Contacts', outgrow: 'Outgrow Last Touch', riskscans: 'Risk Scans', documents: 'Documents', solutions: 'Solutions', computers: 'Computers (Automate)' };
 
   function normalizeLayout(l) {
     var out = { left: [], right: [] }, seen = {};
@@ -5196,6 +5198,7 @@
     if (id === 'riskscans') return riskScansPanelHtml(detail.customer.id);
     if (id === 'documents') return documentsPanelHtml(detail.customer.id);
     if (id === 'solutions') return solutionsPanelHtml(detail.customer);
+    if (id === 'computers') return automatePanelHtml(detail.customer);
     return '';
   }
 
@@ -5509,6 +5512,88 @@
         '</button>' +
       '</div>' +
     '</div>';
+  }
+
+  // ---- Computers card (ConnectWise Automate, api/automate.php) --------------
+  // Added 2026-10-07 per Michael: the customer's computers from Automate -- online/offline counts in the
+  // header, a list when expanded, and a link to the company in the Automate console. The customer is
+  // matched to its Automate client server-side (ConnectWise company number first, then name). Read-only.
+
+  function resetAutomateState() {
+    state.automate = null;
+    state.automateLoading = false;
+    state.automateError = null;
+    state.automateOpen = false;
+    state.automateShowAll = false;
+  }
+
+  function loadAutomate(customerId) {
+    state.automateLoading = true;
+    var requestFor = Number(customerId);
+    apiGet('api/automate.php?action=computers&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.automateLoading = false;
+      if (r.data && r.data.ok) state.automate = r.data;
+      else state.automateError = (r.data && r.data.error) || 'Could not load computers from Automate.';
+      render();
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.automateLoading = false;
+      state.automateError = 'Could not reach Automate - check your connection and try again.';
+      render();
+    });
+  }
+
+  // Automate times arrive as local wall-clock strings ("2026-10-07T21:03:59"); show them as written.
+  function automateWhen(str) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(str || '');
+    if (!m) return str || '-';
+    var mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(m[2]) - 1];
+    var h = Number(m[4]), ap = h >= 12 ? 'PM' : 'AM';
+    return mon + ' ' + Number(m[3]) + ', ' + (h % 12 || 12) + ':' + m[5] + ' ' + ap;
+  }
+
+  function automatePanelHtml(customer) {
+    var open = !!state.automateOpen;
+    var d = state.automate;
+    var found = d && d.matched_client;
+    var sum = found && d.summary ? d.summary : null;
+    var h = '<div class="risk-scans-panel solutions-panel automate-panel">' +
+      '<div class="risk-scans-panel-header">' +
+        '<button type="button" class="solutions-toggle" data-action="automate-toggle" aria-expanded="' + open + '">' +
+          '<span class="solutions-chevron">' + (open ? '▾' : '▸') + '</span>' +
+          '<span class="view-title">Computers</span>' +
+          (sum ? '<span class="solutions-count">' + sum.total + '</span><span class="automate-online">' + sum.online + ' online</span>' : '') +
+        '</button>' +
+        (found && d.console_url ? '<a class="solution-btn" href="' + escapeHtml(d.console_url) + '" target="_blank" rel="noopener">Open in Automate ↗</a>' : '') +
+      '</div>';
+    if (!open) return h + '</div>';
+    if (state.automateError) return h + '<div class="error-banner">' + escapeHtml(state.automateError) + '</div></div>';
+    if (state.automateLoading && !d) return h + '<div class="loading">Loading…</div></div>';
+    if (!d) return h + '</div>';
+    if (d.configured === false) return h + '<div class="roster-empty">Automate is not connected on this server yet.</div></div>';
+    if (!found) return h + '<div class="roster-empty">This customer was not found in Automate, so there are no computers to show.</div></div>';
+    if (!d.computers.length) return h + '<div class="roster-empty">Automate has no computers on file for ' + escapeHtml(d.matched_client.name) + '.</div></div>';
+    h += '<div class="automate-summary">' + sum.online + ' online · ' + sum.offline + ' offline · ' + sum.total + ' total' +
+      (sum.reboot_needed ? ' · <span class="automate-warn">' + sum.reboot_needed + ' need a reboot</span>' : '') + '</div>';
+    var list = state.automateShowAll ? d.computers : d.computers.slice(0, 10);
+    h += '<div class="solutions-list"><div class="automate-row automate-head"><div>Computer</div><div>OS</div><div>Status</div><div>Last contact</div><div>Last user</div></div>';
+    list.forEach(function (c) {
+      var on = String(c.status).toLowerCase() === 'online';
+      h += '<div class="automate-row">' +
+        '<div class="automate-name" title="' + escapeHtml(c.serial ? 'Serial ' + c.serial : '') + '">' + escapeHtml(c.name) + (c.reboot_needed ? ' <span class="automate-warn" title="Windows is waiting on a restart">↻</span>' : '') + '</div>' +
+        '<div>' + escapeHtml(c.os || '-') + '</div>' +
+        '<div><span class="automate-dot ' + (on ? 'on' : 'off') + '"></span>' + escapeHtml(c.status || '-') + '</div>' +
+        '<div>' + escapeHtml(automateWhen(c.last_contact)) + '</div>' +
+        '<div>' + escapeHtml(c.last_user || '-') + '</div>' +
+      '</div>';
+    });
+    h += '</div>';
+    if (d.computers.length > 10) {
+      h += '<button type="button" class="solution-btn automate-more" data-action="automate-showall">' +
+        (state.automateShowAll ? 'Show fewer' : 'Show all ' + d.computers.length) + '</button>';
+    }
+    return h + '</div>';
   }
 
   // ---- Saved Solutions card (api/solutions.php) --------------------------
@@ -7871,6 +7956,12 @@
       nudgeLayoutCard(el.getAttribute('data-card'), parseInt(el.getAttribute('data-dir'), 10));
     } else if (action === 'layout-side') {
       moveLayoutCard(el.getAttribute('data-card'), el.getAttribute('data-col'), null);
+    } else if (action === 'automate-toggle') {
+      state.automateOpen = !state.automateOpen;
+      render();
+    } else if (action === 'automate-showall') {
+      state.automateShowAll = !state.automateShowAll;
+      render();
     } else if (action === 'solutions-toggle') {
       state.solutionsOpen = !state.solutionsOpen;
       render();

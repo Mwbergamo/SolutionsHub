@@ -71,3 +71,4 @@ Thumbs.db
 # relationships/api/automate-config.sample.php to automate-config.php on the server.
 /relationships/api/automate-config.php
 /relationships/data/automate-token.json
+/relationships/data/automate-clients.json

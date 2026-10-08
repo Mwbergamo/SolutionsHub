@@ -3525,3 +3525,17 @@ a { color: inherit; }
 .layout-card-btns button:hover:not(:disabled) { border-color: #2f8fef; color: #8fc3ff; }
 .layout-card-btns button:disabled { opacity: .3; cursor: default; }
 .layout-card-body { pointer-events: none; max-height: 220px; overflow: hidden; opacity: .75; }
+
+/* Computers (Automate) card, 2026-10-07 */
+.automate-online { margin-left: 8px; font-size: 12px; font-weight: 700; color: oklch(0.78 0.14 150); }
+.automate-summary { padding: 4px 2px 10px; font-size: 13px; color: oklch(0.72 0.015 255); }
+.automate-warn { color: oklch(0.78 0.15 85); font-weight: 700; }
+.automate-row { display: grid; grid-template-columns: 1.1fr 1fr .8fr 1.4fr 1fr; gap: 10px; padding: 8px 2px; border-top: 1px solid oklch(0.26 0.02 255); font-size: 13px; align-items: center; }
+.automate-row > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.automate-row.automate-head { border-top: none; padding-top: 0; padding-bottom: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: oklch(0.55 0.015 255); }
+.automate-name { font-weight: 700; }
+.automate-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: oklch(0.5 0.01 255); }
+.automate-dot.on { background: oklch(0.75 0.17 150); }
+.automate-dot.off { background: oklch(0.6 0.2 25); }
+.automate-more { margin-top: 10px; }
+@media (max-width: 700px) { .automate-row { grid-template-columns: 1fr 1fr; } .automate-row.automate-head { display: none; } }
