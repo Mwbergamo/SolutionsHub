@@ -24,21 +24,16 @@
  *   Contact                 -> ticket "Contact:" line, verbatim
  *   Actions / F/U Plan      -> that note's header line + body, verbatim
  *   Proactive Call          -> "0"
- *   Call Type               -> "NOT a call"
+ *   Call Type               -> "NOT A Call"
  *   DYK                     -> "1"
  *   Pivot to Sale / Next    -> "1"
  *
  * Field ids (field190744403 ...) are Formstack's per-field numeric ids; the
  * first nine were read off the live form on 2026-09-17 (see meetings.php).
  *
- * OPEN ITEMS (could not be verified from the build environment -- Formstack
- * is unreachable from it and renders client-side):
- *   - OUTGROW_FIELD_DYK is null until someone reads the DYK field's id off
- *     the live form. While null, DYK is simply left out of the pre-fill and
- *     the response carries a warning telling the rep to set it by hand.
- *   - The Call Type option text "NOT a call" is taken from Michael's
- *     message; Formstack only pre-selects a dropdown/radio when the text
- *     matches an option exactly, so confirm it against the form.
+ * Confirmed against the live form 2026-10-09 (read via Claude in Chrome): DYK is
+ * field190744413 (options 0-4); the Call Type option is spelled "NOT A Call".
+ * Formstack only pre-selects a dropdown when the text matches exactly.
  */
 
 declare(strict_types=1);
@@ -55,9 +50,9 @@ const OUTGROW_FIELD_ACTIONS = 'field190744408';
 const OUTGROW_FIELD_PROACTIVE = 'field190744411';
 const OUTGROW_FIELD_CALL_TYPE = 'field190744412';
 const OUTGROW_FIELD_PIVOT = 'field190744415';
-const OUTGROW_FIELD_DYK = null; // TODO: read this id off the live form -- see header
+const OUTGROW_FIELD_DYK = 'field190744413'; // confirmed off the live form 2026-10-09
 
-const OUTGROW_CALL_TYPE_NOT_A_CALL = 'NOT a call';
+const OUTGROW_CALL_TYPE_NOT_A_CALL = 'NOT A Call'; // exact option text, confirmed 2026-10-09
 
 /**
  * "Fri 10/9/2026/8:10 AM EDT/ Chuck Fleet (time)-" -> author "Chuck Fleet",

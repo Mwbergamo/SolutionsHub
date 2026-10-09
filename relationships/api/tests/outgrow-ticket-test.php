@@ -28,7 +28,7 @@ foreach (['tab-separated' => $a, 'label-then-value lines' => $b] as $name => $te
     check("$name: contact", $v['contact'], 'Robin LaPointe');
     check("$name: actions", $v['actions'], $action);
     check("$name: ticket", $v['ticket'], '953911');
-    check("$name: call type", $v['call_type'], 'NOT a call');
+    check("$name: call type", $v['call_type'], 'NOT A Call');
 }
 
 // Customer-first ordering: the customer's note is on top, ours below -> ours is chosen.
@@ -43,8 +43,9 @@ check('no entry -> error', relationships_outgrow_parse_ticket("hello world")['ok
 $u = relationships_outgrow_form_url(relationships_outgrow_parse_ticket($a)['values']);
 parse_str((string) parse_url($u, PHP_URL_QUERY), $q);
 check('url field406', $q['field190744406'], 'Christine S Rausch MD PC');
-check('url field412', $q['field190744412'], 'NOT a call');
+check('url field412', $q['field190744412'], 'NOT A Call');
 check('url field408', $q['field190744408'], $action);
-check('dyk warning present', (bool) array_filter(relationships_outgrow_parse_ticket($a)['warnings'], fn($w) => str_contains($w, 'DYK')), true);
+check('url field413 (DYK)', $q['field190744413'], '1');
+check('no DYK warning', (bool) array_filter(relationships_outgrow_parse_ticket($a)['warnings'], fn($w) => str_contains($w, 'DYK')), false);
 
 exit($fails ? 1 : 0);
