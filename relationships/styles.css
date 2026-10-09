@@ -3559,3 +3559,7 @@ a { color: inherit; }
 .ticket-outgrow-value { flex: 1; white-space: pre-wrap; word-break: break-word; }
 .ticket-outgrow-warn { margin-top: 10px; font-size: 12px; color: #fbbf24; }
 .ticket-outgrow-actions { margin-top: 12px; }
+
+.ticket-outgrow-touch { margin-bottom: 10px; padding: 8px 10px; border-radius: 8px; font-size: 12.5px; }
+.ticket-outgrow-touch--ok { background: oklch(0.24 0.06 150); color: #86efac; }
+.ticket-outgrow-touch--note { background: oklch(0.26 0.05 85); color: #fbbf24; }

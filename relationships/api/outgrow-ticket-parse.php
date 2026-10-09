@@ -72,6 +72,23 @@ function relationships_outgrow_header_author(string $line): ?string
     return $author !== '' ? $author : null;
 }
 
+/**
+ * "Fri 10/9/2026/8:10 AM EDT/ Chuck Fleet (time)-" -> "2026-10-09" (the
+ * note's own calendar date, exactly as written -- no timezone conversion),
+ * or null when the line has no valid date.
+ */
+function relationships_outgrow_header_date(string $line): ?string
+{
+    if (!preg_match('~^\s*(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\.?\s+(\d{1,2})/(\d{1,2})/(\d{4})\s*/~i', $line, $m)) {
+        return null;
+    }
+    [$month, $day, $year] = [(int) $m[1], (int) $m[2], (int) $m[3]];
+    if (!checkdate($month, $day, $year)) {
+        return null;
+    }
+    return sprintf('%04d-%02d-%02d', $year, $month, $day);
+}
+
 /** Value after "Label:" on the same line, else the next non-empty line. */
 function relationships_outgrow_label_value(array $lines, string $label): string
 {
@@ -196,6 +213,7 @@ function relationships_outgrow_parse_ticket(string $text): array
         'ok' => true,
         'values' => [
             'ticket' => $ticketNo,
+            'note_date' => relationships_outgrow_header_date($chosen['header']),
             'email' => $email ?? '',
             'name' => $chosen['author'],
             'type' => 'Current Customer',

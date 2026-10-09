@@ -778,6 +778,7 @@
   function outgrowSourceNote(source) {
     if (source === 'call') return 'after a call ';
     if (source === 'email') return 'after an email ';
+    if (source === 'ticket') return 'from an OutGrow ticket ';
     return '';
   }
 
@@ -1034,7 +1035,7 @@
         var warn = h.cw_push_status === 'error'
           ? '<div class="outgrow-history-warn" title="' + escapeHtml(h.cw_push_error || '') + '">Didn\u2019t sync to ConnectWise</div>'
           : '';
-        var whoText = h.source === 'connectwise_seed' ? 'Synced from ConnectWise' : outgrowSourceNote(h.source) + escapeHtml(h.set_by_name);
+        var whoText = h.source === 'connectwise_seed' ? 'Synced from ConnectWise' : outgrowSourceNote(h.source) + (h.source === 'ticket' ? 'by ' : '') + escapeHtml(h.set_by_name);
         html += '<div class="outgrow-history-row">' +
           '<div class="outgrow-history-main">' +
             '<span class="outgrow-history-date">' + escapeHtml(fmtOutgrowDate(h.touch_date)) + '</span>' +
@@ -3186,6 +3187,7 @@
       }
       html += '<div class="ticket-outgrow-result">' +
         '<div class="ticket-outgrow-result-title">OutGrow form opened in a new tab' + (v.ticket ? ' — ticket #' + escapeHtml(v.ticket) : '') + '</div>' +
+        (t.result.touch ? '<div class="ticket-outgrow-touch ticket-outgrow-touch--' + (t.result.touch.status === 'updated' ? 'ok' : 'note') + '">' + escapeHtml(t.result.touch.message) + '</div>' : '') +
         row('Your Email', v.email) + row('Your Name', v.name) + row('Client/Prospect Type', v.type) +
         row('Client/Prospect Company', v.company) + row('Contact', v.contact) +
         row('Your Actions, Opportunities Discussed & F/U Plan', v.actions) +
