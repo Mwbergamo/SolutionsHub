@@ -1,0 +1,8535 @@
+/**
+ * relationships/app.js
+ *
+ * CRC "Relationships" dashboard — a small, separate vanilla-JS app (no
+ * runtime.js template engine; this is a fraction of SolutionsHub's size and
+ * plain string-rendering is simpler than pulling that engine in). Talks to
+ * relationships/api/auth.php and relationships/api/customers.php.
+ *
+ * Phase 1: sign-in gate, customer search, pillar summary (bright = has at
+ * least one active service in that pillar, dark = none), pillar drill-down
+ * showing active products + missing services, a missing-services roster,
+ * deep-links back into the main Solutions Hub for a missing service, and a
+ * link out to the (placeholder, pending real per-service folders)
+ * SharePoint marketing library.
+ *
+ * Phase 2 (relationships/api/checklist.php): a 7-step cross-sell checklist
+ * per (customer, missing service), expandable inline under that service in
+ * the drill-down; and a step-queue reporting view (Cross-Sell Report) —
+ * per-service counts of how many customers are pending at each step,
+ * drilling into who they are and jumping straight to that customer's
+ * checklist at that step.
+ */
+
+(function () {
+  'use strict';
+
+  // SolutionsHub site root is one level up from /relationships/.
+  var HUB_URL = '../index.html';
+
+  // Placeholder until CodeBlue supplies the real per-pillar/per-service
+  // SharePoint folder links — for now every "View Marketing" action opens
+  // the shared library root.
+  var MARKETING_LIBRARY_URL = 'https://codebluetechnology.sharepoint.com/sites/Training/Customer%20Marketing/Forms/AllItems.aspx';
+
+  var root = document.getElementById('app-root');
+
+  var state = {
+    user: null,
+    query: '',
+    searching: false,
+    results: [],
+    resultsOpen: false,
+    selectedCustomer: null, // { customer: {id,name}, pillars: [...] }
+    loadingDetail: false,
+    activePillarId: null,
+    error: null,
+
+    // 'dashboard' | 'report' | 'queue' | 'sync'
+    view: 'dashboard',
+    section: null, // null = Relationships itself; 'sales' | 'projects' when opened from the Hub's Sales / Project Management cards (?view=...&section=...)
+
+    // ConnectWise sync (api/sync.php) -- see runFullSync()/stepSyncLoop().
+    syncRunning: false,
+    syncDone: false,
+    syncTotal: 0,
+    syncProcessed: 0,
+    syncTotals: null, // { pending, done, error } -- from the last start/step/status call
+    syncStartedAt: null,
+    syncErrors: [],
+
+    // Monthly Billing sync (api/sync.php's billing-* actions) -- added
+    // 2026-09-10. "Run Sync Now" chains this after the agreement sync
+    // above finishes (see stepSyncLoop()), so one click still does the
+    // whole nightly-cron-equivalent sync; kept as separate state since it's
+    // a genuinely separate queue (by customer, not by agreement) that can
+    // succeed/fail independently of the agreement sync.
+    billingSyncRunning: false,
+    billingSyncDone: false,
+    billingSyncTotal: 0,
+    billingSyncProcessed: 0,
+    billingSyncTotals: null,
+    billingSyncStartedAt: null,
+    billingSyncErrors: [],
+
+    // Prospect Companies sync (api/sync.php's prospect-* actions) -- added
+    // 2026-09-10. "Run Sync Now" chains this after the billing sync above
+    // finishes, same reasoning as billing chaining after agreements: one
+    // click still does the whole nightly-cron-equivalent sync, and this is
+    // a genuinely separate queue (by ConnectWise Company, not by agreement
+    // or by already-synced customer) that can succeed/fail independently.
+    prospectSyncRunning: false,
+    prospectSyncDone: false,
+    prospectSyncTotal: 0,
+    prospectSyncProcessed: 0,
+    prospectSyncTotals: null,
+    prospectSyncStartedAt: null,
+    prospectSyncErrors: [],
+
+    // Ticket History sync (api/sync.php's ticket-history-* actions) --
+    // added 2026-09-10. "Run Sync Now" chains this after the prospect sync
+    // above finishes, populating the front-page Primary Relationship
+    // Dashboard's per-customer Service Tickets YTD + 6-month trend
+    // (dashboard.php reads what this writes). Independent queue, by
+    // customer, same reasoning as billing/prospect above.
+    ticketHistorySyncRunning: false,
+    ticketHistorySyncDone: false,
+    ticketHistorySyncTotal: 0,
+    ticketHistorySyncProcessed: 0,
+    ticketHistorySyncTotals: null,
+    ticketHistorySyncStartedAt: null,
+    ticketHistorySyncErrors: [],
+
+    // Contacts sync (api/sync.php's contacts-* actions) -- added
+    // 2026-09-10. Runs last as part of "Run Sync Now", populating the
+    // front page's per-customer Active Contacts count + 6-month trend, and
+    // the `contacts` table that customer search matches by name/email.
+    // Independent queue, by customer.
+    contactsSyncRunning: false,
+    contactsSyncDone: false,
+    contactsSyncTotal: 0,
+    contactsSyncProcessed: 0,
+    contactsSyncTotals: null,
+    contactsSyncStartedAt: null,
+    contactsSyncErrors: [],
+
+    // Territory sync (api/sync.php's territory-* actions) -- added
+    // 2026-09-16 per Michael's rep-based territory filtering request. Runs
+    // last as part of "Run Sync Now" (after contacts), tagging every
+    // customer with its synced ConnectWise territory so a restricted rep's
+    // customer lists can be filtered -- see connectwise-territory-sync-core.php.
+    // Independent queue, by ConnectWise Company.
+    territorySyncRunning: false,
+    territorySyncDone: false,
+    territorySyncTotal: 0,
+    territorySyncProcessed: 0,
+    territorySyncTotals: null,
+    territorySyncStartedAt: null,
+    territorySyncErrors: [],
+
+    // Territory Admin screen (api/territory-admin.php) -- added 2026-09-16
+    // per Michael, restricted to territory admins only (state.user.is_territory_admin
+    // -- see territory-access.php). Manages which CRC email is restricted
+    // to which synced territory_name(s).
+    territoryAdminLoading: false,
+    territoryAdmin: null, // { assignments: [{id,email,territory_name,created_at}], territory_options: [...] } once loaded
+    territoryAdminError: null,
+    territoryAdminAddEmail: '',
+    territoryAdminAddTerritory: '',
+    territoryAdminSaving: false,
+    territoryAdminRemovingId: null,
+
+    // Primary Relationship Dashboard overview (api/dashboard.php) -- added
+    // 2026-09-10: the gauges + per-customer trend list shown on the front
+    // page when no customer is selected. Loaded once at boot() and re-shown
+    // (not reloaded) whenever the user backs out to the front page; a full
+    // "Run Sync Now" reloads it at the end so the numbers reflect the sync
+    // that just ran. null while never (successfully) loaded yet.
+    overview: null,
+    overviewLoading: false,
+    overviewError: null,
+    // Current sort for the per-customer overview list -- added 2026-09-10
+    // per Michael. column is 'name' | 'billing_trend' | 'ticket_count_ytd' |
+    // 'contact_count'; direction 'asc' (alphabetical A-Z for name, low-to-
+    // high for the numeric/trend columns) or 'desc' (Z-A / high-to-low).
+    // Purely a display concern -- re-sorts state.overview.customers on
+    // every render rather than mutating the fetched data.
+    overviewSort: { column: 'name', direction: 'asc' },
+    // Customer-list filter (added 2026-09-15 per Michael) -- a purely
+    // client-side display filter over the same state.overview.customers
+    // array dashboard.php already returns is_peoplefirst for; see
+    // filteredOverviewCustomers(). (The old Prospects on/off toggle was
+    // removed 2026-09-23: prospects now have their own tile and list.)
+    overviewPeopleFirstOnly: false,
+    // Territory filter for the 60+ Days Since Last OutGrow Touch list --
+    // added 2026-10-05 per Michael. null = all territories; otherwise the
+    // exact territory_name ('' = customers with no synced territory).
+    // Resets each time a list is opened, like the other overview filters.
+    outgrowTerritory: null,
+    // "Group by Territory" toggle for the main Total Customers list --
+    // added 2026-10-05 per Michael's "organized by ... territory" ask for
+    // the Account Opportunity/Risk ranking. Purely a display concern, same
+    // spirit as overviewSort: groups state.overview.customers by
+    // territory_name (see connectwise-territory-sync-core.php) rather than
+    // showing one flat list. Off by default, and (like overviewStatusFilter)
+    // never persisted across list opens.
+    overviewGroupByTerritory: false,
+    // Opportunity/Risk rank explainer popover -- added 2026-10-06, see
+    // opportunityPopoverHtml() for the shape and why a single shared piece
+    // of state (not one per row) is used.
+    opportunityPopover: null,
+    // Front-page customer list is hidden by default (2026-09-23, per
+    // Michael: the front page is a team dashboard + global action items
+    // list, not a customer directory) -- clicking the Total Customers
+    // gauge tile toggles it. See gaugesHtml()/overviewHtml().
+    // overviewListMode: null (hidden) | 'customers' | 'prospects' |
+    // 'residential' | 'outgrow' -- which group the front-page list shows;
+    // the Total Customers / Total Prospects / Total Residential / 60+ Days
+    // tiles set it (Prospects and Residential are their own groups, not
+    // part of Total Customers -- Residential added 2026-09-26 per
+    // Michael's "add another block for Residential customers").
+    overviewListMode: null,
+    // Per-ConnectWise-status toggle chips shown above the Prospects list
+    // (added 2026-09-26, per Michael: "Reps should be able to toggle
+    // on/off each status to make their lists"). Map of cw_status_name ->
+    // false when a rep has hidden that status; absent/true means shown.
+    // Deliberately never persisted anywhere and reset every time the list
+    // is (re)opened (toggle-overview-list) -- Michael's own answer,
+    // "Resets every time," when asked whether this should persist per rep.
+    overviewStatusFilter: {},
+    // OutGrow-stale list sort (front-page "60+ Days Since Last OutGrow
+    // Touch" tile): 'asc' = earliest touch first (never-touched customers
+    // lead), 'desc' = most recent first. One-shot flag so the background
+    // ConnectWise date backfill is only requested once per page load.
+    outgrowSortDir: 'asc',
+    outgrowBackfillStarted: false,
+
+    // Prospecting view (api/prospecting.php, added 2026-09-23) -- see
+    // prospectingHtml() below.
+    prospecting: {
+      tab: 'search', // 'search' | 'mine'
+      loaded: false, loading: false, error: null,
+      configured: true, industries: [], dailyCap: null, remainingToday: null,
+      form: { industry: 'Any', location: 'Richmond, VA', radius: 150 },
+      searching: false, searchStartedAt: 0,
+      search: null, candidates: [], skipped: [],
+      filterTier: 'all', filterIndustry: 'all', filterLocation: '',
+      selectedId: null, draft: null,
+      profileLoading: false, profileError: null,
+      saving: false, claiming: false, claimError: null, claimResult: null,
+      claims: null, claimsLoading: false, claimsScope: 'mine'
+    },
+
+    // Checklist data, keyed by "customerId::pillarId::serviceId". Each
+    // value is: undefined (not fetched yet), 'error', or
+    // { steps: [...7 step objects...], killed: bool } from
+    // checklist.php?action=get.
+    checklists: {},
+    openChecklistKey: null,
+
+    // Cross-sell step notes (api/checklist.php?action=notes_get/notes_add)
+    // -- added 2026-09-23, per Michael: "add the ability to click a small
+    // + icon next to each step for a rep to put in their notes." Same
+    // "customerId::pillarId::serviceId" key shape as state.checklists;
+    // value is undefined (not fetched), 'error', or an array of note rows.
+    // Only one checklist's notes panel is ever open at a time, same
+    // single-key pattern as openChecklistKey itself.
+    checklistNotes: {},
+    openChecklistNotesKey: null,
+    // "customerId::pillarId::serviceId::stepNumber" of the single note
+    // textarea currently open (the "+" button per step), or null. Fully
+    // compound so switching customers/pillars never shows a stray open
+    // textarea against the wrong step.
+    checklistNoteDraftOpenKey: null,
+    checklistNoteDraftText: '',
+    checklistNoteSaving: false,
+
+    // Which contact is selected for a checklist's outreach actions --
+    // keyed the same "customerId::pillarId::serviceId" way. Independent
+    // of state.contactCardSelectedId (the OutGrow contact card's own
+    // selection just above) since a rep may want a different contact for
+    // a specific cross-sell push than whatever's selected for OutGrow.
+    // Reuses state.contactCard.contacts (already loaded per customer,
+    // filtered to contacts with complete info) as its data source --
+    // deliberately no second contact fetch for this.
+    checklistContactSelected: {},
+    openChecklistContactDropdownKey: null,
+    // Set when a rep clicks a step's Email/Call icon before a contact is
+    // selected yet -- {key, step, type} -- so checklist-contact-select
+    // can fire the deferred action the instant a contact is picked,
+    // instead of the rep having to click the icon a second time. Added
+    // 2026-09-30: the icon now works even before a contact is chosen, not
+    // only once one already is (see checklistStepRowHtml()).
+    checklistPendingContactAction: null,
+
+    // "customerId::pillarId::serviceId" currently mid Recycle/Kill/Unkill
+    // request, so those buttons can show a saving state and can't
+    // double-fire.
+    checklistCloseoutSaving: null,
+
+    // Set right before selectCustomer() when arriving from the queue view,
+    // so the customer's dashboard opens straight to that pillar with that
+    // service's checklist already expanded and scrolled to.
+    pendingFocus: null,
+
+    report: null, // rows from checklist.php?action=summary
+    reportLoading: false,
+
+    queue: null, // customers from checklist.php?action=queue
+    queueLoading: false,
+    queueParams: null, // { pillarId, serviceId, step, pillarName, serviceName }
+
+    // PeopleFirst checkin/risk-scan tracking (api/peoplefirst.php). Shown
+    // as a summary line atop the Cross-Sell Report, drilling into a
+    // 'pf-queue' view for who currently needs a checkin or a scan.
+    pfSummary: null, // { total, needs_checkin, needs_scan } from ?action=summary
+    pfSummaryLoading: false,
+    pfQueue: null, // customers from ?action=queue
+    pfQueueLoading: false,
+    pfQueueType: null, // 'checkin' | 'scan'
+    pfLogging: null, // "customerId::type" currently being logged, or null
+
+    // Ticket/billing activity for the currently-open customer
+    // (api/activity.php) -- reset whenever a different customer is opened.
+    // { available: bool, ticket_count_ytd (live), billing: {series, trend}
+    // (nightly-synced as of 2026-09-10 -- see billing_synced_at), billing_synced_at }
+    // or null while loading, or { available: false } for a mock customer /
+    // on error.
+    activitySummary: null,
+    activitySummaryLoading: false,
+
+    // Which activity drill-down (if any) is open under the activity cards:
+    // null | 'tickets' | 'invoices' | 'invoice-detail'.
+    activityView: null,
+    activityTickets: null, // array | 'error' | null (not loaded yet)
+    activityTicketsLoading: false,
+    activityInvoicesPeriod: null, // { type: 'month'|'year', value: "YYYY-MM"|"YYYY", label }
+    activityInvoices: null, // array | 'error' | null
+    activityInvoicesLoading: false,
+    activityInvoiceNumber: null, // shown as the drilldown title while loading
+    activityInvoiceDetail: null, // object | 'error' | null
+    activityInvoiceDetailLoading: false,
+
+    // Account Contacts (added 2026-10-09, per Michael) -- the live, ALL-
+    // contacts (active + inactive) editable list behind the new Account
+    // Contacts tile below the activity cards (contacts-admin.php).
+    // accountContacts holds the array from its 'list' action, 'error', or
+    // null while loading; accountContactTypes is that same response's
+    // {id, name} Contact Type dropdown list, loaded together with the
+    // contacts. Only one contact row is ever editable at a time
+    // (accountContactsEditingId), buffered in accountContactsEditDraft
+    // until Save -- same fixed-id-input pattern as every other
+    // single-draft form in this file (e.g. taskDraftDescription).
+    accountContactsLoading: false,
+    accountContacts: null,
+    accountContactTypes: [],
+    accountContactsError: null,
+    accountContactsEditingId: null,
+    accountContactsEditDraft: { first_name: '', last_name: '', type_id: '', phone: '', email: '' },
+    accountContactsSaving: false,
+    accountContactsSaveError: null,
+    accountContactsCreating: false,
+    accountContactsNewDraft: { first_name: '', last_name: '', type_id: '', phone: '', email: '' },
+    accountContactsCreateSaving: false,
+    accountContactsCreateError: null,
+
+    // Customer Service Summary print view (added 2026-09-14, per Michael) --
+    // a formatted, printable page for Relationship Coordinators: Service
+    // Tickets YTD + top-3-by-hours tickets as check-in talking points,
+    // services currently in place (Pillar / product description / qty),
+    // and pillar services not yet in place (IT/DC/VoIP/Security only,
+    // using the same cross_sell_eligible flag as the Cross-Sell
+    // Opportunities roster) with a short factual blurb + free-comparison
+    // offer for each. printTickets is loaded independently of
+    // activityTickets so opening the print view doesn't disturb whatever's
+    // open in the Service Tickets drill-down (or vice versa).
+    printSummaryOpen: false,
+    printTickets: null, // array | 'error' | null (not loaded yet)
+    printTicketsLoading: false,
+
+    // OutGrow Last Touch (added 2026-09-15, per Michael) -- a CRC-editable
+    // date per customer, with full history (api/outgrow.php), that also
+    // tries to push into ConnectWise's own "OutGrow Last Touch" Company
+    // custom field on every save. outgrowCurrent/outgrowHistory are reset
+    // (resetOutgrowState()) and reloaded (loadOutgrow()) whenever a
+    // different customer is opened, same as the activity state above.
+    outgrowLoading: false,
+    outgrowCurrent: null, // { touch_date, set_by_name, source, created_at } | null
+    outgrowHistory: null, // array | null (not loaded yet)
+    outgrowHistoryOpen: false,
+    outgrowEditing: false,
+    outgrowDraftDate: '', // "YYYY-MM-DD" -- bound to the <input type="date"> while editing
+    outgrowSaving: false,
+    outgrowError: null, // shown inline -- a save failure, or a "saved here but didn't reach ConnectWise" warning
+
+    // "Current vendor if not CodeBlue" -- one editable note per pillar
+    // (api/vendor.php), added 2026-09-15 per Michael's Customer Meeting
+    // Capture request. No history list (unlike OutGrow above) -- just the
+    // current value + who/when it was last touched.
+    vendorNotes: null, // { "<pillar_id>": {vendor_name, updated_at, updated_by_name} | null, ... } once loaded
+    vendorEditingPillarId: null,
+    vendorDraft: '',
+    vendorSaving: false,
+    vendorError: null,
+
+    // Customer Meeting Capture -- meetings logged against a customer, and
+    // the to-do tasks logged under them (api/meetings.php), added
+    // 2026-09-15 per Michael.
+    meetingsLoading: false,
+    meetings: null, // array once loaded (newest meeting first), each with a nested .tasks array (oldest first)
+    meetingsRoster: [], // the 7 fixed assignee names, from the server (relationships_todo_roster())
+    meetingsError: null,
+    meetingAddOpen: false,
+    meetingDraftSubject: '',
+    meetingDraftDate: '',
+    meetingDraftNotes: '',
+    meetingSaving: false,
+    openMeetingId: null, // which logged meeting is expanded, if any
+    taskAddOpenForMeeting: null, // meeting id whose "+ Add Task" form is open, if any
+    taskDraftDescription: '',
+    taskDraftAssignee: '',
+    taskDraftDueDate: '', // "YYYY-MM-DD" | '' -- optional, added 2026-09-16 (scheduled to-dos)
+    taskSaving: false,
+    taskTogglingId: null, // task id currently mid-toggle (checkbox disabled while true)
+    // Deep-link target set by openCustomerAtTask() (global to-do panel ->
+    // a specific customer's task) -- consumed once inside selectCustomer(),
+    // same pattern state.pendingFocus already uses for the checklist.
+    pendingTaskFocus: null, // { meetingId, taskId } | null
+
+    // Risk-scan file uploads (api/risk-scans.php) -- added 2026-09-23 per
+    // Michael: a service team member uploads a customer's risk-scan zip
+    // from that customer's dashboard; a rep downloads and reviews it, then
+    // marks it reviewed. Open (unreviewed) uploads also show as alerts in
+    // the Global To-Do Checklist panel -- server-computed (reviewed_at IS
+    // NULL in meetings.php's 'global' action), not tracked in state here.
+    riskScans: null, // [ { id, original_filename, size_bytes, uploaded_by_name, uploaded_at, reviewed_at, reviewed_by_name }, ... ] | null while loading
+    riskScansLoading: false,
+    riskScansError: null,
+    riskScanDraftFile: null, // File object chosen but not yet uploaded, or null
+    riskScanUploading: false,
+    riskScanTogglingId: null, // scan id currently mid mark/unmark-reviewed (button disabled while true)
+    riskScanRetryingId: null, // scan id currently mid ConnectWise re-attach (button disabled while true)
+    riskScanAssignDraft: {}, // scan id (string) -> roster name picked in that row's assign dropdown, not yet submitted
+    // Deep-link target set by openCustomerAtRiskScan() (Global To-Do panel
+    // -> a specific customer's risk-scan alert) -- same pattern as
+    // pendingTaskFocus above, consumed once inside loadRiskScans().
+    pendingRiskScanFocus: null, // { scanId } | null
+    // Customer Documents (api/documents.php) -- added 2026-10-02 per
+    // Michael: a Documents section under each company for Word docs, PDFs,
+    // spreadsheets and other historical files, attached to the customer's
+    // ConnectWise Documents exactly like Risk Scans.
+    documents: null, // [ { id, original_filename, category, size_bytes, uploaded_by_name, uploaded_at, cw_upload_status, cw_upload_error }, ... ] | null while loading
+    documentsLoading: false,
+    documentsError: null,
+    documentDraftFiles: [], // File objects chosen but not yet uploaded
+    documentDraftCategory: 'General',
+    documentUploading: false,
+    documentUploadProgress: '', // e.g. 'Uploading 2 of 3…'
+    documentRetryingId: null, // document id currently mid ConnectWise re-attach
+
+    // Global master to-do dashboard -- the Relationships front page's new
+    // right-hand panel (api/meetings.php?action=global), added 2026-09-15.
+    // Company Counts reconciliation (ConnectWise Sync screen) -- added 2026-10-05.
+    companyCounts: null,
+    companyCountsLoading: false,
+    globalTodosLoading: false,
+    globalTodos: null, // { roster, counts, tasks } once loaded
+    globalTodosError: null,
+
+    // Per-coordinator to-do view (state.view === 'rep-todos') -- added
+    // 2026-09-16 per Michael: click a name in the Global To-Do Checklist
+    // to see that person's own open/scheduled/recently-completed to-dos,
+    // plus a month calendar of their scheduled ones
+    // (api/meetings.php?action=rep_todos).
+    repTodosLoading: false,
+    repTodosName: null, // the roster name this view is currently showing
+    repTodosData: null, // { rep_name, roster, open_tasks, recent_completed_tasks } once loaded
+    repTodosError: null,
+    repTodosCalYear: null, // calendar's currently-shown year, set when the view opens
+    repTodosCalMonth: null, // calendar's currently-shown month (1-12), set when the view opens
+
+    // Collapsible Assigned Projects cards on the rep-todos screen -- added
+    // 2026-10-03 per Michael. At most one project card is expanded at a
+    // time (same single-id pattern as state.openMeetingId/projectsNotesOpenId
+    // elsewhere in this file); null means every card is collapsed, which is
+    // the default so the "glow" status colors are what a coordinator sees
+    // first when the screen opens.
+    repTodosExpandedProjectId: null,
+
+    // Ticket -> OutGrow view (state.view === 'ticket-outgrow') -- added
+    // 2026-10-09 per Michael: paste a ConnectWise "OutGrow Action" service
+    // ticket and get CBT's OutGrow (Formstack) call-activity form opened
+    // pre-filled (api/outgrow-ticket.php). The rep still clicks Submit on
+    // the form itself -- it has a reCAPTCHA (see meetings.php's
+    // relationships_formstack_todo_url()).
+    ticketOutgrow: { text: '', busy: false, error: null, result: null },
+
+    // Projects view (state.view === 'projects') -- added 2026-10-02 per
+    // Michael's "Projects Follow Up" request: every ConnectWise Project on
+    // the Pre-Sales/Services Projects boards, with coordinator assignment,
+    // a 5-step checklist, and a ConnectWise-backed Notes box. The project
+    // list itself is fetched live every time this screen opens (see
+    // api/projects.php) -- never locally cached.
+    projectsLoading: false,
+    projectsError: null,
+    projectsData: null, // [ { id, company_name, name, status_name, start_date, contact_id, contact_name, assigned_to_name, checklist, kickoff_date }, ... ] | null while loading
+    projectsRoster: [], // roster names, from the same api/projects.php?action=list response
+    projectsAssignDraft: {}, // project id (string) -> roster name picked in that row's assign dropdown, not yet submitted
+    projectsTogglingId: null, // project id currently mid assign/unassign (button disabled while true)
+    projectsOpenIds: {}, // project id (string) -> true while that row's checklist/notes panel is expanded
+    projectsChecklistBusyKey: null, // 'projectId::step' currently mid save, so its checkbox disables during the round-trip
+    projectsKickoffDraft: {}, // project id (string) -> date string typed into step 4's date input, not yet saved
+    projectsKickoffSavingId: null,
+    projectsContactCache: {}, // contact id (string) -> { email, phone } once fetched live, so clicking a step icon twice doesn't re-fetch
+    projectsContactLoadingId: null, // contact id currently mid live fetch (icons disable while true)
+    projectsNotesOpenId: null, // project id whose notes panel is open, or null (one at a time)
+    projectsNotesLoading: false,
+    projectsNotesError: null,
+    projectsNotesData: null, // [ { id, text, type_name, updated_by, last_updated }, ... ] for projectsNotesOpenId, once loaded
+    projectsNoteDraftText: '',
+    projectsNoteSaving: false,
+
+    // Sort/filter over the already-loaded list -- added 2026-10-02 per
+    // Michael's follow-up request. Both are purely client-side (the list
+    // itself is always the same live fetch; this only changes what's
+    // shown/ordered from it). projectsStatusFilter: '' = every project
+    // (closed ones are already excluded server-side, see api/projects.php);
+    // anything else is an exact status_name to show only that status.
+    projectsSortBy: 'start_date_desc', // 'start_date_desc' | 'start_date_asc' | 'company_asc' | 'company_desc'
+    projectsStatusFilter: '',
+
+    // My Projects / All Projects toggle (added 2026-10-02) -- scopes both
+    // the status-breakdown bar graph and the list below it to just this
+    // rep's own assigned projects. 'all' (the prior, only behavior) is the
+    // default so nothing changes unless a rep opts in.
+    projectsScope: 'all' // 'all' | 'mine'
+  };
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function fmtQty(p) {
+    var qty = p.qty;
+    var unit = p.unit ? ' ' + escapeHtml(p.unit) : '';
+    return escapeHtml(qty) + unit;
+  }
+
+  function fmtTimestamp(raw) {
+    if (!raw) return '';
+    // checklist.php writes datetime('now') -- SQLite gives that back as
+    // "YYYY-MM-DD HH:MM:SS" in UTC, with no "T" or offset. sync.php's
+    // started_at is a full ISO 8601 string (PHP's date('c')) and already
+    // has both -- only pad the SQLite shape.
+    var iso = raw.indexOf('T') === -1 ? raw.replace(' ', 'T') + 'Z' : raw;
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return raw;
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) +
+      ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  }
+
+  // Risk-scan file sizes (bytes from the server) -- KB up to 1000 KB, MB
+  // above that, one decimal place either way.
+  function fmtFileSize(bytes) {
+    var n = Number(bytes) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  // Date-only formatting for ConnectWise ticket/invoice dates -- these come
+  // back as full ISO datetimes but only the date is meaningful here.
+  function fmtDate(raw) {
+    if (!raw) return '';
+    var d = new Date(raw);
+    if (isNaN(d.getTime())) return String(raw).slice(0, 10);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function fmtCurrency(n) {
+    return '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  }
+
+  // ---- API helpers ----------------------------------------------------
+
+  function apiGet(url) {
+    return fetch(url, { credentials: 'same-origin' }).then(function (r) {
+      return r.json().then(function (data) { return { status: r.status, data: data }; });
+    });
+  }
+
+  function apiPost(url, body) {
+    return fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    }).then(function (r) {
+      return r.json().then(function (data) { return { status: r.status, data: data }; });
+    });
+  }
+
+  // multipart/form-data POST -- for the risk-scan zip upload
+  // (api/risk-scans.php?action=upload) only. Deliberately NOT JSON like
+  // apiPost() above: a File object can't go in a JSON body, and setting
+  // Content-Type by hand here would drop the multipart boundary the
+  // browser generates -- fetch sets it correctly on its own as long as we
+  // leave the header out entirely.
+  function apiUpload(url, formData) {
+    return fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData
+    }).then(function (r) {
+      return r.json().then(function (data) { return { status: r.status, data: data }; });
+    });
+  }
+
+  // ---- Data loading -----------------------------------------------------
+
+  function boot() {
+    apiGet('api/auth.php?action=me').then(function (r) {
+      if (!r.data || !r.data.ok || !r.data.user) {
+        window.location.href = 'login.html?next=' + encodeURIComponent('index.html');
+        return;
+      }
+      state.user = r.data.user;
+      render();
+      loadLayout();
+      loadOverview();
+      loadGlobalTodos();
+      if (!openFromLink()) openViewFromLink();
+    }).catch(function () {
+      window.location.href = 'login.html?next=' + encodeURIComponent('index.html');
+    });
+  }
+
+  // Deep link from the Commissions report: index.html?cw_company=<ConnectWise company id>
+  // opens that customer's page.
+  function openFromLink() {
+    var cw = '';
+    try { cw = new URLSearchParams(window.location.search).get('cw_company') || ''; } catch (e) { cw = ''; }
+    if (!/^\d+$/.test(cw)) return false;
+    apiGet('api/customers.php?action=resolve&cw_id=' + encodeURIComponent(cw)).then(function (r) {
+      if (r.data && r.data.ok && r.data.id) {
+        selectCustomer(r.data.id);
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not find that customer.';
+        render();
+      }
+    }).catch(function () {});
+    return true;
+  }
+
+  // Deep link from the Hub's Sales / Project Management cards: index.html?view=report|prospecting|projects&section=sales|projects
+  // Views that moved to Hub cards always show their own section's top bar.
+  function openViewFromLink() {
+    var v = '', sec = '';
+    try {
+      var q = new URLSearchParams(window.location.search);
+      v = q.get('view') || ''; sec = q.get('section') || '';
+    } catch (e) { return; }
+    if (v === 'report' || v === 'prospecting') {
+      state.section = 'sales';
+    } else if (v === 'projects') {
+      state.section = 'projects';
+    } else {
+      return;
+    }
+    state.view = v;
+    state.error = null;
+    render();
+    if (v === 'report') { loadReport(); loadPeopleFirstSummary(); }
+    else if (v === 'prospecting') {
+      if (!state.prospecting.loaded) loadProspecting();
+      if (state.prospecting.tab === 'mine' && !state.prospecting.claims) loadProspectClaims();
+    }
+    else if (v === 'projects') { loadProjects(); }
+  }
+
+  // Front-page gauges + per-customer trend list (api/dashboard.php) --
+  // synced-data-only, so this is one cheap GET rather than a per-customer
+  // round-trip. Safe to call more than once (e.g. a defensive call from
+  // 'change-customer'/'show-dashboard' if boot()'s call hasn't resolved
+  // yet) -- overlapping calls just both resolve into the same state.
+  function loadOverview() {
+    if (state.overviewLoading) return;
+    state.overviewLoading = true;
+    state.overviewError = null;
+    render();
+    apiGet('api/dashboard.php?action=overview').then(function (r) {
+      state.overviewLoading = false;
+      if (r.data && r.data.ok) {
+        state.overview = r.data;
+        maybeBackfillOutgrow(r.data);
+      } else {
+        state.overviewError = (r.data && r.data.error) || 'Could not load the dashboard overview.';
+      }
+      render();
+    }).catch(function () {
+      state.overviewLoading = false;
+      state.overviewError = 'Could not load the dashboard overview — check your connection.';
+      render();
+    });
+  }
+
+  // The "60+ Days Since Last OutGrow Touch" count is only right once every
+  // customer's ConnectWise-held date has been pulled in locally (see
+  // outgrow.php's 'backfill_all'). dashboard.php says when that's due
+  // (never run / 12h+ ago); this fires it once, quietly, then refreshes the
+  // numbers if it actually found anything. Failures are silent -- the
+  // server won't offer it again for 12 hours regardless.
+  function maybeBackfillOutgrow(overview) {
+    if (!overview.outgrow_backfill_stale || state.outgrowBackfillStarted) return;
+    state.outgrowBackfillStarted = true;
+    apiPost('api/outgrow.php?action=backfill_all', {}).then(function (r) {
+      if (r.data && r.data.ok && r.data.inserted > 0) {
+        loadOverview();
+      }
+    }).catch(function () { /* silent -- see above */ });
+  }
+
+  var searchDebounce = null;
+  function runSearch(q) {
+    clearTimeout(searchDebounce);
+    if (!q.trim()) {
+      state.results = [];
+      state.searching = false;
+      render();
+      return;
+    }
+    searchDebounce = setTimeout(function () {
+      state.searching = true;
+      render();
+      apiGet('api/customers.php?action=list&q=' + encodeURIComponent(q)).then(function (r) {
+        state.searching = false;
+        if (r.data && r.data.ok) {
+          state.results = r.data.customers;
+        }
+        render();
+      }).catch(function () {
+        state.searching = false;
+        render();
+      });
+    }, 2000);
+  }
+
+  function resetActivityState() {
+    state.activitySummary = null;
+    state.activitySummaryLoading = false;
+    state.activityView = null;
+    state.activityTickets = null;
+    state.activityTicketsLoading = false;
+    state.activityInvoicesPeriod = null;
+    state.activityInvoices = null;
+    state.activityInvoicesLoading = false;
+    state.activityInvoiceNumber = null;
+    state.activityInvoiceDetail = null;
+    state.activityInvoiceDetailLoading = false;
+    state.printSummaryOpen = false;
+    state.printTickets = null;
+    state.printTicketsLoading = false;
+    state.accountContactsLoading = false;
+    state.accountContacts = null;
+    state.accountContactTypes = [];
+    state.accountContactsError = null;
+    state.accountContactsEditingId = null;
+    state.accountContactsEditDraft = { first_name: '', last_name: '', type_id: '', phone: '', email: '' };
+    state.accountContactsSaving = false;
+    state.accountContactsSaveError = null;
+    state.accountContactsCreating = false;
+    state.accountContactsNewDraft = { first_name: '', last_name: '', type_id: '', phone: '', email: '' };
+    state.accountContactsCreateSaving = false;
+    state.accountContactsCreateError = null;
+  }
+
+  function resetOutgrowState() {
+    state.outgrowLoading = false;
+    state.outgrowCurrent = null;
+    state.outgrowHistory = null;
+    state.outgrowHistoryOpen = false;
+    state.outgrowEditing = false;
+    state.outgrowDraftDate = '';
+    state.outgrowSaving = false;
+    state.outgrowError = null;
+  }
+
+  // Contact card (address + primary contact + tap-to-call/email) --
+  // added 2026-09-23 per Michael: "pull in address, primary contact name,
+  // email and phone number from ConnectWise on each Customer in
+  // Relationships and show that data cleanly above Outgrow Last Touch."
+  // Loaded live alongside the rest of a customer's dashboard data (same
+  // per-open pattern as loadActivitySummary's ticket count -- see that
+  // function's own comment) rather than nightly-synced, since address and
+  // phone have never been synced anywhere in this app before now. See
+  // api/contact-card.php's file header for what's confirmed vs. an
+  // unverified guess about ConnectWise's field shapes.
+  function resetContactCardState() {
+    state.contactCard = null;
+    state.contactCardLoading = false;
+    state.contactCardError = null;
+    // Dropdown open/closed, and which contact (by ConnectWise contact id,
+    // a string) is currently picked -- added 2026-09-23 per Michael:
+    // "show a drop down list where the new contact info is... When you
+    // select the contact in question, you can then tap on email or
+    // phone." Nothing is pre-selected -- the dropdown always starts
+    // closed with no contact chosen, even when there's only one to pick,
+    // so picking one is always a deliberate step.
+    state.contactCardOpen = false;
+    state.contactCardSelectedId = null;
+    // Pending "log this as an OutGrow touch?" confirmation -- per
+    // Michael's explicit choice (AskUserQuestion) that tapping call/email
+    // must NOT log the touch immediately; it only opens the dialer/email
+    // app and logs after this confirm step is answered "yes".
+    // { source: 'call' | 'email' } | null
+    state.outgrowConfirm = null;
+  }
+
+  function outgrowTodayYmd() {
+    var d = new Date();
+    var mm = d.getMonth() + 1;
+    var dd = d.getDate();
+    return d.getFullYear() + '-' + (mm < 10 ? '0' : '') + mm + '-' + (dd < 10 ? '0' : '') + dd;
+  }
+
+  // "YYYY-MM-DD" -> "M/D/YY" -- plain string slicing rather than
+  // new Date(ymd), which parses a bare date as UTC midnight and can roll
+  // back a day once formatted in a negative-UTC-offset timezone (US
+  // Eastern included) -- a real, silent off-by-one this avoids entirely.
+  function fmtOutgrowDate(ymd) {
+    if (!ymd) return '';
+    var parts = String(ymd).split('-');
+    if (parts.length !== 3) return ymd;
+    return parseInt(parts[1], 10) + '/' + parseInt(parts[2], 10) + '/' + parts[0].slice(2);
+  }
+
+  // A short lead-in for who-set-this text, distinguishing a touch logged
+  // via the contact card's tap-to-call/email confirm step (2026-09-23)
+  // from an ordinary manual date edit -- e.g. "after a call by Jane Doe"
+  // vs. plain "by Jane Doe". Empty string for 'manual' (and anything
+  // else unrecognized) leaves the existing "by <name>" phrasing alone.
+  function outgrowSourceNote(source) {
+    if (source === 'call') return 'after a call ';
+    if (source === 'email') return 'after an email ';
+    if (source === 'ticket') return 'from an OutGrow ticket ';
+    return '';
+  }
+
+  function loadOutgrow(customerId) {
+    state.outgrowLoading = true;
+    var requestFor = Number(customerId);
+    apiGet('api/outgrow.php?action=get&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.outgrowLoading = false;
+      if (r.data && r.data.ok) {
+        state.outgrowCurrent = r.data.current;
+        state.outgrowHistory = r.data.history;
+      }
+      render();
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.outgrowLoading = false;
+      render();
+    });
+  }
+
+  function saveOutgrow(customerId) {
+    var date = state.outgrowDraftDate;
+    if (!date) {
+      state.outgrowError = 'Pick a date first.';
+      render();
+      return;
+    }
+    state.outgrowSaving = true;
+    state.outgrowError = null;
+    render();
+    apiPost('api/outgrow.php?action=set', { customer_id: customerId, touch_date: date }).then(function (r) {
+      state.outgrowSaving = false;
+      if (r.data && r.data.ok) {
+        state.outgrowCurrent = r.data.current;
+        state.outgrowHistory = r.data.history;
+        state.outgrowEditing = false;
+        if (r.data.cw_push && r.data.cw_push.status === 'error') {
+          state.outgrowError = 'Saved here, but didn\u2019t reach ConnectWise: ' + r.data.cw_push.error;
+        }
+      } else {
+        state.outgrowError = (r.data && r.data.error) || 'Could not save.';
+      }
+      render();
+    }).catch(function () {
+      state.outgrowSaving = false;
+      state.outgrowError = 'Could not save \u2014 check your connection.';
+      render();
+    });
+  }
+
+  // Logs an OutGrow touch with an explicit source ('call' or 'email'),
+  // reached only after the confirm-step banner in contactCardHtml() is
+  // answered "yes" -- see resetContactCardState()'s comment. Posts to the
+  // exact same outgrow.php?action=set endpoint saveOutgrow() above uses
+  // (same local-save-then-ConnectWise-push behavior, same history/current
+  // response shape) so both the date-edit flow and this one stay one
+  // source of truth; only the touch_date (today) and source differ.
+  function logOutgrowTouch(customerId, source) {
+    state.outgrowSaving = true;
+    state.outgrowError = null;
+    render();
+    apiPost('api/outgrow.php?action=set', { customer_id: customerId, touch_date: outgrowTodayYmd(), source: source }).then(function (r) {
+      state.outgrowSaving = false;
+      if (r.data && r.data.ok) {
+        state.outgrowCurrent = r.data.current;
+        state.outgrowHistory = r.data.history;
+        if (r.data.cw_push && r.data.cw_push.status === 'error') {
+          state.outgrowError = 'Logged here, but didn\u2019t reach ConnectWise: ' + r.data.cw_push.error;
+        }
+      } else {
+        state.outgrowError = (r.data && r.data.error) || 'Could not log the touch.';
+      }
+      render();
+    }).catch(function () {
+      state.outgrowSaving = false;
+      state.outgrowError = 'Could not log the touch \u2014 check your connection.';
+      render();
+    });
+  }
+
+  function loadContactCard(customerId) {
+    state.contactCardLoading = true;
+    var requestFor = Number(customerId);
+    apiGet('api/contact-card.php?action=get&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.contactCardLoading = false;
+      if (r.data && r.data.ok) {
+        state.contactCard = r.data;
+      } else {
+        state.contactCard = { available: false };
+        state.contactCardError = (r.data && r.data.error) || 'Could not load contact info from ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.contactCardLoading = false;
+      state.contactCardError = 'Could not load contact info \u2014 check your connection.';
+      render();
+    });
+  }
+
+  // Contact card HTML -- address, primary contact name/email, and
+  // tap-to-call/tap-to-email links, shown just above the OutGrow Last
+  // Touch card (per Michael's "show that data cleanly above Outgrow Last
+  // Touch"). Renders nothing at all for a mock/unsynced customer
+  // (available: false) rather than an empty card. The inline confirm
+  // banner (state.outgrowConfirm) is what actually logs the OutGrow touch
+  // -- tapping the tel:/mailto: link itself only opens the dialer/email
+  // app and shows this banner; see logOutgrowTouch()'s comment and
+  // resetContactCardState()'s comment on why that's a separate step.
+  function contactCardHtml() {
+    var card = state.contactCard;
+    if (state.contactCardLoading && !card) {
+      return '<div class="contact-card"><div class="loading">Loading contact info\u2026</div></div>';
+    }
+    if (!card || !card.available) {
+      return '';
+    }
+
+    var html = '<div class="contact-card">';
+
+    if (card.address) {
+      var addr = card.address;
+      var cityLine = [addr.city, addr.state, addr.zip].filter(Boolean).join(', ');
+      html += '<div class="contact-card-address">' +
+        (addr.line1 ? escapeHtml(addr.line1) + '<br>' : '') +
+        (addr.line2 ? escapeHtml(addr.line2) + '<br>' : '') +
+        (cityLine ? escapeHtml(cityLine) : '') +
+      '</div>';
+    }
+
+    var contacts = card.contacts || [];
+    html += '<div class="contact-card-person">';
+    if (contacts.length === 0) {
+      html += '<div class="contact-card-empty">No contacts with complete info on file.</div>';
+    } else {
+      var selected = null;
+      for (var ci = 0; ci < contacts.length; ci++) {
+        if (state.contactCardSelectedId && contacts[ci].id === state.contactCardSelectedId) {
+          selected = contacts[ci];
+          break;
+        }
+      }
+
+      // Dropdown -- added 2026-09-23 per Michael: "show a drop down list
+      // where the new contact info is... you should see the contacts
+      // name info, email info and phone info in the list. When you
+      // select the contact in question, you can then tap on email or
+      // phone." .contact-card-dropdown is the outside-click boundary
+      // onDocumentClick() checks to auto-close this, same pattern as the
+      // customer search box's .search-wrap.
+      html += '<div class="contact-card-dropdown">';
+      html += '<button type="button" class="contact-card-dropdown-toggle" data-action="contact-dropdown-toggle" aria-expanded="' + (state.contactCardOpen ? 'true' : 'false') + '">' +
+        '<span>' + (selected ? escapeHtml(selected.name || 'Contact') : 'Select a contact…') + '</span>' +
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="contact-card-dropdown-chevron"><polyline points="6 9 12 15 18 9"></polyline></svg>' +
+      '</button>';
+
+      if (state.contactCardOpen) {
+        html += '<div class="contact-card-dropdown-panel">';
+        contacts.forEach(function (c) {
+          var rowClass = 'contact-card-dropdown-row' + (selected && c.id === selected.id ? ' selected' : '');
+          html += '<div class="' + rowClass + '" data-action="contact-select" data-contact-id="' + escapeHtml(c.id) + '">' +
+            '<div class="contact-card-dropdown-name">' + escapeHtml(c.name || 'Contact') + '</div>' +
+            '<div class="contact-card-dropdown-meta">' + escapeHtml(c.email) + ' · ' + escapeHtml(c.phone) + '</div>' +
+          '</div>';
+        });
+        html += '</div>';
+      }
+      html += '</div>'; // .contact-card-dropdown
+
+      if (selected) {
+        var links = '<a class="contact-card-link" href="tel:' + escapeHtml(selected.phone) + '" data-action="contact-call">' +
+          '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.362 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.338 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>' +
+          escapeHtml(selected.phone) + '</a>' +
+          '<a class="contact-card-link" href="mailto:' + escapeHtml(selected.email) + '" data-action="contact-email">' +
+          '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>' +
+          escapeHtml(selected.email) + '</a>';
+        html += '<div class="contact-card-links">' + links + '</div>';
+      }
+    }
+    html += '</div>'; // .contact-card-person
+
+    if (state.outgrowConfirm) {
+      var confirmLabel = state.outgrowConfirm.source === 'call' ? 'Log this call as an OutGrow touch?' : 'Log this email as an OutGrow touch?';
+      html += '<div class="contact-card-confirm">' +
+        '<span class="contact-card-confirm-label">' + escapeHtml(confirmLabel) + '</span>' +
+        '<div class="contact-card-confirm-actions">' +
+          '<button type="button" class="svc-action-btn primary" data-action="contact-confirm-yes" ' + (state.outgrowSaving ? 'disabled' : '') + '>' + (state.outgrowSaving ? 'Logging\u2026' : 'Yes, log it') + '</button>' +
+          '<button type="button" class="svc-action-btn secondary" data-action="contact-confirm-no" ' + (state.outgrowSaving ? 'disabled' : '') + '>No</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    if (state.contactCardError) {
+      html += '<div class="contact-card-error">' + escapeHtml(state.contactCardError) + '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function outgrowFieldHtml() {
+    var current = state.outgrowCurrent;
+    var valueText = current ? fmtOutgrowDate(current.touch_date) : 'Not recorded yet';
+    var subText = current
+      ? (current.source === 'connectwise_seed' ? 'Synced from ConnectWise' : outgrowSourceNote(current.source) + 'by ' + escapeHtml(current.set_by_name))
+      : '';
+
+    var html = '<div class="outgrow-card">';
+    html += '<div class="outgrow-card-label-row">' +
+      '<div class="outgrow-card-label">OutGrow Last Touch</div>' +
+      '<button class="outgrow-history-btn" type="button" data-action="outgrow-history-toggle" aria-label="View history" title="View history">' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15.5 14"></polyline></svg>' +
+      '</button>' +
+    '</div>';
+    html += '<div class="outgrow-card-value">' + escapeHtml(valueText) + '</div>';
+    if (subText) {
+      html += '<div class="outgrow-card-sub">' + subText + '</div>';
+    }
+
+    if (state.outgrowEditing) {
+      html += '<div class="outgrow-edit-row">' +
+        '<input type="date" id="outgrowDateInput" class="outgrow-date-input" value="' + escapeHtml(state.outgrowDraftDate) + '">' +
+        '<button class="svc-action-btn primary" type="button" data-action="outgrow-save" ' + (state.outgrowSaving ? 'disabled' : '') + '>' + (state.outgrowSaving ? 'Saving\u2026' : 'Save') + '</button>' +
+        '<button class="svc-action-btn secondary" type="button" data-action="outgrow-edit-cancel">Cancel</button>' +
+      '</div>';
+    } else {
+      html += '<button class="outgrow-update-btn" type="button" data-action="outgrow-edit-start">Update</button>';
+    }
+
+    if (state.outgrowError) {
+      html += '<div class="outgrow-error">' + escapeHtml(state.outgrowError) + '</div>';
+    }
+
+    if (state.outgrowHistoryOpen) {
+      html += outgrowHistoryHtml();
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function outgrowHistoryHtml() {
+    var html = '<div class="outgrow-history">';
+    html += '<div class="outgrow-history-title">History</div>';
+    if (state.outgrowLoading && !state.outgrowHistory) {
+      html += '<div class="loading">Loading\u2026</div>';
+    } else if (!state.outgrowHistory || state.outgrowHistory.length === 0) {
+      html += '<div class="empty-state">No history yet.</div>';
+    } else {
+      html += '<div class="outgrow-history-list">';
+      state.outgrowHistory.forEach(function (h) {
+        var warn = h.cw_push_status === 'error'
+          ? '<div class="outgrow-history-warn" title="' + escapeHtml(h.cw_push_error || '') + '">Didn\u2019t sync to ConnectWise</div>'
+          : '';
+        var whoText = h.source === 'connectwise_seed' ? 'Synced from ConnectWise' : outgrowSourceNote(h.source) + (h.source === 'ticket' ? 'by ' : '') + escapeHtml(h.set_by_name);
+        html += '<div class="outgrow-history-row">' +
+          '<div class="outgrow-history-main">' +
+            '<span class="outgrow-history-date">' + escapeHtml(fmtOutgrowDate(h.touch_date)) + '</span>' +
+            '<span class="outgrow-history-who">' + whoText + '</span>' +
+          '</div>' +
+          '<div class="outgrow-history-when">' + escapeHtml(fmtTimestamp(h.created_at)) + '</div>' +
+          warn +
+        '</div>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  // ---- "Current vendor if not CodeBlue" (per pillar) --------------------
+
+  function resetVendorState() {
+    state.vendorNotes = null;
+    state.vendorEditingPillarId = null;
+    state.vendorDraft = '';
+    state.vendorSaving = false;
+    state.vendorError = null;
+  }
+
+  function loadVendorNotes(customerId) {
+    var requestFor = Number(customerId);
+    apiGet('api/vendor.php?action=list&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      if (r.data && r.data.ok) {
+        state.vendorNotes = r.data.notes;
+        render();
+      }
+    }).catch(function () { /* silent -- the field still renders, just without a saved value yet */ });
+  }
+
+  function saveVendorNote(customerId, pillarId) {
+    state.vendorSaving = true;
+    state.vendorError = null;
+    render();
+    apiPost('api/vendor.php?action=set', { customer_id: customerId, pillar_id: pillarId, vendor_name: state.vendorDraft }).then(function (r) {
+      state.vendorSaving = false;
+      if (r.data && r.data.ok) {
+        if (!state.vendorNotes) state.vendorNotes = {};
+        state.vendorNotes[pillarId] = r.data.note;
+        state.vendorEditingPillarId = null;
+      } else {
+        state.vendorError = (r.data && r.data.error) || 'Could not save.';
+      }
+      render();
+    }).catch(function () {
+      state.vendorSaving = false;
+      state.vendorError = 'Could not save \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  // ---- Customer Meeting Capture (meetings + their to-do tasks) ----------
+
+  function resetMeetingsState() {
+    state.meetingsLoading = false;
+    state.meetings = null;
+    state.meetingsRoster = [];
+    state.meetingsError = null;
+    state.meetingAddOpen = false;
+    state.meetingDraftSubject = '';
+    state.meetingDraftDate = '';
+    state.meetingDraftNotes = '';
+    state.meetingSaving = false;
+    state.openMeetingId = null;
+    state.taskAddOpenForMeeting = null;
+    state.taskDraftDescription = '';
+    state.taskDraftAssignee = '';
+    state.taskDraftDueDate = '';
+    state.taskSaving = false;
+    state.taskTogglingId = null;
+    // pendingTaskFocus is deliberately NOT cleared here -- openCustomerAtTask()
+    // sets it BEFORE calling selectCustomer(), which calls resetMeetingsState()
+    // on its way to loadMeetings(); clearing it here would lose the deep-link
+    // target before loadMeetings() ever gets to consume it.
+  }
+
+  function loadMeetings(customerId) {
+    state.meetingsLoading = true;
+    var requestFor = Number(customerId);
+    apiGet('api/meetings.php?action=list&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.meetingsLoading = false;
+      var focusTaskId = null;
+      if (r.data && r.data.ok) {
+        state.meetings = r.data.meetings;
+        state.meetingsRoster = r.data.roster;
+        // Deliberately no default assignee here (2026-09-23, per Michael:
+        // "By default, the to-do should not show any rep" -- a rep must
+        // actively pick one from the blank-first dropdown, see
+        // taskAssigneeSelect's markup below). Used to default to
+        // r.data.roster[0] (Claire Hayden, first in the fixed roster) the
+        // moment meetings loaded; that's exactly the silent default
+        // Michael asked to remove.
+        if (state.pendingTaskFocus) {
+          state.openMeetingId = state.pendingTaskFocus.meetingId;
+          focusTaskId = state.pendingTaskFocus.taskId;
+          state.pendingTaskFocus = null;
+        }
+      } else {
+        state.meetingsError = (r.data && r.data.error) || 'Could not load meetings.';
+      }
+      render();
+      if (focusTaskId) {
+        var el = document.querySelector('[data-task-row="' + focusTaskId + '"]');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.meetingsLoading = false;
+      state.meetingsError = 'Could not load meetings \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  // ---- Risk-scan uploads (api/risk-scans.php) ---------------------------
+  // Added 2026-09-23 per Michael -- see the state block's comment above
+  // and risk-scans.php's file header for the full design. Same
+  // load/reset/deep-link pattern as Meetings/Checklist above.
+
+  function resetRiskScansState() {
+    state.riskScans = null;
+    state.riskScansLoading = false;
+    state.riskScansError = null;
+    state.riskScanDraftFile = null;
+    state.riskScanUploading = false;
+    state.riskScanTogglingId = null;
+    state.riskScanAssignDraft = {};
+    // pendingRiskScanFocus is deliberately NOT cleared here -- same reason
+    // pendingTaskFocus isn't cleared in resetMeetingsState() above.
+  }
+
+  function loadRiskScans(customerId) {
+    state.riskScansLoading = true;
+    var requestFor = Number(customerId);
+    apiGet('api/risk-scans.php?action=list&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.riskScansLoading = false;
+      var focusScanId = null;
+      if (r.data && r.data.ok) {
+        state.riskScans = r.data.scans;
+        if (state.pendingRiskScanFocus) {
+          focusScanId = state.pendingRiskScanFocus.scanId;
+          state.pendingRiskScanFocus = null;
+        }
+      } else {
+        state.riskScansError = (r.data && r.data.error) || 'Could not load risk scans.';
+      }
+      render();
+      if (focusScanId) {
+        var el = document.querySelector('[data-riskscan-row="' + focusScanId + '"]');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.riskScansLoading = false;
+      state.riskScansError = 'Could not load risk scans \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  function uploadRiskScan(customerId) {
+    var file = state.riskScanDraftFile;
+    if (!file) {
+      state.riskScansError = 'Choose a .zip file first.';
+      render();
+      return;
+    }
+    state.riskScanUploading = true;
+    state.riskScansError = null;
+    render();
+    var formData = new FormData();
+    formData.append('customer_id', String(customerId));
+    formData.append('file', file);
+    apiUpload('api/risk-scans.php?action=upload', formData).then(function (r) {
+      state.riskScanUploading = false;
+      if (r.data && r.data.ok) {
+        state.riskScanDraftFile = null;
+        // The upload response already carries the updated PeopleFirst
+        // fields when this is a PeopleFirst customer (risk-scans.php,
+        // 'upload' action) -- apply them locally rather than a whole
+        // extra round-trip just to refresh two date fields.
+        if (r.data.customer && state.selectedCustomer && Number(state.selectedCustomer.customer.id) === Number(customerId)) {
+          state.selectedCustomer.customer.last_risk_scan_at = r.data.customer.last_risk_scan_at;
+          state.selectedCustomer.customer.last_risk_scan_by = r.data.customer.last_risk_scan_by;
+        }
+        loadRiskScans(customerId);
+      } else {
+        state.riskScansError = (r.data && r.data.error) || 'Could not upload that file.';
+        render();
+      }
+    }).catch(function () {
+      state.riskScanUploading = false;
+      state.riskScansError = 'Could not upload that file \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  function retryRiskScanCw(scanId) {
+    state.riskScanRetryingId = scanId;
+    render();
+    apiPost('api/risk-scans.php?action=retry_cw_upload', { id: scanId }).then(function (r) {
+      state.riskScanRetryingId = null;
+      if (r.data && r.data.ok && state.riskScans) {
+        var updated = r.data.scan;
+        state.riskScans = state.riskScans.map(function (s) { return s.id === updated.id ? updated : s; });
+      } else {
+        state.riskScansError = (r.data && r.data.error) || 'Could not retry the ConnectWise attachment.';
+      }
+      render();
+    }).catch(function () {
+      state.riskScanRetryingId = null;
+      state.riskScansError = 'Could not retry the ConnectWise attachment \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  function setRiskScanReviewed(scanId, reviewed) {
+    state.riskScanTogglingId = scanId;
+    render();
+    apiPost('api/risk-scans.php?action=' + (reviewed ? 'mark_reviewed' : 'unmark_reviewed'), { id: scanId }).then(function (r) {
+      state.riskScanTogglingId = null;
+      if (r.data && r.data.ok && state.riskScans) {
+        var updated = r.data.scan;
+        state.riskScans = state.riskScans.map(function (s) { return s.id === updated.id ? updated : s; });
+      } else {
+        state.riskScansError = (r.data && r.data.error) || 'Could not update that scan.';
+      }
+      render();
+    }).catch(function () {
+      state.riskScanTogglingId = null;
+      state.riskScansError = 'Could not update that scan \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  function setRiskScanAssigned(scanId, assigned, assignedToName) {
+    state.riskScanTogglingId = scanId;
+    render();
+    var body = assigned ? { id: scanId, assigned_to_name: assignedToName } : { id: scanId };
+    apiPost('api/risk-scans.php?action=' + (assigned ? 'assign' : 'unassign'), body).then(function (r) {
+      state.riskScanTogglingId = null;
+      if (r.data && r.data.ok && state.riskScans) {
+        var updated = r.data.scan;
+        state.riskScans = state.riskScans.map(function (s) { return s.id === updated.id ? updated : s; });
+        delete state.riskScanAssignDraft[scanId];
+      } else {
+        state.riskScansError = (r.data && r.data.error) || 'Could not update that scan.';
+      }
+      render();
+    }).catch(function () {
+      state.riskScanTogglingId = null;
+      state.riskScansError = 'Could not update that scan — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Delegated 'change' handler for the per-row assign-to dropdowns in
+  // riskScanItemHtml() below -- there can be several unassigned scans (and
+  // so several selects) on screen at once, unlike the single Add Task
+  // form's taskAssigneeSelect, so this is bound once on root (see the
+  // 'Bound once' block near the end of this file) rather than looked up by
+  // a single element id after every render. Only tracks the pick so it
+  // survives a re-render (e.g. the 'pick a name first' validation error
+  // below) -- doesn't re-render itself, same as the plain <input> handlers
+  // elsewhere in this file.
+  function onRiskScanAssignSelectChange(ev) {
+    var el = ev.target;
+    var scanId = el.getAttribute && el.getAttribute('data-riskscan-assign-select');
+    if (!scanId) return;
+    state.riskScanAssignDraft[scanId] = el.value;
+  }
+
+  function openCustomerAtRiskScan(customerId, scanId) {
+    state.view = 'dashboard';
+    state.pendingRiskScanFocus = { scanId: scanId };
+    selectCustomer(customerId);
+  }
+
+  // ---- Customer Documents (api/documents.php) ---------------------------
+  // Added 2026-10-02 per Michael -- see documents.php's file header. Same
+  // load/reset/upload/retry pattern as Risk Scans above.
+
+  var DOCUMENT_CATEGORIES = ['General', 'Contract', 'Proposal / Quote', 'Network Diagram', 'Invoice / Billing', 'Meeting Notes', 'Assessment / Report', 'Other'];
+  var DOCUMENT_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.csv,.ppt,.pptx,.txt,.rtf,.odt,.ods,.msg,.eml,.png,.jpg,.jpeg,.gif,.vsd,.vsdx,.zip';
+
+  function resetDocumentsState() {
+    state.documents = null;
+    state.documentsLoading = false;
+    state.documentsError = null;
+    state.documentDraftFiles = [];
+    state.documentDraftCategory = 'General';
+    state.documentUploading = false;
+    state.documentUploadProgress = '';
+    state.documentRetryingId = null;
+  }
+
+  function loadDocuments(customerId) {
+    state.documentsLoading = true;
+    var requestFor = Number(customerId);
+    apiGet('api/documents.php?action=list&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.documentsLoading = false;
+      if (r.data && r.data.ok) {
+        state.documents = r.data.documents;
+      } else {
+        state.documentsError = (r.data && r.data.error) || 'Could not load documents.';
+      }
+      render();
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.documentsLoading = false;
+      state.documentsError = 'Could not load documents \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  // Uploads the chosen files one at a time (so one rejected file doesn't
+  // sink the rest, and each gets its own ConnectWise attachment). Files that
+  // fail are kept in the draft list with the reason shown; files that
+  // succeed drop out of it.
+  function uploadDocuments(customerId) {
+    var files = state.documentDraftFiles.slice();
+    if (!files.length) {
+      state.documentsError = 'Choose at least one file first.';
+      render();
+      return;
+    }
+    state.documentUploading = true;
+    state.documentsError = null;
+    var failures = [];
+    var remaining = [];
+    var category = state.documentDraftCategory;
+
+    function finish() {
+      state.documentUploading = false;
+      state.documentUploadProgress = '';
+      state.documentDraftFiles = remaining;
+      if (failures.length) state.documentsError = failures.join(' ');
+      loadDocuments(customerId);
+      render();
+    }
+
+    function next(i) {
+      if (i >= files.length) { finish(); return; }
+      var file = files[i];
+      state.documentUploadProgress = 'Uploading ' + (i + 1) + ' of ' + files.length + '\u2026';
+      render();
+      var formData = new FormData();
+      formData.append('customer_id', String(customerId));
+      formData.append('category', category);
+      formData.append('file', file);
+      apiUpload('api/documents.php?action=upload', formData).then(function (r) {
+        if (!(r.data && r.data.ok)) {
+          remaining.push(file);
+          failures.push(file.name + ': ' + ((r.data && r.data.error) || 'could not be uploaded.'));
+        }
+        next(i + 1);
+      }).catch(function () {
+        remaining.push(file);
+        failures.push(file.name + ': could not be uploaded \u2014 check your connection and try again.');
+        next(i + 1);
+      });
+    }
+    render();
+    next(0);
+  }
+
+  function retryDocumentCw(docId) {
+    state.documentRetryingId = docId;
+    render();
+    apiPost('api/documents.php?action=retry_cw_upload', { id: docId }).then(function (r) {
+      state.documentRetryingId = null;
+      if (r.data && r.data.ok && state.documents) {
+        var updated = r.data.document;
+        state.documents = state.documents.map(function (d) { return d.id === updated.id ? updated : d; });
+      } else {
+        state.documentsError = (r.data && r.data.error) || 'Could not retry the ConnectWise attachment.';
+      }
+      render();
+    }).catch(function () {
+      state.documentRetryingId = null;
+      state.documentsError = 'Could not retry the ConnectWise attachment \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  function saveMeeting(customerId) {
+    var subject = (state.meetingDraftSubject || '').trim();
+    var date = state.meetingDraftDate;
+    if (!subject || !date) {
+      state.meetingsError = 'Enter a subject and a date.';
+      render();
+      return;
+    }
+    state.meetingSaving = true;
+    state.meetingsError = null;
+    render();
+    apiPost('api/meetings.php?action=create_meeting', {
+      customer_id: customerId, subject: subject, meeting_date: date, notes: state.meetingDraftNotes || ''
+    }).then(function (r) {
+      state.meetingSaving = false;
+      if (r.data && r.data.ok) {
+        state.meetings = [r.data.meeting].concat(state.meetings || []);
+        state.meetingAddOpen = false;
+        state.meetingDraftSubject = '';
+        state.meetingDraftDate = '';
+        state.meetingDraftNotes = '';
+        state.openMeetingId = r.data.meeting.id;
+        if (r.data.meeting.cw_push && r.data.meeting.cw_push.status === 'error') {
+          state.meetingsError = 'Saved here, but didn\u2019t reach ConnectWise: ' + r.data.meeting.cw_push.error;
+        }
+      } else {
+        state.meetingsError = (r.data && r.data.error) || 'Could not save the meeting.';
+      }
+      render();
+    }).catch(function () {
+      state.meetingSaving = false;
+      state.meetingsError = 'Could not save the meeting \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  function saveTask(meetingId) {
+    var description = (state.taskDraftDescription || '').trim();
+    var assignee = state.taskDraftAssignee;
+    if (!description || !assignee) {
+      state.meetingsError = 'Enter a task description and pick who it\u2019s assigned to.';
+      render();
+      return;
+    }
+    state.taskSaving = true;
+    state.meetingsError = null;
+    render();
+    apiPost('api/meetings.php?action=add_task', {
+      meeting_id: meetingId, description: description, assigned_to_name: assignee,
+      due_date: state.taskDraftDueDate || null
+    }).then(function (r) {
+      state.taskSaving = false;
+      if (r.data && r.data.ok) {
+        (state.meetings || []).forEach(function (m) {
+          if (m.id === meetingId) m.tasks.push(r.data.task);
+        });
+        state.taskAddOpenForMeeting = null;
+        state.taskDraftDescription = '';
+        state.taskDraftDueDate = '';
+        if (r.data.task.cw_push && r.data.task.cw_push.status === 'error') {
+          state.meetingsError = 'Task saved here, but didn\u2019t reach ConnectWise: ' + r.data.task.cw_push.error;
+        }
+      } else {
+        state.meetingsError = (r.data && r.data.error) || 'Could not save the task.';
+      }
+      render();
+    }).catch(function () {
+      state.taskSaving = false;
+      state.meetingsError = 'Could not save the task \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  // formstackTab (added 2026-09-17, per Michael -- "every To-Do... completed
+  // [should] create an entry in" CBT's Outgrow/Formstack activity-tracking
+  // form) is a blank tab the caller already opened SYNCHRONOUSLY inside the
+  // click handler, before this async call started -- browsers only allow
+  // window.open() without a popup-blocker prompt when it happens directly
+  // inside a user gesture, and by the time this function's apiPost().then()
+  // callback runs, that gesture has long since ended. So the click handler
+  // opens the blank tab up front and hands it in here; this function either
+  // redirects it to the pre-filled form (completed=true, task really is now
+  // done) or closes it (completed=false, or the save failed) once it knows
+  // which. The form itself still needs a human to review and click Submit
+  // (it has a reCAPTCHA, and CBT has no Formstack API access -- see
+  // meetings.php's relationships_formstack_todo_url() for why this can't be
+  // a silent backend submission).
+  function toggleTaskDone(taskId, completed, formstackTab) {
+    state.taskTogglingId = taskId;
+    render();
+    apiPost('api/meetings.php?action=set_task_done', { task_id: taskId, completed: completed }).then(function (r) {
+      state.taskTogglingId = null;
+      if (r.data && r.data.ok) {
+        (state.meetings || []).forEach(function (m) {
+          m.tasks = m.tasks.map(function (t) { return t.id === r.data.task.id ? r.data.task : t; });
+        });
+        if (formstackTab) {
+          if (r.data.formstack_url) {
+            formstackTab.location.href = r.data.formstack_url;
+          } else {
+            formstackTab.close();
+          }
+        }
+        // Also refresh the per-coordinator view's own data (added
+        // 2026-09-24 per Michael: reps can now check a to-do off directly
+        // from their Open To-Dos list, not just from the customer
+        // dashboard) -- state.repTodosData is a separate piece of state
+        // from state.meetings, so it needs its own reload. Same "reload
+        // after mutate" idiom used elsewhere (checklist recycle/kill).
+        if (state.view === 'rep-todos' && state.repTodosName) {
+          loadRepTodos(state.repTodosName);
+        }
+      } else if (formstackTab) {
+        formstackTab.close();
+      }
+      render();
+    }).catch(function () {
+      state.taskTogglingId = null;
+      if (formstackTab) formstackTab.close();
+      render();
+    });
+  }
+
+  // ---- Global master to-do dashboard (Relationships front page) ---------
+
+  function loadGlobalTodos() {
+    if (state.globalTodosLoading) return;
+    state.globalTodosLoading = true;
+    state.globalTodosError = null;
+    render();
+    apiGet('api/meetings.php?action=global').then(function (r) {
+      state.globalTodosLoading = false;
+      if (r.data && r.data.ok) {
+        state.globalTodos = r.data;
+      } else {
+        state.globalTodosError = (r.data && r.data.error) || 'Could not load the to-do dashboard.';
+      }
+      render();
+    }).catch(function () {
+      state.globalTodosLoading = false;
+      state.globalTodosError = 'Could not load the to-do dashboard \u2014 check your connection.';
+      render();
+    });
+  }
+
+  // ---- Per-coordinator to-do view (state.view === 'rep-todos') ----------
+  // Added 2026-09-16 per Michael: click a name in the Global To-Do
+  // Checklist above to land here -- that person's own to-do list plus a
+  // month calendar of the ones they've scheduled.
+
+  function loadRepTodos(name) {
+    state.repTodosLoading = true;
+    state.repTodosError = null;
+    render();
+    apiGet('api/meetings.php?action=rep_todos&assigned_to_name=' + encodeURIComponent(name)).then(function (r) {
+      state.repTodosLoading = false;
+      if (r.data && r.data.ok) {
+        state.repTodosData = r.data;
+      } else {
+        state.repTodosError = (r.data && r.data.error) || 'Could not load that to-do list.';
+      }
+      render();
+    }).catch(function () {
+      state.repTodosLoading = false;
+      state.repTodosError = 'Could not load that to-do list \u2014 check your connection.';
+      render();
+    });
+  }
+
+  // Moves the rep-todos calendar by whole months, wrapping the year at
+  // both ends (e.g. December 2026 + 1 -> January 2027).
+  function shiftRepTodosMonth(delta) {
+    var month = state.repTodosCalMonth + delta;
+    var year = state.repTodosCalYear;
+    while (month < 1) { month += 12; year -= 1; }
+    while (month > 12) { month -= 12; year += 1; }
+    state.repTodosCalMonth = month;
+    state.repTodosCalYear = year;
+    render();
+  }
+
+  // Zero-padded 2-digit number, for building "YYYY-MM-DD" strings without
+  // relying on String.prototype.padStart (not used anywhere else in this
+  // file).
+  function rtPad2(n) {
+    return n < 10 ? '0' + n : String(n);
+  }
+
+  // Fired once, right after a customer's dashboard loads -- non-blocking
+  // (the rest of the dashboard renders immediately; these two stat cards
+  // show their own loading state) since this means 1-2 extra live
+  // ConnectWise round-trips that shouldn't hold up anything else.
+  function loadActivitySummary(customerId) {
+    state.activitySummaryLoading = true;
+    // Guards against a slow response for a customer the CRC has since
+    // navigated away from landing late and showing stale/wrong data (or
+    // silently hiding the panel) for whoever's open now. customerId can
+    // arrive as a string (a data-id DOM attribute) while
+    // selectedCustomer.customer.id is always a number (from JSON) -- Number()
+    // both sides rather than risk a strict-equality type mismatch that
+    // would make every response look "stale" and never resolve.
+    var requestFor = Number(customerId);
+    render();
+    apiGet('api/activity.php?action=summary&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.activitySummaryLoading = false;
+      if (r.data && r.data.ok) {
+        // { available: true, ... } or { available: false } (mock customer,
+        // nothing to show, not an error) -- either way this is real data.
+        state.activitySummary = r.data;
+      } else {
+        // A real failure (ConnectWise unreachable, a field-mapping bug,
+        // etc.) -- kept distinct from "available: false" with no error so
+        // the panel can show what went wrong instead of just vanishing.
+        state.activitySummary = { available: false, error: (r.data && r.data.error) || 'Could not load ticket/billing activity from ConnectWise.' };
+      }
+      render();
+    }).catch(function () {
+      if (!state.selectedCustomer || state.selectedCustomer.customer.id !== requestFor) return;
+      state.activitySummaryLoading = false;
+      state.activitySummary = { available: false, error: 'Could not load ticket/billing activity — check your connection.' };
+      render();
+    });
+  }
+
+  function loadActivityTickets(customerId) {
+    state.activityView = 'tickets';
+    state.activityTicketsLoading = true;
+    state.activityTickets = null;
+    state.error = null;
+    render();
+    apiGet('api/activity.php?action=tickets&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      state.activityTicketsLoading = false;
+      if (r.data && r.data.ok) {
+        state.activityTickets = r.data.tickets;
+      } else {
+        state.activityTickets = 'error';
+        state.error = (r.data && r.data.error) || 'Could not load tickets from ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      state.activityTicketsLoading = false;
+      state.activityTickets = 'error';
+      state.error = 'Could not load tickets — check your connection.';
+      render();
+    });
+  }
+
+  // periodType is 'month' (periodValue "YYYY-MM") or 'year' (periodValue
+  // "YYYY", added 2026-09-15 for the annual-billing-cadence bars) --
+  // whichever kind of Monthly Billing bar was clicked.
+  function loadActivityInvoices(customerId, periodType, periodValue, label) {
+    state.activityView = 'invoices';
+    state.activityInvoicesPeriod = { type: periodType, value: periodValue, label: label };
+    state.activityInvoicesLoading = true;
+    state.activityInvoices = null;
+    state.error = null;
+    render();
+    var paramName = periodType === 'year' ? 'year' : 'month';
+    apiGet(
+      'api/activity.php?action=invoices&customer_id=' + encodeURIComponent(customerId) + '&' + paramName + '=' + encodeURIComponent(periodValue)
+    ).then(function (r) {
+      state.activityInvoicesLoading = false;
+      if (r.data && r.data.ok) {
+        state.activityInvoices = r.data.invoices;
+      } else {
+        state.activityInvoices = 'error';
+        state.error = (r.data && r.data.error) || 'Could not load invoices from ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      state.activityInvoicesLoading = false;
+      state.activityInvoices = 'error';
+      state.error = 'Could not load invoices — check your connection.';
+      render();
+    });
+  }
+
+  function loadActivityInvoiceDetail(invoiceId, invoiceNumber) {
+    state.activityView = 'invoice-detail';
+    state.activityInvoiceNumber = invoiceNumber;
+    state.activityInvoiceDetailLoading = true;
+    state.activityInvoiceDetail = null;
+    state.error = null;
+    render();
+    apiGet('api/activity.php?action=invoice-detail&invoice_id=' + encodeURIComponent(invoiceId)).then(function (r) {
+      state.activityInvoiceDetailLoading = false;
+      if (r.data && r.data.ok) {
+        state.activityInvoiceDetail = r.data.invoice;
+      } else {
+        state.activityInvoiceDetail = 'error';
+        state.error = (r.data && r.data.error) || 'Could not load that invoice from ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      state.activityInvoiceDetailLoading = false;
+      state.activityInvoiceDetail = 'error';
+      state.error = 'Could not load that invoice — check your connection.';
+      render();
+    });
+  }
+
+  function selectCustomer(id) {
+    state.loadingDetail = true;
+    state.resultsOpen = false;
+    state.activePillarId = null;
+    state.error = null;
+    render();
+    apiGet('api/customers.php?action=detail&id=' + encodeURIComponent(id)).then(function (r) {
+      state.loadingDetail = false;
+      var scrollToKey = null;
+      if (r.data && r.data.ok) {
+        state.selectedCustomer = r.data;
+        resetActivityState();
+        loadActivitySummary(id);
+        resetOutgrowState();
+        loadOutgrow(id);
+        resetContactCardState();
+        loadContactCard(id);
+        resetVendorState();
+        loadVendorNotes(id);
+        resetMeetingsState();
+        loadMeetings(id);
+        resetRiskScansState();
+        loadRiskScans(id);
+        resetDocumentsState();
+        loadDocuments(id);
+        resetSolutionsState();
+        loadSolutions(id);
+        resetAutomateState();
+        loadAutomate(id);
+        if (state.pendingFocus) {
+          var pf = state.pendingFocus;
+          state.pendingFocus = null;
+          state.activePillarId = pf.pillarId;
+          scrollToKey = id + '::' + pf.pillarId + '::' + pf.serviceId;
+          state.openChecklistKey = scrollToKey;
+          loadChecklist(id, pf.pillarId, pf.serviceId);
+        }
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not load that customer.';
+      }
+      render();
+      if (scrollToKey) {
+        var el = document.querySelector('[data-checklist-key="' + scrollToKey + '"]');
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }).catch(function () {
+      state.loadingDetail = false;
+      state.error = 'Could not load that customer — check your connection and try again.';
+      render();
+    });
+  }
+
+  function loadChecklist(customerId, pillarId, serviceId) {
+    var key = customerId + '::' + pillarId + '::' + serviceId;
+    apiGet(
+      'api/checklist.php?action=get&customer_id=' + encodeURIComponent(customerId) +
+      '&pillar_id=' + encodeURIComponent(pillarId) + '&service_id=' + encodeURIComponent(serviceId)
+    ).then(function (r) {
+      state.checklists[key] = (r.data && r.data.ok) ? { steps: r.data.steps, killed: !!r.data.killed } : 'error';
+      render();
+    }).catch(function () {
+      state.checklists[key] = 'error';
+      render();
+    });
+  }
+
+  function setChecklistStep(customerId, pillarId, serviceId, serviceName, stepNumber, completed) {
+    apiPost('api/checklist.php?action=set', {
+      customer_id: customerId, pillar_id: pillarId, service_id: serviceId,
+      service_name: serviceName, step_number: stepNumber, completed: completed
+    }).then(function (r) {
+      if (r.data && r.data.ok) {
+        loadChecklist(customerId, pillarId, serviceId);
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not save that — try again.';
+        render();
+      }
+    }).catch(function () {
+      state.error = 'Could not save that — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Cross-sell outreach scripts, notes, and Recycle/Kill actions -- added
+  // 2026-09-23 per Michael: "I want to specify what happens with each
+  // cross sell opportunity by step... create content dynamically for each
+  // Pillar and step." Per Michael's own confirmed scope choice, only
+  // Voice over IP / Cloud Voice System has a real script right now
+  // (CROSS_SELL_SCRIPTS below) -- the notes/contact-selection/Recycle/Kill
+  // machinery is generic and already live for every cross-sell-tracked
+  // service (see relationships_cross_sell_map() in catalog.php); the
+  // other 5 just show plain checkboxes + notes until their scripts arrive.
+
+  // One entry per scripted cross-sell service, keyed "pillarId::serviceId".
+  // Steps 2/4/6 are always the generic "Phone Call Follow-Up" (no content
+  // needed -- see checklistStepRowHtml(), which just offers a tel: link
+  // once a contact is selected) and step 7 is the Recycle/Kill row (also
+  // generic, rendered once every step is checked off) -- so a script only
+  // ever needs entries for steps 1/3/5, each { subject, servicesIntro,
+  // body }. `body` is an array of lines (joined with \n for the plain-text
+  // mailto: body Michael chose over an in-app HTML send -- see
+  // claude/relationships-connectwise-sync.md for that decision) containing
+  // {{FirstName}}/{{CompanyName}} merge tokens and, where Michael's script
+  // has "Today, CodeBlue currently provides your team with...", the
+  // '{{SERVICES_BLOCK}}' marker -- crossSellEmailContent() below splices
+  // in that customer's actual active services there, or removes the line
+  // entirely when they have none (per Michael: "ignore the line... if
+  // there are no active pillar services in place").
+  //
+  // Steps 1 and 3's Subject lines were left blank when Michael first
+  // pasted this script into chat (only Step 5 had one) -- rather than
+  // guess, the real subjects (and a couple of small wording refinements
+  // Michael had already made) were pulled from his own saved Outlook
+  // drafts, found sitting in this repo's working tree as
+  // "Marketing Emails/*.msg" while this feature was being built:
+  // Step 1 = "Communication Solution with CodeBlue", Step 3 = "Zultys vs.
+  // the others: What changes with CodeBlue" (Step 5's .msg matched the
+  // chat script exactly). One stray citation-link artifact in Step 1's
+  // .msg body ("...in 2023.gitnux <https://gitnux.org/...>") was cleaned
+  // up to a plain sentence, and Step 3's "Hey{{FirstName}}," (missing
+  // "there"/a space) was straightened out to match the greeting style of
+  // the other two steps -- everything else below is verbatim.
+  //
+  // Still worth a look before relying on this: Step 3's original content
+  // included a two-column comparison TABLE (Consideration /
+  // Zultys+CodeBlue / Others) -- a mailto: body is plain text with no
+  // table support, so it's flattened below into one line per
+  // consideration ("Zultys + CodeBlue: ... / Others: ..."), preserving
+  // every word of the original cell text.
+  var CROSS_SELL_SCRIPTS = {
+    'voip::cloud-voice': {
+      1: {
+        subject: 'Communication Solution with CodeBlue',
+        servicesIntro: 'Today, CodeBlue currently provides your team with:',
+        body: [
+          'Hey there {{FirstName}},',
+          'We appreciate the opportunity to support you and your team here at CodeBlue.',
+          '{{SERVICES_BLOCK}}',
+          'As your business evolves, we want to make sure every part of your technology—including the way customers and employees communicate—keeps pace.',
+          '',
+          'A better way to stay connected',
+          'CodeBlue’s Zultys Voice over IP (VoIP) solution brings business calling, messaging, collaboration, and mobility into one secure, scalable platform.',
+          '',
+          '• Secure, reliable communications designed to support your business and customer experience',
+          '• Advanced call routing, mobile access, chat, texting, voicemail tools, and collaboration features',
+          '• Guidance from CodeBlue’s own voice and network engineering professionals, with responsive support when you need it',
+          '',
+          'Why businesses are moving to VoIP',
+          '• Businesses using VoIP commonly report 50–75% lower telephony costs compared with traditional public switched telephone network (PSTN) service',
+          '• 65% of enterprises worldwide used VoIP as their primary telephony system in 2023.',
+          '• VoIP allows calls to move between desktop phones, computers, and mobile devices—so employees can remain available without being tied to a single physical office',
+          '',
+          'Why bundle voice with CodeBlue?',
+          '• Simpler support experience: One knowledgeable partner that already understands your business and technology environment',
+          '• One-stop IT and voice partner: Coordinate your network, cybersecurity, managed IT, and communications through CodeBlue rather than multiple vendors',
+          '• End-to-end communications quality control: Our voice and networking engineers can help ensure the infrastructure behind your calls is designed for clear, dependable communication',
+          '',
+          'Every organization’s needs are different—we would welcome the opportunity to meet with you, and discuss a Zultys solution designed around your specific requirements.',
+          'Thank you again for your partnership and for trusting CodeBlue Technology. We are always here to help you solve your next technical challenge.',
+          '',
+          'Best regards,'
+        ]
+      },
+      3: {
+        subject: 'Zultys vs. the others: What changes with CodeBlue',
+        servicesIntro: 'Today, CodeBlue supports your organization with:',
+        body: [
+          'Hey there {{FirstName}},',
+          'We value the opportunity to support {{CompanyName}} and help keep your technology dependable, secure, and aligned with your business goals.',
+          '{{SERVICES_BLOCK}}',
+          'Because we already understand your environment, we wanted to introduce a communications option that can bring your phone system, IT infrastructure, and support experience closer together: Zultys Voice over IP, delivered and supported by CodeBlue.',
+          '',
+          'More than a hosted phone platform',
+          'There are over 2600 cloud-phone providers. However, a phone system is only as good as the support, network readiness, deployment planning, and long-term accountability behind it.',
+          '',
+          'With Zultys and CodeBlue, you receive a unified communications platform along with a local technology partner that can support the voice system and the IT environment it relies on. Zultys combines calling, messaging, video, mobility, and collaboration capabilities in one platform, while CodeBlue’s voice and network engineers help guide design, deployment, troubleshooting, and ongoing support.',
+          '',
+          'Side-by-side at a glance',
+          '• Support experience — Zultys + CodeBlue: Direct relationship with CodeBlue engineers and support staff who can understand both your voice and IT environment. Others: Centralized cloud-provider support; support availability may vary by plan and service.',
+          '• IT and voice accountability — Zultys + CodeBlue: One partner for communications, network readiness, managed IT, cybersecurity, and related technology services. Others: Voice platform provider; internal IT or another partner may manage network and endpoint issues.',
+          '• Deployment flexibility — Zultys + CodeBlue: Cloud, on-premise, and hybrid configurations can be evaluated around operational, continuity, and business requirements. Others: Primarily cloud-delivered unified communications.',
+          '• Hardware support approach — Zultys + CodeBlue: CodeBlue can help coordinate phones, configuration, deployment, and support as part of the broader solution. Others: Hardware terms, warranty coverage, and replacement processes should be reviewed in the applicable order and service agreement.',
+          '• Contract discussion — Zultys + CodeBlue: CodeBlue can structure an engagement around your requirements; ask us about month-to-month service options and equipment terms. Others: Plan, payment, and commitment options vary by offer and agreement.',
+          '• Quality control — Zultys + CodeBlue: One team can assess voice, internet connectivity, LAN/Wi-Fi, security, and user experience together. Others: Responsibility may span phone provider, internet provider, network partner, and internal IT.',
+          '',
+          'The CodeBlue difference',
+          '• Simpler support: Instead of determining whether an issue belongs to the phone vendor, internet provider, network provider, or IT company, start with CodeBlue. We can help coordinate the right response and support the full technology picture.',
+          '• One trusted technology partner: Your phones should not operate separately from the network, security, devices, and IT services your business relies on each day.',
+          '• End-to-end communication quality: Voice quality depends on more than the handset. CodeBlue can evaluate the systems behind the call—including network performance, connectivity, configuration, and business-continuity needs.',
+          '• Flexible commercial conversation: We will clearly review service, hardware, warranty, support, and contract terms before recommending a path. This matters because published equipment and subscription terms can differ significantly by provider, service type, and deployment model. For example, Zultys’ Hardware-as-a-Service offering is advertised with predictable monthly pricing but may require a three- or five-year agreement for qualifying deployments, while its equipment-rental program lists specific minimum commitments and early-termination terms.',
+          '',
+          'Let’s compare your actual needs',
+          'A meaningful comparison should go beyond a per-user monthly price. We would love the opportunity to review your current phone environment, service agreement, renewal date, support concerns, office locations, remote-work needs, and hardware requirements.',
+          '',
+          'From there, CodeBlue can help determine whether Zultys is the right fit—and provide a clear comparison of costs, features, support responsibilities, warranty coverage, and contract options based on your organization’s specific needs.',
+          'Thank you again for your partnership and your openness to letting CodeBlue help with your next technical challenge.',
+          '',
+          'Best regards,'
+        ]
+      },
+      5: {
+        subject: 'Is CodeBlue’s voice solution a fit for your business?',
+        body: [
+          'Hey there {{FirstName}},',
+          'Thank you for taking the time to review the information we recently shared about CodeBlue Technology’s Zultys Voice over IP solution, including how it compares with other business communications platforms.',
+          'Our goal is to understand how {{CompanyName}} handled customer phone calls and communications today, where you want to go, and whether CodeBlue can provide meaningful value through a more unified voice and IT support experience.',
+          '',
+          'We would appreciate the opportunity to schedule a 30-minute conversation to discuss:',
+          '• Your current communications environment, provider, and support experience',
+          '• Business goals around customer service, mobility, multiple locations, remote work, growth, and continuity',
+          '• Any communication challenges or upcoming contract, equipment, or renewal considerations',
+          '• Whether Zultys and CodeBlue’s engineering-led support model align with your needs',
+          '',
+          'At the end of the conversation, we can determine together whether there is a practical fit and value in moving forward. If there is not, you will still have a clearer view of the options available for your business communications strategy.',
+          '',
+          'Would you be available for a 30-minute meeting next week?',
+          'Thank you again for your continued partnership with CodeBlue Technology. We appreciate the opportunity to support your business and remain ready to help with any technical challenge your team faces.',
+          '',
+          'Best regards,'
+        ]
+      }
+    }
+  };
+
+  // Every currently-active service's name across every pillar for the
+  // selected customer -- the data behind {{SERVICES_BLOCK}} above. Same
+  // "active" flag customers.php?action=detail already returns (used
+  // identically by printSummaryHtml()'s "Services Currently In Place"
+  // section) -- not scoped to any one pillar, since Michael's script means
+  // this literally ("the active customer pillar's we currently provide"),
+  // and the service being marketed is by definition not active yet anyway.
+  function crossSellActiveServiceNames(detail) {
+    var names = [];
+    (detail.pillars || []).forEach(function (pillar) {
+      (pillar.services || []).forEach(function (svc) {
+        if (svc.active) names.push(svc.name);
+      });
+    });
+    return names;
+  }
+
+  // Fills in a scripted email for the given pillar/service/step + selected
+  // contact. Returns null when this pillar/service has no script yet (the
+  // 5 cross-sell services other than Cloud Voice System, until Michael
+  // supplies their content) or the step isn't one of the scripted ones
+  // (2/4/6 are plain phone-call steps, 7 is the closeout row).
+  function crossSellEmailContent(pillarId, serviceId, stepNumber, contact) {
+    var script = CROSS_SELL_SCRIPTS[pillarId + '::' + serviceId];
+    var tpl = script && script[stepNumber];
+    if (!tpl || !state.selectedCustomer) return null;
+
+    var companyName = state.selectedCustomer.customer.name;
+    var firstName = (contact.name || '').trim().split(/\s+/)[0] || 'there';
+    var activeServices = crossSellActiveServiceNames(state.selectedCustomer);
+    var servicesBlockLines = activeServices.length
+      ? [tpl.servicesIntro].concat(activeServices.map(function (s) { return '• ' + s; })).concat([''])
+      : [];
+
+    var lines = [];
+    tpl.body.forEach(function (line) {
+      if (line === '{{SERVICES_BLOCK}}') {
+        lines = lines.concat(servicesBlockLines);
+      } else {
+        lines.push(line);
+      }
+    });
+
+    var mergeFields = function (s) {
+      return s.split('{{FirstName}}').join(firstName).split('{{CompanyName}}').join(companyName);
+    };
+
+    return { subject: mergeFields(tpl.subject), body: mergeFields(lines.join('\n')) };
+  }
+
+  // Raw mailto: URL for *programmatic* navigation (window.location.href =
+  // ...) from the step icon buttons below -- distinct from an HTML
+  // href="..." attribute, which needs escapeHtml() so the browser's HTML
+  // parser can un-escape it back into a real URL. Assigning .href via JS
+  // never goes through that parser, so escaping here would corrupt the
+  // URL instead (a literal "&amp;" splitting subject from body). Added
+  // 2026-09-30 alongside the always-visible step icons below.
+  function crossSellMailtoUrl(email, subject, body) {
+    return 'mailto:' + email + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  }
+
+  // True when CROSS_SELL_SCRIPTS has real content for this pillar/service/
+  // step -- decides whether a step's Email icon is worth showing at all,
+  // independent of whether a contact happens to be selected yet.
+  function crossSellHasScript(pillarId, serviceId, stepNumber) {
+    var script = CROSS_SELL_SCRIPTS[pillarId + '::' + serviceId];
+    return !!(script && script[stepNumber]);
+  }
+
+  // Small inline icons for a step row's Email/Call buttons (feather-style,
+  // matching the dropdown chevron already used elsewhere in this file).
+  var CHECKLIST_ICON_EMAIL = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"></rect><path d="m22 7-10 7L2 7"></path></svg>';
+  var CHECKLIST_ICON_PHONE = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>';
+
+  // Fires the Email or Call action for a checklist step against a known
+  // contact -- called directly from the step icon's click when a contact
+  // is already selected, and again from checklist-contact-select below
+  // when the icon was clicked first and a contact still needed picking.
+  function fireChecklistContactAction(type, pillarId, serviceId, stepNumber, contact) {
+    if (!contact) return;
+    if (type === 'call') {
+      if (!contact.phone) return;
+      window.location.href = 'tel:' + contact.phone;
+      return;
+    }
+    if (!contact.email) return;
+    var email = crossSellEmailContent(pillarId, serviceId, stepNumber, contact);
+    if (!email) return;
+    window.location.href = crossSellMailtoUrl(contact.email, email.subject, email.body);
+  }
+
+  function loadChecklistNotes(customerId, pillarId, serviceId) {
+    var key = customerId + '::' + pillarId + '::' + serviceId;
+    apiGet(
+      'api/checklist.php?action=notes_get&customer_id=' + encodeURIComponent(customerId) +
+      '&pillar_id=' + encodeURIComponent(pillarId) + '&service_id=' + encodeURIComponent(serviceId)
+    ).then(function (r) {
+      state.checklistNotes[key] = (r.data && r.data.ok) ? r.data.notes : 'error';
+      render();
+    }).catch(function () {
+      state.checklistNotes[key] = 'error';
+      render();
+    });
+  }
+
+  function addChecklistNote(customerId, pillarId, serviceId, stepNumber) {
+    var text = (state.checklistNoteDraftText || '').trim();
+    if (!text) return;
+    var key = customerId + '::' + pillarId + '::' + serviceId;
+    state.checklistNoteSaving = true;
+    render();
+    apiPost('api/checklist.php?action=notes_add', {
+      customer_id: customerId, pillar_id: pillarId, service_id: serviceId,
+      step_number: stepNumber, note_text: text
+    }).then(function (r) {
+      state.checklistNoteSaving = false;
+      if (r.data && r.data.ok) {
+        state.checklistNoteDraftOpenKey = null;
+        state.checklistNoteDraftText = '';
+        loadChecklistNotes(customerId, pillarId, serviceId); // re-render happens inside
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not save that note — try again.';
+        render();
+      }
+    }).catch(function () {
+      state.checklistNoteSaving = false;
+      state.error = 'Could not save that note — check your connection and try again.';
+      render();
+    });
+  }
+
+  function recycleChecklist(customerId, pillarId, serviceId) {
+    var key = customerId + '::' + pillarId + '::' + serviceId;
+    state.checklistCloseoutSaving = key;
+    render();
+    apiPost('api/checklist.php?action=recycle', { customer_id: customerId, pillar_id: pillarId, service_id: serviceId }).then(function (r) {
+      state.checklistCloseoutSaving = null;
+      if (r.data && r.data.ok) {
+        loadChecklist(customerId, pillarId, serviceId);
+        if (state.openChecklistNotesKey === key) loadChecklistNotes(customerId, pillarId, serviceId);
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not recycle that opportunity — try again.';
+        render();
+      }
+    }).catch(function () {
+      state.checklistCloseoutSaving = null;
+      state.error = 'Could not recycle that opportunity — check your connection and try again.';
+      render();
+    });
+  }
+
+  function setChecklistKilled(customerId, pillarId, serviceId, killed) {
+    var key = customerId + '::' + pillarId + '::' + serviceId;
+    state.checklistCloseoutSaving = key;
+    render();
+    apiPost('api/checklist.php?action=kill', { customer_id: customerId, pillar_id: pillarId, service_id: serviceId, killed: killed }).then(function (r) {
+      state.checklistCloseoutSaving = null;
+      if (r.data && r.data.ok) {
+        loadChecklist(customerId, pillarId, serviceId);
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not save that — try again.';
+        render();
+      }
+    }).catch(function () {
+      state.checklistCloseoutSaving = null;
+      state.error = 'Could not save that — check your connection and try again.';
+      render();
+    });
+  }
+
+  function loadReport() {
+    state.reportLoading = true;
+    state.report = null;
+    state.error = null;
+    render();
+    apiGet('api/checklist.php?action=summary').then(function (r) {
+      state.reportLoading = false;
+      if (r.data && r.data.ok) {
+        state.report = r.data.rows;
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not load the report.';
+      }
+      render();
+    }).catch(function () {
+      state.reportLoading = false;
+      state.error = 'Could not load the report — check your connection and try again.';
+      render();
+    });
+  }
+
+  function loadQueue(pillarId, serviceId, step, pillarName, serviceName) {
+    state.queueLoading = true;
+    state.queue = null;
+    state.error = null;
+    state.queueParams = { pillarId: pillarId, serviceId: serviceId, step: step, pillarName: pillarName, serviceName: serviceName };
+    render();
+    apiGet(
+      'api/checklist.php?action=queue&pillar_id=' + encodeURIComponent(pillarId) +
+      '&service_id=' + encodeURIComponent(serviceId) + '&step=' + encodeURIComponent(step)
+    ).then(function (r) {
+      state.queueLoading = false;
+      if (r.data && r.data.ok) {
+        state.queue = r.data.customers;
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not load that list.';
+      }
+      render();
+    }).catch(function () {
+      state.queueLoading = false;
+      state.error = 'Could not load that list — check your connection and try again.';
+      render();
+    });
+  }
+
+  function loadPeopleFirstSummary() {
+    state.pfSummaryLoading = true;
+    apiGet('api/peoplefirst.php?action=summary').then(function (r) {
+      state.pfSummaryLoading = false;
+      if (r.data && r.data.ok) {
+        state.pfSummary = r.data;
+      }
+      render();
+    }).catch(function () {
+      state.pfSummaryLoading = false;
+      render();
+    });
+  }
+
+  function loadPeopleFirstQueue(type) {
+    state.pfQueueLoading = true;
+    state.pfQueue = null;
+    state.pfQueueType = type;
+    state.error = null;
+    render();
+    apiGet('api/peoplefirst.php?action=queue&type=' + encodeURIComponent(type)).then(function (r) {
+      state.pfQueueLoading = false;
+      if (r.data && r.data.ok) {
+        state.pfQueue = r.data.customers;
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not load that list.';
+      }
+      render();
+    }).catch(function () {
+      state.pfQueueLoading = false;
+      state.error = 'Could not load that list — check your connection and try again.';
+      render();
+    });
+  }
+
+  function logPeopleFirst(customerId, type) {
+    var key = customerId + '::' + type;
+    state.pfLogging = key;
+    render();
+    apiPost('api/peoplefirst.php?action=log', { customer_id: customerId, type: type }).then(function (r) {
+      state.pfLogging = null;
+      if (r.data && r.data.ok && state.selectedCustomer && state.selectedCustomer.customer.id === r.data.customer.id) {
+        state.selectedCustomer.customer = r.data.customer;
+      } else if (!r.data || !r.data.ok) {
+        state.error = (r.data && r.data.error) || 'Could not log that — try again.';
+      }
+      render();
+    }).catch(function () {
+      state.pfLogging = null;
+      state.error = 'Could not log that — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Company reconciliation numbers (api/sync.php?action=company-counts):
+  // what the Hub currently holds as Active / Prospect / Residential /
+  // excluded, plus a per-ConnectWise-status breakdown, for checking against
+  // ConnectWise's own company counts.
+  function loadCompanyCounts() {
+    state.companyCountsLoading = true;
+    apiGet('api/sync.php?action=company-counts').then(function (r) {
+      state.companyCountsLoading = false;
+      if (r.data && r.data.ok) {
+        state.companyCounts = r.data;
+      }
+      render();
+    }).catch(function () {
+      state.companyCountsLoading = false;
+      render();
+    });
+  }
+
+  function companyCountsHtml() {
+    var cc = state.companyCounts;
+    var html = '<div class="company-counts">' +
+      '<div class="company-counts-title">Company Counts' +
+      '<button class="sync-stage-btn" type="button" data-action="refresh-company-counts"' + (state.companyCountsLoading ? ' disabled' : '') + '>' + (state.companyCountsLoading ? 'Loading…' : 'Refresh') + '</button></div>';
+    if (!cc) {
+      return html + '<div class="company-counts-note">Loading…</div></div>';
+    }
+    var b = cc.buckets || {};
+    html += '<div class="company-counts-grid">' +
+      '<div><span>' + (b.active || 0) + '</span>Active</div>' +
+      '<div><span>' + (b.prospect || 0) + '</span>Prospects</div>' +
+      '<div><span>' + (b.residential || 0) + '</span>Residential</div>' +
+      '<div class="muted"><span>' + (b.excluded || 0) + '</span>Hidden</div>' +
+    '</div>';
+    html += '<div class="company-counts-note">Active = status Active, Delinquent or Special Info (not Vendor). Residential = status Residential. Prospects = every other company. Hidden = demo rows and companies no longer in ConnectWise. Last company sync: ' +
+      (cc.last_company_sync ? escapeHtml(fmtTimestamp(cc.last_company_sync)) : 'never') +
+      (cc.companies_seen_last_sync != null ? ' (' + cc.companies_seen_last_sync + ' ConnectWise companies seen)' : '') + '.</div>';
+    if (b.unclassified) {
+      html += '<div class="company-counts-note">' + b.unclassified + ' companies are not classified yet — run the Company Status sync.</div>';
+    }
+    if (cc.active_without_contacts) {
+      html += '<div class="company-counts-note">' + cc.active_without_contacts + ' Active companies have no synced contacts (they still count).</div>';
+    }
+    html += '<table class="company-counts-table"><thead><tr><th>Hub list</th><th>ConnectWise status</th><th>Companies</th></tr></thead><tbody>';
+    (cc.by_status || []).forEach(function (row) {
+      html += '<tr><td>' + escapeHtml(row.bucket === 'excluded' ? 'hidden' : row.bucket) + '</td><td>' + escapeHtml(row.status) + '</td><td>' + row.count + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    return html;
+  }
+
+  function loadSyncStatus() {
+    apiGet('api/sync.php?action=status').then(function (r) {
+      if (r.data && r.data.ok) {
+        state.syncTotals = r.data.totals;
+        state.syncStartedAt = r.data.started_at;
+      }
+      render();
+    }).catch(function () { /* silent -- the view still offers "Run Sync Now" */ });
+    apiGet('api/sync.php?action=billing-status').then(function (r) {
+      if (r.data && r.data.ok) {
+        state.billingSyncTotals = r.data.totals;
+        state.billingSyncStartedAt = r.data.started_at;
+      }
+      render();
+    }).catch(function () { /* silent, same as above */ });
+    apiGet('api/sync.php?action=prospect-status').then(function (r) {
+      if (r.data && r.data.ok) {
+        state.prospectSyncTotals = r.data.totals;
+        state.prospectSyncStartedAt = r.data.started_at;
+      }
+      render();
+    }).catch(function () { /* silent, same as above */ });
+    apiGet('api/sync.php?action=ticket-history-status').then(function (r) {
+      if (r.data && r.data.ok) {
+        state.ticketHistorySyncTotals = r.data.totals;
+        state.ticketHistorySyncStartedAt = r.data.started_at;
+      }
+      render();
+    }).catch(function () { /* silent, same as above */ });
+    apiGet('api/sync.php?action=contacts-status').then(function (r) {
+      if (r.data && r.data.ok) {
+        state.contactsSyncTotals = r.data.totals;
+        state.contactsSyncStartedAt = r.data.started_at;
+      }
+      render();
+    }).catch(function () { /* silent, same as above */ });
+    apiGet('api/sync.php?action=territory-status').then(function (r) {
+      if (r.data && r.data.ok) {
+        state.territorySyncTotals = r.data.totals;
+        state.territorySyncStartedAt = r.data.started_at;
+      }
+      render();
+    }).catch(function () { /* silent, same as above */ });
+  }
+
+  // Kicks off a full ConnectWise sync: api/sync.php?action=start builds the
+  // queue of agreements to pull (cheap -- a handful of list calls), then
+  // stepSyncLoop() drains it in bounded batches, one HTTP request per
+  // batch, so no single request risks Bluehost's execution-time limit even
+  // though a full sync (~440 agreements) can take a few minutes overall.
+  // Once the agreement queue is fully drained, runBillingSync() below picks
+  // up automatically -- "Run Sync Now" does the same two-part sync the
+  // nightly cron does, in one click.
+  function runFullSync(chained) {
+    chained = chained !== false;
+    state.syncRunning = true;
+    state.syncDone = false;
+    state.syncErrors = [];
+    state.error = null;
+    render();
+    apiPost('api/sync.php?action=start', {}).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.syncRunning = false;
+        state.error = (r.data && r.data.error) || 'Could not start the sync.';
+        render();
+        return;
+      }
+      state.syncTotal = r.data.total;
+      state.syncProcessed = 0;
+      render();
+      stepSyncLoop(chained);
+    }).catch(function () {
+      state.syncRunning = false;
+      state.error = 'Could not start the sync — check your connection and try again.';
+      render();
+    });
+  }
+
+  function stepSyncLoop(chained) {
+    apiPost('api/sync.php?action=step', { batch_size: 20 }).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.syncRunning = false;
+        state.error = (r.data && r.data.error) || 'Sync failed partway through.';
+        render();
+        return;
+      }
+      state.syncTotals = r.data.totals;
+      state.syncProcessed = r.data.totals.done + r.data.totals.error;
+      if (r.data.errors && r.data.errors.length) {
+        state.syncErrors = state.syncErrors.concat(r.data.errors);
+      }
+      if (r.data.done) {
+        state.syncRunning = false;
+        state.syncDone = true;
+        render();
+        if (chained) {
+          runBillingSync();
+        }
+      } else {
+        render();
+        stepSyncLoop(chained);
+      }
+    }).catch(function () {
+      state.syncRunning = false;
+      state.error = 'Sync failed partway through — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Same start()/step() shape as the agreement sync above, run right after
+  // it as part of the same "Run Sync Now" click -- a failure here is shown
+  // (sync-errors-title/list, same pattern) but doesn't retroactively
+  // un-succeed the agreement sync that already completed; they're
+  // independent queues (see api/sync.php's file header).
+  function runBillingSync(chained) {
+    chained = chained !== false;
+    state.billingSyncRunning = true;
+    state.billingSyncDone = false;
+    state.billingSyncErrors = [];
+    render();
+    apiPost('api/sync.php?action=billing-start', {}).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.billingSyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Agreements synced, but could not start the billing sync.';
+        render();
+        return;
+      }
+      state.billingSyncTotal = r.data.total;
+      state.billingSyncProcessed = 0;
+      render();
+      billingStepSyncLoop(chained);
+    }).catch(function () {
+      state.billingSyncRunning = false;
+      state.error = 'Agreements synced, but the billing sync could not start — check your connection and try again.';
+      render();
+    });
+  }
+
+  function billingStepSyncLoop(chained) {
+    apiPost('api/sync.php?action=billing-step', { batch_size: 20 }).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.billingSyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Billing sync failed partway through.';
+        render();
+        return;
+      }
+      state.billingSyncTotals = r.data.totals;
+      state.billingSyncProcessed = r.data.totals.done + r.data.totals.error;
+      if (r.data.errors && r.data.errors.length) {
+        state.billingSyncErrors = state.billingSyncErrors.concat(r.data.errors);
+      }
+      if (r.data.done) {
+        state.billingSyncRunning = false;
+        state.billingSyncDone = true;
+        render();
+        if (chained) {
+          runProspectSync();
+        }
+      } else {
+        render();
+        billingStepSyncLoop(chained);
+      }
+    }).catch(function () {
+      state.billingSyncRunning = false;
+      state.error = 'Billing sync failed partway through — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Same start()/step() shape as the two syncs above, run right after
+  // billing as part of the same "Run Sync Now" click -- see api/sync.php's
+  // file header. Independent queue: a failure here doesn't retroactively
+  // un-succeed the agreement or billing sync that already completed.
+  function runProspectSync(chained) {
+    chained = chained !== false;
+    state.prospectSyncRunning = true;
+    state.prospectSyncDone = false;
+    state.prospectSyncErrors = [];
+    render();
+    apiPost('api/sync.php?action=prospect-start', {}).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.prospectSyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Agreements and billing synced, but could not start the prospect sync.';
+        render();
+        return;
+      }
+      state.prospectSyncTotal = r.data.total;
+      state.prospectSyncProcessed = 0;
+      render();
+      prospectStepSyncLoop(chained);
+    }).catch(function () {
+      state.prospectSyncRunning = false;
+      state.error = 'Agreements and billing synced, but the prospect sync could not start — check your connection and try again.';
+      render();
+    });
+  }
+
+  function prospectStepSyncLoop(chained) {
+    apiPost('api/sync.php?action=prospect-step', { batch_size: 50 }).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.prospectSyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Prospect sync failed partway through.';
+        render();
+        return;
+      }
+      state.prospectSyncTotals = r.data.totals;
+      state.prospectSyncProcessed = r.data.totals.done + r.data.totals.error;
+      if (r.data.errors && r.data.errors.length) {
+        state.prospectSyncErrors = state.prospectSyncErrors.concat(r.data.errors);
+      }
+      if (r.data.done) {
+        state.prospectSyncRunning = false;
+        state.prospectSyncDone = true;
+        loadCompanyCounts();
+        render();
+        if (chained) {
+          runTicketHistorySync();
+        }
+      } else {
+        render();
+        prospectStepSyncLoop(chained);
+      }
+    }).catch(function () {
+      state.prospectSyncRunning = false;
+      state.error = 'Prospect sync failed partway through — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Same start()/step() shape as the three syncs above, run right after
+  // prospects as part of the same "Run Sync Now" click -- see
+  // api/sync.php's file header. Independent queue: a failure here doesn't
+  // retroactively un-succeed any sync that already completed.
+  function runTicketHistorySync(chained) {
+    chained = chained !== false;
+    state.ticketHistorySyncRunning = true;
+    state.ticketHistorySyncDone = false;
+    state.ticketHistorySyncErrors = [];
+    render();
+    apiPost('api/sync.php?action=ticket-history-start', {}).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.ticketHistorySyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Agreements, billing, and prospects synced, but could not start the ticket history sync.';
+        render();
+        return;
+      }
+      state.ticketHistorySyncTotal = r.data.total;
+      state.ticketHistorySyncProcessed = 0;
+      render();
+      ticketHistoryStepSyncLoop(chained);
+    }).catch(function () {
+      state.ticketHistorySyncRunning = false;
+      state.error = 'The ticket history sync could not start — check your connection and try again.';
+      render();
+    });
+  }
+
+  function ticketHistoryStepSyncLoop(chained) {
+    apiPost('api/sync.php?action=ticket-history-step', { batch_size: 50 }).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.ticketHistorySyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Ticket history sync failed partway through.';
+        render();
+        return;
+      }
+      state.ticketHistorySyncTotals = r.data.totals;
+      state.ticketHistorySyncProcessed = r.data.totals.done + r.data.totals.error;
+      if (r.data.errors && r.data.errors.length) {
+        state.ticketHistorySyncErrors = state.ticketHistorySyncErrors.concat(r.data.errors);
+      }
+      if (r.data.done) {
+        state.ticketHistorySyncRunning = false;
+        state.ticketHistorySyncDone = true;
+        render();
+        if (chained) {
+          runContactsSync();
+        }
+      } else {
+        render();
+        ticketHistoryStepSyncLoop(chained);
+      }
+    }).catch(function () {
+      state.ticketHistorySyncRunning = false;
+      state.error = 'Ticket history sync failed partway through — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Same shape again, run last as part of "Run Sync Now" -- once this
+  // finishes, the front-page overview is reloaded so its gauges/list
+  // reflect the sync that just ran (see loadOverview()).
+  function runContactsSync(chained) {
+    chained = chained !== false;
+    state.contactsSyncRunning = true;
+    state.contactsSyncDone = false;
+    state.contactsSyncErrors = [];
+    render();
+    apiPost('api/sync.php?action=contacts-start', {}).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.contactsSyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Everything else synced, but could not start the contacts sync.';
+        render();
+        return;
+      }
+      state.contactsSyncTotal = r.data.total;
+      state.contactsSyncProcessed = 0;
+      render();
+      contactsStepSyncLoop(chained);
+    }).catch(function () {
+      state.contactsSyncRunning = false;
+      state.error = 'The contacts sync could not start — check your connection and try again.';
+      render();
+    });
+  }
+
+  function contactsStepSyncLoop(chained) {
+    apiPost('api/sync.php?action=contacts-step', { batch_size: 50 }).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.contactsSyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Contacts sync failed partway through.';
+        render();
+        return;
+      }
+      state.contactsSyncTotals = r.data.totals;
+      state.contactsSyncProcessed = r.data.totals.done + r.data.totals.error;
+      if (r.data.errors && r.data.errors.length) {
+        state.contactsSyncErrors = state.contactsSyncErrors.concat(r.data.errors);
+      }
+      if (r.data.done) {
+        state.contactsSyncRunning = false;
+        state.contactsSyncDone = true;
+        render();
+        if (chained) {
+          runTerritorySync();
+        }
+      } else {
+        render();
+        contactsStepSyncLoop(chained);
+      }
+    }).catch(function () {
+      state.contactsSyncRunning = false;
+      state.error = 'Contacts sync failed partway through — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Same shape again, run last as part of "Run Sync Now" -- once this
+  // finishes, the front-page overview is reloaded so its gauges/list
+  // reflect the sync that just ran (see loadOverview()), same as contacts
+  // used to do directly before this stage was added.
+  function runTerritorySync(chained) {
+    chained = chained !== false;
+    state.territorySyncRunning = true;
+    state.territorySyncDone = false;
+    state.territorySyncErrors = [];
+    render();
+    apiPost('api/sync.php?action=territory-start', {}).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.territorySyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Everything else synced, but could not start the territory sync.';
+        render();
+        return;
+      }
+      state.territorySyncTotal = r.data.total;
+      state.territorySyncProcessed = 0;
+      render();
+      territoryStepSyncLoop(chained);
+    }).catch(function () {
+      state.territorySyncRunning = false;
+      state.error = 'The territory sync could not start — check your connection and try again.';
+      render();
+    });
+  }
+
+  function territoryStepSyncLoop(chained) {
+    apiPost('api/sync.php?action=territory-step', { batch_size: 50 }).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.territorySyncRunning = false;
+        state.error = (r.data && r.data.error) || 'Territory sync failed partway through.';
+        render();
+        return;
+      }
+      state.territorySyncTotals = r.data.totals;
+      state.territorySyncProcessed = r.data.totals.done + r.data.totals.error;
+      if (r.data.errors && r.data.errors.length) {
+        state.territorySyncErrors = state.territorySyncErrors.concat(r.data.errors);
+      }
+      if (r.data.done) {
+        state.territorySyncRunning = false;
+        state.territorySyncDone = true;
+        render();
+        loadOverview();
+      } else {
+        render();
+        territoryStepSyncLoop(chained);
+      }
+    }).catch(function () {
+      state.territorySyncRunning = false;
+      state.error = 'Territory sync failed partway through — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Per-stage lookup used by the Sync view's new "Run Only" and
+  // "Retry Failed" controls -- added 2026-09-26 per Michael's confirmed
+  // "Full plan" for the sync-reliability fix (Contacts sync was failing
+  // ~70% of its calls at the volume this integration now runs at).
+  // `run(false)` starts that one stage without chaining into the next --
+  // exactly what runFullSync()/runBillingSync()/etc already support via
+  // the new `chained` param above, just called directly instead of via
+  // the previous stage's completion. `step(false)` resumes that stage's
+  // existing queue (its already-set-up start()'s queue) without rebuilding
+  // it -- used by retrySyncFailed() below, which only re-queues the rows
+  // that failed and must NOT call action=start again (that would delete
+  // and rebuild the whole queue, re-fetching and re-classifying every
+  // company/customer from scratch, defeating the point of a cheap retry).
+  var SYNC_STAGE_MAP = {
+    agreements: {
+      run: function (chained) { runFullSync(chained); },
+      step: function (chained) { stepSyncLoop(chained); },
+      retryAction: 'retry-failed',
+      runningKey: 'syncRunning', doneKey: 'syncDone', errorsKey: 'syncErrors'
+    },
+    billing: {
+      run: function (chained) { runBillingSync(chained); },
+      step: function (chained) { billingStepSyncLoop(chained); },
+      retryAction: 'billing-retry-failed',
+      runningKey: 'billingSyncRunning', doneKey: 'billingSyncDone', errorsKey: 'billingSyncErrors'
+    },
+    prospects: {
+      run: function (chained) { runProspectSync(chained); },
+      step: function (chained) { prospectStepSyncLoop(chained); },
+      retryAction: 'prospect-retry-failed',
+      runningKey: 'prospectSyncRunning', doneKey: 'prospectSyncDone', errorsKey: 'prospectSyncErrors'
+    },
+    'ticket-history': {
+      run: function (chained) { runTicketHistorySync(chained); },
+      step: function (chained) { ticketHistoryStepSyncLoop(chained); },
+      retryAction: 'ticket-history-retry-failed',
+      runningKey: 'ticketHistorySyncRunning', doneKey: 'ticketHistorySyncDone', errorsKey: 'ticketHistorySyncErrors'
+    },
+    contacts: {
+      run: function (chained) { runContactsSync(chained); },
+      step: function (chained) { contactsStepSyncLoop(chained); },
+      retryAction: 'contacts-retry-failed',
+      runningKey: 'contactsSyncRunning', doneKey: 'contactsSyncDone', errorsKey: 'contactsSyncErrors'
+    },
+    territory: {
+      run: function (chained) { runTerritorySync(chained); },
+      step: function (chained) { territoryStepSyncLoop(chained); },
+      retryAction: 'territory-retry-failed',
+      runningKey: 'territorySyncRunning', doneKey: 'territorySyncDone', errorsKey: 'territorySyncErrors'
+    }
+  };
+
+  // Runs exactly one sync stage, standalone -- does not cascade into the
+  // next stage even once this one finishes.
+  function runStageOnly(stage) {
+    var cfg = SYNC_STAGE_MAP[stage];
+    if (cfg) {
+      cfg.run(false);
+    }
+  }
+
+  // Re-queues just this stage's failed rows (api/sync.php's *-retry-failed
+  // action -- cheap, doesn't touch anything that already succeeded) and,
+  // once that's confirmed, resumes that stage's step loop directly so the
+  // re-queued rows actually get processed now rather than just sitting
+  // pending again. Standalone (chained=false), same as "Run Only" -- a
+  // retry shouldn't cascade into the next stage either.
+  function retrySyncFailed(stage) {
+    var cfg = SYNC_STAGE_MAP[stage];
+    if (!cfg) {
+      return;
+    }
+    apiPost('api/sync.php?action=' + cfg.retryAction, {}).then(function (r) {
+      if (!r.data || !r.data.ok) {
+        state.error = (r.data && r.data.error) || 'Could not retry the failed rows.';
+        render();
+        return;
+      }
+      state[cfg.runningKey] = true;
+      state[cfg.doneKey] = false;
+      state[cfg.errorsKey] = [];
+      state.error = null;
+      render();
+      cfg.step(false);
+    }).catch(function () {
+      state.error = 'Could not retry the failed rows — check your connection and try again.';
+      render();
+    });
+  }
+
+  // ---- Territory Admin (api/territory-admin.php) -----------------------
+
+  function loadTerritoryAdmin() {
+    state.territoryAdminLoading = true;
+    state.territoryAdminError = null;
+    render();
+    apiGet('api/territory-admin.php?action=list').then(function (r) {
+      state.territoryAdminLoading = false;
+      if (r.data && r.data.ok) {
+        state.territoryAdmin = { assignments: r.data.assignments, territory_options: r.data.territory_options };
+      } else {
+        state.territoryAdminError = (r.data && r.data.error) || 'Could not load territory assignments.';
+      }
+      render();
+    }).catch(function () {
+      state.territoryAdminLoading = false;
+      state.territoryAdminError = 'Could not load territory assignments — check your connection.';
+      render();
+    });
+  }
+
+  function addTerritoryAssignment() {
+    var email = state.territoryAdminAddEmail.trim();
+    var territory = state.territoryAdminAddTerritory.trim();
+    if (!email || !territory) {
+      state.territoryAdminError = 'Both an email and a territory name are required.';
+      render();
+      return;
+    }
+    state.territoryAdminSaving = true;
+    state.territoryAdminError = null;
+    render();
+    apiPost('api/territory-admin.php?action=add', { email: email, territory_name: territory }).then(function (r) {
+      state.territoryAdminSaving = false;
+      if (!r.data || !r.data.ok) {
+        state.territoryAdminError = (r.data && r.data.error) || 'Could not add that assignment.';
+        render();
+        return;
+      }
+      state.territoryAdminAddEmail = '';
+      state.territoryAdminAddTerritory = '';
+      loadTerritoryAdmin();
+    }).catch(function () {
+      state.territoryAdminSaving = false;
+      state.territoryAdminError = 'Could not add that assignment — check your connection.';
+      render();
+    });
+  }
+
+  function removeTerritoryAssignment(id) {
+    state.territoryAdminRemovingId = id;
+    state.territoryAdminError = null;
+    render();
+    apiPost('api/territory-admin.php?action=remove', { id: id }).then(function (r) {
+      state.territoryAdminRemovingId = null;
+      if (!r.data || !r.data.ok) {
+        state.territoryAdminError = (r.data && r.data.error) || 'Could not remove that assignment.';
+        render();
+        return;
+      }
+      loadTerritoryAdmin();
+    }).catch(function () {
+      state.territoryAdminRemovingId = null;
+      state.territoryAdminError = 'Could not remove that assignment — check your connection.';
+      render();
+    });
+  }
+
+  function openCustomerAtChecklist(customerId, pillarId, serviceId, serviceName) {
+    state.view = 'dashboard';
+    state.pendingFocus = { pillarId: pillarId, serviceId: serviceId, serviceName: serviceName };
+    selectCustomer(customerId);
+  }
+
+  // Global to-do panel -> a specific customer's task, same deep-link
+  // pattern as openCustomerAtChecklist() above (click something in a
+  // cross-customer view -> jump straight to that customer's dashboard,
+  // focused on the item). loadMeetings() (called from inside
+  // selectCustomer()) is what actually consumes state.pendingTaskFocus
+  // once the customer's meetings have loaded.
+  function openCustomerAtTask(customerId, meetingId, taskId) {
+    state.view = 'dashboard';
+    state.pendingTaskFocus = { meetingId: meetingId, taskId: taskId };
+    selectCustomer(customerId);
+  }
+
+  function signOut() {
+    apiPost('api/auth.php?action=logout', {}).finally(function () {
+      window.location.href = 'login.html';
+    });
+  }
+
+  // ---- Derived data -----------------------------------------------------
+
+  // Only the services flagged cross_sell_eligible by the server (see
+  // catalog.php's relationships_cross_sell_map()) show up here — the rest
+  // of the catalog is missing-but-not-marketed, per CodeBlue's process.
+  function missingRoster(detail) {
+    var roster = [];
+    detail.pillars.forEach(function (pillar) {
+      pillar.services.forEach(function (svc) {
+        if (!svc.active && svc.cross_sell_eligible) {
+          roster.push({ pillarId: pillar.id, pillarName: pillar.name, serviceId: svc.id, serviceName: svc.name });
+        }
+      });
+    });
+    return roster;
+  }
+
+  // ---- Customer Service Summary (print) --------------------------------
+
+  // The 4 pillars included in the printed summary, in display order --
+  // Data Cabling is deliberately excluded, per Michael's request.
+  var PRINT_SUMMARY_PILLAR_IDS = ['it', 'dc', 'voip', 'security'];
+
+  // Short, factual blurb per "not in place" candidate service, ending with
+  // a free-comparison offer -- per Michael's 2026-09-14 request, strictly
+  // factual (no persuasive/salesy language). Keyed "pillarId::serviceId".
+  // Only covers services that are cross_sell_eligible (see missingRoster()
+  // above), since Michael chose to match the existing cross-sell list
+  // rather than the full catalog for this feature's "not in place" filter.
+  // That means Data Center Services has no entries here at all -- this app
+  // currently has no cross-sell definition for that pillar (see
+  // relationships_cross_sell_map() in catalog.php), so DC's "not in place"
+  // section never has anything to show, and Voice over IP is narrowed to
+  // Cloud Voice System only. Flagged to Michael when this shipped.
+  var PRINT_SUMMARY_BLURBS = {
+    'it::managed-it': 'Managed IT Services provides proactive monitoring, maintenance, and support for a customer\u2019s servers, workstations, and network under a single agreement, rather than on a break-fix basis. CodeBlue offers a free, no-obligation comparison of your current IT support arrangement against a Managed IT Services agreement.',
+    'it::cyber-security': 'Cyber Security adds layered protection \u2014 including endpoint detection, email security, and ongoing vulnerability monitoring \u2014 beyond what\u2019s included in standard IT support. CodeBlue offers a free, no-obligation comparison of your current security coverage against CodeBlue\u2019s Cyber Security offering.',
+    'it::provided-equipment': 'Provided Equipment supplies and maintains the workstations, servers, and related hardware a business runs on, in place of purchasing and managing that equipment separately. CodeBlue offers a free, no-obligation comparison of your current equipment arrangement against CodeBlue\u2019s Provided Equipment program.',
+    'voip::cloud-voice': 'A Cloud Voice System delivers phone service hosted in the cloud \u2014 calling, voicemail, and desktop/mobile apps \u2014 without on-site phone system hardware to maintain. CodeBlue offers a free, no-obligation comparison of your current phone system against CodeBlue\u2019s Cloud Voice System.',
+    'security::ip-cameras': 'IP Security Camera Systems provide networked video surveillance for a customer\u2019s premises, with remote viewing and recorded footage available from any location. CodeBlue offers a free, no-obligation comparison of your current camera setup (or lack of one) against a CodeBlue IP Security Camera System.',
+    'security::access-control': 'Access Control Systems replace or supplement traditional keys with badge, fob, or code-based entry, along with a log of who accessed a location and when. CodeBlue offers a free, no-obligation comparison of your current access setup (or lack of one) against a CodeBlue Access Control System.'
+  };
+
+  function loadPrintTickets(customerId) {
+    state.printTicketsLoading = true;
+    state.printTickets = null;
+    render();
+    apiGet('api/activity.php?action=tickets&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      state.printTicketsLoading = false;
+      if (r.data && r.data.ok) {
+        state.printTickets = r.data.tickets;
+      } else {
+        state.printTickets = 'error';
+      }
+      render();
+    }).catch(function () {
+      state.printTicketsLoading = false;
+      state.printTickets = 'error';
+      render();
+    });
+  }
+
+  function printSummaryHtml(detail) {
+    var customer = detail.customer;
+    var summary = state.activitySummary;
+    var ticketsAvailable = !!(summary && summary.available !== false);
+
+    var html = '<div class="print-summary-panel">';
+    html += '<div class="print-summary-toolbar no-print">' +
+      '<div class="drilldown-title">Print Service Summary \u2014 ' + escapeHtml(customer.name) + '</div>' +
+      '<div class="print-summary-toolbar-actions">' +
+        '<button class="svc-action-btn primary" type="button" data-action="print-summary-go">Print</button>' +
+        '<button class="drilldown-back" type="button" data-action="close-print-summary" aria-label="Close">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>' +
+        '</button>' +
+      '</div>' +
+    '</div>';
+
+    html += '<div id="printableSummary">';
+    html += '<div class="print-doc-header">' +
+      '<div class="print-doc-title">Service Summary</div>' +
+      '<div class="print-doc-customer">' + escapeHtml(customer.name) + '</div>' +
+      '<div class="print-doc-date">Prepared ' + escapeHtml(fmtDate(new Date().toISOString())) + '</div>' +
+    '</div>';
+
+    // Service Tickets YTD + highlighted highest-hours tickets
+    html += '<div class="print-section">';
+    html += '<div class="print-section-title">Service Tickets \u2014 Year to Date</div>';
+    if (!ticketsAvailable) {
+      html += '<div class="print-empty">Not available for this customer (no ConnectWise record on file).</div>';
+    } else {
+      html += '<div class="print-ticket-count">' + summary.ticket_count_ytd + ' ticket' + (summary.ticket_count_ytd === 1 ? '' : 's') + ' so far this year</div>';
+      if (state.printTicketsLoading || state.printTickets === null) {
+        html += '<div class="print-empty no-print">Loading highlighted tickets\u2026</div>';
+      } else if (state.printTickets === 'error') {
+        html += '<div class="print-empty">Could not load ticket detail from ConnectWise.</div>';
+      } else {
+        var top = state.printTickets.slice().sort(function (a, b) { return (b.hours || 0) - (a.hours || 0); }).slice(0, 3).filter(function (t) { return (t.hours || 0) > 0; });
+        if (top.length === 0) {
+          html += '<div class="print-empty">No tickets with logged hours this year.</div>';
+        } else {
+          html += '<div class="print-subhead">Highest-Hours Tickets \u2014 Check-In Talking Points</div>';
+          html += '<table class="activity-table print-table"><thead><tr>' +
+            '<th>Date</th><th>Ticket #</th><th>Summary</th><th>Engineer</th><th>Hours</th>' +
+          '</tr></thead><tbody>';
+          top.forEach(function (t) {
+            html += '<tr><td>' + escapeHtml(fmtDate(t.date)) + '</td><td>#' + t.ticket_number + '</td>' +
+              '<td>' + escapeHtml(t.summary) + '</td><td>' + escapeHtml(t.engineer) + '</td>' +
+              '<td>' + t.hours + '</td></tr>';
+          });
+          html += '</tbody></table>';
+        }
+      }
+    }
+    html += '</div>';
+
+    // Services currently in place
+    html += '<div class="print-section">';
+    html += '<div class="print-section-title">Services Currently In Place</div>';
+    var anyActive = false;
+    PRINT_SUMMARY_PILLAR_IDS.forEach(function (pillarId) {
+      var pillar = detail.pillars.filter(function (p) { return p.id === pillarId; })[0];
+      if (!pillar) return;
+      var activeServices = pillar.services.filter(function (s) { return s.active; });
+      if (activeServices.length === 0) return;
+      anyActive = true;
+      html += '<div class="print-pillar-block">';
+      html += '<div class="print-pillar-name">' + escapeHtml(pillar.name) + '</div>';
+      activeServices.forEach(function (svc) {
+        svc.products.forEach(function (p) {
+          html += '<div class="product-row"><span>' + escapeHtml(p.label) + '</span><span class="product-qty">' + fmtQty(p) + '</span></div>';
+        });
+      });
+      html += '</div>';
+    });
+    if (!anyActive) {
+      html += '<div class="print-empty">No active services in these pillars.</div>';
+    }
+    html += '</div>';
+
+    // Pillar services not yet in place
+    html += '<div class="print-section">';
+    html += '<div class="print-section-title">Pillar Services Not Yet In Place</div>';
+    var anyMissing = false;
+    PRINT_SUMMARY_PILLAR_IDS.forEach(function (pillarId) {
+      var pillar = detail.pillars.filter(function (p) { return p.id === pillarId; })[0];
+      if (!pillar) return;
+      var missing = pillar.services.filter(function (s) { return !s.active && s.cross_sell_eligible; });
+      if (missing.length === 0) return;
+      anyMissing = true;
+      html += '<div class="print-pillar-block">';
+      html += '<div class="print-pillar-name">' + escapeHtml(pillar.name) + '</div>';
+      missing.forEach(function (svc) {
+        var blurb = PRINT_SUMMARY_BLURBS[pillarId + '::' + svc.id] || '';
+        html += '<div class="print-missing-service">' +
+          '<div class="print-missing-service-name">' + escapeHtml(svc.name) + '</div>' +
+          (blurb ? '<div class="print-missing-service-blurb">' + escapeHtml(blurb) + '</div>' : '') +
+        '</div>';
+      });
+      html += '</div>';
+    });
+    if (!anyMissing) {
+      html += '<div class="print-empty">This customer already has every eligible service in these pillars.</div>';
+    }
+    html += '</div>';
+
+    html += '</div>'; // #printableSummary
+    html += '</div>'; // .print-summary-panel
+    return html;
+  }
+
+  // ---- Rendering ----------------------------------------------------
+
+  function render() {
+    // Capture the search input's focus/caret state *before* touching the
+    // DOM -- replacing root.innerHTML while it's focused fires a 'blur' on
+    // the old node synchronously, so anything read after the swap is
+    // already stale. Reading document.activeElement here, before any
+    // mutation, is the only reliable way to know it was focused.
+    var searchFocus = captureSearchFocus();
+    // Same idea for the Overview list's own scroll position (added
+    // 2026-10-07, per Michael: hovering/clicking the Opportunity/Risk badge
+    // was jumping a scrolled customer list back to the top) -- re-creating
+    // .overview-list via innerHTML always resets its scrollTop to 0, so
+    // read it here before the swap and put it back after. This is a
+    // general safety net for *any* render() call that happens while that
+    // list is scrolled, not just the popover path -- the popover's own
+    // hover/click handlers below go further and avoid calling render() at
+    // all, which is the real fix for that specific jump; this is the
+    // backstop for every other action that still re-renders the whole page
+    // (sorting, filtering, grouping, etc.) while the list is scrolled.
+    var overviewScroll = captureOverviewListScroll();
+    root.innerHTML = topbarHtml() + '<div class="main">' + mainHtml() + '</div>';
+    bindEvents();
+    restoreSearchFocus(searchFocus);
+    adjustOverviewListScroll();
+    restoreOverviewListScroll(overviewScroll);
+  }
+
+  function captureSearchFocus() {
+    var el = document.getElementById('customerSearchInput');
+    if (el && document.activeElement === el) {
+      return { start: el.selectionStart, end: el.selectionEnd };
+    }
+    return null;
+  }
+
+  function restoreSearchFocus(focusInfo) {
+    if (!focusInfo) return;
+    var el = document.getElementById('customerSearchInput');
+    if (!el) return;
+    el.focus();
+    try {
+      el.setSelectionRange(focusInfo.start, focusInfo.end);
+    } catch (e) {
+      // setSelectionRange can throw on some input types -- ignore, focus
+      // alone is the important part.
+    }
+  }
+
+  function captureOverviewListScroll() {
+    var list = document.querySelector('.overview-list');
+    if (!list) return null;
+    return { scrollTop: list.scrollTop };
+  }
+
+  function restoreOverviewListScroll(scrollInfo) {
+    if (!scrollInfo) return;
+    var list = document.querySelector('.overview-list');
+    if (!list) return;
+    list.scrollTop = scrollInfo.scrollTop;
+  }
+
+  // Clyde mascot art (added 2026-10-05). Same ~150px footprint as the Clyde on
+  // the Solutions Hub home page; `small` is the compact variant used inside
+  // the Global To-Do panel header. Files live in ../assets/clyde/.
+  // Seasonal art (assets/clyde/clyde-season.js picks the folder by date).
+  function clydeSrc(name) {
+    return window.ClydeSeason ? window.ClydeSeason.src(name, '../assets/clyde/') : '../assets/clyde/clyde-' + name + '.png';
+  }
+  function clydeImgHtml(name, alt, small) {
+    return '<img class="clyde-img' + (small ? ' clyde-img--small' : '') + '" src="' + clydeSrc(name) + '" alt="' + alt + '" draggable="false">';
+  }
+  // A view-header with a Clyde on the left and the title/subtitle beside it.
+  function clydeHeaderHtml(name, alt, innerHtml) {
+    return '<div class="view-header view-header--clyde">' + clydeImgHtml(name, alt) + '<div class="view-header-text">' + innerHtml + '</div></div>';
+  }
+
+  // Tools that used to be Relationships tabs now live on Hub cards (reorganized 2026-10-07):
+  //   Sales              -> Cross-Sell Report, Prospecting
+  //   Project Management -> Projects
+  // They still run inside this app (same code, same data); the page is opened with ?view=...&section=...
+  // and the top bar shows that section's tabs and a link back to its Hub card instead of the Relationships tabs.
+  var SECTIONS = {
+    sales: {
+      brand: 'Sales', sub: 'CodeBlue Technology — Cross-Sell and Prospecting', back: '../sales/', backLabel: '← Sales',
+      tabs: [
+        { label: 'Cross-Sell Report', action: 'show-report', views: ['report', 'queue', 'pf-queue'] },
+        { label: 'Prospecting', action: 'show-prospecting', views: ['prospecting'] }
+      ]
+    },
+    projects: {
+      brand: 'Project Management', sub: 'CodeBlue Technology — Projects', back: '../projects/', backLabel: '← Project Management',
+      tabs: [ { label: 'Projects', action: 'show-projects', views: ['projects'] } ]
+    }
+  };
+
+  function topbarHtml() {
+    if (!state.user) return '';
+    var sec = state.section && SECTIONS[state.section] ? SECTIONS[state.section] : null;
+    var nav, brand, sub, back;
+    if (sec) {
+      brand = sec.brand; sub = sec.sub;
+      back = '<a class="back-to-hub" href="' + sec.back + '">' + sec.backLabel + '</a>';
+      nav = sec.tabs.map(function (t) {
+        return '<button class="nav-btn ' + (t.views.indexOf(state.view) >= 0 ? 'active' : '') + '" type="button" data-action="' + t.action + '">' + t.label + '</button>';
+      }).join('');
+    } else {
+      brand = 'Relationships'; sub = 'CodeBlue Technology — Client Relationship Dashboard';
+      back = '<a class="back-to-hub" href="' + HUB_URL + '">← Solutions Hub</a>';
+      nav =
+        '<button class="nav-btn ' + (state.view === 'dashboard' ? 'active' : '') + '" type="button" data-action="show-dashboard">Dashboard</button>' +
+        '<button class="nav-btn ' + (state.view === 'ticket-outgrow' ? 'active' : '') + '" type="button" data-action="show-ticket-outgrow">Ticket \u2192 OutGrow</button>' +
+        '<button class="nav-btn ' + (state.view === 'sync' ? 'active' : '') + '" type="button" data-action="show-sync">ConnectWise Sync</button>' +
+        (state.user.is_territory_admin
+          ? '<button class="nav-btn ' + (state.view === 'territory-admin' ? 'active' : '') + '" type="button" data-action="show-territory-admin">Territory Admin</button>'
+          : '');
+    }
+    return (
+      '<div class="topbar">' +
+        '<div class="topbar-left">' +
+          '<div>' +
+            '<div class="brand">' + brand + '</div>' +
+            '<div class="brand-sub">' + sub + '</div>' +
+          '</div>' +
+          '<nav class="topbar-nav">' + nav + '</nav>' +
+          back +
+        '</div>' +
+        '<div class="topbar-right">' +
+          '<span>' + escapeHtml(state.user.name) + '</span>' +
+          '<button class="signout-btn" data-action="signout" type="button">Sign Out</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  // ---- Ticket -> OutGrow (state.view === 'ticket-outgrow') --------------
+
+  function ticketOutgrowHtml() {
+    var t = state.ticketOutgrow;
+    var html = '<div class="view-header">' +
+      '<div class="view-title">Ticket → OutGrow</div>' +
+      '<div class="view-sub">Paste the text of a ConnectWise “OutGrow Action” service ticket. The OutGrow form opens already filled in — you just review it and click Submit.</div>' +
+    '</div>';
+    html += '<div class="ticket-outgrow-card">' +
+      '<textarea id="ticketOutgrowText" class="checklist-note-textarea ticket-outgrow-textarea" rows="14" placeholder="Paste the whole ticket here — company, contact and the Discussion section.">' + escapeHtml(t.text) + '</textarea>' +
+      '<div class="checklist-note-form-actions">' +
+        '<button type="button" class="svc-action-btn primary" data-action="ticket-outgrow-create" ' + (t.busy ? 'disabled' : '') + '>' + (t.busy ? 'Reading ticket…' : 'Create OutGrow entry') + '</button>' +
+        '<button type="button" class="svc-action-btn secondary" data-action="ticket-outgrow-clear" ' + (t.busy ? 'disabled' : '') + '>Clear</button>' +
+      '</div>';
+    if (t.error) {
+      html += '<div class="error-banner ticket-outgrow-error">' + escapeHtml(t.error) + '</div>';
+    }
+    if (t.result) {
+      var v = t.result.values;
+      function row(label, value) {
+        return '<div class="ticket-outgrow-row"><div class="ticket-outgrow-label">' + label + '</div><div class="ticket-outgrow-value">' + escapeHtml(value || '—') + '</div></div>';
+      }
+      html += '<div class="ticket-outgrow-result">' +
+        '<div class="ticket-outgrow-result-title">OutGrow form opened in a new tab' + (v.ticket ? ' — ticket #' + escapeHtml(v.ticket) : '') + '</div>' +
+        (t.result.touch ? '<div class="ticket-outgrow-touch ticket-outgrow-touch--' + (t.result.touch.status === 'updated' ? 'ok' : 'note') + '">' + escapeHtml(t.result.touch.message) + '</div>' : '') +
+        row('Your Email', v.email) + row('Your Name', v.name) + row('Client/Prospect Type', v.type) +
+        row('Client/Prospect Company', v.company) + row('Contact', v.contact) +
+        row('Your Actions, Opportunities Discussed & F/U Plan', v.actions) +
+        row('Proactive Call', v.proactive_call) + row('Call Type', v.call_type) +
+        row('DYK', v.dyk) + row('Pivot to Sale or Next Conversation', v.pivot);
+      (t.result.warnings || []).forEach(function (w) {
+        html += '<div class="ticket-outgrow-warn">' + escapeHtml(w) + '</div>';
+      });
+      html += '<div class="ticket-outgrow-actions"><a class="svc-action-btn secondary" href="' + escapeHtml(t.result.formstack_url) + '" target="_blank" rel="noopener">Reopen the form</a></div>' +
+        '</div>';
+    }
+    return html + '</div>';
+  }
+
+  function createTicketOutgrow() {
+    var t = state.ticketOutgrow;
+    if (!t.text.trim()) {
+      t.error = 'Paste the ticket text first.';
+      t.result = null;
+      render();
+      return;
+    }
+    // Opened synchronously, inside the click, so the browser's pop-up
+    // blocker allows it -- same trick toggleTaskDone() uses for the same form.
+    var tab = window.open('', '_blank');
+    t.busy = true;
+    t.error = null;
+    t.result = null;
+    render();
+    apiPost('api/outgrow-ticket.php', { ticket_text: t.text }).then(function (r) {
+      t.busy = false;
+      if (r.data && r.data.ok) {
+        t.result = r.data;
+        if (tab) { tab.location.href = r.data.formstack_url; }
+      } else {
+        t.error = (r.data && r.data.error) || 'Could not read that ticket.';
+        if (tab) tab.close();
+      }
+      render();
+    }).catch(function () {
+      t.busy = false;
+      t.error = 'Could not read the ticket — check your connection.';
+      if (tab) tab.close();
+      render();
+    });
+  }
+
+  function mainHtml() {
+    if (!state.user) return '<div class="loading">Loading…</div>';
+
+    if (state.view === 'report') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + reportHtml();
+    }
+    if (state.view === 'queue') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + queueHtml();
+    }
+    if (state.view === 'pf-queue') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + pfQueueHtml();
+    }
+    if (state.view === 'prospecting') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + prospectingHtml();
+    }
+    if (state.view === 'sync') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + syncHtml();
+    }
+    if (state.view === 'territory-admin') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + territoryAdminHtml();
+    }
+    if (state.view === 'rep-todos') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + repTodosHtml();
+    }
+    if (state.view === 'projects') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + projectsHtml();
+    }
+    if (state.view === 'ticket-outgrow') {
+      return ticketOutgrowHtml();
+    }
+
+    var html;
+    if (!state.loadingDetail && !state.selectedCustomer) {
+      // Relationships Hub main screen: laptop Clyde beside the customer search.
+      html = '<div class="hub-hero">' + clydeImgHtml('hub', 'Clyde at the Relationships Hub') +
+        '<div class="search-wrap">' + searchBoxHtml() + '</div></div>';
+    } else {
+      html = '<div class="search-wrap">' + searchBoxHtml() + '</div>';
+    }
+
+    if (state.error) {
+      html += '<div class="error-banner">' + escapeHtml(state.error) + '</div>';
+    }
+
+    if (state.loadingDetail) {
+      html += '<div class="loading">Loading customer…</div>';
+    } else if (state.selectedCustomer) {
+      html += customerDashboardHtml(state.selectedCustomer);
+    } else {
+      // Front page split left/right, per Michael 2026-09-15: existing
+      // Customer Information/overview stays left-justified, the new
+      // Global Check-List To-Do's dashboard is right-justified.
+      html += '<div class="frontpage-grid">' +
+        '<div class="frontpage-left">' + overviewHtml() + '</div>' +
+        '<div class="frontpage-right">' + globalTodosPanelHtml() + '</div>' +
+      '</div>';
+    }
+
+    return html;
+  }
+
+  function reportHtml() {
+    var html = clydeHeaderHtml('cross-sell', 'Clyde working the Cross-Sell Report',
+      '<div class="view-title">Cross-Sell Step Report</div>' +
+      '<div class="view-sub">How many customers are currently sitting at each step, per missing service. Click a number to see who.</div>');
+
+    html += peopleFirstSummaryHtml();
+
+    if (state.reportLoading || !state.report) {
+      return html + '<div class="loading">Loading report…</div>';
+    }
+    if (state.report.length === 0) {
+      return html + '<div class="empty-state">No cross-sell activity yet.</div>';
+    }
+
+    html += '<div class="report-table-wrap"><table class="report-table"><thead><tr>' +
+      '<th class="report-service-col">Pillar / Service</th>' +
+      [1, 2, 3, 4, 5, 6, 7].map(function (n) { return '<th>Step ' + n + '</th>'; }).join('') +
+      '<th>Closed</th><th>Total</th>' +
+    '</tr></thead><tbody>';
+
+    state.report.forEach(function (row) {
+      html += '<tr><td class="report-service-col">' +
+        '<div class="report-pillar-name">' + escapeHtml(row.pillar_name) + '</div>' +
+        '<div class="report-service-name">' + escapeHtml(row.service_name) + '</div>' +
+      '</td>';
+      for (var n = 1; n <= 7; n++) {
+        html += '<td>' + reportCellHtml(row, String(n), row.steps[String(n)] || 0) + '</td>';
+      }
+      html += '<td>' + reportCellHtml(row, 'closed', row.closed) + '</td>';
+      html += '<td class="report-total">' + row.total + '</td></tr>';
+    });
+
+    html += '</tbody></table></div>';
+    return html;
+  }
+
+  function reportCellHtml(row, step, count) {
+    if (!count) return '<span class="report-count zero">0</span>';
+    return '<button class="report-count" type="button" data-action="report-cell" ' +
+      'data-pillar="' + row.pillar_id + '" data-service="' + row.service_id + '" data-step="' + step + '" ' +
+      'data-pillar-name="' + escapeHtml(row.pillar_name) + '" data-service-name="' + escapeHtml(row.service_name) + '">' +
+      count + '</button>';
+  }
+
+  // PeopleFirst summary line atop the Cross-Sell Report — separate from
+  // the step-report table above since these customers aren't cross-sell
+  // targets; the two numbers here are click-through counts of who needs a
+  // client checkin this calendar month or a risk scan this calendar
+  // quarter (see peoplefirst.php's need_checkin/need_scan for the exact
+  // rule).
+  function peopleFirstSummaryHtml() {
+    if (state.pfSummaryLoading && !state.pfSummary) {
+      return '<div class="peoplefirst-summary loading">Loading PeopleFirst status…</div>';
+    }
+    if (!state.pfSummary) return '';
+
+    var s = state.pfSummary;
+    return '<div class="peoplefirst-summary">' +
+      '<div class="peoplefirst-summary-title">★ PeopleFirst Members — ' + s.total + ' total</div>' +
+      '<div class="peoplefirst-summary-counts">' +
+        peopleFirstCountHtml(s.needs_checkin, 'need a client checkin this month', 'checkin') +
+        peopleFirstCountHtml(s.needs_scan, 'need a risk scan this quarter', 'scan') +
+      '</div>' +
+    '</div>';
+  }
+
+  function peopleFirstCountHtml(count, label, type) {
+    if (!count) {
+      return '<div class="peoplefirst-summary-count zero"><span class="peoplefirst-summary-number">0</span> ' + escapeHtml(label) + '</div>';
+    }
+    return '<button class="peoplefirst-summary-count" type="button" data-action="pf-open-queue" data-type="' + type + '">' +
+      '<span class="peoplefirst-summary-number">' + count + '</span> ' + escapeHtml(label) +
+    '</button>';
+  }
+
+  function pfQueueHtml() {
+    var type = state.pfQueueType;
+    var title = type === 'scan' ? 'Needs a Risk Scan This Quarter' : 'Needs a Client Checkin This Month';
+    var html = '<div class="view-header">' +
+      '<button class="back-link" type="button" data-action="pf-queue-back">← Back to report</button>' +
+      '<div class="view-title">' + title + '</div>' +
+      '<div class="view-sub">Click a customer to open their dashboard and log it.</div>' +
+    '</div>';
+
+    if (state.pfQueueLoading || !state.pfQueue) {
+      return html + '<div class="loading">Loading…</div>';
+    }
+    if (state.pfQueue.length === 0) {
+      return html + '<div class="empty-state">Nobody currently needs this — everyone’s up to date.</div>';
+    }
+
+    html += '<div class="queue-list">';
+    state.pfQueue.forEach(function (c) {
+      var lastLabel = c.last_at ? ('Last: ' + fmtTimestamp(c.last_at) + (c.last_by ? ' — ' + escapeHtml(c.last_by) : '')) : 'Never logged';
+      html += '<div class="queue-item" data-action="open-pf-queue-customer" data-customer="' + c.id + '">' +
+        '<div class="queue-item-name">' + escapeHtml(c.name) + '<div class="queue-item-meta">' + escapeHtml(lastLabel) + '</div></div>' +
+        '<div class="queue-item-go">Open →</div>' +
+      '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function queueHtml() {
+    var qp = state.queueParams || {};
+    var stepLabel = qp.step === 'closed' ? 'Closed / re-address in 180 days' : ('Step ' + qp.step);
+    var html = '<div class="view-header">' +
+      '<button class="back-link" type="button" data-action="queue-back">← Back to report</button>' +
+      '<div class="view-title">' + escapeHtml(qp.serviceName || '') + ' — ' + escapeHtml(stepLabel) + '</div>' +
+      '<div class="view-sub">' + escapeHtml(qp.pillarName || '') + '. Click a customer to open their checklist at this step.</div>' +
+    '</div>';
+
+    if (state.queueLoading || !state.queue) {
+      return html + '<div class="loading">Loading…</div>';
+    }
+    if (state.queue.length === 0) {
+      return html + '<div class="empty-state">No customers currently at this step.</div>';
+    }
+
+    html += '<div class="queue-list">';
+    state.queue.forEach(function (c) {
+      html += '<div class="queue-item" data-action="open-queue-customer" data-customer="' + c.customer_id + '">' +
+        '<div class="queue-item-name">' + escapeHtml(c.customer_name) + '</div>' +
+        '<div class="queue-item-go">Open →</div>' +
+      '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  // ---- Prospecting (api/prospecting.php) -- added 2026-09-23, per Michael ---
+  // A rep issues a "Prospect" command, a research agent finds 5-8 target-
+  // market businesses, the rep opens one for a profile and claims it as a
+  // ConnectWise Prospect (90-day clock). See api/prospecting.php and
+  // prospecting-agent.php for the server side and what the agent can see.
+
+  function safeUrl(u) {
+    return (typeof u === 'string' && /^https?:\/\//i.test(u)) ? u : '';
+  }
+
+  function pfLink(label, url) {
+    var href = safeUrl(url);
+    return href
+      ? '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(label) + '</a>'
+      : escapeHtml(label);
+  }
+
+  function applyProspectPayload(d) {
+    var p = state.prospecting;
+    p.configured = d.configured !== false;
+    p.industries = d.industries || p.industries || [];
+    p.dailyCap = d.daily_cap;
+    p.remainingToday = d.remaining_today;
+    p.search = d.search || null;
+    p.candidates = d.candidates || [];
+    p.skipped = d.skipped || [];
+    p.selectedId = null;
+    p.draft = null;
+    p.claimError = null;
+    p.profileError = null;
+  }
+
+  function loadProspecting() {
+    var p = state.prospecting;
+    if (p.loading) return;
+    p.loading = true;
+    p.error = null;
+    render();
+    apiGet('api/prospecting.php?action=latest').then(function (r) {
+      p.loading = false;
+      p.loaded = true;
+      if (r.data && r.data.ok) {
+        applyProspectPayload(r.data);
+        if (r.data.running_search_id) {
+          // A search started earlier is still going -- pick it back up.
+          p.searching = true;
+          p.searchStartedAt = p.searchStartedAt || Date.now();
+          pfStartElapsedTimer();
+          pollProspectSearch(r.data.running_search_id, 0);
+        }
+      } else {
+        p.error = (r.data && r.data.error) || 'Could not load Prospecting.';
+      }
+      render();
+    }).catch(function () {
+      p.loading = false;
+      p.error = 'Could not load Prospecting — check your connection and try again.';
+      render();
+    });
+  }
+
+  var pfElapsedTimer = null;
+  function pfStopElapsedTimer() {
+    if (pfElapsedTimer) { clearInterval(pfElapsedTimer); pfElapsedTimer = null; }
+  }
+  function pfStartElapsedTimer() {
+    pfStopElapsedTimer();
+    pfElapsedTimer = setInterval(function () {
+      var el = document.getElementById('pfElapsed');
+      if (!el) return;
+      var s = Math.floor((Date.now() - state.prospecting.searchStartedAt) / 1000);
+      el.textContent = Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
+    }, 1000);
+  }
+
+  // The search runs in the background on the server (it can take several
+  // minutes): this starts it, then polls search_status every few seconds.
+  // pollProspectSearch() is also what resumes a search that was still
+  // running when the page was reloaded (see loadProspecting()).
+  var pfPollTimer = null;
+  function pfStopPolling() {
+    if (pfPollTimer) { clearTimeout(pfPollTimer); pfPollTimer = null; }
+  }
+
+  function pollProspectSearch(searchId, failures) {
+    var p = state.prospecting;
+    pfStopPolling();
+    pfPollTimer = setTimeout(function () {
+      apiGet('api/prospecting.php?action=search_status&search_id=' + encodeURIComponent(searchId)).then(function (r) {
+        if (r.data && r.data.ok && r.data.status === 'running') {
+          pollProspectSearch(searchId, 0);
+          return;
+        }
+        pfStopElapsedTimer();
+        p.searching = false;
+        if (r.data && r.data.ok && r.data.status === 'done') {
+          applyProspectPayload(r.data);
+        } else if (r.data && r.data.ok && r.data.status === 'failed') {
+          p.error = 'The search could not finish: ' + (r.data.error || 'unknown error') + ' You can try again.';
+        } else {
+          p.error = (r.data && r.data.error) || 'Lost track of the search. Reopen Prospecting in a minute to see the results.';
+        }
+        render();
+      }).catch(function () {
+        // A dropped poll isn't a failed search -- keep trying a few times.
+        if ((failures || 0) < 5) {
+          pollProspectSearch(searchId, (failures || 0) + 1);
+          return;
+        }
+        pfStopElapsedTimer();
+        p.searching = false;
+        p.error = 'Lost the connection while the search was running. Reopen Prospecting in a minute to see the results.';
+        render();
+      });
+    }, 4000);
+  }
+
+  function runProspectSearch() {
+    var p = state.prospecting;
+    if (p.searching) return;
+    p.searching = true;
+    p.error = null;
+    p.searchStartedAt = Date.now();
+    render();
+    pfStartElapsedTimer();
+    apiPost('api/prospecting.php?action=search', {
+      industry: p.form.industry,
+      location: p.form.location,
+      radius_miles: parseInt(p.form.radius, 10) || 150
+    }).then(function (r) {
+      if (r.data && r.data.ok && r.data.status === 'running') {
+        pollProspectSearch(r.data.search_id, 0);
+        return;
+      }
+      pfStopElapsedTimer();
+      p.searching = false;
+      p.error = (r.data && r.data.error) || 'The search did not start. Please try again.';
+      render();
+    }).catch(function () {
+      pfStopElapsedTimer();
+      p.searching = false;
+      p.error = 'Could not start the search — check your connection and try again.';
+      render();
+    });
+  }
+
+  function findProspect(id) {
+    var list = state.prospecting.candidates;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === id) return list[i];
+    }
+    return null;
+  }
+
+  function prospectDraftFrom(c) {
+    return {
+      website: c.website || '',
+      phone: c.phone || '',
+      address_line1: c.address_line1 || '',
+      city: c.city || '',
+      state: c.state || '',
+      zip: c.zip || '',
+      contact_first_name: c.contact.first_name || '',
+      contact_last_name: c.contact.last_name || '',
+      contact_title: c.contact.title || '',
+      contact_email: c.contact.email || '',
+      contact_phone: c.contact.phone || ''
+    };
+  }
+
+  function selectProspect(id) {
+    var c = findProspect(id);
+    var p = state.prospecting;
+    p.selectedId = id;
+    p.draft = c ? prospectDraftFrom(c) : null;
+    p.claimError = null;
+    p.profileError = null;
+    render();
+  }
+
+  function replaceProspect(updated) {
+    var p = state.prospecting;
+    p.candidates = p.candidates.map(function (c) { return c.id === updated.id ? updated : c; });
+  }
+
+  function saveProspectDraft(then) {
+    var p = state.prospecting;
+    var c = findProspect(p.selectedId);
+    if (!c || !p.draft) return;
+    p.saving = true;
+    p.claimError = null;
+    render();
+    var body = { candidate_id: c.id };
+    Object.keys(p.draft).forEach(function (k) { body[k] = p.draft[k]; });
+    apiPost('api/prospecting.php?action=update_candidate', body).then(function (r) {
+      p.saving = false;
+      if (r.data && r.data.ok) {
+        replaceProspect(r.data.candidate);
+        p.draft = prospectDraftFrom(r.data.candidate);
+        if (then) { then(r.data.candidate); return; }
+      } else {
+        p.claimError = (r.data && r.data.error) || 'Could not save those details.';
+      }
+      render();
+    }).catch(function () {
+      p.saving = false;
+      p.claimError = 'Could not save — check your connection and try again.';
+      render();
+    });
+  }
+
+  function buildProspectProfile() {
+    var p = state.prospecting;
+    var c = findProspect(p.selectedId);
+    if (!c || p.profileLoading) return;
+    p.profileLoading = true;
+    p.profileError = null;
+    render();
+    apiPost('api/prospecting.php?action=profile', { candidate_id: c.id }).then(function (r) {
+      p.profileLoading = false;
+      if (r.data && r.data.ok) {
+        replaceProspect(r.data.candidate);
+        p.draft = prospectDraftFrom(r.data.candidate);
+      } else {
+        p.profileError = (r.data && r.data.error) || 'Could not build the profile. Please try again.';
+      }
+      render();
+    }).catch(function () {
+      p.profileLoading = false;
+      p.profileError = 'The profile took too long or the connection dropped — please try again.';
+      render();
+    });
+  }
+
+  function pfMissingForClaim(c, d) {
+    var m = [];
+    if (!c.name) m.push('business name');
+    if (!(d.contact_first_name || '').trim()) m.push('contact first name');
+    if (!(d.contact_last_name || '').trim()) m.push('contact last name');
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test((d.contact_email || '').trim())) m.push('contact email');
+    if (!(d.contact_phone || '').trim() && !(d.phone || '').trim()) m.push('phone number');
+    return m;
+  }
+
+  function claimProspect() {
+    var p = state.prospecting;
+    var c = findProspect(p.selectedId);
+    if (!c || p.claiming) return;
+    var missing = pfMissingForClaim(c, p.draft || {});
+    if (missing.length) {
+      p.claimError = 'Before claiming, fill in: ' + missing.join(', ') + '.';
+      render();
+      return;
+    }
+    // Save whatever the rep typed first, then claim.
+    saveProspectDraft(function (saved) {
+      p.claiming = true;
+      p.claimError = null;
+      render();
+      apiPost('api/prospecting.php?action=claim', { candidate_id: saved.id }).then(function (r) {
+        p.claiming = false;
+        if (r.data && r.data.ok) {
+          saved.claimed_customer_id = r.data.customer_id;
+          replaceProspect(saved);
+          p.claimResult = { id: saved.id, customerId: r.data.customer_id, warnings: r.data.warnings || [] };
+          p.claims = null; // refresh My Prospects next time it's opened
+          state.overview = null; // front-page counts changed
+        } else {
+          p.claimError = (r.data && r.data.error) || 'Could not add this prospect to ConnectWise.';
+        }
+        render();
+      }).catch(function () {
+        p.claiming = false;
+        p.claimError = 'The connection dropped while claiming. Check My Prospects before trying again so it isn’t created twice.';
+        render();
+      });
+    });
+  }
+
+  function loadProspectClaims() {
+    var p = state.prospecting;
+    if (p.claimsLoading) return;
+    p.claimsLoading = true;
+    render();
+    apiGet('api/prospecting.php?action=my_claims').then(function (r) {
+      p.claimsLoading = false;
+      if (r.data && r.data.ok) {
+        p.claims = r.data.claims || [];
+      } else {
+        p.error = (r.data && r.data.error) || 'Could not load claimed prospects.';
+      }
+      render();
+    }).catch(function () {
+      p.claimsLoading = false;
+      p.error = 'Could not load claimed prospects — check your connection.';
+      render();
+    });
+  }
+
+  function filteredProspects() {
+    var p = state.prospecting;
+    var loc = (p.filterLocation || '').trim().toLowerCase();
+    return p.candidates.filter(function (c) {
+      if (p.filterTier === 'High' && c.tier !== 'High') return false;
+      if (p.filterTier === 'Medium' && c.tier !== 'High' && c.tier !== 'Medium') return false;
+      if (p.filterIndustry !== 'all' && c.industry !== p.filterIndustry) return false;
+      if (loc) {
+        var hay = ((c.city || '') + ' ' + (c.state || '') + ' ' + (c.zip || '')).toLowerCase();
+        if (hay.indexOf(loc) === -1) return false;
+      }
+      return true;
+    });
+  }
+
+  function pfChipHtml(ok, okText, missingText) {
+    return ok
+      ? '<span class="pf-chip ok">✓ ' + escapeHtml(okText) + '</span>'
+      : '<span class="pf-chip missing">' + escapeHtml(missingText) + '</span>';
+  }
+
+  function prospectCardHtml(c) {
+    var p = state.prospecting;
+    var contactName = ((c.contact.first_name || '') + ' ' + (c.contact.last_name || '')).trim();
+    var emp = c.employee_low != null || c.employee_high != null
+      ? (c.employee_low != null && c.employee_high != null && c.employee_low !== c.employee_high
+          ? c.employee_low + '–' + c.employee_high : (c.employee_low != null ? c.employee_low : c.employee_high)) + ' employees (est.)'
+      : 'Size unknown';
+    var place = [c.city, c.state].filter(Boolean).join(', ');
+    return '<div class="pf-card' + (p.selectedId === c.id ? ' selected' : '') + (c.claimed_customer_id ? ' claimed' : '') + '" data-action="prospect-select" data-id="' + c.id + '">' +
+      '<div class="pf-card-top">' +
+        '<div class="pf-card-name">' + escapeHtml(c.name) + '</div>' +
+        '<span class="pf-tier pf-tier-' + escapeHtml(c.tier) + '" title="Confidence score ' + c.confidence + '/100">' + escapeHtml(c.tier) + ' · ' + c.confidence + '</span>' +
+      '</div>' +
+      '<div class="pf-card-meta">' + escapeHtml(c.industry || 'Industry unknown') + ' · ' + escapeHtml(place || 'Location unknown') +
+        (c.distance_mi != null ? ' · ' + Math.round(c.distance_mi) + ' mi from Richmond' : '') + '</div>' +
+      '<div class="pf-card-meta">' + escapeHtml(emp) + '</div>' +
+      '<div class="pf-card-contact">' + (contactName ? escapeHtml(contactName) + (c.contact.title ? ', ' + escapeHtml(c.contact.title) : '') : '<span class="pf-chip missing">no contact found</span>') + '</div>' +
+      '<div class="pf-chips">' +
+        pfChipHtml(!!c.contact.email, 'email', 'missing email') +
+        pfChipHtml(!!(c.contact.phone || c.phone), 'phone', 'missing phone') +
+        (c.claimed_customer_id ? '<span class="pf-chip claimed">Claimed</span>' : '') +
+      '</div>' +
+    '</div>';
+  }
+
+  function pfInput(field, label, type) {
+    var d = state.prospecting.draft || {};
+    return '<label class="pf-field"><span>' + escapeHtml(label) + '</span>' +
+      '<input type="' + (type || 'text') + '" data-pf="draft.' + field + '" value="' + escapeHtml(d[field] || '') + '"></label>';
+  }
+
+  function prospectDetailHtml(c) {
+    var p = state.prospecting;
+    var prof = c.profile;
+    var html = '<div class="pf-detail">';
+    html += '<div class="pf-detail-head"><div>' +
+      '<div class="pf-detail-name">' + escapeHtml(c.name) + '</div>' +
+      '<div class="pf-detail-sub">' + escapeHtml(c.industry || '') + (safeUrl(c.website) ? ' · ' + pfLink(c.website.replace(/^https?:\/\//i, ''), c.website) : '') + '</div>' +
+    '</div><button type="button" class="pf-close" data-action="prospect-close" aria-label="Close">×</button></div>';
+
+    html += '<div class="pf-chips">' +
+      '<span class="pf-tier pf-tier-' + escapeHtml(c.tier) + '">' + escapeHtml(c.tier) + ' confidence · ' + c.confidence + '/100</span>' +
+      (c.missing || []).map(function (m) { return '<span class="pf-chip missing">missing: ' + escapeHtml(m) + '</span>'; }).join('') +
+    '</div>';
+
+    if (c.summary) html += '<p class="pf-text">' + escapeHtml(c.summary) + '</p>';
+    if (c.employee_evidence) {
+      html += '<p class="pf-note">Size: ' + escapeHtml(c.employee_evidence) + (safeUrl(c.employee_source_url) ? ' — ' + pfLink('source', c.employee_source_url) : '') + '</p>';
+    }
+
+    // ---- Profile (bio, contact background, recommendations) ----
+    if (prof) {
+      html += '<div class="pf-section-title">Business profile</div>';
+      if (prof.business_summary) html += '<p class="pf-text">' + escapeHtml(prof.business_summary) + '</p>';
+      if (prof.primary_contact && prof.primary_contact.background) {
+        html += '<div class="pf-section-title">Primary contact</div><p class="pf-text">' + escapeHtml(prof.primary_contact.background) +
+          (safeUrl(prof.primary_contact.profile_url) ? ' ' + pfLink('Public profile →', prof.primary_contact.profile_url) : '') + '</p>';
+      } else if (prof.primary_contact && safeUrl(prof.primary_contact.profile_url)) {
+        html += '<div class="pf-section-title">Primary contact</div><p class="pf-text">' + pfLink('Public profile →', prof.primary_contact.profile_url) + '</p>';
+      }
+      if (prof.recommendations && prof.recommendations.length) {
+        html += '<div class="pf-section-title">Recommended CodeBlue services</div><ul class="pf-list">';
+        prof.recommendations.forEach(function (r) {
+          html += '<li><strong>' + escapeHtml(r.service || '') + '</strong> <span class="pf-muted">(' + escapeHtml(r.pillar || '') + ')</span> — ' + escapeHtml(r.why || '') + '</li>';
+        });
+        html += '</ul>';
+      }
+      if (prof.talking_points && prof.talking_points.length) {
+        html += '<div class="pf-section-title">Conversation openers</div><ul class="pf-list">' +
+          prof.talking_points.map(function (t) { return '<li>' + escapeHtml(t) + '</li>'; }).join('') + '</ul>';
+      }
+      if (prof.sources && prof.sources.length) {
+        html += '<div class="pf-sources">Sources: ' + prof.sources.slice(0, 6).map(function (u, i) { return pfLink(String(i + 1), u); }).join(' · ') + '</div>';
+      }
+    } else {
+      html += '<button type="button" class="pf-btn secondary" data-action="prospect-build-profile"' + (p.profileLoading ? ' disabled' : '') + '>' +
+        (p.profileLoading ? 'Researching this company… (about a minute)' : 'Build full profile & recommendations') + '</button>';
+      if (p.profileError) html += '<div class="error-banner">' + escapeHtml(p.profileError) + '</div>';
+    }
+
+    // ---- Editable details (fill in anything the search couldn't find) ----
+    html += '<div class="pf-section-title">Contact &amp; company details</div>' +
+      '<div class="pf-grid2">' +
+        pfInput('contact_first_name', 'Contact first name') + pfInput('contact_last_name', 'Contact last name') +
+        pfInput('contact_title', 'Title') + pfInput('contact_email', 'Contact email', 'email') +
+        pfInput('contact_phone', 'Contact phone', 'tel') + pfInput('phone', 'Company phone', 'tel') +
+        pfInput('website', 'Website') + pfInput('address_line1', 'Street address') +
+        pfInput('city', 'City') + pfInput('state', 'State') + pfInput('zip', 'ZIP') +
+      '</div>';
+    var srcBits = [];
+    if (safeUrl(c.contact.name_source_url)) srcBits.push(pfLink('name found here', c.contact.name_source_url));
+    if (safeUrl(c.contact.email_source_url)) srcBits.push(pfLink('email found here', c.contact.email_source_url));
+    if (safeUrl(c.contact.phone_source_url)) srcBits.push(pfLink('phone found here', c.contact.phone_source_url));
+    if (srcBits.length) html += '<div class="pf-sources">' + srcBits.join(' · ') + '</div>';
+
+    // ---- Claim ----
+    if (c.claimed_customer_id) {
+      html += '<div class="pf-claimed-box">✓ Claimed as a Prospect. ' +
+        '<button type="button" class="pf-btn primary" data-action="prospect-open-customer" data-id="' + c.claimed_customer_id + '">Open in Relationships →</button></div>';
+      if (p.claimResult && p.claimResult.id === c.id && p.claimResult.warnings.length) {
+        html += '<div class="pf-note">Note: ' + p.claimResult.warnings.map(escapeHtml).join(' ') + '</div>';
+      }
+    } else {
+      html += '<div class="pf-claim">' +
+        '<p class="pf-note">Claiming creates this company in ConnectWise as a <strong>Prospect</strong> in your territory with this contact, assigned to you, and starts your 90-day clock. Every service starts unworked.</p>' +
+        '<button type="button" class="pf-btn primary" data-action="prospect-claim"' + (p.claiming || p.saving ? ' disabled' : '') + '>' +
+          (p.claiming ? 'Adding to ConnectWise…' : (p.saving ? 'Saving…' : 'Claim as Prospect')) + '</button>' +
+        '<button type="button" class="pf-btn secondary" data-action="prospect-save"' + (p.claiming || p.saving ? ' disabled' : '') + '>Save details</button>' +
+      '</div>';
+      if (p.claimError) html += '<div class="error-banner">' + escapeHtml(p.claimError) + '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function prospectSearchFormHtml() {
+    var p = state.prospecting;
+    var industries = ['Any'].concat(p.industries || []);
+    var opts = industries.map(function (i) {
+      return '<option value="' + escapeHtml(i) + '"' + (p.form.industry === i ? ' selected' : '') + '>' + escapeHtml(i === 'Any' ? 'Any target industry' : i) + '</option>';
+    }).join('');
+    var html = '<div class="pf-search">' +
+      '<label class="pf-field"><span>Industry</span><select data-pf="form.industry"' + (p.searching ? ' disabled' : '') + '>' + opts + '</select></label>' +
+      '<label class="pf-field"><span>Location</span><input type="text" data-pf="form.location" value="' + escapeHtml(p.form.location) + '" placeholder="City or ZIP"' + (p.searching ? ' disabled' : '') + '></label>' +
+      '<label class="pf-field pf-field-sm"><span>Radius (mi)</span><input type="number" min="10" max="150" data-pf="form.radius" value="' + escapeHtml(p.form.radius) + '"' + (p.searching ? ' disabled' : '') + '></label>' +
+      '<button type="button" class="pf-btn primary pf-go" data-action="prospect-run"' + (p.searching || !p.configured || p.remainingToday === 0 ? ' disabled' : '') + '>' +
+        (p.searching ? 'Researching… <span id="pfElapsed">0:00</span>' : 'Prospect') + '</button>' +
+    '</div>';
+    if (p.searching) {
+      html += '<div class="pf-progress">Searching the public web for target-market businesses, checking for duplicates and locating them. This can take a few minutes — you can leave this page and come back; the search keeps running and the results will be saved.</div>';
+    } else if (!p.configured) {
+      html += '<div class="error-banner">Prospecting isn’t set up yet — the research service key (relationships/api/anthropic-config.php) hasn’t been added on the server.</div>';
+    } else if (p.remainingToday != null) {
+      html += '<div class="pf-hint">' + p.remainingToday + ' of ' + p.dailyCap + ' Prospect searches left today. Searches use only public web information — emails and phones are shown only when found on a public page, and can be edited before you claim.</div>';
+    }
+    return html;
+  }
+
+  function prospectResultsHtml() {
+    var p = state.prospecting;
+    var html = '';
+    if (!p.search) {
+      return '<div class="empty-state">Pick an industry and location, then press <strong>Prospect</strong> to find businesses in CodeBlue’s target market.</div>';
+    }
+    var list = filteredProspects();
+    var industries = ['all'];
+    p.candidates.forEach(function (c) { if (c.industry && industries.indexOf(c.industry) === -1) industries.push(c.industry); });
+    html += '<div class="pf-filters">' +
+      '<label class="pf-field pf-field-sm"><span>Confidence</span><select data-pf="filter.tier">' +
+        '<option value="all"' + (p.filterTier === 'all' ? ' selected' : '') + '>All</option>' +
+        '<option value="Medium"' + (p.filterTier === 'Medium' ? ' selected' : '') + '>Medium and up</option>' +
+        '<option value="High"' + (p.filterTier === 'High' ? ' selected' : '') + '>High only</option></select></label>' +
+      '<label class="pf-field pf-field-sm"><span>Industry</span><select data-pf="filter.industry">' +
+        industries.map(function (i) { return '<option value="' + escapeHtml(i) + '"' + (p.filterIndustry === i ? ' selected' : '') + '>' + escapeHtml(i === 'all' ? 'All' : i) + '</option>'; }).join('') + '</select></label>' +
+      '<label class="pf-field pf-field-sm"><span>City / ZIP</span><input type="text" data-pf="filter.location" value="' + escapeHtml(p.filterLocation || '') + '" placeholder="filter results"></label>' +
+    '</div>';
+    html += '<div class="pf-result-meta">' + escapeHtml(p.search.industry === 'Any' ? 'Any industry' : p.search.industry) + ' near ' + escapeHtml(p.search.location_text) +
+      ' — ' + list.length + ' shown, ranked by confidence' + (p.search.created_at ? ' · ' + escapeHtml(fmtTimestamp(p.search.created_at)) : '') + '</div>';
+    if (!list.length) {
+      html += '<div class="empty-state">' + (p.candidates.length ? 'No results match those filters.' : 'That search didn’t turn up new businesses. Try another industry or location.') + '</div>';
+    } else {
+      html += '<div class="pf-cards">' + list.map(prospectCardHtml).join('') + '</div>';
+    }
+    if (p.skipped && p.skipped.length) {
+      html += '<div class="pf-skipped">Skipped ' + p.skipped.length + ' already known: ' +
+        p.skipped.map(function (s) { return escapeHtml(s.name); }).join(', ') + '</div>';
+    }
+    return html;
+  }
+
+  function daysLeftBadgeHtml(daysLeft) {
+    var cls = daysLeft < 0 ? 'over' : (daysLeft <= 7 ? 'red' : (daysLeft <= 30 ? 'amber' : 'green'));
+    var text = daysLeft < 0 ? (Math.abs(daysLeft) + ' days overdue') : (daysLeft + ' days left');
+    return '<span class="pf-days ' + cls + '">' + escapeHtml(text) + '</span>';
+  }
+
+  function prospectClaimsHtml() {
+    var p = state.prospecting;
+    if (p.claimsLoading && !p.claims) return '<div class="loading">Loading…</div>';
+    if (!p.claims) return '';
+    var rows = p.claims.filter(function (c) { return p.claimsScope === 'all' || c.is_mine; });
+    var html = '<div class="pf-filters"><label class="pf-field pf-field-sm"><span>Show</span><select data-pf="claimsScope">' +
+      '<option value="mine"' + (p.claimsScope === 'mine' ? ' selected' : '') + '>My prospects</option>' +
+      '<option value="all"' + (p.claimsScope === 'all' ? ' selected' : '') + '>Everyone’s</option></select></label></div>';
+    if (!rows.length) {
+      return html + '<div class="empty-state">No claimed prospects yet. Find one on the Find Prospects tab.</div>';
+    }
+    html += '<div class="pf-claims">';
+    rows.forEach(function (c) {
+      html += '<div class="pf-claim-row" data-action="prospect-open-customer" data-id="' + c.customer_id + '">' +
+        '<div class="pf-claim-name">' + escapeHtml(c.name) + '<div class="pf-card-meta">' + escapeHtml([c.city, c.state].filter(Boolean).join(', ')) +
+          ' · claimed by ' + escapeHtml(c.claimed_by_name) + ' · ' + escapeHtml(fmtTimestamp(c.claimed_at)) + '</div></div>' +
+        daysLeftBadgeHtml(c.days_left) +
+      '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function prospectingHtml() {
+    var p = state.prospecting;
+    var html = clydeHeaderHtml('prospecting', 'Clyde researching prospects',
+      '<div class="view-title">Prospecting</div>' +
+      '<div class="view-sub">Find target-market businesses within 150 miles of Richmond, review a quick profile, and claim them as ConnectWise Prospects. You have 90 days to move each one forward.</div>');
+    html += '<div class="pf-tabs">' +
+      '<button type="button" class="pf-tab' + (p.tab === 'search' ? ' active' : '') + '" data-action="prospect-tab" data-tab="search">Find Prospects</button>' +
+      '<button type="button" class="pf-tab' + (p.tab === 'mine' ? ' active' : '') + '" data-action="prospect-tab" data-tab="mine">My Prospects</button>' +
+    '</div>';
+    if (p.error) html += '<div class="error-banner">' + escapeHtml(p.error) + '</div>';
+    if (p.loading && !p.loaded) return html + '<div class="loading">Loading…</div>';
+
+    if (p.tab === 'mine') return html + prospectClaimsHtml();
+
+    html += prospectSearchFormHtml();
+    var selected = p.selectedId != null ? findProspect(p.selectedId) : null;
+    html += '<div class="pf-layout' + (selected ? ' has-detail' : '') + '">' +
+      '<div class="pf-results">' + prospectResultsHtml() + '</div>' +
+      (selected ? '<div class="pf-detail-col">' + prospectDetailHtml(selected) + '</div>' : '') +
+    '</div>';
+    return html;
+  }
+
+  // Delegated input/change handling for the Prospecting view. Fields carry
+  // data-pf="<group>.<field>". Typing only updates state (no re-render, so
+  // focus isn't lost); selects re-render since they change what's shown.
+  function onProspectInput(ev) {
+    var el = ev.target;
+    var key = el.getAttribute && el.getAttribute('data-pf');
+    if (!key) return;
+    var p = state.prospecting;
+    var isSelect = el.tagName === 'SELECT';
+    if (ev.type === 'input' && isSelect) return;
+    if (ev.type === 'change' && !isSelect) return;
+    var val = el.value;
+    if (key.indexOf('draft.') === 0) {
+      if (!p.draft) p.draft = {};
+      p.draft[key.slice(6)] = val;
+    } else if (key.indexOf('form.') === 0) {
+      p.form[key.slice(5)] = val;
+    } else if (key === 'filter.tier') {
+      p.filterTier = val;
+    } else if (key === 'filter.industry') {
+      p.filterIndustry = val;
+    } else if (key === 'filter.location') {
+      p.filterLocation = val;
+      return; // re-rendered on blur/enter via change below
+    } else if (key === 'claimsScope') {
+      p.claimsScope = val;
+    }
+    if (isSelect) render();
+  }
+
+  function onProspectFilterCommit(ev) {
+    var el = ev.target;
+    if (el.getAttribute && el.getAttribute('data-pf') === 'filter.location' && ev.type === 'change') {
+      render();
+    }
+  }
+
+  function syncHtml() {
+    var html = '<div class="view-header">' +
+      '<div class="view-title">ConnectWise Sync</div>' +
+      '<div class="view-sub">Pulls active services from ConnectWise — IT Services, Voice, Premise Security, and Data Center agreements — into this dashboard, refreshes every customer’s Monthly Billing chart, sorts every ConnectWise company into Active (Active/Delinquent/Special Info), Prospect (Inactive/Inactive - Still Approved) or Residential by its Company Status, refreshes the front page’s Service Tickets YTD/trend and Active Contacts count/trend and search-by-contact data, then tags every company with its ConnectWise Territory so rep-based customer filtering (Territory Admin) stays current. Checklist progress already recorded isn’t touched.</div>' +
+    '</div>';
+
+    html += '<div class="sync-panel">';
+
+    var running = state.syncRunning || state.billingSyncRunning || state.prospectSyncRunning ||
+      state.ticketHistorySyncRunning || state.contactsSyncRunning || state.territorySyncRunning;
+
+    if (state.syncRunning) {
+      var pct = state.syncTotal ? Math.min(100, Math.round((state.syncProcessed / state.syncTotal) * 100)) : 0;
+      html += '<div class="sync-progress-label">Syncing services… ' + state.syncProcessed + ' of ' + state.syncTotal + ' agreements (' + pct + '%)</div>' +
+        '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + pct + '%"></div></div>';
+    } else if (state.billingSyncRunning) {
+      var bpct = state.billingSyncTotal ? Math.min(100, Math.round((state.billingSyncProcessed / state.billingSyncTotal) * 100)) : 0;
+      html += '<div class="sync-progress-label">Services synced. Syncing Monthly Billing… ' + state.billingSyncProcessed + ' of ' + state.billingSyncTotal + ' customers (' + bpct + '%)</div>' +
+        '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + bpct + '%"></div></div>';
+    } else if (state.prospectSyncRunning) {
+      var ppct = state.prospectSyncTotal ? Math.min(100, Math.round((state.prospectSyncProcessed / state.prospectSyncTotal) * 100)) : 0;
+      html += '<div class="sync-progress-label">Billing synced. Syncing Prospect Companies… ' + state.prospectSyncProcessed + ' of ' + state.prospectSyncTotal + ' companies (' + ppct + '%)</div>' +
+        '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + ppct + '%"></div></div>';
+    } else if (state.ticketHistorySyncRunning) {
+      var thpct = state.ticketHistorySyncTotal ? Math.min(100, Math.round((state.ticketHistorySyncProcessed / state.ticketHistorySyncTotal) * 100)) : 0;
+      html += '<div class="sync-progress-label">Prospects synced. Syncing Ticket History… ' + state.ticketHistorySyncProcessed + ' of ' + state.ticketHistorySyncTotal + ' customers (' + thpct + '%)</div>' +
+        '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + thpct + '%"></div></div>';
+    } else if (state.contactsSyncRunning) {
+      var cpct = state.contactsSyncTotal ? Math.min(100, Math.round((state.contactsSyncProcessed / state.contactsSyncTotal) * 100)) : 0;
+      html += '<div class="sync-progress-label">Ticket history synced. Syncing Contacts… ' + state.contactsSyncProcessed + ' of ' + state.contactsSyncTotal + ' customers (' + cpct + '%)</div>' +
+        '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + cpct + '%"></div></div>';
+    } else if (state.territorySyncRunning) {
+      var tpct = state.territorySyncTotal ? Math.min(100, Math.round((state.territorySyncProcessed / state.territorySyncTotal) * 100)) : 0;
+      html += '<div class="sync-progress-label">Contacts synced. Syncing Territories… ' + state.territorySyncProcessed + ' of ' + state.territorySyncTotal + ' companies (' + tpct + '%)</div>' +
+        '<div class="sync-progress-bar"><div class="sync-progress-fill" style="width:' + tpct + '%"></div></div>';
+    }
+
+    html += '<button class="sync-run-btn" type="button" data-action="run-sync"' + (running ? ' disabled' : '') + '>' + (running ? 'Syncing…' : 'Run Sync Now') + '</button>';
+
+    // Independent per-stage controls -- added 2026-09-26 per Michael's
+    // confirmed "Full plan" for the sync-reliability fix. api/sync.php has
+    // always supported every stage's start/step (and now retry-failed)
+    // independently; this is what actually exposes that in the UI, so a
+    // rep who only needs (say) Contacts re-synced doesn't have to sit
+    // through Agreements/Billing/Prospects/Ticket History again first.
+    var stageButtonDefs = [
+      { stage: 'agreements', label: 'Services (Agreements)', totals: state.syncTotals },
+      { stage: 'billing', label: 'Monthly Billing', totals: state.billingSyncTotals },
+      { stage: 'prospects', label: 'Prospect Companies', totals: state.prospectSyncTotals },
+      { stage: 'ticket-history', label: 'Ticket History', totals: state.ticketHistorySyncTotals },
+      { stage: 'contacts', label: 'Contacts', totals: state.contactsSyncTotals },
+      { stage: 'territory', label: 'Territories', totals: state.territorySyncTotals }
+    ];
+    html += '<div class="sync-stage-controls">';
+    stageButtonDefs.forEach(function (def) {
+      html += '<div class="sync-stage-row">' +
+        '<span class="sync-stage-name">' + escapeHtml(def.label) + '</span>' +
+        '<button class="sync-stage-btn" type="button" data-action="run-stage" data-stage="' + def.stage + '"' + (running ? ' disabled' : '') + '>Run Only</button>';
+      if (def.totals && def.totals.error) {
+        html += '<button class="sync-stage-btn sync-stage-retry-btn" type="button" data-action="retry-stage-failed" data-stage="' + def.stage + '"' + (running ? ' disabled' : '') + '>Retry Failed (' + def.totals.error + ')</button>';
+      }
+      html += '</div>';
+    });
+    html += '</div>';
+
+    if (!running) {
+      if (state.syncDone) {
+        html += '<div class="sync-result">Services: ' + (state.syncTotals ? state.syncTotals.done : 0) + ' agreements synced' +
+          (state.syncTotals && state.syncTotals.error ? ', ' + state.syncTotals.error + ' failed (see below)' : '') + '.</div>';
+      } else if (state.syncTotals && (state.syncTotals.done || state.syncTotals.error)) {
+        html += '<div class="sync-result">Services — last run: ' + state.syncTotals.done + ' synced' +
+          (state.syncTotals.error ? ', ' + state.syncTotals.error + ' failed' : '') +
+          (state.syncStartedAt ? ' — started ' + escapeHtml(fmtTimestamp(state.syncStartedAt)) : '') + '.</div>';
+      } else if (state.syncTotals) {
+        html += '<div class="sync-result">Services: no sync has been run yet.</div>';
+      }
+
+      if (state.billingSyncDone) {
+        html += '<div class="sync-result">Monthly Billing: ' + (state.billingSyncTotals ? state.billingSyncTotals.done : 0) + ' customers synced' +
+          (state.billingSyncTotals && state.billingSyncTotals.error ? ', ' + state.billingSyncTotals.error + ' failed (see below)' : '') + '.</div>';
+      } else if (state.billingSyncTotals && (state.billingSyncTotals.done || state.billingSyncTotals.error)) {
+        html += '<div class="sync-result">Monthly Billing — last run: ' + state.billingSyncTotals.done + ' synced' +
+          (state.billingSyncTotals.error ? ', ' + state.billingSyncTotals.error + ' failed' : '') +
+          (state.billingSyncStartedAt ? ' — started ' + escapeHtml(fmtTimestamp(state.billingSyncStartedAt)) : '') + '.</div>';
+      } else if (state.billingSyncTotals) {
+        html += '<div class="sync-result">Monthly Billing: no sync has been run yet.</div>';
+      }
+
+      if (state.prospectSyncDone) {
+        html += '<div class="sync-result">Prospect Companies: ' + (state.prospectSyncTotals ? state.prospectSyncTotals.done : 0) + ' companies synced' +
+          (state.prospectSyncTotals && state.prospectSyncTotals.error ? ', ' + state.prospectSyncTotals.error + ' failed (see below)' : '') + '.</div>';
+      } else if (state.prospectSyncTotals && (state.prospectSyncTotals.done || state.prospectSyncTotals.error)) {
+        html += '<div class="sync-result">Prospect Companies — last run: ' + state.prospectSyncTotals.done + ' synced' +
+          (state.prospectSyncTotals.error ? ', ' + state.prospectSyncTotals.error + ' failed' : '') +
+          (state.prospectSyncStartedAt ? ' — started ' + escapeHtml(fmtTimestamp(state.prospectSyncStartedAt)) : '') + '.</div>';
+      } else if (state.prospectSyncTotals) {
+        html += '<div class="sync-result">Prospect Companies: no sync has been run yet.</div>';
+      }
+
+      if (state.ticketHistorySyncDone) {
+        html += '<div class="sync-result">Ticket History: ' + (state.ticketHistorySyncTotals ? state.ticketHistorySyncTotals.done : 0) + ' customers synced' +
+          (state.ticketHistorySyncTotals && state.ticketHistorySyncTotals.error ? ', ' + state.ticketHistorySyncTotals.error + ' failed (see below)' : '') + '.</div>';
+      } else if (state.ticketHistorySyncTotals && (state.ticketHistorySyncTotals.done || state.ticketHistorySyncTotals.error)) {
+        html += '<div class="sync-result">Ticket History — last run: ' + state.ticketHistorySyncTotals.done + ' synced' +
+          (state.ticketHistorySyncTotals.error ? ', ' + state.ticketHistorySyncTotals.error + ' failed' : '') +
+          (state.ticketHistorySyncStartedAt ? ' — started ' + escapeHtml(fmtTimestamp(state.ticketHistorySyncStartedAt)) : '') + '.</div>';
+      } else if (state.ticketHistorySyncTotals) {
+        html += '<div class="sync-result">Ticket History: no sync has been run yet.</div>';
+      }
+
+      if (state.contactsSyncDone) {
+        html += '<div class="sync-result">Contacts: ' + (state.contactsSyncTotals ? state.contactsSyncTotals.done : 0) + ' customers synced' +
+          (state.contactsSyncTotals && state.contactsSyncTotals.error ? ', ' + state.contactsSyncTotals.error + ' failed (see below)' : '') + '.</div>';
+      } else if (state.contactsSyncTotals && (state.contactsSyncTotals.done || state.contactsSyncTotals.error)) {
+        html += '<div class="sync-result">Contacts — last run: ' + state.contactsSyncTotals.done + ' synced' +
+          (state.contactsSyncTotals.error ? ', ' + state.contactsSyncTotals.error + ' failed' : '') +
+          (state.contactsSyncStartedAt ? ' — started ' + escapeHtml(fmtTimestamp(state.contactsSyncStartedAt)) : '') + '.</div>';
+      } else if (state.contactsSyncTotals) {
+        html += '<div class="sync-result">Contacts: no sync has been run yet.</div>';
+      }
+
+      if (state.territorySyncDone) {
+        html += '<div class="sync-result">Territories: ' + (state.territorySyncTotals ? state.territorySyncTotals.done : 0) + ' companies synced' +
+          (state.territorySyncTotals && state.territorySyncTotals.error ? ', ' + state.territorySyncTotals.error + ' failed (see below)' : '') + '.</div>';
+      } else if (state.territorySyncTotals && (state.territorySyncTotals.done || state.territorySyncTotals.error)) {
+        html += '<div class="sync-result">Territories — last run: ' + state.territorySyncTotals.done + ' synced' +
+          (state.territorySyncTotals.error ? ', ' + state.territorySyncTotals.error + ' failed' : '') +
+          (state.territorySyncStartedAt ? ' — started ' + escapeHtml(fmtTimestamp(state.territorySyncStartedAt)) : '') + '.</div>';
+      } else if (state.territorySyncTotals) {
+        html += '<div class="sync-result">Territories: no sync has been run yet.</div>';
+      }
+    }
+
+    if (state.syncErrors.length) {
+      html += '<div class="sync-errors-title">Agreements that failed to sync (' + state.syncErrors.length + '):</div><div class="sync-errors-list">';
+      state.syncErrors.forEach(function (err) {
+        html += '<div class="sync-error-row"><strong>' + escapeHtml(err.company_name) + '</strong> — agreement #' + err.agreement_id + ': ' + escapeHtml(err.error) + '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (state.billingSyncErrors.length) {
+      html += '<div class="sync-errors-title">Customers whose billing failed to sync (' + state.billingSyncErrors.length + '):</div><div class="sync-errors-list">';
+      state.billingSyncErrors.forEach(function (err) {
+        html += '<div class="sync-error-row"><strong>' + escapeHtml(err.company_name) + '</strong>: ' + escapeHtml(err.error) + '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (state.prospectSyncErrors.length) {
+      html += '<div class="sync-errors-title">Companies that failed to sync as prospects (' + state.prospectSyncErrors.length + '):</div><div class="sync-errors-list">';
+      state.prospectSyncErrors.forEach(function (err) {
+        html += '<div class="sync-error-row"><strong>' + escapeHtml(err.company_name) + '</strong>: ' + escapeHtml(err.error) + '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (state.ticketHistorySyncErrors.length) {
+      html += '<div class="sync-errors-title">Customers whose ticket history failed to sync (' + state.ticketHistorySyncErrors.length + '):</div><div class="sync-errors-list">';
+      state.ticketHistorySyncErrors.forEach(function (err) {
+        html += '<div class="sync-error-row"><strong>' + escapeHtml(err.company_name) + '</strong>: ' + escapeHtml(err.error) + '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (state.contactsSyncErrors.length) {
+      html += '<div class="sync-errors-title">Customers whose contacts failed to sync (' + state.contactsSyncErrors.length + '):</div><div class="sync-errors-list">';
+      state.contactsSyncErrors.forEach(function (err) {
+        html += '<div class="sync-error-row"><strong>' + escapeHtml(err.company_name) + '</strong>: ' + escapeHtml(err.error) + '</div>';
+      });
+      html += '</div>';
+    }
+
+    if (state.territorySyncErrors.length) {
+      html += '<div class="sync-errors-title">Companies whose territory failed to sync (' + state.territorySyncErrors.length + '):</div><div class="sync-errors-list">';
+      state.territorySyncErrors.forEach(function (err) {
+        html += '<div class="sync-error-row"><strong>' + escapeHtml(err.company_name) + '</strong>: ' + escapeHtml(err.error) + '</div>';
+      });
+      html += '</div>';
+    }
+
+    html += companyCountsHtml();
+
+    html += '</div>';
+    return html;
+  }
+
+  // Territory Admin screen -- added 2026-09-16 per Michael. Nav item is
+  // only shown to state.user.is_territory_admin (topbarHtml()), but this
+  // view is reachable by URL/state manipulation too -- territory-admin.php
+  // itself re-checks admin status server-side on every call, so there's no
+  // real access to gain by forcing this view open without the flag; the
+  // client-side gate is purely about not showing a confusing "Access
+  // Denied" nav item to every other CRC.
+  function territoryAdminHtml() {
+    var html = '<div class="view-header">' +
+      '<div class="view-title">Territory Admin</div>' +
+      '<div class="view-sub">Restrict a CRC to only their assigned territories’ customers. A rep with no rows below sees every customer, same as before this feature existed. Territory names must match the synced ConnectWise Territory exactly — pick from the list where possible rather than typing, since a typo silently shows that rep zero customers with no error anywhere.</div>' +
+    '</div>';
+
+    if (state.territoryAdminLoading || !state.territoryAdmin) {
+      return html + '<div class="loading">Loading territory assignments…</div>';
+    }
+
+    var data = state.territoryAdmin;
+
+    html += '<div class="territory-admin-panel">';
+
+    if (state.territoryAdminError) {
+      html += '<div class="error-banner">' + escapeHtml(state.territoryAdminError) + '</div>';
+    }
+
+    // Add-assignment form.
+    html += '<div class="territory-admin-add">' +
+      '<input type="email" id="territoryAdminEmailInput" placeholder="rep@codebluetechnology.com" value="' + escapeHtml(state.territoryAdminAddEmail) + '" autocomplete="off">' +
+      '<input type="text" id="territoryAdminTerritoryInput" placeholder="Territory name" value="' + escapeHtml(state.territoryAdminAddTerritory) + '" list="territoryAdminOptionsList" autocomplete="off">' +
+      '<datalist id="territoryAdminOptionsList">' +
+        data.territory_options.map(function (t) { return '<option value="' + escapeHtml(t) + '"></option>'; }).join('') +
+      '</datalist>' +
+      '<button type="button" class="territory-admin-add-btn" data-action="territory-admin-add"' + (state.territoryAdminSaving ? ' disabled' : '') + '>' +
+        (state.territoryAdminSaving ? 'Adding…' : '+ Add') +
+      '</button>' +
+    '</div>';
+
+    if (data.territory_options.length === 0) {
+      html += '<div class="territory-admin-hint">No synced territory names yet — run a ConnectWise Sync first (Territories is the last stage) to populate the picker above. You can still type a name manually.</div>';
+    }
+
+    // Current assignments, grouped by email so each rep's rows sit together.
+    var byEmail = {};
+    var emailOrder = [];
+    data.assignments.forEach(function (a) {
+      if (!byEmail[a.email]) {
+        byEmail[a.email] = [];
+        emailOrder.push(a.email);
+      }
+      byEmail[a.email].push(a);
+    });
+
+    if (emailOrder.length === 0) {
+      html += '<div class="territory-admin-empty">No restricted reps yet — every CRC currently sees every customer.</div>';
+    } else {
+      emailOrder.forEach(function (email) {
+        html += '<div class="territory-admin-rep">' +
+          '<div class="territory-admin-rep-email">' + escapeHtml(email) + '</div>' +
+          '<div class="territory-admin-rep-territories">';
+        byEmail[email].forEach(function (a) {
+          html += '<div class="territory-admin-chip">' +
+            '<span>' + escapeHtml(a.territory_name) + '</span>' +
+            '<button type="button" class="territory-admin-remove-btn" data-action="territory-admin-remove" data-id="' + a.id + '"' +
+              (state.territoryAdminRemovingId === a.id ? ' disabled' : '') + ' title="Remove">' +
+              (state.territoryAdminRemovingId === a.id ? '…' : '×') +
+            '</button>' +
+          '</div>';
+        });
+        html += '</div></div>';
+      });
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  // Primary Relationship Dashboard front page -- added 2026-09-10, per
+  // Michael's "gauges" request. Replaces the old plain empty-state div
+  // whenever no customer is selected. Reads only state.overview
+  // (api/dashboard.php), which loadOverview() populates; this function
+  // itself never triggers a fetch, so it's safe to call from render().
+  function overviewHtml() {
+    return overviewBodyHtml();
+  }
+
+  function overviewBodyHtml() {
+    if (state.overviewLoading && !state.overview) {
+      return '<div class="loading">Loading dashboard…</div>';
+    }
+    if (state.overview) {
+      return gaugesHtml(state.overview.gauges || []) + leaderboardsHtml(state.overview.leaderboards || []) +
+        (state.overviewListMode === 'outgrow'
+          ? outgrowStaleListHtml(state.overview.customers || [])
+          : (state.overviewListMode ? customerOverviewListHtml(state.overview.customers || []) : ''));
+    }
+    // Never loaded (still pending) or failed to load -- either way, fall
+    // back to the original guidance rather than showing nothing. A load
+    // failure here doesn't block searching/selecting a customer directly.
+    return (state.overviewError ? '<div class="error-banner">' + escapeHtml(state.overviewError) + '</div>' : '') +
+      '<div class="empty-state">Search for a customer above to see their active CodeBlue services and what they’re missing.</div>';
+  }
+
+  // Shared trend badge -- same "▲ 12.3%" / "▼ 8.0%" / "— " markup and
+  // .trend-badge.<direction> classes activityPanelHtml() already uses for
+  // the Monthly Billing card, so a trend means the same thing everywhere
+  // it appears. trend.percent === null (no real prior-period data yet --
+  // see relationships_cw_activity_billing_series_from_totals()) renders as
+  // a bare direction arrow with a "not enough history yet" title instead
+  // of a misleading percentage.
+  function trendBadgeHtml(trend, size) {
+    if (!trend) return '';
+    var icon = trend.direction === 'up' ? '▲' : (trend.direction === 'down' ? '▼' : '—');
+    var pctText = trend.percent == null ? '' : (trend.percent + '%');
+    var title = trend.percent == null ? ' title="Not enough synced history yet"' : '';
+    var cls = 'trend-badge ' + trend.direction + (size ? ' trend-badge-' + size : '');
+    return '<span class="' + cls + '"' + title + '>' + icon + (pctText ? ' ' + pctText : '') + '</span>';
+  }
+
+  // One trend's percent as plain text, for the Opportunity/Risk badge's
+  // tooltip below -- same null/"not enough history yet" handling as
+  // trendBadgeHtml(), just without the markup.
+  function overviewTrendTitleText(trend) {
+    if (!trend) return 'n/a';
+    if (trend.percent == null) return 'not enough history yet';
+    return (trend.direction === 'up' ? '+' : (trend.direction === 'down' ? '-' : '')) + trend.percent + '%';
+  }
+
+  // Account Opportunity/Risk badge -- added 2026-10-05 per Michael's
+  // "routine recommendation agent" request: ranks every account from
+  // "Likely to need services" (opportunity) to "Account in danger" (risk),
+  // using the exact score/label dashboard.php's
+  // relationships_account_opportunity_score() computes server-side (this
+  // is a FIRST CUT, not a tuned/confirmed spec -- see that function's own
+  // comment). Per this app's "always show the real underlying numbers, not
+  // just a badge" convention (same as every other trend/status indicator
+  // here), the title tooltip always spells out the three trend percents
+  // and the Customer-Experience ticket count that produced the score,
+  // rather than leaving the badge as an unexplained verdict. A score of
+  // null (no customers rows synced far enough to compute it, which
+  // shouldn't normally happen but degrades gracefully) renders as a dash.
+  function overviewOpportunityClass(label) {
+    if (label === 'Likely to need services') return 'opportunity';
+    if (label === 'Account in danger') return 'risk';
+    return 'stable';
+  }
+
+  // The badge itself no longer carries a native title tooltip -- clicking
+  // or hovering it instead opens the explainer popover below
+  // (opportunityPopoverHtml()), which shows the same information in a
+  // readable, always-visible bubble rather than the browser's own slow,
+  // plain-text tooltip. data-id ties the trigger back to a row in
+  // state.overview.customers for the popover to look up.
+  function opportunityBadgeHtml(c) {
+    if (c.opportunity_score == null) return '<span class="overview-dash">—</span>';
+    var cls = overviewOpportunityClass(c.opportunity_label);
+    var html = '<span class="opportunity-badge ' + cls + '" data-action="toggle-opportunity-popover" data-id="' + c.id + '" tabindex="0">' +
+        escapeHtml(c.opportunity_label) +
+        ' <span class="opportunity-score">' + (c.opportunity_score > 0 ? '+' : '') + c.opportunity_score + '</span>' +
+      '</span>';
+    if (c.cx_issue_ticket_count_90d) {
+      html += '<span class="cx-issue-chip" data-action="toggle-opportunity-popover" data-id="' + c.id + '">CX ' + c.cx_issue_ticket_count_90d + '</span>';
+    }
+    return html;
+  }
+
+  // ---- Opportunity/Risk rank explainer popover ---------------------------
+  // Added 2026-10-06 per Michael: "a summary bubble ... tells you why it's
+  // ranked that way." One shared element rather than one per row -- the
+  // Overview list can hold thousands of customers -- positioned with
+  // position:fixed from the hovered/clicked badge's actual screen location
+  // (computeOpportunityPopoverPosition() below), so it always lands next to
+  // the right row and is never clipped by .overview-list's own scrollbar:
+  // position:fixed escapes an ancestor's overflow:auto entirely (as long as
+  // no ancestor sets a CSS transform/filter, which none here do).
+  //
+  // state.opportunityPopover: { customerId, left, top, pinned } | null.
+  // pinned:false is a hover preview (closes on mouseout -- see
+  // onOpportunityMouseOver/Out below); pinned:true came from a click and
+  // stays open until clicked again or dismissed by clicking elsewhere (see
+  // the click-away check at the top of onRootClick).
+
+  // Mirrors dashboard.php's RELATIONSHIPS_OPPORTUNITY_WEIGHT_*/
+  // RELATIONSHIPS_OPPORTUNITY_CX_PENALTY_* constants, purely so this
+  // popover can show a per-signal point breakdown. MUST be kept in sync by
+  // hand if those server-side weights ever change -- relationships_account_
+  // opportunity_score() in dashboard.php is the actual source of truth for
+  // opportunity_score/opportunity_label everywhere else in this app; this
+  // never recomputes or overrides those, only re-derives the breakdown for
+  // display.
+  var OPPORTUNITY_WEIGHT_BILLING = 0.4;
+  var OPPORTUNITY_WEIGHT_TICKETS = 0.3;
+  var OPPORTUNITY_WEIGHT_CONTACTS = 0.3;
+  var OPPORTUNITY_CX_PENALTY_PER_TICKET = 15;
+  var OPPORTUNITY_CX_PENALTY_MAX = 60;
+
+  function opportunityContributionRowHtml(label, trend) {
+    var signed = overviewTrendSignedPercent(trend);
+    var weight = label === 'Billing trend' ? OPPORTUNITY_WEIGHT_BILLING
+      : (label === 'Ticket volume trend' ? OPPORTUNITY_WEIGHT_TICKETS : OPPORTUNITY_WEIGHT_CONTACTS);
+    var contribution = signed * weight;
+    var sign = contribution > 0.05 ? '+' : '';
+    var cls = contribution > 0.05 ? 'pos' : (contribution < -0.05 ? 'neg' : 'neutral');
+    return '<div class="opp-pop-row">' +
+      '<span class="opp-pop-label">' + escapeHtml(label) + ' <span class="opp-pop-weight">(' + Math.round(weight * 100) + '%)</span></span>' +
+      '<span class="opp-pop-trend">' + escapeHtml(overviewTrendTitleText(trend)) + '</span>' +
+      '<span class="opp-pop-contrib ' + cls + '">' + sign + contribution.toFixed(1) + ' pts</span>' +
+    '</div>';
+  }
+
+  // The per-signal rows + CX-penalty row + footer, with no title/subtitle --
+  // extracted 2026-10-07 from what was all of opportunityPopoverContentHtml()
+  // so the hover/click popover above AND the permanent report panel on the
+  // customer's own profile (opportunityReportPanelHtml() below) render the
+  // exact same breakdown from one function rather than two copies that
+  // could drift apart.
+  function opportunityBreakdownRowsHtml(c) {
+    var cxCount = c.cx_issue_ticket_count_90d || 0;
+    var cxPenalty = Math.min(OPPORTUNITY_CX_PENALTY_MAX, cxCount * OPPORTUNITY_CX_PENALTY_PER_TICKET);
+    return opportunityContributionRowHtml('Billing trend', c.billing_trend) +
+      opportunityContributionRowHtml('Ticket volume trend', c.ticket_trend) +
+      opportunityContributionRowHtml('Active contacts trend', c.contact_trend) +
+      '<div class="opp-pop-row">' +
+        '<span class="opp-pop-label">Customer-experience issues <span class="opp-pop-weight">(90d)</span></span>' +
+        '<span class="opp-pop-trend">' + cxCount + ' ticket' + (cxCount === 1 ? '' : 's') + ' needed repeat dispatch</span>' +
+        '<span class="opp-pop-contrib ' + (cxPenalty > 0 ? 'neg' : 'neutral') + '">' + (cxPenalty > 0 ? '-' : '') + cxPenalty.toFixed(1) + ' pts</span>' +
+      '</div>' +
+      '<div class="opp-pop-footer">Positive points pull toward “Likely to need services,” negative toward “Account in danger.” First-cut weights — not yet tuned against real accounts.</div>';
+  }
+
+  function opportunityPopoverContentHtml(c) {
+    return '<div class="opp-pop-title">' + escapeHtml(c.name) + '</div>' +
+      '<div class="opp-pop-subtitle">Why this rank: <strong class="opp-pop-label-' + overviewOpportunityClass(c.opportunity_label) + '">' + escapeHtml(c.opportunity_label) +
+        '</strong> (' + (c.opportunity_score > 0 ? '+' : '') + c.opportunity_score + ')</div>' +
+      opportunityBreakdownRowsHtml(c);
+  }
+
+  // Permanent "why ranked this way" report on the customer's own profile --
+  // added 2026-10-07 per Michael's follow-up to the popover: "I'd also
+  // like the popover data to show in the customer's profile. This will
+  // give the reps a direct report after their attention is brought to
+  // issues." Reuses opportunityBreakdownRowsHtml() so this never drifts
+  // from the Overview list's own popover, backed by the same
+  // billing_trend/ticket_trend/contact_trend/cx_issue_ticket_count_90d/
+  // opportunity_score/opportunity_label fields customers.php's detail
+  // action now returns (see that file's header) -- computed fresh from
+  // this customer's own synced data on every detail load, not carried
+  // over from the Overview list. Guarded the same way opportunityBadgeHtml()
+  // is: opportunity_score == null (no synced trend history yet) renders
+  // nothing rather than a misleading empty report.
+  function opportunityReportPanelHtml(customer) {
+    if (customer.opportunity_score == null) return '';
+    var cls = overviewOpportunityClass(customer.opportunity_label);
+    return '<div class="risk-scans-panel opportunity-report-panel">' +
+      '<div class="risk-scans-panel-header">' +
+        '<div class="view-title">Opportunity/Risk Report</div>' +
+        '<span class="opportunity-badge ' + cls + '">' + escapeHtml(customer.opportunity_label) +
+          ' <span class="opportunity-score">' + (customer.opportunity_score > 0 ? '+' : '') + customer.opportunity_score + '</span>' +
+        '</span>' +
+      '</div>' +
+      '<div class="opportunity-report-rows">' + opportunityBreakdownRowsHtml(customer) + '</div>' +
+    '</div>';
+  }
+
+  // Anchors the popover near the trigger badge without letting it run off
+  // the viewport -- clamped horizontally, and flipped above the badge
+  // instead of below when there isn't room underneath (estimated height,
+  // since the real height isn't known until the popover itself renders).
+  function computeOpportunityPopoverPosition(rect) {
+    var width = 280;
+    var estHeight = 210;
+    var left = Math.min(rect.left, window.innerWidth - width - 12);
+    left = Math.max(12, left);
+    var top = rect.bottom + 8;
+    if (top + estHeight > window.innerHeight - 12) {
+      top = rect.top - estHeight - 8;
+    }
+    return { left: left, top: Math.max(12, top) };
+  }
+
+  // Always emits the #opportunityPopover container, even when nothing is
+  // open -- hidden via inline display:none rather than omitted entirely
+  // (added 2026-10-07, alongside updateOpportunityPopoverDom() below). A
+  // real, persistent DOM node is what lets the hover/click handlers update
+  // the popover WITHOUT a full render() -- updateOpportunityPopoverDom()
+  // just mutates this one element directly. If the node didn't exist until
+  // the first hover, there'd be nothing for that direct update to grab,
+  // and render() would be unavoidable on first show.
+  function opportunityPopoverHtml() {
+    var pop = state.opportunityPopover;
+    var customers = (state.overview && state.overview.customers) || [];
+    var c = null;
+    if (pop) {
+      for (var i = 0; i < customers.length; i++) {
+        if (String(customers[i].id) === String(pop.customerId)) { c = customers[i]; break; }
+      }
+    }
+    if (!pop || !c) {
+      return '<div id="opportunityPopover" class="opportunity-popover" style="display:none;"></div>';
+    }
+    return '<div id="opportunityPopover" class="opportunity-popover" style="left:' + pop.left + 'px; top:' + pop.top + 'px;">' +
+      opportunityPopoverContentHtml(c) +
+    '</div>';
+  }
+
+  // Updates the one shared #opportunityPopover element in place from the
+  // current state.opportunityPopover, instead of calling render() --
+  // added 2026-10-07 per Michael: hovering/clicking the badge was
+  // triggering a full render() (root.innerHTML = ...), which re-creates
+  // .overview-list from scratch and resets its scroll position, jumping a
+  // scrolled customer list back to the top. A hover/click on this badge
+  // never needs to touch anything else on the page, so this talks to the
+  // popover element directly and leaves the rest of the DOM (and its
+  // scroll position) completely alone. Falls through to doing nothing if
+  // the popover node isn't currently in the DOM at all (e.g. the Overview
+  // list itself is collapsed/hidden) -- there's nothing to update then.
+  function updateOpportunityPopoverDom() {
+    var el = document.getElementById('opportunityPopover');
+    if (!el) return;
+    var pop = state.opportunityPopover;
+    var customers = (state.overview && state.overview.customers) || [];
+    var c = null;
+    if (pop) {
+      for (var i = 0; i < customers.length; i++) {
+        if (String(customers[i].id) === String(pop.customerId)) { c = customers[i]; break; }
+      }
+    }
+    if (!pop || !c) {
+      el.style.display = 'none';
+      return;
+    }
+    el.innerHTML = opportunityPopoverContentHtml(c);
+    el.style.left = pop.left + 'px';
+    el.style.top = pop.top + 'px';
+    el.style.display = '';
+  }
+
+  // Hover handlers (event-delegated on `root`, bound once alongside the
+  // other root listeners -- see the bottom of this file) -- a click-pinned
+  // popover (state.opportunityPopover.pinned) is left alone by hovering
+  // elsewhere; only another click, or the click-away check in onRootClick,
+  // closes it.
+  function onOpportunityMouseOver(e) {
+    var el = e.target.closest('[data-action="toggle-opportunity-popover"]');
+    if (!el) return;
+    if (state.opportunityPopover && state.opportunityPopover.pinned) return;
+    var oppId = el.getAttribute('data-id');
+    if (state.opportunityPopover && !state.opportunityPopover.pinned && String(state.opportunityPopover.customerId) === String(oppId)) return;
+    var pos = computeOpportunityPopoverPosition(el.getBoundingClientRect());
+    state.opportunityPopover = { customerId: oppId, left: pos.left, top: pos.top, pinned: false };
+    updateOpportunityPopoverDom();
+  }
+
+  function onOpportunityMouseOut(e) {
+    if (!state.opportunityPopover || state.opportunityPopover.pinned) return;
+    var leavingBadge = e.target.closest('[data-action="toggle-opportunity-popover"]');
+    var leavingPopover = e.target.closest('.opportunity-popover');
+    if (!leavingBadge && !leavingPopover) return;
+    var to = e.relatedTarget;
+    if (to && to.closest && (to.closest('.opportunity-popover') || to.closest('[data-action="toggle-opportunity-popover"]'))) return;
+    state.opportunityPopover = null;
+    updateOpportunityPopoverDom();
+  }
+
+  // Rectangular KPI tiles under the search bar -- gauges is a flat ordered
+  // array from the server (see dashboard.php's header for why), so this
+  // renders whatever comes back rather than a fixed set of named fields;
+  // more gauges can be added later without an app.js change.
+  function gaugesHtml(gauges) {
+    if (!gauges.length) return '';
+    var html = '<div class="gauges-grid">';
+    gauges.forEach(function (g) {
+      if (g.format === 'trend') {
+        html += '<div class="gauge-tile">' +
+          '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
+          '<div class="gauge-value-row">' + trendBadgeHtml(g.trend, 'lg') + '</div>' +
+        '</div>';
+      } else if (g.key === 'total_customers' || g.key === 'total_prospects' || g.key === 'total_residential' || g.key === 'outgrow_stale') {
+        // Clickable: shows/hides that group's list (hidden by default).
+        var listMode = g.key === 'total_customers' ? 'customers' : (g.key === 'total_prospects' ? 'prospects' : (g.key === 'total_residential' ? 'residential' : 'outgrow'));
+        var listOpen = state.overviewListMode === listMode;
+        html += '<button type="button" class="gauge-tile gauge-tile-clickable' + (g.key === 'outgrow_stale' ? ' gauge-tile-alert' : '') + (listOpen ? ' active' : '') + '" data-action="toggle-overview-list" data-mode="' + listMode + '" ' +
+          'title="' + (listOpen ? 'Hide the list' : 'Show the list') + '">' +
+          '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
+          '<div class="gauge-value">' + (g.value == null ? '—' : g.value) + '</div>' +
+          '<div class="gauge-hint">' + (listOpen ? 'Hide list ▲' : 'View list ▼') + '</div>' +
+        '</button>';
+      } else {
+        html += '<div class="gauge-tile">' +
+          '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
+          '<div class="gauge-value">' + (g.value == null ? '—' : g.value) + '</div>' +
+        '</div>';
+      }
+    });
+    html += '</div>';
+    return html;
+  }
+
+  // Weekly rep leaderboards -- added 2026-09-23, per Michael: "Top 3 reps
+  // based on closed tasks for the week" / "Top 3 reps based on number of
+  // meetings created," a gold star on whoever's #1, sized and styled like
+  // the gauge tiles above ("match size of the current pills") but in
+  // their own always-side-by-side pair rather than folded into the
+  // auto-fill gauges grid, since these two belong together as a set. See
+  // dashboard.php's relationships_leaderboard_week_start_utc() for
+  // exactly what "week" means and when it resets -- nothing client-side
+  // needs to know about that; this just renders whatever ranked list
+  // comes back, 0-3 entries.
+  function leaderboardsHtml(leaderboards) {
+    if (!leaderboards || !leaderboards.length) return '';
+    var html = '<div class="leaderboard-grid">';
+    leaderboards.forEach(function (lb) {
+      html += '<div class="gauge-tile leaderboard-tile">' +
+        '<div class="gauge-label">' + escapeHtml(lb.label) + '</div>';
+      var entries = lb.entries || [];
+      if (entries.length === 0) {
+        html += '<div class="leaderboard-empty">Nobody yet this week.</div>';
+      } else {
+        html += '<div class="leaderboard-list">';
+        entries.forEach(function (e, i) {
+          html += '<div class="leaderboard-row">' +
+            (i === 0
+              ? '<span class="leaderboard-star" title="This week\u2019s leader">\u2605</span>'
+              : '<span class="leaderboard-rank-spacer"></span>') +
+            '<span class="leaderboard-name">' + escapeHtml(e.name) + '</span>' +
+            '<span class="leaderboard-count">' + e.count + '</span>' +
+          '</div>';
+        });
+        html += '</div>';
+      }
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  // A trend's signed percent for sorting purposes -- trend.percent is
+  // always stored as a non-negative magnitude (see
+  // relationships_cw_activity_billing_series_from_totals() in
+  // connectwise-activity.php), with the sign carried separately in
+  // trend.direction, so "low to high" only makes sense once direction is
+  // folded back in (a 20% drop sorts below a 5% rise). No history yet
+  // (percent: null) sorts as a flat 0, same as a genuinely flat trend.
+  function overviewTrendSignedPercent(trend) {
+    if (!trend || trend.percent == null) return 0;
+    return trend.direction === 'down' ? -trend.percent : trend.percent;
+  }
+
+  function overviewSortValue(c, column) {
+    switch (column) {
+      case 'billing_trend': return overviewTrendSignedPercent(c.billing_trend);
+      case 'ticket_count_ytd': return c.ticket_count_ytd || 0;
+      case 'contact_count': return c.contact_count || 0;
+      // Opportunity/Risk column -- added 2026-10-05. Sorts by the signed
+      // score itself (positive = opportunity, negative = risk -- see
+      // relationships_account_opportunity_score() in dashboard.php), same
+      // "low to high" direction convention as every other numeric column
+      // here, so ascending puts the most at-risk accounts first and
+      // descending puts the biggest opportunities first.
+      case 'opportunity_score': return c.opportunity_score == null ? 0 : c.opportunity_score;
+      case 'name':
+      default:
+        return (c.name || '').toLowerCase();
+    }
+  }
+
+  function sortOverviewCustomers(customers) {
+    var sort = state.overviewSort || { column: 'name', direction: 'asc' };
+    var dir = sort.direction === 'desc' ? -1 : 1;
+    return customers.slice().sort(function (a, b) {
+      var av = overviewSortValue(a, sort.column);
+      var bv = overviewSortValue(b, sort.column);
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      // Stable, readable tiebreak -- alphabetical, regardless of which
+      // column is actually being sorted.
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  // One clickable column-header label. Clicking a new column sorts it
+  // ascending (A-Z for name, low-to-high for the numeric/trend columns);
+  // clicking the already-active column flips asc/desc.
+  function overviewHeaderCellHtml(column, label) {
+    var sort = state.overviewSort || { column: 'name', direction: 'asc' };
+    var active = sort.column === column;
+    var arrow = active ? (sort.direction === 'asc' ? ' ▲' : ' ▼') : '';
+    return '<button class="overview-col-sort' + (active ? ' active' : '') + '" type="button" ' +
+      'data-action="sort-overview" data-column="' + column + '">' + escapeHtml(label) + arrow + '</button>';
+  }
+
+  // Per-customer trend list: 6-month Agreement Billing trend, Service
+  // Tickets YTD + 6-month trend, and Active Contacts + 6-month trend, all
+  // from synced local data (see dashboard.php). Reuses the same
+  // data-action="select-customer" the search box already uses, so tapping
+  // a row opens that customer's account summary exactly like a search
+  // result does -- no separate click handler needed. Sortable by any
+  // column (see overviewHeaderCellHtml()/sortOverviewCustomers()); once
+  // there are more than 25 rows, the list itself becomes a fixed-height
+  // scroll area (see adjustOverviewListScroll(), called after every
+  // render()) instead of growing the whole page -- roughly the first 25
+  // stay visible without scrolling.
+  // Client-side filters for the front-page customer list -- added
+  // 2026-09-15 per Michael: a Prospects on/off toggle, and a "PeopleFirst
+  // Only" toggle that singles out just the PeopleFirst member companies.
+  // Both read the same is_prospect_only / is_peoplefirst flags the row
+  // badges already use, so no API change is needed. PeopleFirst Only wins
+  // when both are somehow set, since a PeopleFirst company is never also
+  // a prospect.
+  function filteredOverviewCustomers(customers) {
+    if (state.overviewListMode === 'prospects') {
+      var prospects = customers.filter(function (c) { return c.is_prospect_only; });
+      var filterMap = state.overviewStatusFilter || {};
+      return prospects.filter(function (c) {
+        var status = c.cw_status_name || '(no status)';
+        return filterMap[status] !== false;
+      });
+    }
+    if (state.overviewListMode === 'residential') {
+      return customers.filter(function (c) { return c.is_residential; });
+    }
+    var customersOnly = customers.filter(function (c) { return !c.is_prospect_only && !c.is_residential; });
+    if (state.overviewPeopleFirstOnly) {
+      return customersOnly.filter(function (c) { return c.is_peoplefirst; });
+    }
+    return customersOnly;
+  }
+
+  // Toolbar of filter toggle buttons shown above the list header. Counts
+  // are always computed off the *unfiltered* customers array so a hidden
+  // group's count doesn't disappear along with its rows.
+  function overviewFilterBarHtml(customers) {
+    // Prospects have their own per-ConnectWise-status toggle chips instead
+    // of PeopleFirst Only -- added 2026-09-26, per Michael: "Reps should be
+    // able to toggle on/off each status to make their lists." Built from
+    // the *unfiltered* prospect set so a hidden status's chip (and count)
+    // never disappears just because it's currently toggled off.
+    if (state.overviewListMode === 'prospects') {
+      var prospects = customers.filter(function (c) { return c.is_prospect_only; });
+      var counts = {};
+      prospects.forEach(function (c) {
+        var status = c.cw_status_name || '(no status)';
+        counts[status] = (counts[status] || 0) + 1;
+      });
+      var statuses = Object.keys(counts).sort();
+      if (!statuses.length) return '';
+      var filterMap = state.overviewStatusFilter || {};
+      var chips = statuses.map(function (status) {
+        var on = filterMap[status] !== false;
+        return '<button class="overview-filter-btn status' + (on ? ' active' : '') + '" type="button" ' +
+          'data-action="toggle-overview-status" data-status="' + escapeHtml(status) + '" title="Show/hide ' + escapeHtml(status) + ' prospects">' +
+          escapeHtml(status) +
+          ' <span class="overview-filter-count">' + counts[status] + '</span>' +
+        '</button>';
+      }).join('');
+      return '<div class="overview-filter-bar">' + chips + '</div>';
+    }
+    // Residential has no filter bar of its own (2026-09-26) -- just the
+    // plain list, same as the customers list without PeopleFirst Only.
+    if (state.overviewListMode === 'residential') return '';
+    var peopleFirstCount = customers.filter(function (c) { return c.is_peoplefirst; }).length;
+    var pfOnly = !!state.overviewPeopleFirstOnly;
+    var groupOn = !!state.overviewGroupByTerritory;
+    return '<div class="overview-filter-bar">' +
+      '<button class="overview-filter-btn peoplefirst' + (pfOnly ? ' active' : '') + '" type="button" ' +
+        'data-action="toggle-overview-peoplefirst" title="Show only PeopleFirst member companies">' +
+        '★ PeopleFirst Only' +
+        ' <span class="overview-filter-count">' + peopleFirstCount + '</span>' +
+      '</button>' +
+      '<button class="overview-filter-btn territory-group' + (groupOn ? ' active' : '') + '" type="button" ' +
+        'data-action="toggle-overview-group-territory" title="Group this list by synced territory">' +
+        (groupOn ? '✓ Grouped by Territory' : 'Group by Territory') +
+      '</button>' +
+    '</div>';
+  }
+
+  // "60+ Days Since Last OutGrow Touch" list (front-page tile, 2026-09-23,
+  // per Michael): real customers (never prospects) with no published Last
+  // OutGrow Touch, or one 60+ days old -- the exact set the tile counts
+  // (dashboard.php's outgrow_days_since). Sortable by touch date,
+  // earliest -> latest by default; never-touched customers sort as the
+  // "earliest". Clicking a name opens that customer's dashboard via the
+  // same select-customer action every other list uses.
+  function outgrowStaleListHtml(customers) {
+    var stale = customers.filter(function (c) {
+      return !c.is_prospect_only && !c.is_residential && c.has_recent_billing && (c.outgrow_days_since == null || c.outgrow_days_since >= 60);
+    });
+    // Territory chips are built from the full stale set so a territory's
+    // chip (and count) stays put while another one is selected.
+    var terrCounts = {};
+    stale.forEach(function (c) {
+      var t = c.territory_name || '';
+      terrCounts[t] = (terrCounts[t] || 0) + 1;
+    });
+    var terrNames = Object.keys(terrCounts).sort(function (a, b) {
+      if (a === '') return 1;
+      if (b === '') return -1;
+      return a.localeCompare(b);
+    });
+    if (state.outgrowTerritory !== null && !(state.outgrowTerritory in terrCounts)) {
+      state.outgrowTerritory = null; // selected territory no longer has stale customers
+    }
+    var totalStale = stale.length;
+    if (state.outgrowTerritory !== null) {
+      stale = stale.filter(function (c) { return (c.territory_name || '') === state.outgrowTerritory; });
+    }
+    var terrBar = '';
+    if (terrNames.length > 1 || state.outgrowTerritory !== null) {
+      terrBar = '<div class="overview-filter-bar">' +
+        '<button class="overview-filter-btn territory-group' + (state.outgrowTerritory === null ? ' active' : '') + '" type="button" data-action="set-outgrow-territory" data-territory="" data-all="1">All Territories <span class="overview-filter-count">' + totalStale + '</span></button>' +
+        terrNames.map(function (t) {
+          return '<button class="overview-filter-btn territory-group' + (state.outgrowTerritory === t ? ' active' : '') + '" type="button" data-action="set-outgrow-territory" data-territory="' + escapeHtml(t) + '">' +
+            escapeHtml(t || 'No territory') + ' <span class="overview-filter-count">' + terrCounts[t] + '</span></button>';
+        }).join('') +
+      '</div>';
+    }
+    var dir = state.outgrowSortDir === 'desc' ? -1 : 1;
+    stale.sort(function (a, b) {
+      var av = a.last_outgrow_touch || '';
+      var bv = b.last_outgrow_touch || '';
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return a.name.localeCompare(b.name);
+    });
+    var arrow = state.outgrowSortDir === 'desc' ? ' ▼' : ' ▲';
+    var html = '<div class="overview-list-wrap">' + terrBar +
+      '<div class="overview-list-header">' +
+        '<div class="overview-col-name"><span class="overview-col-sort">Customer</span></div>' +
+        '<div class="overview-col"><button class="overview-col-sort active" type="button" data-action="sort-outgrow" title="Flip between earliest-first and latest-first">Last OutGrow Touch' + arrow + '</button></div>' +
+        '<div class="overview-col"><span class="overview-col-sort">Days Since</span></div>' +
+        '<div class="overview-col"><span class="overview-col-sort">Last Touched By</span></div>' +
+      '</div>' +
+      '<div class="overview-list">';
+    if (!stale.length) {
+      html += '<div class="overview-list-empty">' + (state.outgrowTerritory !== null ? 'No customers in this territory need an OutGrow touch.' : 'Every customer has had an OutGrow touch in the last 60 days.') + '</div>';
+    }
+    stale.forEach(function (c) {
+      var badge = c.is_peoplefirst ? peopleFirstBadgeHtml() : '';
+      html += '<div class="overview-row" data-action="select-customer" data-id="' + c.id + '">' +
+        '<div class="overview-col-name"><span class="overview-name">' + escapeHtml(c.name) + '</span>' + badge + '</div>' +
+        '<div class="overview-col">' + (c.last_outgrow_touch ? escapeHtml(fmtOutgrowDate(c.last_outgrow_touch)) : '<span class="outgrow-none">None recorded</span>') + '</div>' +
+        '<div class="overview-col">' + (c.outgrow_days_since == null ? '<span class="overview-dash">—</span>' : c.outgrow_days_since + ' days') + '</div>' +
+        '<div class="overview-col">' + (c.last_outgrow_touch_by ? escapeHtml(c.last_outgrow_touch_by) : '<span class="overview-dash">—</span>') + '</div>' +
+      '</div>';
+    });
+    html += '</div></div>';
+    return html;
+  }
+
+  // One customer row, extracted 2026-10-05 so the territory-grouped and
+  // flat rendering paths in customerOverviewListHtml() below share the
+  // exact same row markup instead of drifting apart.
+  function overviewRowHtml(c) {
+    var badge = c.is_peoplefirst ? peopleFirstBadgeHtml() : (c.is_prospect_only ? prospectBadgeHtml() : (c.is_residential ? residentialBadgeHtml() : ''));
+    return '<div class="overview-row" data-action="select-customer" data-id="' + c.id + '">' +
+      '<div class="overview-col-name"><span class="overview-name">' + escapeHtml(c.name) + '</span>' + badge + '</div>' +
+      '<div class="overview-col">' + (trendBadgeHtml(c.billing_trend) || '<span class="overview-dash">—</span>') + '</div>' +
+      '<div class="overview-col"><span class="overview-count">' + c.ticket_count_ytd + '</span>' + trendBadgeHtml(c.ticket_trend) + '</div>' +
+      '<div class="overview-col"><span class="overview-count">' + c.contact_count + '</span>' + trendBadgeHtml(c.contact_trend) + '</div>' +
+      '<div class="overview-col overview-col-opportunity">' + opportunityBadgeHtml(c) + '</div>' +
+    '</div>';
+  }
+
+  function customerOverviewListHtml(customers) {
+    if (!customers.length) return '';
+    var filtered = filteredOverviewCustomers(customers);
+    var sorted = sortOverviewCustomers(filtered);
+    // Territory grouping (added 2026-10-05, per Michael's "organized by
+    // ... territory" ask) only applies to the main Total Customers list --
+    // Prospects/Residential keep their existing flat lists, since this
+    // Account Opportunity/Risk ranking is scoped to real customers.
+    var groupByTerritory = !!state.overviewGroupByTerritory && state.overviewListMode === 'customers';
+    var html = '<div class="overview-list-wrap">' +
+      overviewFilterBarHtml(customers) +
+      '<div class="overview-list-header">' +
+        '<div class="overview-col-name">' + overviewHeaderCellHtml('name', 'Customer') + '</div>' +
+        '<div class="overview-col">' + overviewHeaderCellHtml('billing_trend', 'Billing Trend (6mo)') + '</div>' +
+        '<div class="overview-col">' + overviewHeaderCellHtml('ticket_count_ytd', 'Tickets YTD') + '</div>' +
+        '<div class="overview-col">' + overviewHeaderCellHtml('contact_count', 'Active Contacts') + '</div>' +
+        '<div class="overview-col overview-col-opportunity">' + overviewHeaderCellHtml('opportunity_score', 'Opportunity/Risk') + '</div>' +
+      '</div>' +
+      '<div class="overview-list">';
+    if (!sorted.length) {
+      html += '<div class="overview-list-empty">' + (state.overviewListMode === 'prospects' ? 'No prospects match the current filter.' : (state.overviewListMode === 'residential' ? 'No residential customers.' : 'No customers match the current filter.')) + '</div>';
+    } else if (groupByTerritory) {
+      // Groups preserve the already-applied sort order within each
+      // territory; the groups themselves are alphabetical by territory
+      // name, with customers who have no synced territory_name yet (see
+      // connectwise-territory-sync-core.php -- most CRCs have no
+      // restriction and this sync may never have been run) bucketed last
+      // under "No Territory Synced" rather than silently dropped.
+      var groups = {};
+      var groupNames = [];
+      sorted.forEach(function (c) {
+        var t = c.territory_name || '';
+        if (!groups[t]) { groups[t] = []; groupNames.push(t); }
+        groups[t].push(c);
+      });
+      groupNames.sort(function (a, b) {
+        if (a === b) return 0;
+        if (a === '') return 1;
+        if (b === '') return -1;
+        return a.localeCompare(b);
+      });
+      groupNames.forEach(function (t) {
+        html += '<div class="overview-group-header">' + (t ? escapeHtml(t) : 'No Territory Synced') +
+          ' <span class="overview-group-count">' + groups[t].length + '</span></div>';
+        groups[t].forEach(function (c) { html += overviewRowHtml(c); });
+      });
+    } else {
+      sorted.forEach(function (c) { html += overviewRowHtml(c); });
+    }
+    html += '</div>' + opportunityPopoverHtml() + '</div>';
+    return html;
+  }
+
+  // Caps the overview list's visible height to roughly 25 rows once there
+  // are more than that many, so the customer list scrolls inside its own
+  // nested box instead of stretching the whole page -- measured from the
+  // actual rendered row height (rather than a hardcoded pixel guess) so it
+  // stays correct whether rows are single-line (desktop) or stacked
+  // (narrow/mobile -- see styles.css's @media rule for .overview-row).
+  // Called after every render() that might have (re)built the list.
+  var OVERVIEW_VISIBLE_ROWS = 25;
+  function adjustOverviewListScroll() {
+    var list = document.querySelector('.overview-list');
+    if (!list) return;
+    // Territory-grouped view (added 2026-10-05) mixes shorter group-header
+    // rows into this list, which breaks the uniform-row-height math below
+    // -- skip the height cap while grouped and let the page grow instead
+    // of scroll, rather than mismeasuring against a header's height.
+    if (state.overviewGroupByTerritory && state.overviewListMode === 'customers') {
+      list.style.maxHeight = '';
+      return;
+    }
+    var rows = list.children;
+    if (rows.length <= OVERVIEW_VISIBLE_ROWS) {
+      list.style.maxHeight = '';
+      return;
+    }
+    var rowRect = rows[0].getBoundingClientRect();
+    var gap = parseFloat(getComputedStyle(list).rowGap || getComputedStyle(list).gap || '0') || 0;
+    var maxHeight = (rowRect.height * OVERVIEW_VISIBLE_ROWS) + (gap * (OVERVIEW_VISIBLE_ROWS - 1));
+    list.style.maxHeight = Math.ceil(maxHeight) + 'px';
+  }
+
+  function searchBoxHtml() {
+    var box =
+      '<div class="search-box">' +
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.5 0.02 255)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>' +
+        '<input id="customerSearchInput" type="text" value="' + escapeHtml(state.query) + '" placeholder="Search by company, contact name, or email…" autocomplete="off">' +
+      '</div>';
+
+    if (state.resultsOpen && state.query.trim()) {
+      box += '<div class="search-results">';
+      if (state.searching) {
+        box += '<div class="search-empty">Searching…</div>';
+      } else if (state.results.length) {
+        state.results.forEach(function (c) {
+          var rowClass = c.is_peoplefirst ? ' peoplefirst' : (c.is_prospect_only ? ' prospect' : (c.is_residential ? ' residential' : ''));
+          // matched_contact_name (customers.php's list action, added
+          // 2026-09-10) is set when this result matched via a synced
+          // ConnectWise Contact's name/email rather than the company name
+          // itself -- see that file's header for the local-data-only search.
+          var viaHint = c.matched_contact_name ? '<span class="search-result-via">via ' + escapeHtml(c.matched_contact_name) + '</span>' : '';
+          box += '<div class="search-result-row' + rowClass + '" data-action="select-customer" data-id="' + c.id + '">' +
+            '<span>' + escapeHtml(c.name) + viaHint + '</span>' +
+            (c.is_peoplefirst ? peopleFirstBadgeHtml() : (c.is_prospect_only ? prospectBadgeHtml() : (c.is_residential ? residentialBadgeHtml() : ''))) +
+          '</div>';
+        });
+      } else {
+        box += '<div class="search-empty">No customers match “' + escapeHtml(state.query) + '”.</div>';
+      }
+      box += '</div>';
+    }
+
+    return box;
+  }
+
+  // PeopleFirst: CodeBlue's top-tier, most-inclusive IT Services package
+  // (see connectwise-sync-core.php). These customers get little to no
+  // cross-sell -- they already have most everything -- so the badge is a
+  // cue to schedule a quarterly risk assessment / client visit instead.
+  function peopleFirstBadgeHtml() {
+    return '<span class="peoplefirst-badge" title="PeopleFirst top-tier member — due a quarterly risk assessment / client visit">★ PeopleFirst</span>';
+  }
+
+  // Prospect: a real ConnectWise Company (Active/Delinquent/Special Info
+  // status, not a Vendor) with no active agreement of any kind yet -- see
+  // connectwise-prospect-sync-core.php. Zero existing services, so every
+  // pillar is a cross-sell opportunity; the badge is the cue that this is a
+  // cold/warm lead rather than an existing customer just missing a few
+  // add-ons.
+  function prospectBadgeHtml() {
+    return '<span class="prospect-badge" title="Prospect — a ConnectWise company with no active CodeBlue services yet. Full cross-sell opportunity.">◇ Prospect</span>';
+  }
+
+  // Residential: a ConnectWise Company whose live status is literally
+  // "Residential" -- added 2026-09-26, per Michael's own new block
+  // request. Residential wins over every other bucket, including an
+  // existing agreement (his own answer when asked directly), so this
+  // badge can appear even on a company with real customer_services rows.
+  function residentialBadgeHtml() {
+    return '<span class="residential-badge" title="Residential — ConnectWise Company status is Residential.">⌂ Residential</span>';
+  }
+
+  // Live ConnectWise ticket count + 6-month Agreement-invoice billing for
+  // the open customer (api/activity.php). Three distinct "nothing to show
+  // yet" states, deliberately NOT collapsed into one: still loading (show
+  // a loading card), a mock customer with no ConnectWise id (nothing to
+  // show, not an error -- render nothing), and an actual ConnectWise
+  // failure (show why, rather than silently vanishing -- that silent-hide
+  // was the bug reported 2026-09-10: any real error was getting treated
+  // exactly like "mock customer, nothing to show" and the whole panel
+  // just disappeared with no explanation).
+  function activityPanelHtml(detail) {
+    var summary = state.activitySummary;
+    if (state.activitySummaryLoading && !summary) {
+      return '<div class="activity-panel"><div class="activity-card loading-card">Loading ticket & billing activity…</div></div>';
+    }
+    if (!summary) {
+      return '';
+    }
+    if (summary.available === false) {
+      if (summary.error) {
+        return '<div class="activity-panel"><div class="activity-card error-card">' +
+          'Couldn’t load ticket/billing activity from ConnectWise: ' + escapeHtml(summary.error) +
+        '</div></div>';
+      }
+      return ''; // mock customer -- no ConnectWise id, nothing to show, not an error
+    }
+
+    var html = '<div class="activity-panel">';
+
+    html += '<button class="activity-card" type="button" data-action="open-tickets">' +
+      '<div class="activity-card-label">Service Tickets YTD</div>' +
+      '<div class="activity-card-value">' + summary.ticket_count_ytd + '</div>' +
+      '<div class="activity-card-sub">Professional Services board — click to view</div>' +
+    '</button>';
+
+    html += '<button class="activity-card" type="button" data-action="open-contacts">' +
+      '<div class="activity-card-label">Active Contacts</div>' +
+      '<div class="activity-card-value">' + (detail.customer.active_contact_count || 0) + '</div>' +
+      '<div class="activity-card-sub">Synced nightly — click to view every contact, edit, or add one</div>' +
+    '</button>';
+
+    // Monthly Billing is read from the nightly sync, not live (see
+    // activity.php) -- billing_synced_at is null when this customer hasn't
+    // been covered by a billing sync run yet, which reads as a real,
+    // confirmed $0 if shown as a normal chart. Show a plain "not yet
+    // synced" message instead, deliberately not a chart, so nobody mistakes
+    // "hasn't synced" for "no billing."
+    if (!summary.billing_synced_at) {
+      html += '<div class="activity-card billing-card">' +
+        '<div class="activity-card-label">Monthly Billing</div>' +
+        '<div class="activity-card-sub">Not yet synced — run ConnectWise Sync to populate this customer’s billing history.</div>' +
+      '</div>';
+    } else {
+      var billing = summary.billing;
+      var isAnnual = billing.mode === 'annual';
+      var maxTotal = Math.max.apply(null, billing.series.map(function (m) { return m.total; }).concat([1]));
+      var trend = billing.trend;
+      var trendIcon = trend.direction === 'up' ? '▲' : (trend.direction === 'down' ? '▼' : '—');
+      var trendPctText = trend.percent == null ? '' : (trend.percent + '%');
+      var trendSummary = trend.direction === 'flat'
+        ? 'Holding steady'
+        : ('Trending ' + trend.direction + (trendPctText ? ' ' + trendPctText : '') + (isAnnual ? '' : ' on average'));
+
+      // Annual-cadence customers (added 2026-09-15, per Michael: "For
+      // accounts that are only being billed annually, I want to see
+      // their last 3 years of billings, just like the last 3 months for
+      // normal monthly customers.") -- see billing.php's/connectwise-
+      // billing-sync-core.php's cadence detection. Same bar-chart markup,
+      // just keyed by `year` instead of `month` and captioned for a
+      // year-over-year comparison instead of the monthly rolling average.
+      html += '<div class="activity-card billing-card">' +
+        '<div class="activity-card-label-row">' +
+          '<div class="activity-card-label">' + (isAnnual ? 'Annual Billing' : 'Monthly Billing') + '</div>' +
+          '<div class="trend-badge ' + trend.direction + '">' + trendIcon + (trendPctText ? ' ' + trendPctText : '') + '</div>' +
+        '</div>' +
+        '<div class="billing-chart">' +
+          billing.series.map(function (m) {
+            var pct = maxTotal > 0 ? Math.max(4, Math.round((m.total / maxTotal) * 100)) : 4;
+            var periodAttr = isAnnual ? ('data-year="' + m.year + '"') : ('data-month="' + m.month + '"');
+            var barLabel = isAnnual ? m.label : m.label.split(' ')[0];
+            return '<button class="billing-bar-col" type="button" data-action="open-invoices" ' + periodAttr + ' data-label="' + escapeHtml(m.label) + '" title="' + escapeHtml(m.label) + ': ' + fmtCurrency(m.total) + '">' +
+              '<div class="billing-bar-value">' + fmtCurrency(m.total) + '</div>' +
+              '<div class="billing-bar-track"><div class="billing-bar-fill" style="height:' + pct + '%"></div></div>' +
+              '<div class="billing-bar-label">' + escapeHtml(barLabel) + '</div>' +
+            '</button>';
+          }).join('') +
+        '</div>' +
+        '<div class="activity-card-sub">' +
+          (isAnnual
+            ? ('Billed annually — ' + escapeHtml(trendSummary) + ' vs. the prior year — Agreement invoices only, click a bar for detail.')
+            : (escapeHtml(trendSummary) + ' vs. the prior 3 months — Agreement invoices only, click a bar for detail.')) +
+          ' Synced ' + escapeHtml(fmtTimestamp(summary.billing_synced_at)) + '.</div>' +
+      '</div>';
+    }
+
+    html += '</div>';
+    html += activityDrilldownHtml(detail);
+    return html;
+  }
+
+  function activityDrilldownBackBtn(action, label) {
+    return '<button class="drilldown-back" type="button" data-action="' + action + '" aria-label="' + escapeHtml(label) + '">' +
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>' +
+    '</button>';
+  }
+
+  function activityDrilldownHtml(detail) {
+    if (!state.activityView) return '';
+    var html = '<div class="activity-drilldown">';
+
+    if (state.activityView === 'tickets') {
+      html += '<div class="drilldown-header">' + activityDrilldownBackBtn('activity-close', 'Close') +
+        '<div class="drilldown-title">Service Tickets YTD — ' + escapeHtml(detail.customer.name) + '</div>' +
+      '</div>';
+      if (state.activityTicketsLoading || !state.activityTickets) {
+        html += '<div class="loading">Loading tickets…</div>';
+      } else if (state.activityTickets === 'error') {
+        html += '<div class="activity-error">Could not load tickets from ConnectWise.</div>';
+      } else if (state.activityTickets.length === 0) {
+        html += '<div class="empty-state">No Professional Services tickets so far this year.</div>';
+      } else {
+        html += '<div class="activity-table-wrap"><table class="activity-table"><thead><tr>' +
+          '<th>Date</th><th>Ticket #</th><th>Summary</th><th>Engineer</th><th>Hours</th>' +
+        '</tr></thead><tbody>';
+        state.activityTickets.forEach(function (t) {
+          html += '<tr><td>' + escapeHtml(fmtDate(t.date)) + '</td><td>#' + t.ticket_number + '</td>' +
+            '<td>' + escapeHtml(t.summary) + '</td><td>' + escapeHtml(t.engineer) + '</td>' +
+            '<td>' + (t.hours || 0) + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+    } else if (state.activityView === 'invoices') {
+      var m = state.activityInvoicesPeriod || {};
+      html += '<div class="drilldown-header">' + activityDrilldownBackBtn('activity-close', 'Close') +
+        '<div class="drilldown-title">Agreement Invoices — ' + escapeHtml(m.label || '') + '</div>' +
+      '</div>';
+      if (state.activityInvoicesLoading || !state.activityInvoices) {
+        html += '<div class="loading">Loading invoices…</div>';
+      } else if (state.activityInvoices === 'error') {
+        html += '<div class="activity-error">Could not load invoices from ConnectWise.</div>';
+      } else if (state.activityInvoices.length === 0) {
+        html += '<div class="empty-state">No Agreement invoices this ' + (m.type === 'year' ? 'year' : 'month') + '.</div>';
+      } else {
+        html += invoicesByAgreementTypeHtml(state.activityInvoices);
+      }
+    } else if (state.activityView === 'invoice-detail') {
+      html += '<div class="drilldown-header">' + activityDrilldownBackBtn('activity-back-to-invoices', 'Back') +
+        '<div class="drilldown-title">Invoice #' + escapeHtml(String(state.activityInvoiceNumber || '')) + '</div>' +
+      '</div>';
+      if (state.activityInvoiceDetailLoading || !state.activityInvoiceDetail) {
+        html += '<div class="loading">Loading invoice…</div>';
+      } else if (state.activityInvoiceDetail === 'error') {
+        html += '<div class="activity-error">Could not load this invoice from ConnectWise.</div>';
+      } else {
+        html += invoiceDetailHtml(state.activityInvoiceDetail);
+      }
+    } else if (state.activityView === 'contacts') {
+      html += accountContactsDrilldownHtml(detail);
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function accountContactsDrilldownHtml(detail) {
+    var customerId = detail.customer.id;
+    var html = '<div class="drilldown-header">' + activityDrilldownBackBtn('activity-close', 'Close') +
+      '<div class="drilldown-title">Account Contacts — ' + escapeHtml(detail.customer.name) + '</div>' +
+    '</div>';
+
+    if (state.accountContactsLoading || state.accountContacts === null) {
+      return html + '<div class="loading">Loading contacts…</div>';
+    }
+    if (state.accountContacts === 'error') {
+      return html + '<div class="activity-error">' + escapeHtml(state.accountContactsError || 'Could not load contacts from ConnectWise.') + '</div>';
+    }
+
+    html += '<div class="meeting-form-actions" style="margin-bottom:12px;">' +
+      '<button type="button" class="vendor-field-btn primary" data-action="contacts-new" ' + (state.accountContactsCreating ? 'disabled' : '') + '>+ Add Contact</button>' +
+    '</div>';
+
+    if (state.accountContactsCreating) {
+      html += '<div class="vendor-field editing" style="margin-bottom:16px;">' +
+        '<input type="text" id="contactsNewFirstName" class="meeting-form-input" placeholder="First name" value="' + escapeHtml(state.accountContactsNewDraft.first_name) + '" maxlength="100">' +
+        '<input type="text" id="contactsNewLastName" class="meeting-form-input" placeholder="Last name" value="' + escapeHtml(state.accountContactsNewDraft.last_name) + '" maxlength="100">' +
+        '<select id="contactsNewType" class="meeting-form-select"><option value="">Contact Type…</option>' +
+          accountContactTypeOptionsHtml(state.accountContactsNewDraft.type_id ? parseInt(state.accountContactsNewDraft.type_id, 10) : null) +
+        '</select>' +
+        '<input type="text" id="contactsNewPhone" class="meeting-form-input" placeholder="Phone" value="' + escapeHtml(state.accountContactsNewDraft.phone) + '" maxlength="40">' +
+        '<input type="text" id="contactsNewEmail" class="meeting-form-input" placeholder="Email" value="' + escapeHtml(state.accountContactsNewDraft.email) + '" maxlength="200">' +
+        (state.accountContactsCreateError ? '<div class="vendor-field-error">' + escapeHtml(state.accountContactsCreateError) + '</div>' : '') +
+        '<div class="vendor-field-actions">' +
+          '<button type="button" class="vendor-field-btn primary" data-action="contacts-new-save" data-customer="' + customerId + '" ' + (state.accountContactsCreateSaving ? 'disabled' : '') + '>' + (state.accountContactsCreateSaving ? 'Creating…' : 'Create Contact') + '</button>' +
+          '<button type="button" class="vendor-field-btn secondary" data-action="contacts-new-cancel" ' + (state.accountContactsCreateSaving ? 'disabled' : '') + '>Cancel</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    if (state.accountContacts.length === 0) {
+      return html + '<div class="empty-state">No contacts on file for this customer in ConnectWise.</div>';
+    }
+
+    html += '<div class="activity-table-wrap"><table class="activity-table"><thead><tr>' +
+      '<th>Status</th><th>First Name</th><th>Last Name</th><th>Email</th><th>Phone</th><th>Type</th><th></th>' +
+    '</tr></thead><tbody>';
+    state.accountContacts.forEach(function (c) {
+      if (state.accountContactsEditingId === c.id) {
+        var d = state.accountContactsEditDraft;
+        html += '<tr>' +
+          '<td>' + (c.inactive ? 'Inactive' : 'Active') + '</td>' +
+          '<td><input type="text" id="contactsEditFirstName" class="meeting-form-input" value="' + escapeHtml(d.first_name) + '" maxlength="100"></td>' +
+          '<td><input type="text" id="contactsEditLastName" class="meeting-form-input" value="' + escapeHtml(d.last_name) + '" maxlength="100"></td>' +
+          '<td><input type="text" id="contactsEditEmail" class="meeting-form-input" value="' + escapeHtml(d.email) + '" maxlength="200"></td>' +
+          '<td><input type="text" id="contactsEditPhone" class="meeting-form-input" value="' + escapeHtml(d.phone) + '" maxlength="40"></td>' +
+          '<td><select id="contactsEditType" class="meeting-form-select"><option value="">—</option>' + accountContactTypeOptionsHtml(d.type_id ? parseInt(d.type_id, 10) : null) + '</select></td>' +
+          '<td><div class="vendor-field-actions">' +
+            '<button type="button" class="vendor-field-btn primary" data-action="contacts-save" data-customer="' + customerId + '" data-contact="' + c.id + '" ' + (state.accountContactsSaving ? 'disabled' : '') + '>' + (state.accountContactsSaving ? 'Saving…' : 'Save') + '</button>' +
+            '<button type="button" class="vendor-field-btn secondary" data-action="contacts-cancel-edit" ' + (state.accountContactsSaving ? 'disabled' : '') + '>Cancel</button>' +
+          '</div></td>' +
+        '</tr>';
+        if (state.accountContactsSaveError) {
+          html += '<tr><td colspan="7"><div class="vendor-field-error">' + escapeHtml(state.accountContactsSaveError) + '</div></td></tr>';
+        }
+      } else {
+        html += '<tr>' +
+          '<td>' + (c.inactive ? 'Inactive' : 'Active') + '</td>' +
+          '<td>' + escapeHtml(c.first_name) + '</td>' +
+          '<td>' + escapeHtml(c.last_name) + '</td>' +
+          '<td>' + (c.email ? escapeHtml(c.email) : '—') + '</td>' +
+          '<td>' + (c.phone ? escapeHtml(c.phone) : '—') + '</td>' +
+          '<td>' + (c.type_name ? escapeHtml(c.type_name) : '—') + '</td>' +
+          '<td><div class="vendor-field-actions">' +
+            '<button type="button" class="vendor-field-btn secondary" data-action="contacts-edit" data-contact="' + c.id + '">Edit</button>' +
+            '<button type="button" class="vendor-field-btn secondary" data-action="contacts-toggle-inactive" data-customer="' + customerId + '" data-contact="' + c.id + '" ' + (state.accountContactsSaving ? 'disabled' : '') + '>' + (c.inactive ? 'Mark Active' : 'Mark Inactive') + '</button>' +
+          '</div></td>' +
+        '</tr>';
+      }
+    });
+    html += '</tbody></table></div>';
+    return html;
+  }
+
+  function accountContactTypeOptionsHtml(selectedId) {
+    var types = state.accountContactTypes || [];
+    var html = '';
+    types.forEach(function (t) {
+      html += '<option value="' + t.id + '"' + (t.id === selectedId ? ' selected' : '') + '>' + escapeHtml(t.name) + '</option>';
+    });
+    return html;
+  }
+
+  function loadAccountContacts(customerId) {
+    state.activityView = 'contacts';
+    state.accountContactsLoading = true;
+    state.accountContacts = null;
+    state.accountContactsError = null;
+    state.accountContactsEditingId = null;
+    state.accountContactsCreating = false;
+    state.error = null;
+    render();
+    apiGet('api/contacts-admin.php?action=list&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      state.accountContactsLoading = false;
+      if (r.data && r.data.ok) {
+        state.accountContacts = r.data.contacts;
+        state.accountContactTypes = r.data.contact_types || [];
+      } else {
+        state.accountContacts = 'error';
+        state.accountContactsError = (r.data && r.data.error) || 'Could not load contacts from ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      state.accountContactsLoading = false;
+      state.accountContacts = 'error';
+      state.accountContactsError = 'Could not load contacts — check your connection.';
+      render();
+    });
+  }
+
+  function accountContactsStartEdit(contact) {
+    state.accountContactsEditingId = contact.id;
+    state.accountContactsEditDraft = {
+      first_name: contact.first_name || '',
+      last_name: contact.last_name || '',
+      type_id: contact.type_id || '',
+      phone: contact.phone || '',
+      email: contact.email || ''
+    };
+    state.accountContactsSaveError = null;
+    render();
+  }
+
+  function accountContactsCancelEdit() {
+    state.accountContactsEditingId = null;
+    state.accountContactsSaveError = null;
+    render();
+  }
+
+  function saveAccountContact(customerId, contact) {
+    var draft = state.accountContactsEditDraft;
+    state.accountContactsSaving = true;
+    state.accountContactsSaveError = null;
+    render();
+    apiPost('api/contacts-admin.php?action=update', {
+      customer_id: customerId,
+      contact_id: contact.id,
+      first_name: draft.first_name,
+      last_name: draft.last_name,
+      type_id: draft.type_id ? parseInt(draft.type_id, 10) : null,
+      phone: draft.phone,
+      phone_comm_id: contact.phone_comm_id,
+      email: draft.email,
+      email_comm_id: contact.email_comm_id
+    }).then(function (r) {
+      state.accountContactsSaving = false;
+      if (r.data && r.data.ok) {
+        var list = state.accountContacts;
+        if (list && list !== 'error') {
+          for (var i = 0; i < list.length; i++) {
+            if (list[i].id === contact.id) { list[i] = r.data.contact; break; }
+          }
+        }
+        state.accountContactsEditingId = null;
+      } else {
+        state.accountContactsSaveError = (r.data && r.data.error) || 'Could not save this contact to ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      state.accountContactsSaving = false;
+      state.accountContactsSaveError = 'Could not save this contact — check your connection.';
+      render();
+    });
+  }
+
+  function toggleAccountContactInactive(customerId, contact) {
+    state.accountContactsSaving = true;
+    state.accountContactsSaveError = null;
+    render();
+    apiPost('api/contacts-admin.php?action=update', {
+      customer_id: customerId,
+      contact_id: contact.id,
+      inactive: !contact.inactive
+    }).then(function (r) {
+      state.accountContactsSaving = false;
+      if (r.data && r.data.ok) {
+        var list = state.accountContacts;
+        if (list && list !== 'error') {
+          for (var i = 0; i < list.length; i++) {
+            if (list[i].id === contact.id) { list[i] = r.data.contact; break; }
+          }
+        }
+      } else {
+        state.accountContactsSaveError = (r.data && r.data.error) || 'Could not update this contact in ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      state.accountContactsSaving = false;
+      state.accountContactsSaveError = 'Could not update this contact — check your connection.';
+      render();
+    });
+  }
+
+  function createAccountContact(customerId) {
+    var draft = state.accountContactsNewDraft;
+    if (!draft.first_name || !draft.last_name) {
+      state.accountContactsCreateError = 'First and last name are both required.';
+      render();
+      return;
+    }
+    state.accountContactsCreateSaving = true;
+    state.accountContactsCreateError = null;
+    render();
+    apiPost('api/contacts-admin.php?action=create', {
+      customer_id: customerId,
+      first_name: draft.first_name,
+      last_name: draft.last_name,
+      type_id: draft.type_id ? parseInt(draft.type_id, 10) : null,
+      phone: draft.phone,
+      email: draft.email
+    }).then(function (r) {
+      state.accountContactsCreateSaving = false;
+      if (r.data && r.data.ok) {
+        var list = state.accountContacts;
+        if (list && list !== 'error') { list.push(r.data.contact); }
+        state.accountContactsCreating = false;
+        state.accountContactsNewDraft = { first_name: '', last_name: '', type_id: '', phone: '', email: '' };
+      } else {
+        state.accountContactsCreateError = (r.data && r.data.error) || 'Could not create this contact in ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      state.accountContactsCreateSaving = false;
+      state.accountContactsCreateError = 'Could not create this contact — check your connection.';
+      render();
+    });
+  }
+
+  function invoicesByAgreementTypeHtml(invoices) {
+    var groups = {};
+    var order = [];
+    invoices.forEach(function (inv) {
+      var key = inv.agreement_type || 'Unknown';
+      if (!groups[key]) { groups[key] = []; order.push(key); }
+      groups[key].push(inv);
+    });
+
+    var html = '<div class="invoice-groups">';
+    order.forEach(function (key) {
+      var rows = groups[key];
+      var subtotal = rows.reduce(function (sum, r) { return sum + (r.total || 0); }, 0);
+      html += '<div class="invoice-group">' +
+        '<div class="invoice-group-head"><span>' + escapeHtml(key) + '</span><span>' + fmtCurrency(subtotal) + '</span></div>';
+      rows.forEach(function (inv) {
+        html += '<div class="invoice-row" data-action="open-invoice-detail" data-invoice="' + inv.id + '" data-number="' + escapeHtml(String(inv.invoice_number)) + '">' +
+          '<div class="invoice-row-main">' +
+            '<div class="invoice-row-number">#' + escapeHtml(String(inv.invoice_number)) + '</div>' +
+            '<div class="invoice-row-agreement">' + escapeHtml(inv.agreement_name || '—') + '</div>' +
+          '</div>' +
+          '<div class="invoice-row-date">' + escapeHtml(fmtDate(inv.date)) + '</div>' +
+          '<div class="invoice-row-total">' + fmtCurrency(inv.total) + '</div>' +
+        '</div>';
+      });
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function invoiceDetailHtml(inv) {
+    var html = '<div class="invoice-detail-meta">' +
+      '<div><span class="meta-label">Date</span><span>' + escapeHtml(fmtDate(inv.date)) + '</span></div>' +
+      '<div><span class="meta-label">Total</span><span>' + fmtCurrency(inv.total) + '</span></div>' +
+      '<div><span class="meta-label">Agreement</span><span>' + escapeHtml(inv.agreement_name || '—') + '</span></div>' +
+      '<div><span class="meta-label">Agreement Type</span><span>' + escapeHtml(inv.agreement_type || '—') + '</span></div>' +
+    '</div>';
+
+    var hasHours = inv.hours_remaining !== null && inv.hours_remaining !== undefined;
+    if (hasHours) {
+      html += '<div class="block-time-note">Hours Remaining (Block Time): <strong>' + escapeHtml(String(inv.hours_remaining)) + '</strong></div>';
+    }
+
+    if (inv.line_items && inv.line_items.length) {
+      html += '<div class="invoice-line-items">';
+      inv.line_items.forEach(function (li) {
+        html += '<div class="product-row"><span>' + escapeHtml(li.description) + '</span><span class="product-qty">' + (li.qty != null ? li.qty : '') + '</span></div>';
+      });
+      html += '</div>';
+      // ConnectWise's invoice record never carries its own line items for a
+      // normal Agreement invoice (confirmed 2026-09-10) -- these are the
+      // agreement's current active additions instead, a close but not
+      // always exact stand-in for what that specific past invoice billed.
+      if (inv.line_items_source === 'agreement_additions') {
+        html += '<div class="activity-card-sub">Current active additions on this agreement — not a historical snapshot of this specific invoice.</div>';
+      }
+    } else if (!hasHours) {
+      html += '<div class="empty-state">No active additions found on this agreement.</div>';
+      if (inv.raw_hour_fields && Object.keys(inv.raw_hour_fields).length) {
+        html += '<div class="raw-fields-note">Possible hours-remaining fields found on the agreement (not yet confirmed): ' +
+          Object.keys(inv.raw_hour_fields).map(function (k) { return escapeHtml(k) + ' = ' + escapeHtml(String(inv.raw_hour_fields[k])); }).join(', ') +
+        '</div>';
+      }
+    }
+
+    return html;
+  }
+
+  // ---- Arrangeable dashboard cards (added 2026-10-07 per Michael) ---------
+  // "Edit view" lets a rep drag the cards between two columns; the arrangement is saved per rep
+  // (api/layout.php) and applied to every customer they open.
+  var LAYOUT_DEFAULT = { left: ['opportunity', 'contact', 'outgrow'], right: ['riskscans', 'documents', 'solutions', 'computers'] };
+  var LAYOUT_CARD_NAMES = { opportunity: 'Opportunity/Risk Report', contact: 'Contacts', outgrow: 'Outgrow Last Touch', riskscans: 'Risk Scans', documents: 'Documents', solutions: 'Solutions', computers: 'Computers (Automate)' };
+
+  function normalizeLayout(l) {
+    var out = { left: [], right: [] }, seen = {};
+    ['left', 'right'].forEach(function (col) {
+      ((l && l[col]) || []).forEach(function (id) {
+        if (LAYOUT_CARD_NAMES[id] && !seen[id]) { seen[id] = true; out[col].push(id); }
+      });
+    });
+    ['left', 'right'].forEach(function (col) {
+      LAYOUT_DEFAULT[col].forEach(function (id) { if (!seen[id]) { seen[id] = true; out[col].push(id); } });
+    });
+    return out;
+  }
+
+  function currentLayout() { return normalizeLayout(state.layout || LAYOUT_DEFAULT); }
+
+  function loadLayout() {
+    apiGet('api/layout.php?action=get').then(function (r) {
+      if (r.data && r.data.ok) { state.layout = r.data.layout; render(); }
+    }).catch(function () { /* default layout is fine */ });
+  }
+
+  function saveLayout() {
+    state.layoutSaveError = null;
+    apiPost('api/layout.php?action=save', { layout: currentLayout() }).then(function (r) {
+      if (!r.data || !r.data.ok) { state.layoutSaveError = (r.data && r.data.error) || 'Could not save your layout.'; render(); }
+    }).catch(function () { state.layoutSaveError = 'Could not save your layout - check your connection.'; render(); });
+  }
+
+  function moveLayoutCard(id, toCol, beforeId) {
+    var l = currentLayout();
+    ['left', 'right'].forEach(function (c) { l[c] = l[c].filter(function (x) { return x !== id; }); });
+    var idx = beforeId ? l[toCol].indexOf(beforeId) : -1;
+    if (idx < 0) l[toCol].push(id); else l[toCol].splice(idx, 0, id);
+    state.layout = l;
+    render();
+    saveLayout();
+  }
+
+  function nudgeLayoutCard(id, dir) {
+    var l = currentLayout();
+    var col = l.left.indexOf(id) >= 0 ? 'left' : 'right';
+    var i = l[col].indexOf(id), j = i + dir;
+    if (j < 0 || j >= l[col].length) return;
+    var t = l[col][i]; l[col][i] = l[col][j]; l[col][j] = t;
+    state.layout = l;
+    render();
+    saveLayout();
+  }
+
+  function layoutCardInnerHtml(id, detail) {
+    if (id === 'opportunity') return opportunityReportPanelHtml(detail.customer);
+    if (id === 'contact') return contactCardHtml();
+    if (id === 'outgrow') return outgrowFieldHtml();
+    if (id === 'riskscans') return riskScansPanelHtml(detail.customer.id);
+    if (id === 'documents') return documentsPanelHtml(detail.customer.id);
+    if (id === 'solutions') return solutionsPanelHtml(detail.customer);
+    if (id === 'computers') return automatePanelHtml(detail.customer);
+    return '';
+  }
+
+  function dashboardCardsHtml(detail) {
+    var l = currentLayout();
+    var edit = !!state.layoutEdit;
+    var html = '';
+    if (edit) {
+      html += '<div class="layout-edit-banner"><span><strong>Edit view</strong> - drag a card by its bar (or use the arrows) to rearrange. Your layout is saved automatically and used for every customer.</span>' +
+        '<button type="button" class="layout-reset-btn" data-action="layout-reset">Reset to default</button>' +
+        (state.layoutSaveError ? '<span class="layout-edit-error">' + escapeHtml(state.layoutSaveError) + '</span>' : '') + '</div>';
+    }
+    html += '<div class="detail-cols' + (edit ? ' layout-editing' : '') + '">';
+    ['left', 'right'].forEach(function (col) {
+      html += '<div class="detail-col" data-layout-col="' + col + '">';
+      l[col].forEach(function (id, i) {
+        var inner = layoutCardInnerHtml(id, detail);
+        if (!edit) { html += inner; return; }
+        html += '<div class="layout-card" draggable="true" data-layout-card="' + id + '">' +
+          '<div class="layout-card-bar"><span class="layout-grip" aria-hidden="true">\u2807\u2807</span><span class="layout-card-title">' + escapeHtml(LAYOUT_CARD_NAMES[id]) + '</span>' +
+          '<span class="layout-card-btns">' +
+            '<button type="button" data-action="layout-nudge" data-card="' + id + '" data-dir="-1" title="Move up"' + (i === 0 ? ' disabled' : '') + '>\u25B2</button>' +
+            '<button type="button" data-action="layout-nudge" data-card="' + id + '" data-dir="1" title="Move down"' + (i === l[col].length - 1 ? ' disabled' : '') + '>\u25BC</button>' +
+            '<button type="button" data-action="layout-side" data-card="' + id + '" data-col="' + (col === 'left' ? 'right' : 'left') + '" title="Move to the ' + (col === 'left' ? 'right' : 'left') + ' column">' + (col === 'left' ? '\u25B6' : '\u25C0') + '</button>' +
+          '</span></div><div class="layout-card-body">' + inner + '</div></div>';
+      });
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
+  function onLayoutDragStart(e) {
+    var card = e.target.closest && e.target.closest('[data-layout-card]');
+    if (!card) return;
+    state.layoutDragId = card.getAttribute('data-layout-card');
+    card.classList.add('layout-dragging');
+    try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', state.layoutDragId); } catch (x) {}
+  }
+  function layoutDropTarget(e) {
+    var col = e.target.closest && e.target.closest('[data-layout-col]');
+    if (!col) return null;
+    var before = null;
+    var cards = col.querySelectorAll('[data-layout-card]');
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i].getAttribute('data-layout-card') === state.layoutDragId) continue;
+      var r = cards[i].getBoundingClientRect();
+      if (e.clientY < r.top + r.height / 2) { before = cards[i].getAttribute('data-layout-card'); break; }
+    }
+    return { col: col.getAttribute('data-layout-col'), before: before };
+  }
+  function onLayoutDragOver(e) {
+    if (!state.layoutDragId) return;
+    var t = layoutDropTarget(e);
+    if (!t) return;
+    e.preventDefault();
+    var cols = root.querySelectorAll('[data-layout-col]');
+    for (var i = 0; i < cols.length; i++) cols[i].classList.toggle('layout-drop', cols[i].getAttribute('data-layout-col') === t.col);
+  }
+  function onLayoutDrop(e) {
+    if (!state.layoutDragId) return;
+    var t = layoutDropTarget(e);
+    var id = state.layoutDragId;
+    state.layoutDragId = null;
+    if (!t) return;
+    e.preventDefault();
+    moveLayoutCard(id, t.col, t.before);
+  }
+  function onLayoutDragEnd() {
+    state.layoutDragId = null;
+    var els = root.querySelectorAll('.layout-dragging, .layout-drop');
+    for (var i = 0; i < els.length; i++) els[i].classList.remove('layout-dragging', 'layout-drop');
+  }
+
+  function customerDashboardHtml(detail) {
+    var roster = missingRoster(detail);
+    var html = '';
+
+    var headerClass = detail.customer.is_peoplefirst ? ' peoplefirst' : (detail.customer.is_prospect_only ? ' prospect' : (detail.customer.is_residential ? ' residential' : ''));
+    html += '<div class="customer-header' + headerClass + '">' +
+      '<div class="customer-header-left">' +
+        '<div class="customer-name">' + escapeHtml(detail.customer.name) + '</div>' +
+        (detail.customer.is_peoplefirst ? peopleFirstBadgeHtml() : (detail.customer.is_prospect_only ? prospectBadgeHtml() : (detail.customer.is_residential ? residentialBadgeHtml() : ''))) +
+      '</div>' +
+      '<div class="customer-header-right">' +
+        '<button class="print-summary-btn" type="button" data-action="open-print-summary">Print Service Summary</button>' +
+        (detail.customer.connectwise_id ? '<a class="print-summary-btn" style="text-decoration:none;display:inline-block;" href="../collections/index.html?cw_company=' + encodeURIComponent(detail.customer.connectwise_id) + '" target="_blank" rel="noopener">Open Balance Report</a>' : '') +
+        '<button class="change-customer-btn' + (state.layoutEdit ? ' layout-edit-on' : '') + '" type="button" data-action="layout-edit-toggle">' + (state.layoutEdit ? 'Done editing' : 'Edit view') + '</button>' +
+        '<button class="change-customer-btn" type="button" data-action="change-customer">Search a different customer</button>' +
+      '</div>' +
+    '</div>';
+
+
+    if (detail.customer.is_peoplefirst) {
+      html += '<div class="peoplefirst-note">PeopleFirst Support Members - Quarterly Risk Scans and Monthly Client Checkin\'s are required.</div>';
+      html += peopleFirstFieldsHtml(detail.customer);
+    } else if (detail.customer.is_prospect_only) {
+      html += '<div class="prospect-note">Prospect — a ConnectWise company with no active CodeBlue services yet. Every pillar below is a cross-sell opportunity.</div>';
+      var pclaim = detail.customer.prospect_claim;
+      if (pclaim) {
+        html += '<div class="prospect-claim-note">Claimed by ' + escapeHtml(pclaim.claimed_by_name) + ' on ' + escapeHtml(fmtTimestamp(pclaim.claimed_at)) +
+          ' \u2014 90 days to move this account forward: ' + daysLeftBadgeHtml(pclaim.days_left) + '</div>';
+      }
+    } else if (detail.customer.is_residential) {
+      // Added 2026-09-26, per Michael's "add another block for Residential
+      // customers" request -- same note pattern as PeopleFirst/Prospect
+      // above, so every customer bucket gets a one-line explanation of
+      // what its badge means right on the dashboard.
+      html += '<div class="residential-note">Residential — ConnectWise Company status is Residential.</div>';
+    }
+
+    html += dashboardCardsHtml(detail);
+
+    html += activityPanelHtml(detail);
+
+    html += '<div class="dashboard-grid">';
+
+    html += '<div class="pillar-grid">';
+    detail.pillars.forEach(function (pillar) {
+      var activeCount = pillar.services.filter(function (s) { return s.active; }).length;
+      var totalCount = pillar.services.length;
+      var isHostedVoip = pillar.id === 'voip' && detail.customer.voip_hosted_elsewhere;
+      var tileClass = isHostedVoip ? 'hosted-elsewhere' : (pillar.active ? 'active' : 'inactive');
+      var statusText = isHostedVoip ? 'HOSTED PLATFORM →' : (pillar.active ? 'ACTIVE →' : 'NOT IN USE →');
+      var countText = isHostedVoip
+        ? 'Hosted by manufacturer — not marketed by CodeBlue'
+        : activeCount + ' of ' + totalCount + ' service areas in use';
+      html += '<div class="pillar-tile-wrap">' +
+        vendorFieldHtml(detail.customer.id, pillar) +
+        '<div class="pillar-tile ' + tileClass + '" data-action="open-pillar" data-pillar="' + pillar.id + '"' +
+        (isHostedVoip ? ' title="Voice hosted directly by the manufacturer' + (detail.customer.voip_hosted_agreement_name ? ' (' + escapeHtml(detail.customer.voip_hosted_agreement_name) + ')' : '') + ' — do not market phone/VoIP services to this customer."' : '') + '>' +
+          '<div>' +
+            '<div class="pillar-tile-name">' + escapeHtml(pillar.name) + '</div>' +
+            '<div class="pillar-tile-count">' + countText + '</div>' +
+          '</div>' +
+          '<div class="pillar-tile-status">' + statusText + '</div>' +
+        '</div>' +
+      '</div>';
+    });
+    html += '</div>';
+
+    html += '<div class="right-column">';
+
+    html += '<div class="roster-panel">' +
+      '<div class="roster-title">Cross-Sell Opportunities</div>' +
+      '<div class="roster-sub">Services this customer isn’t using yet. Click one to open its pillar.</div>' +
+      '<div class="roster-list">';
+    if (roster.length === 0) {
+      html += '<div class="roster-empty">This customer is using every CodeBlue service area — nothing to cross-sell right now.</div>';
+    } else {
+      roster.forEach(function (item) {
+        html += '<div class="roster-item" data-action="open-pillar" data-pillar="' + item.pillarId + '">' +
+          '<div class="roster-item-pillar">' + escapeHtml(item.pillarName) + '</div>' +
+          '<div class="roster-item-name">' + escapeHtml(item.serviceName) + '</div>' +
+        '</div>';
+      });
+    }
+    html += '</div></div>';
+
+    // Customer Meeting Capture -- added 2026-09-15 per Michael: a
+    // "Meetings" box, and a separate "Meeting To-Dos" box formatted like
+    // the Cross-Sell Checklist, both stacked directly under Cross-Sell
+    // Opportunities in the same right-hand column.
+    html += meetingsPanelHtml(detail.customer.id);
+    html += meetingTasksPanelHtml();
+
+    html += '</div>'; // .right-column
+
+    html += '</div>'; // .dashboard-grid
+
+    if (state.activePillarId) {
+      var pillar = detail.pillars.filter(function (p) { return p.id === state.activePillarId; })[0];
+      if (pillar) {
+        html += drilldownHtml(pillar, detail.customer);
+      }
+    }
+
+    if (state.printSummaryOpen) {
+      html += printSummaryHtml(detail);
+    }
+
+    return html;
+  }
+
+  function peopleFirstFieldsHtml(customer) {
+    return '<div class="peoplefirst-fields">' +
+      peopleFirstFieldHtml(customer, 'checkin', 'Last Client Checkin', customer.last_client_checkin_at, customer.last_client_checkin_by) +
+      peopleFirstFieldHtml(customer, 'scan', 'Last Risk Scan', customer.last_risk_scan_at, customer.last_risk_scan_by) +
+    '</div>';
+  }
+
+  function peopleFirstFieldHtml(customer, type, label, at, by) {
+    var key = customer.id + '::' + type;
+    var isLogging = state.pfLogging === key;
+    var valueHtml = at
+      ? escapeHtml(fmtTimestamp(at)) + (by ? '<div class="peoplefirst-field-by">by ' + escapeHtml(by) + '</div>' : '')
+      : '<span class="peoplefirst-field-empty">Not recorded yet</span>';
+
+    return '<div class="peoplefirst-field">' +
+      '<div class="peoplefirst-field-label">' + escapeHtml(label) + '</div>' +
+      '<div class="peoplefirst-field-value">' + valueHtml + '</div>' +
+      '<button class="peoplefirst-log-btn" type="button" data-action="log-peoplefirst" data-customer="' + customer.id + '" data-type="' + type + '" ' +
+        (isLogging ? 'disabled' : '') + '>' + (isLogging ? 'Logging…' : 'Log Today') + '</button>' +
+    '</div>';
+  }
+
+  // ---- Risk scans (upload/download/review) -------------------------------
+  // Added 2026-09-23 per Michael. Shown on EVERY customer's dashboard, not
+  // only PeopleFirst members (AskUserQuestion, 2026-09-23) -- a scan can be
+  // uploaded for any customer; it only also stamps the PeopleFirst
+  // "Last Risk Scan" fields above when this customer actually is one (see
+  // risk-scans.php's 'upload' action).
+
+  function riskScansPanelHtml(customerId) {
+    var html = '<div class="risk-scans-panel">';
+    html += '<div class="risk-scans-panel-header">' +
+      '<div class="view-title">Risk Scans</div>' +
+      '<div class="risk-scan-upload-row">' +
+        '<label class="risk-scan-file-label" for="riskScanFileInput">' +
+          (state.riskScanDraftFile ? escapeHtml(state.riskScanDraftFile.name) : 'Choose .zip file…') +
+        '</label>' +
+        '<input type="file" id="riskScanFileInput" accept=".zip" class="risk-scan-file-input">' +
+        '<button class="risk-scan-upload-btn" type="button" data-action="riskscan-upload" data-customer="' + customerId + '" ' +
+          (!state.riskScanDraftFile || state.riskScanUploading ? 'disabled' : '') + '>' +
+          (state.riskScanUploading ? 'Uploading…' : 'Upload') +
+        '</button>' +
+      '</div>' +
+    '</div>';
+
+    if (state.riskScansError) {
+      html += '<div class="error-banner">' + escapeHtml(state.riskScansError) + '</div>';
+    }
+
+    if (state.riskScansLoading && !state.riskScans) {
+      html += '<div class="loading">Loading…</div>';
+    } else if (!state.riskScans || !state.riskScans.length) {
+      html += '<div class="roster-empty">No risk scans uploaded yet.</div>';
+    } else {
+      html += '<div class="risk-scan-list">';
+      state.riskScans.forEach(function (scan) {
+        html += riskScanItemHtml(scan);
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  // ConnectWise attachment status line (risk-scans.php's
+  // relationships_risk_scan_push_to_cw()) -- every scan is also supposed
+  // to land in the customer's ConnectWise Documents, so anything other
+  // than 'uploaded' is called out, with a Retry for failed/never-attempted.
+  function riskScanCwStatusHtml(scan) {
+    var st = scan.cw_upload_status;
+    if (st === 'uploaded') {
+      return '<div class="risk-scan-cw-status ok">✓ Saved to ConnectWise attachments</div>';
+    }
+    if (st === 'skipped') {
+      return '<div class="risk-scan-cw-status muted">Not attached in ConnectWise — no ConnectWise company for this customer.</div>';
+    }
+    var retrying = state.riskScanRetryingId === scan.id;
+    var msg = st === 'failed'
+      ? 'ConnectWise attachment failed' + (scan.cw_upload_error ? ': ' + escapeHtml(scan.cw_upload_error) : '.')
+      : 'Not yet saved to ConnectWise attachments.';
+    return '<div class="risk-scan-cw-status bad">' + msg +
+      ' <button class="risk-scan-cw-retry" type="button" data-action="riskscan-retry-cw" data-scan="' + scan.id + '" ' + (retrying ? 'disabled' : '') + '>' +
+        (retrying ? 'Retrying…' : 'Retry') +
+      '</button></div>';
+  }
+
+  function riskScanItemHtml(scan) {
+    var isReviewed = !!scan.reviewed_at;
+    var isAssigned = !!scan.assigned_to_name;
+    var isToggling = state.riskScanTogglingId === scan.id;
+    return '<div class="risk-scan-item' + (isReviewed ? ' reviewed' : '') + '" data-riskscan-row="' + scan.id + '">' +
+      '<div class="risk-scan-item-main">' +
+        '<div class="risk-scan-item-name">' + escapeHtml(scan.original_filename) + '</div>' +
+        '<div class="risk-scan-item-meta">' + fmtFileSize(scan.size_bytes) + ' · uploaded by ' + escapeHtml(scan.uploaded_by_name) + ' · ' + escapeHtml(fmtTimestamp(scan.uploaded_at)) + '</div>' +
+        (isAssigned && !isReviewed
+          ? '<div class="risk-scan-item-assigned-meta">Assigned to ' + escapeHtml(scan.assigned_to_name) + '</div>'
+          : '') +
+        (isReviewed
+          ? '<div class="risk-scan-item-reviewed-meta">✓ Reviewed by ' + escapeHtml(scan.reviewed_by_name) + ' — ' + escapeHtml(fmtTimestamp(scan.reviewed_at)) + '</div>'
+          : '') +
+        riskScanCwStatusHtml(scan) +
+      '</div>' +
+      '<div class="risk-scan-item-actions">' +
+        '<a class="risk-scan-download-btn" href="api/risk-scans.php?action=download&id=' + scan.id + '">Download</a>' +
+        (!isReviewed
+          ? (isAssigned
+              ? '<button class="risk-scan-review-btn" type="button" data-action="riskscan-unassign" data-scan="' + scan.id + '" ' + (isToggling ? 'disabled' : '') + '>' +
+                  (isToggling ? '…' : 'Unassign') +
+                '</button>'
+              // Roster dropdown, per Michael (2026-09-29): "change 'Assign
+              // myself' to a list of Relationship Coordinators, just like
+              // we do with To-Do's" -- same state.meetingsRoster the Add
+              // Task form's taskAssigneeSelect already uses.
+              : '<select class="risk-scan-assign-select" data-riskscan-assign-select="' + scan.id + '" ' + (isToggling ? 'disabled' : '') + '>' +
+                  '<option value="">Assign to…</option>' +
+                  state.meetingsRoster.map(function (name) {
+                    return '<option value="' + escapeHtml(name) + '"' + (state.riskScanAssignDraft[scan.id] === name ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
+                  }).join('') +
+                '</select>' +
+                '<button class="risk-scan-review-btn" type="button" data-action="riskscan-assign" data-scan="' + scan.id + '" ' + (isToggling ? 'disabled' : '') + '>' +
+                  (isToggling ? '…' : 'Assign') +
+                '</button>')
+          : '') +
+        '<button class="risk-scan-review-btn" type="button" data-action="' + (isReviewed ? 'riskscan-unmark-reviewed' : 'riskscan-mark-reviewed') + '" data-scan="' + scan.id + '" ' + (isToggling ? 'disabled' : '') + '>' +
+          (isToggling ? '…' : (isReviewed ? 'Reopen' : 'Mark Reviewed')) +
+        '</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // ---- Computers card (ConnectWise Automate, api/automate.php) --------------
+  // Added 2026-10-07 per Michael: the customer's computers from Automate -- online/offline counts in the
+  // header, a list when expanded, and a link to the company in the Automate console. The customer is
+  // matched to its Automate client server-side (ConnectWise company number first, then name). Read-only.
+
+  function resetAutomateState() {
+    state.automate = null;
+    state.automateLoading = false;
+    state.automateError = null;
+    state.automateOpen = false;
+    state.automateShowAll = false;
+  }
+
+  function loadAutomate(customerId) {
+    state.automateLoading = true;
+    var requestFor = Number(customerId);
+    apiGet('api/automate.php?action=computers&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.automateLoading = false;
+      if (r.data && r.data.ok) state.automate = r.data;
+      else state.automateError = (r.data && r.data.error) || 'Could not load computers from Automate.';
+      render();
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.automateLoading = false;
+      state.automateError = 'Could not reach Automate - check your connection and try again.';
+      render();
+    });
+  }
+
+  // Automate times arrive as local wall-clock strings ("2026-10-07T21:03:59"); show them as written.
+  function automateWhen(str) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(str || '');
+    if (!m) return str || '-';
+    var mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(m[2]) - 1];
+    var h = Number(m[4]), ap = h >= 12 ? 'PM' : 'AM';
+    return mon + ' ' + Number(m[3]) + ', ' + (h % 12 || 12) + ':' + m[5] + ' ' + ap;
+  }
+
+  function automatePanelHtml(customer) {
+    var open = !!state.automateOpen;
+    var d = state.automate;
+    var found = d && d.matched_client;
+    var sum = found && d.summary ? d.summary : null;
+    var h = '<div class="risk-scans-panel solutions-panel automate-panel">' +
+      '<div class="risk-scans-panel-header">' +
+        '<button type="button" class="solutions-toggle" data-action="automate-toggle" aria-expanded="' + open + '">' +
+          '<span class="solutions-chevron">' + (open ? '▾' : '▸') + '</span>' +
+          '<span class="view-title">Computers</span>' +
+          (sum ? '<span class="solutions-count">' + sum.total + '</span><span class="automate-online">' + sum.online + ' online</span>' : '') +
+        '</button>' +
+        (found ? '<a class="solution-btn" href="network.html?customer=' + encodeURIComponent(customer.id) + '" target="_blank" rel="noopener">Show Customer Network</a>' : '') +
+        (found && d.console_url ? '<a class="solution-btn" href="' + escapeHtml(d.console_url) + '" target="_blank" rel="noopener">Open in Automate ↗</a>' : '') +
+      '</div>';
+    if (!open) return h + '</div>';
+    if (state.automateError) return h + '<div class="error-banner">' + escapeHtml(state.automateError) + '</div></div>';
+    if (state.automateLoading && !d) return h + '<div class="loading">Loading…</div></div>';
+    if (!d) return h + '</div>';
+    if (d.configured === false) return h + '<div class="roster-empty">Automate is not connected on this server yet.</div></div>';
+    if (!found) return h + '<div class="roster-empty">This customer was not found in Automate, so there are no computers to show.</div></div>';
+    if (!d.computers.length) return h + '<div class="roster-empty">Automate has no computers on file for ' + escapeHtml(d.matched_client.name) + '.</div></div>';
+    h += '<div class="automate-summary">' + sum.online + ' online · ' + sum.offline + ' offline · ' + sum.total + ' total' +
+      (sum.reboot_needed ? ' · <span class="automate-warn">' + sum.reboot_needed + ' need a reboot</span>' : '') + '</div>';
+    var list = state.automateShowAll ? d.computers : d.computers.slice(0, 10);
+    h += '<div class="solutions-list"><div class="automate-row automate-head"><div>Computer</div><div>OS</div><div>Status</div><div>Last contact</div><div>Last user</div></div>';
+    list.forEach(function (c) {
+      var on = String(c.status).toLowerCase() === 'online';
+      h += '<div class="automate-row">' +
+        '<div class="automate-name" title="' + escapeHtml(c.serial ? 'Serial ' + c.serial : '') + '">' + escapeHtml(c.name) + (c.reboot_needed ? ' <span class="automate-warn" title="Windows is waiting on a restart">↻</span>' : '') + '</div>' +
+        '<div>' + escapeHtml(c.os || '-') + '</div>' +
+        '<div><span class="automate-dot ' + (on ? 'on' : 'off') + '"></span>' + escapeHtml(c.status || '-') + '</div>' +
+        '<div>' + escapeHtml(automateWhen(c.last_contact)) + '</div>' +
+        '<div>' + escapeHtml(c.last_user || '-') + '</div>' +
+      '</div>';
+    });
+    h += '</div>';
+    if (d.computers.length > 10) {
+      h += '<button type="button" class="solution-btn automate-more" data-action="automate-showall">' +
+        (state.automateShowAll ? 'Show fewer' : 'Show all ' + d.computers.length) + '</button>';
+    }
+    return h + '</div>';
+  }
+
+  // ---- Saved Solutions card (api/solutions.php) --------------------------
+  // Added 2026-10-07 per Michael: solutions built in the Solutions Hub are saved to a customer (with
+  // documents and images) and listed here in a collapsible "Solutions" card -- name, date created,
+  // the rep who saved it and its pillar(s) of service. "Open / Edit" reopens it in the Hub
+  // (../index.html?solution=ID); "Delete" is offered only to the rep who saved it (or an admin).
+
+  function resetSolutionsState() {
+    state.solutions = null;
+    state.solutionsLoading = false;
+    state.solutionsError = null;
+    state.solutionsOpen = false;
+    state.solutionFiles = {}; // solution id -> { loading, files, error } once its Files list has been opened
+    state.solutionFilesOpen = {};
+    state.solutionDeletingId = null;
+  }
+
+  function loadSolutions(customerId) {
+    state.solutionsLoading = true;
+    var requestFor = Number(customerId);
+    apiGet('api/solutions.php?action=list&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.solutionsLoading = false;
+      if (r.data && r.data.ok) state.solutions = r.data.solutions;
+      else state.solutionsError = (r.data && r.data.error) || 'Could not load solutions.';
+      render();
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.solutionsLoading = false;
+      state.solutionsError = 'Could not load solutions — check your connection and try again.';
+      render();
+    });
+  }
+
+  function toggleSolutionFiles(id) {
+    state.solutionFilesOpen[id] = !state.solutionFilesOpen[id];
+    if (state.solutionFilesOpen[id] && !state.solutionFiles[id]) {
+      state.solutionFiles[id] = { loading: true, files: [], error: null };
+      apiGet('api/solutions.php?action=get&id=' + id).then(function (r) {
+        var slot = state.solutionFiles[id] = { loading: false, files: [], error: null };
+        if (r.data && r.data.ok) slot.files = solutionVisibleFiles(r.data.solution.files || []);
+        else slot.error = (r.data && r.data.error) || 'Could not load the files.';
+        render();
+      }).catch(function () {
+        state.solutionFiles[id] = { loading: false, files: [], error: 'Could not load the files — check your connection.' };
+        render();
+      });
+    }
+    render();
+  }
+
+  function deleteSolution(id) {
+    var s = (state.solutions || []).filter(function (x) { return x.id === id; })[0];
+    if (!s) return;
+    if (!window.confirm('Delete the saved solution “' + s.name + '” and its files? This can’t be undone.')) return;
+    state.solutionDeletingId = id;
+    state.solutionsError = null;
+    render();
+    apiPost('api/solutions.php?action=delete', { id: id }).then(function (r) {
+      state.solutionDeletingId = null;
+      if (r.data && r.data.ok) {
+        state.solutions = (state.solutions || []).filter(function (x) { return x.id !== id; });
+      } else {
+        state.solutionsError = (r.data && r.data.error) || 'Could not delete the solution.';
+      }
+      render();
+    }).catch(function () {
+      state.solutionDeletingId = null;
+      state.solutionsError = 'Could not delete the solution — check your connection and try again.';
+      render();
+    });
+  }
+
+  // The original of a camera photo is kept only so the layout can be re-edited; when its marked-up copy exists, show that one.
+  function solutionVisibleFiles(files) {
+    var marked = {};
+    files.forEach(function (f) { if (f.kind === 'camera_marked') marked[String(f.ref || '').split(':')[0]] = true; });
+    return files.filter(function (f) { return !(f.kind === 'camera_photo' && marked[f.ref]); });
+  }
+
+  function solutionFileCwHtml(f) {
+    if (f.kind !== 'camera_marked') return '';
+    var st = f.cw_upload_status;
+    if (st === 'uploaded') return '<div class="risk-scan-cw-status ok">\u2713 Attached to the ConnectWise company</div>';
+    if (st === 'skipped') return '<div class="risk-scan-cw-status muted">Not attached in ConnectWise \u2014 no ConnectWise company for this customer.</div>';
+    var retrying = state.solutionRetryingFile === f.id;
+    return '<div class="risk-scan-cw-status bad">' + (st === 'failed' ? 'ConnectWise attachment failed' + (f.cw_upload_error ? ': ' + escapeHtml(f.cw_upload_error) : '.') : 'Not yet attached in ConnectWise.') +
+      ' <button class="risk-scan-cw-retry" type="button" data-action="solution-file-retry" data-file="' + f.id + '" data-solution="' + f.solutionId + '"' + (retrying ? ' disabled' : '') + '>' + (retrying ? 'Retrying\u2026' : 'Retry') + '</button></div>';
+  }
+
+  function retrySolutionFile(fileId, solutionId) {
+    state.solutionRetryingFile = fileId;
+    render();
+    apiPost('api/solutions.php?action=retry_cw_file', { file_id: fileId }).then(function (r) {
+      state.solutionRetryingFile = null;
+      var slot = state.solutionFiles[solutionId];
+      if (r.data && r.data.ok && slot) slot.files = solutionVisibleFiles(r.data.files || []);
+      else if (slot) slot.error = (r.data && r.data.error) || 'Could not retry the ConnectWise attachment.';
+      render();
+    }).catch(function () {
+      state.solutionRetryingFile = null;
+      var slot = state.solutionFiles[solutionId];
+      if (slot) slot.error = 'Could not retry the ConnectWise attachment \u2014 check your connection.';
+      render();
+    });
+  }
+
+  function solutionDate(raw) {
+    if (!raw) return '';
+    var d = new Date(raw.indexOf('T') === -1 ? raw.replace(' ', 'T') + 'Z' : raw);
+    return isNaN(d.getTime()) ? raw : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function solutionCwLinksHtml(s) {
+    var links = (s.cw_links || []).filter(function (l) { return l.status !== 'failed'; });
+    if (!links.length) return '';
+    return '<div class="solution-cwlinks">ConnectWise: ' + links.map(function (l) { return escapeHtml(l.project_name || ('Project #' + l.project_id)); }).join(', ') + '</div>';
+  }
+
+  function copySolutionLink(id) {
+    var s = (state.solutions || []).filter(function (x) { return x.id === id; })[0];
+    if (!s || !s.link) return;
+    var done = function (ok) {
+      if (!ok) { window.prompt('Copy this solution link:', s.link); return; }
+      state.solutionCopiedId = id; render();
+      setTimeout(function () { if (state.solutionCopiedId === id) { state.solutionCopiedId = null; render(); } }, 2000);
+    };
+    var fallback = function () {
+      var ta = document.createElement('textarea');
+      ta.value = s.link; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+      document.body.appendChild(ta); ta.select();
+      var ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(ta); done(ok);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(s.link).then(function () { done(true); }, fallback);
+    else fallback();
+  }
+
+  function solutionRowHtml(s) {
+    var open = !!state.solutionFilesOpen[s.id];
+    var pillars = (s.pillars || []).map(function (p) { return '<span class="solution-pillar-tag">' + escapeHtml(p) + '</span>'; }).join('') ||
+      '<span class="solution-pillar-tag muted">—</span>';
+    var edited = s.updated_at && s.updated_at !== s.created_at
+      ? ' <span class="solution-edited" title="Last updated by ' + escapeHtml(s.updated_by_name) + ' on ' + escapeHtml(fmtTimestamp(s.updated_at)) + '">(edited ' + escapeHtml(solutionDate(s.updated_at)) + ')</span>' : '';
+    var h = '<div class="solution-row" data-solution-row="' + s.id + '">' +
+      '<div class="solution-cell solution-name">' + escapeHtml(s.name) + solutionCwLinksHtml(s) + '</div>' +
+      '<div class="solution-cell solution-pillars">' + pillars + '</div>' +
+      '<div class="solution-cell solution-created">' + escapeHtml(solutionDate(s.created_at)) + edited + '</div>' +
+      '<div class="solution-cell solution-rep">' + escapeHtml(s.created_by_name) + '</div>' +
+      '<div class="solution-cell solution-actions">' +
+        '<button type="button" class="solution-btn" data-action="solution-files" data-solution="' + s.id + '">' + (open ? 'Hide files' : 'Files') + '</button>' +
+        '<button type="button" class="solution-btn" data-action="solution-copy" data-solution="' + s.id + '" title="Copy this solution\'s unique link (to paste into ConnectWise)">' + (state.solutionCopiedId === s.id ? 'Copied \u2713' : 'Copy link') + '</button>' +
+        '<a class="solution-btn primary" href="../index.html?solution=' + s.id + '" target="_blank" rel="noopener">Open / Edit</a>' +
+        (s.can_delete ? '<button type="button" class="solution-btn danger" data-action="solution-delete" data-solution="' + s.id + '"' + (state.solutionDeletingId === s.id ? ' disabled' : '') + '>' + (state.solutionDeletingId === s.id ? 'Deleting…' : 'Delete') + '</button>' : '') +
+      '</div>';
+    if (open) {
+      var slot = state.solutionFiles[s.id];
+      h += '<div class="solution-files">';
+      if (!slot || slot.loading) h += '<div class="loading">Loading…</div>';
+      else if (slot.error) h += '<div class="error-banner">' + escapeHtml(slot.error) + '</div>';
+      else if (!slot.files.length) h += '<div class="roster-empty">No documents or images were saved with this solution.</div>';
+      else {
+        slot.files.forEach(function (f) {
+          f.solutionId = s.id;
+          var href = escapeHtml(f.url);
+          h += '<div class="solution-file">' +
+            (f.is_image ? '<a href="' + href + '" target="_blank" rel="noopener"><img class="solution-thumb" src="' + href + '" alt="" loading="lazy"></a>' : '<span class="solution-doc-icon">📄</span>') +
+            '<div class="solution-file-main"><div class="risk-scan-item-name">' + escapeHtml(f.name) + (f.kind === 'camera_marked' ? ' <span class="document-category-tag">Camera layout photo</span>' : (f.kind === 'camera_photo' ? ' <span class="document-category-tag">Camera photo</span>' : '')) + '</div>' +
+            '<div class="risk-scan-item-meta">' + fmtFileSize(f.size_bytes) + '</div>' + solutionFileCwHtml(f) + '</div>' +
+            '<a class="risk-scan-download-btn" href="' + href + '"' + (f.is_image ? ' target="_blank" rel="noopener"' : '') + '>' + (f.is_image ? 'View' : 'Download') + '</a></div>';
+        });
+      }
+      h += '</div>';
+    }
+    return h + '</div>';
+  }
+
+  function solutionsPanelHtml(customer) {
+    var open = !!state.solutionsOpen;
+    var count = state.solutions ? state.solutions.length : null;
+    var h = '<div class="risk-scans-panel solutions-panel">' +
+      '<div class="risk-scans-panel-header">' +
+        '<button type="button" class="solutions-toggle" data-action="solutions-toggle" aria-expanded="' + open + '">' +
+          '<span class="solutions-chevron">' + (open ? '▾' : '▸') + '</span>' +
+          '<span class="view-title">Solutions</span>' +
+          (count !== null ? '<span class="solutions-count">' + count + '</span>' : '') +
+        '</button>' +
+        '<a class="solution-btn primary" href="../index.html?customer_id=' + customer.id + '&customer_name=' + encodeURIComponent(customer.name || '') + '" target="_blank" rel="noopener">+ New solution</a>' +
+      '</div>';
+    if (open) {
+      if (state.solutionsError) h += '<div class="error-banner">' + escapeHtml(state.solutionsError) + '</div>';
+      if (state.solutionsLoading && !state.solutions) h += '<div class="loading">Loading…</div>';
+      else if (!state.solutions || !state.solutions.length) {
+        h += '<div class="roster-empty">No solutions saved for this customer yet. Build one in the Solutions Hub and choose “Save to customer” on the Solution Summary.</div>';
+      } else {
+        h += '<div class="solutions-list"><div class="solution-row solution-head"><div class="solution-cell">Solution</div><div class="solution-cell">Pillar of service</div><div class="solution-cell">Created</div><div class="solution-cell">Saved by</div><div class="solution-cell"></div></div>';
+        state.solutions.forEach(function (s) { h += solutionRowHtml(s); });
+        h += '</div>';
+      }
+    }
+    return h + '</div>';
+  }
+
+  // ---- Customer Documents panel ------------------------------------------
+  // Added 2026-10-02 per Michael. Shown on every customer's dashboard right
+  // under Risk Scans. Every upload is also attached to the customer's
+  // ConnectWise Documents (same status line + Retry as Risk Scans).
+
+  function documentsPanelHtml(customerId) {
+    var drafts = state.documentDraftFiles || [];
+    var label = !drafts.length ? 'Choose files…'
+      : (drafts.length === 1 ? drafts[0].name : drafts.length + ' files selected');
+    var html = '<div class="risk-scans-panel documents-panel">';
+    html += '<div class="risk-scans-panel-header">' +
+      '<div class="view-title">Documents</div>' +
+      '<div class="risk-scan-upload-row">' +
+        '<select class="risk-scan-assign-select document-category-select" id="documentCategorySelect" ' + (state.documentUploading ? 'disabled' : '') + '>' +
+          DOCUMENT_CATEGORIES.map(function (c) {
+            return '<option value="' + escapeHtml(c) + '"' + (state.documentDraftCategory === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
+          }).join('') +
+        '</select>' +
+        '<label class="risk-scan-file-label" for="documentFileInput">' + escapeHtml(label) + '</label>' +
+        '<input type="file" id="documentFileInput" accept="' + DOCUMENT_ACCEPT + '" multiple class="risk-scan-file-input">' +
+        '<button class="risk-scan-upload-btn" type="button" data-action="document-upload" data-customer="' + customerId + '" ' +
+          (!drafts.length || state.documentUploading ? 'disabled' : '') + '>' +
+          (state.documentUploading ? escapeHtml(state.documentUploadProgress || 'Uploading…') : 'Upload') +
+        '</button>' +
+      '</div>' +
+    '</div>';
+    html += '<div class="document-hint">Word, PDF, Excel, PowerPoint, images, Visio, email and zip files · up to 100 MB each · also saved to this customer’s ConnectWise attachments.</div>';
+
+    if (state.documentsError) {
+      html += '<div class="error-banner">' + escapeHtml(state.documentsError) + '</div>';
+    }
+
+    if (state.documentsLoading && !state.documents) {
+      html += '<div class="loading">Loading…</div>';
+    } else if (!state.documents || !state.documents.length) {
+      html += '<div class="roster-empty">No documents uploaded yet.</div>';
+    } else {
+      html += '<div class="risk-scan-list">';
+      state.documents.forEach(function (doc) {
+        html += documentItemHtml(doc);
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function documentCwStatusHtml(doc) {
+    var st = doc.cw_upload_status;
+    if (st === 'uploaded') {
+      return '<div class="risk-scan-cw-status ok">✓ Saved to ConnectWise attachments</div>';
+    }
+    if (st === 'skipped') {
+      return '<div class="risk-scan-cw-status muted">Not attached in ConnectWise — no ConnectWise company for this customer.</div>';
+    }
+    var retrying = state.documentRetryingId === doc.id;
+    var msg = st === 'failed'
+      ? 'ConnectWise attachment failed' + (doc.cw_upload_error ? ': ' + escapeHtml(doc.cw_upload_error) : '.')
+      : 'Not yet saved to ConnectWise attachments.';
+    return '<div class="risk-scan-cw-status bad">' + msg +
+      ' <button class="risk-scan-cw-retry" type="button" data-action="document-retry-cw" data-doc="' + doc.id + '" ' + (retrying ? 'disabled' : '') + '>' +
+        (retrying ? 'Retrying…' : 'Retry') +
+      '</button></div>';
+  }
+
+  function documentItemHtml(doc) {
+    return '<div class="risk-scan-item" data-document-row="' + doc.id + '">' +
+      '<div class="risk-scan-item-main">' +
+        '<div class="risk-scan-item-name">' + escapeHtml(doc.original_filename) +
+          ' <span class="document-category-tag">' + escapeHtml(doc.category || 'General') + '</span></div>' +
+        '<div class="risk-scan-item-meta">' + fmtFileSize(doc.size_bytes) + ' · uploaded by ' + escapeHtml(doc.uploaded_by_name) + ' · ' + escapeHtml(fmtTimestamp(doc.uploaded_at)) + '</div>' +
+        documentCwStatusHtml(doc) +
+      '</div>' +
+      '<div class="risk-scan-item-actions">' +
+        '<a class="risk-scan-download-btn" href="api/documents.php?action=download&id=' + doc.id + '">Download</a>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // ---- "Current vendor if not CodeBlue" (per pillar) --------------------
+
+  function vendorFieldHtml(customerId, pillar) {
+    var pillarId = pillar.id;
+    var note = state.vendorNotes ? state.vendorNotes[pillarId] : null;
+    var isEditing = state.vendorEditingPillarId === pillarId;
+
+    if (isEditing) {
+      return '<div class="vendor-field editing">' +
+        '<input type="text" id="vendorFieldInput" class="vendor-field-input" placeholder="Vendor name" value="' + escapeHtml(state.vendorDraft) + '" maxlength="200">' +
+        '<div class="vendor-field-actions">' +
+          '<button type="button" class="vendor-field-btn primary" data-action="vendor-save" data-pillar="' + pillarId + '" ' + (state.vendorSaving ? 'disabled' : '') + '>' + (state.vendorSaving ? 'Saving…' : 'Save') + '</button>' +
+          '<button type="button" class="vendor-field-btn secondary" data-action="vendor-edit-cancel" ' + (state.vendorSaving ? 'disabled' : '') + '>Cancel</button>' +
+        '</div>' +
+        (state.vendorError ? '<div class="vendor-field-error">' + escapeHtml(state.vendorError) + '</div>' : '') +
+      '</div>';
+    }
+
+    var valueHtml;
+    if (note) {
+      valueHtml = (note.vendor_name
+        ? '<span class="vendor-field-name">' + escapeHtml(note.vendor_name) + '</span>'
+        : '<span class="vendor-field-empty">(cleared)</span>') +
+        '<span class="vendor-field-meta">' + escapeHtml(fmtTimestamp(note.updated_at)) + ' · ' + escapeHtml(note.updated_by_name) + '</span>';
+    } else {
+      valueHtml = '<span class="vendor-field-empty">Not recorded</span>';
+    }
+
+    return '<div class="vendor-field">' +
+      '<span class="vendor-field-label">Current Vendor (if not CodeBlue)</span>' +
+      '<span class="vendor-field-value">' + valueHtml + '</span>' +
+      '<button type="button" class="vendor-field-edit-btn" data-action="vendor-edit-start" data-pillar="' + pillarId + '">Edit</button>' +
+    '</div>';
+  }
+
+  // ---- Customer Meeting Capture: Meetings box ----------------------------
+
+  function meetingsPanelHtml(customerId) {
+    var html = '<div class="meetings-panel">';
+    html += '<div class="meetings-panel-header">' +
+      '<div class="roster-title">Meetings</div>' +
+      '<button type="button" class="meetings-add-btn" data-action="meeting-add-open">+ Log a Meeting</button>' +
+    '</div>';
+
+    if (state.meetingsError) {
+      html += '<div class="meetings-error">' + escapeHtml(state.meetingsError) + '</div>';
+    }
+
+    if (state.meetingAddOpen) {
+      html += '<div class="meeting-add-form">' +
+        '<input type="text" id="meetingSubjectInput" class="meeting-form-input" placeholder="Subject (e.g. CRC Check-in 9/15/2026 - Services Review)" value="' + escapeHtml(state.meetingDraftSubject) + '" maxlength="200">' +
+        '<input type="date" id="meetingDateInput" class="meeting-form-input" value="' + escapeHtml(state.meetingDraftDate) + '">' +
+        '<textarea id="meetingNotesInput" class="meeting-form-textarea" placeholder="Notes from the meeting…" rows="3">' + escapeHtml(state.meetingDraftNotes) + '</textarea>' +
+        '<div class="meeting-form-actions">' +
+          '<button type="button" class="vendor-field-btn primary" data-action="meeting-save" data-customer="' + customerId + '" ' + (state.meetingSaving ? 'disabled' : '') + '>' + (state.meetingSaving ? 'Saving…' : 'Save Meeting') + '</button>' +
+          '<button type="button" class="vendor-field-btn secondary" data-action="meeting-add-cancel" ' + (state.meetingSaving ? 'disabled' : '') + '>Cancel</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    if (state.meetingsLoading && !state.meetings) {
+      html += '<div class="loading">Loading meetings…</div>';
+    } else if (!state.meetings || state.meetings.length === 0) {
+      html += '<div class="roster-empty">No meetings logged yet.</div>';
+    } else {
+      html += '<div class="meeting-list">';
+      state.meetings.forEach(function (m) {
+        html += meetingRowHtml(m);
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function meetingRowHtml(m) {
+    var isOpen = state.openMeetingId === m.id;
+    var openTaskCount = m.tasks.filter(function (t) { return !t.completed_at; }).length;
+    var cwWarn = m.cw_push && m.cw_push.status === 'error'
+      ? '<div class="meeting-cw-warn" title="' + escapeHtml(m.cw_push.error || '') + '">Didn’t sync to ConnectWise</div>'
+      : '';
+
+    var html = '<div class="meeting-row">' +
+      '<div class="meeting-row-head" data-action="meeting-toggle" data-meeting="' + m.id + '">' +
+        '<div class="meeting-row-main">' +
+          '<div class="meeting-row-subject">' + escapeHtml(m.subject) + '</div>' +
+          '<div class="meeting-row-meta">' + escapeHtml(fmtOutgrowDate(m.meeting_date)) + ' · logged by ' + escapeHtml(m.logged_by_name) +
+            (openTaskCount ? ' · ' + openTaskCount + ' open task' + (openTaskCount === 1 ? '' : 's') : '') +
+          '</div>' +
+        '</div>' +
+        '<div class="meeting-row-toggle">' + (isOpen ? '▴' : '▾') + '</div>' +
+      '</div>';
+
+    if (isOpen) {
+      html += '<div class="meeting-row-body">';
+      if (m.notes) {
+        html += '<div class="meeting-row-notes">' + escapeHtml(m.notes).replace(/\n/g, '<br>') + '</div>';
+      }
+      html += cwWarn;
+
+      if (state.taskAddOpenForMeeting === m.id) {
+        html += '<div class="task-add-form">' +
+          '<input type="text" id="taskDescriptionInput" class="meeting-form-input" placeholder="Task description" value="' + escapeHtml(state.taskDraftDescription) + '" maxlength="500">' +
+          '<select id="taskAssigneeSelect" class="meeting-form-select">' +
+            // Blank placeholder above the roster -- added 2026-09-23 per
+            // Michael: "create a blank choice for to-do assignments above
+            // Claire Hayden so that a rep has to choose an assignment for
+            // someone." Selected whenever nothing's been picked yet
+            // (state.taskDraftAssignee === ''), which is now always true
+            // when this form first opens -- see task-add-open above.
+            '<option value=""' + (state.taskDraftAssignee === '' ? ' selected' : '') + '>Select a rep\u2026</option>' +
+            state.meetingsRoster.map(function (name) {
+              return '<option value="' + escapeHtml(name) + '"' + (state.taskDraftAssignee === name ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
+            }).join('') +
+          '</select>' +
+          '<label class="task-due-date-label">Due date (optional)' +
+            '<input type="date" id="taskDueDateInput" class="meeting-form-input" value="' + escapeHtml(state.taskDraftDueDate) + '">' +
+          '</label>' +
+          '<div class="meeting-form-actions">' +
+            '<button type="button" class="vendor-field-btn primary" data-action="task-save" data-meeting="' + m.id + '" ' + (state.taskSaving ? 'disabled' : '') + '>' + (state.taskSaving ? 'Saving…' : 'Add Task') + '</button>' +
+            '<button type="button" class="vendor-field-btn secondary" data-action="task-add-cancel" ' + (state.taskSaving ? 'disabled' : '') + '>Cancel</button>' +
+          '</div>' +
+        '</div>';
+      } else {
+        html += '<button type="button" class="meetings-add-btn small" type="button" data-action="task-add-open" data-meeting="' + m.id + '">+ Add Task</button>';
+      }
+
+      html += '</div>'; // .meeting-row-body
+    }
+
+    html += '</div>'; // .meeting-row
+    return html;
+  }
+
+  // Same visual formatting as the 7-step Cross-Sell Checklist
+  // (.checklist-step / checklistHtml() above) -- per Michael: "It should
+  // follow the same formatting as the Check-list items."
+  function meetingTaskItemHtml(t) {
+    var isDone = !!t.completed_at;
+    var toggling = state.taskTogglingId === t.id;
+    var metaLine = isDone
+      ? '✓ ' + escapeHtml(t.completed_by_name) + ' — ' + escapeHtml(fmtTimestamp(t.completed_at))
+      : 'Assigned to ' + escapeHtml(t.assigned_to_name) + (t.due_date ? ' · Due ' + escapeHtml(fmtOutgrowDate(t.due_date)) : '');
+    var cwWarn = t.cw_push && t.cw_push.status === 'error'
+      ? ' <span class="meeting-task-cw-warn" title="' + escapeHtml(t.cw_push.error || '') + '">⚠</span>'
+      : '';
+    // "We have a next step!" notification email (added 2026-09-16) --
+    // same inline-warning treatment as the ConnectWise push above, so a
+    // failed send to the assigned rep isn't silently lost on the CRC's
+    // screen either.
+    var emailWarn = t.email && t.email.status === 'failed'
+      ? ' <span class="meeting-task-email-warn" title="' + escapeHtml('Didn’t email ' + (t.assigned_to_name || '') + (t.email.error ? ': ' + t.email.error : '')) + '">✉⚠</span>'
+      : '';
+    // Close-on-done attempt (added 2026-09-17) -- same inline-warning
+    // treatment as the create-time cwWarn above, so a failed close isn't
+    // silently lost on the CRC's screen either.
+    var cwCloseWarn = t.cw_close && t.cw_close.status === 'error'
+      ? ' <span class="meeting-task-cw-warn" title="' + escapeHtml('Didn’t close in ConnectWise: ' + (t.cw_close.error || '')) + '">⚠</span>'
+      : '';
+
+    return '<label class="checklist-step ' + (isDone ? 'done' : '') + '" data-task-row="' + t.id + '">' +
+      '<input type="checkbox" ' + (isDone ? 'checked' : '') + (toggling ? ' disabled' : '') +
+        ' data-action="task-toggle-done" data-task="' + t.id + '" data-completed="' + (isDone ? '1' : '0') + '">' +
+      '<div class="checklist-step-text">' +
+        '<div class="checklist-step-label">' + escapeHtml(t.description) + cwWarn + emailWarn + cwCloseWarn + '</div>' +
+        '<div class="checklist-step-meta">' + metaLine + '</div>' +
+      '</div>' +
+    '</label>';
+  }
+
+  // The separate box "under the Cross-Sell Opportunities box" Michael
+  // asked for -- every task from every one of this customer's meetings,
+  // flattened into one checklist-styled list (open first).
+  function meetingTasksPanelHtml() {
+    var html = '<div class="meeting-tasks-panel">';
+    html += '<div class="roster-title">Meeting To-Dos</div>';
+    html += '<div class="roster-sub">Tasks from this customer’s meetings. Check one off when it’s done.</div>';
+
+    var allTasks = [];
+    (state.meetings || []).forEach(function (m) {
+      m.tasks.forEach(function (t) { allTasks.push({ task: t, meetingSubject: m.subject }); });
+    });
+    allTasks.sort(function (a, b) {
+      var aDone = a.task.completed_at ? 1 : 0;
+      var bDone = b.task.completed_at ? 1 : 0;
+      return aDone - bDone;
+    });
+
+    if (state.meetingsLoading && !state.meetings) {
+      html += '<div class="loading">Loading…</div>';
+    } else if (allTasks.length === 0) {
+      html += '<div class="roster-empty">No tasks yet — add one from a logged meeting above.</div>';
+    } else {
+      html += '<div class="meeting-task-list">';
+      allTasks.forEach(function (item) {
+        html += '<div class="meeting-task-with-context">' +
+          meetingTaskItemHtml(item.task) +
+          '<div class="meeting-task-context">from “' + escapeHtml(item.meetingSubject) + '”</div>' +
+        '</div>';
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  // ---- Global master to-do dashboard (Relationships front page) ---------
+
+  function globalTodosPanelHtml() {
+    var html = '<div class="global-todo-panel">';
+    html += '<div class="view-header view-header--clyde-small">' + clydeImgHtml('todo', 'Clyde checking the to-do list', true) +
+      '<div class="view-header-text">' +
+      '<div class="view-title">Global To-Do Checklist</div>' +
+      '<div class="view-sub">Open tasks from every customer’s meetings. Click one to open that company and complete it there. Click a coordinator’s name below to see just their to-do list and calendar.</div>' +
+      '</div></div>';
+
+    if (state.globalTodosError) {
+      html += '<div class="error-banner">' + escapeHtml(state.globalTodosError) + '</div>';
+    }
+
+    if (state.globalTodosLoading && !state.globalTodos) {
+      return html + '<div class="loading">Loading…</div></div>';
+    }
+    if (!state.globalTodos) {
+      return html + '</div>';
+    }
+
+    var g = state.globalTodos;
+    html += '<div class="global-todo-summary">';
+    g.roster.forEach(function (name) {
+      var n = g.counts[name] || 0;
+      html += '<div class="global-todo-summary-item' + (n === 0 ? ' zero' : '') + '" data-action="show-rep-todos" data-rep="' + escapeHtml(name) + '" title="See ' + escapeHtml(name) + '’s to-do list and calendar">' +
+        '<span class="global-todo-summary-count">' + n + '</span>' +
+        '<span class="global-todo-summary-name">' + escapeHtml(name) + '</span>' +
+      '</div>';
+    });
+    html += '</div>';
+
+    if (g.risk_scan_alerts && g.risk_scan_alerts.length) {
+      html += '<div class="global-riskscan-section">';
+      html += '<div class="global-riskscan-title">Risk Scans Awaiting Review (' + g.risk_scan_alerts.length + ')</div>';
+      html += '<div class="global-todo-list">';
+      g.risk_scan_alerts.forEach(function (a) {
+        html += '<div class="global-todo-item riskscan-alert" data-action="open-customer-riskscan" data-customer="' + a.customer_id + '" data-scan="' + a.id + '">' +
+          '<div class="global-todo-item-main">' +
+            '<div class="global-todo-item-desc">' + escapeHtml(a.original_filename) + '</div>' +
+            '<div class="global-todo-item-meta">' + escapeHtml(a.customer_name) + ' · uploaded by ' + escapeHtml(a.uploaded_by_name) + ' · ' + escapeHtml(fmtTimestamp(a.uploaded_at)) + '</div>' +
+          '</div>' +
+          '<div class="global-todo-item-go">Unassigned — Open →</div>' +
+        '</div>';
+      });
+      html += '</div></div>';
+    }
+
+    // Claimed but not yet reviewed -- added 2026-09-24 per Michael: stays
+    // visible in this same panel (below the unassigned pool above) once a
+    // rep assigns it to themselves, now naming who has it.
+    if (g.risk_scan_assigned && g.risk_scan_assigned.length) {
+      html += '<div class="global-riskscan-section">';
+      html += '<div class="global-riskscan-title">Risk Scans In Progress (' + g.risk_scan_assigned.length + ')</div>';
+      html += '<div class="global-todo-list">';
+      g.risk_scan_assigned.forEach(function (a) {
+        html += '<div class="global-todo-item riskscan-alert" data-action="open-customer-riskscan" data-customer="' + a.customer_id + '" data-scan="' + a.id + '">' +
+          '<div class="global-todo-item-main">' +
+            '<div class="global-todo-item-desc">' + escapeHtml(a.original_filename) + '</div>' +
+            '<div class="global-todo-item-meta">' + escapeHtml(a.customer_name) + ' · uploaded by ' + escapeHtml(a.uploaded_by_name) + ' · ' + escapeHtml(fmtTimestamp(a.uploaded_at)) + '</div>' +
+          '</div>' +
+          '<div class="global-todo-item-go">Assigned to ' + escapeHtml(a.assigned_to_name) + '</div>' +
+        '</div>';
+      });
+      html += '</div></div>';
+    }
+
+    if (g.prospect_alerts && g.prospect_alerts.length) {
+      html += '<div class="global-riskscan-section">';
+      html += '<div class="global-riskscan-title">Prospects Nearing 90 Days (' + g.prospect_alerts.length + ')</div>';
+      html += '<div class="global-todo-list">';
+      g.prospect_alerts.forEach(function (a) {
+        html += '<div class="global-todo-item riskscan-alert" data-action="prospect-open-customer" data-id="' + a.customer_id + '">' +
+          '<div class="global-todo-item-main">' +
+            '<div class="global-todo-item-desc">' + escapeHtml(a.customer_name) + '</div>' +
+            '<div class="global-todo-item-meta">Claimed by ' + escapeHtml(a.claimed_by_name) + '</div>' +
+          '</div>' +
+          '<div class="global-todo-item-go">' + daysLeftBadgeHtml(a.days_left) + '</div>' +
+        '</div>';
+      });
+      html += '</div></div>';
+    }
+
+    if (g.tasks.length === 0) {
+      html += '<div class="roster-empty">No meeting tasks yet.</div>';
+    } else {
+      html += '<div class="global-todo-list">';
+      g.tasks.forEach(function (t) {
+        var isDone = !!t.completed_at;
+        html += '<div class="global-todo-item' + (isDone ? ' done' : '') + '" data-action="open-customer-task" data-customer="' + t.customer_id + '" data-meeting="' + t.meeting_id + '" data-task="' + t.id + '">' +
+          '<div class="global-todo-item-main">' +
+            '<div class="global-todo-item-desc">' + escapeHtml(t.description) + '</div>' +
+            '<div class="global-todo-item-meta">' + escapeHtml(t.customer_name) + ' · “' + escapeHtml(t.meeting_subject) + '” · ' + escapeHtml(t.assigned_to_name) + '</div>' +
+          '</div>' +
+          (isDone
+            ? '<div class="global-todo-item-done-meta">✓ ' + escapeHtml(t.completed_by_name) + ' — ' + escapeHtml(fmtTimestamp(t.completed_at)) + '</div>'
+            : '<div class="global-todo-item-go">Open →</div>') +
+        '</div>';
+      });
+      html += '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  // ---- Per-coordinator to-do view (state.view === 'rep-todos') ----------
+  // Added 2026-09-16 per Michael. Reached by clicking a name in the Global
+  // To-Do Checklist above (data-action="show-rep-todos"). Two columns: a
+  // month calendar of this person's scheduled to-dos on the left, and
+  // their unscheduled + recently-completed to-dos as plain lists on the
+  // right -- same click-through-to-the-customer pattern as the global
+  // panel (data-action="open-customer-task"), not an inline checkbox.
+
+  function repTodosHtml() {
+    var name = state.repTodosName || '';
+    var html = '<div class="view-header">' +
+      '<button class="back-link" type="button" data-action="rep-todos-back">← Back to Dashboard</button>' +
+      '<div class="view-title">' + escapeHtml(name) + '’s To-Dos</div>' +
+      '<div class="view-sub">Every open to-do assigned to ' + escapeHtml(name) + ', with the ones scheduled shown on the calendar too. Check one off here, or click it to open that customer.</div>' +
+    '</div>';
+
+    if (state.repTodosError) {
+      html += '<div class="error-banner">' + escapeHtml(state.repTodosError) + '</div>';
+    }
+
+    if (state.repTodosLoading && !state.repTodosData) {
+      return html + '<div class="loading">Loading…</div>';
+    }
+    if (!state.repTodosData) {
+      return html;
+    }
+
+    var d = state.repTodosData;
+    var openTasks = d.open_tasks || [];
+    var recentCompleted = d.recent_completed_tasks || [];
+    var openWithDate = openTasks.filter(function (t) { return !!t.due_date; });
+    var riskScans = d.risk_scans || [];
+
+    html += '<div class="rep-todos-layout">';
+    html += '<div class="rep-todos-calendar-col">' + repTodosCalendarHtml(openWithDate, recentCompleted) + '</div>';
+    html += '<div class="rep-todos-list-col">';
+    // Risk scans this rep has claimed (added 2026-09-24) -- only shown
+    // when there's something to show, since most reps won't have any.
+    if (riskScans.length) {
+      html += repTodosListSectionHtml('Risk scans assigned to you', riskScans, '', repRiskScanItemHtml);
+    }
+    // To-Dos + Projects side by side (added 2026-10-02 per Michael: "take
+    // the to-do's box and shrink it in half, and drop in a projects view
+    // ... gives them one screen to carry out their assignments") -- the
+    // to-do's lists (previously full width) now share a row with this
+    // rep's own assigned projects, so a coordinator can clear both their
+    // to-do list and their project checklist steps without leaving this
+    // screen.
+    html += '<div class="rep-todos-bottom-row">';
+    html += '<div class="rep-todos-todos-subcol">' +
+      // All open to-dos, scheduled or not (added 2026-09-24 per Michael:
+      // "a list view of all open to-do's with creation date, customer
+      // name... allows the rep to check them off to completion") --
+      // previously this only listed the undated ones, since the dated
+      // ones already showed on the calendar above; now it's the full
+      // backlog, same order the server returns (due date first, then
+      // oldest-created).
+      repTodosListSectionHtml('Open To-Dos', openTasks, 'No open to-dos — everything is caught up.') +
+      repTodosListSectionHtml('Recently completed', recentCompleted, 'Nothing completed yet.') +
+    '</div>';
+    html += '<div class="rep-todos-projects-subcol">' + repTodosProjectsHtml(name) + '</div>';
+    html += '</div>'; // .rep-todos-bottom-row
+    html += '</div>';
+    html += '</div>';
+
+    return html;
+  }
+
+  // itemFn defaults to repTodoItemHtml (meeting to-dos); the risk-scans
+  // section above passes repRiskScanItemHtml instead -- same list markup,
+  // different row shape.
+  function repTodosListSectionHtml(title, tasks, emptyMessage, itemFn) {
+    itemFn = itemFn || repTodoItemHtml;
+    var html = '<div class="rep-todos-section">';
+    html += '<div class="roster-title">' + escapeHtml(title) + '</div>';
+    if (!tasks || tasks.length === 0) {
+      html += '<div class="roster-empty">' + escapeHtml(emptyMessage) + '</div>';
+    } else {
+      html += '<div class="global-todo-list">';
+      tasks.forEach(function (t) { html += itemFn(t); });
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  // Same markup as a global-todo-item (click -> open that customer's risk
+  // scan) -- read-only here; Download/Unassign/Mark Reviewed live on the
+  // customer's own dashboard once you click through.
+  function repRiskScanItemHtml(a) {
+    return '<div class="global-todo-item riskscan-alert" data-action="open-customer-riskscan" data-customer="' + a.customer_id + '" data-scan="' + a.id + '">' +
+      '<div class="global-todo-item-main">' +
+        '<div class="global-todo-item-desc">' + escapeHtml(a.original_filename) + '</div>' +
+        '<div class="global-todo-item-meta">' + escapeHtml(a.customer_name) + ' · uploaded by ' + escapeHtml(a.uploaded_by_name) + ' · ' + escapeHtml(fmtTimestamp(a.uploaded_at)) + '</div>' +
+      '</div>' +
+      '<div class="global-todo-item-go">Open →</div>' +
+    '</div>';
+  }
+
+  // Same markup/behavior as a global-todo-item (click -> open that
+  // customer's task) with a due-date badge appended when the task has one,
+  // plus its creation date and an inline checkbox (added 2026-09-24 per
+  // Michael: "a list view of all open to-do's with creation date,
+  // customer name and allows the rep to click on the to-do and takes them
+  // to the customer. It also allows them to check them off to
+  // completion.") -- the checkbox carries its own data-action, so
+  // clicking it (Element.closest('[data-action]') matches the checkbox
+  // itself first) toggles completion in place instead of navigating to
+  // the customer; clicking anywhere else in the row still opens the
+  // customer's task the way it always has.
+  function repTodoItemHtml(t) {
+    var isDone = !!t.completed_at;
+    var toggling = state.taskTogglingId === t.id;
+    var dueBadge = t.due_date
+      ? ' <span class="rep-todo-item-due">Due ' + escapeHtml(fmtOutgrowDate(t.due_date)) + '</span>'
+      : '';
+    var createdMeta = t.created_at ? ' · created ' + escapeHtml(fmtTimestamp(t.created_at)) : '';
+    return '<div class="global-todo-item' + (isDone ? ' done' : '') + '" data-action="open-customer-task" data-customer="' + t.customer_id + '" data-meeting="' + t.meeting_id + '" data-task="' + t.id + '">' +
+      '<input type="checkbox" class="rep-todo-item-check" ' + (isDone ? 'checked' : '') + (toggling ? ' disabled' : '') +
+        ' data-action="task-toggle-done" data-task="' + t.id + '" data-completed="' + (isDone ? '1' : '0') + '" aria-label="Mark to-do complete">' +
+      '<div class="global-todo-item-main">' +
+        '<div class="global-todo-item-desc">' + escapeHtml(t.description) + dueBadge + '</div>' +
+        '<div class="global-todo-item-meta">' + escapeHtml(t.customer_name) + ' · “' + escapeHtml(t.meeting_subject) + '”' + createdMeta + '</div>' +
+      '</div>' +
+      (isDone
+        ? '<div class="global-todo-item-done-meta">✓ ' + escapeHtml(t.completed_by_name) + ' — ' + escapeHtml(fmtTimestamp(t.completed_at)) + '</div>'
+        : '<div class="global-todo-item-go">Open →</div>') +
+    '</div>';
+  }
+
+  // Renders a standard month grid (Sun-Sat) for state.repTodosCalYear /
+  // state.repTodosCalMonth. openWithDate + recentCompleted (already
+  // capped to the last 10 by the server) are grouped onto the day cells
+  // they fall on; a day outside this month is left as an empty filler
+  // cell so the grid always lands on whole weeks.
+  function repTodosCalendarHtml(openWithDate, recentCompleted) {
+    var year = state.repTodosCalYear;
+    var month = state.repTodosCalMonth; // 1-12
+    var monthLabel = new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+    var tasksByDate = {};
+    openWithDate.forEach(function (t) {
+      (tasksByDate[t.due_date] = tasksByDate[t.due_date] || []).push(t);
+    });
+    recentCompleted.forEach(function (t) {
+      if (!t.due_date) return;
+      (tasksByDate[t.due_date] = tasksByDate[t.due_date] || []).push(t);
+    });
+
+    var daysInMonth = new Date(year, month, 0).getDate();
+    var startWeekday = new Date(year, month - 1, 1).getDay(); // 0 = Sunday
+
+    var html = '<div class="rep-todos-calendar">';
+    html += '<div class="rep-todos-cal-header">' +
+      '<button class="rep-todos-cal-nav" type="button" data-action="rep-todos-prev-month" aria-label="Previous month">‹</button>' +
+      '<div class="rep-todos-cal-month">' + escapeHtml(monthLabel) + '</div>' +
+      '<button class="rep-todos-cal-nav" type="button" data-action="rep-todos-next-month" aria-label="Next month">›</button>' +
+    '</div>';
+
+    html += '<div class="rep-todos-cal-grid rep-todos-cal-daylabels">';
+    ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(function (label) {
+      html += '<div class="rep-todos-cal-daylabel">' + label + '</div>';
+    });
+    html += '</div>';
+
+    html += '<div class="rep-todos-cal-grid">';
+    for (var lead = 0; lead < startWeekday; lead++) {
+      html += '<div class="rep-todos-cal-cell empty"></div>';
+    }
+    for (var day = 1; day <= daysInMonth; day++) {
+      var ymd = year + '-' + rtPad2(month) + '-' + rtPad2(day);
+      var dayTasks = tasksByDate[ymd] || [];
+      html += '<div class="rep-todos-cal-cell">' +
+        '<div class="rep-todos-cal-cell-date">' + day + '</div>';
+      dayTasks.forEach(function (t) {
+        var isDone = !!t.completed_at;
+        html += '<div class="rep-todos-cal-task' + (isDone ? ' done' : '') + '" data-action="open-customer-task" data-customer="' + t.customer_id + '" data-meeting="' + t.meeting_id + '" data-task="' + t.id + '" title="' + escapeHtml(t.customer_name + ': ' + t.description) + '">' +
+          escapeHtml(t.description) +
+        '</div>';
+      });
+      html += '</div>';
+    }
+    var totalCells = startWeekday + daysInMonth;
+    var trailing = (7 - (totalCells % 7)) % 7;
+    for (var trail = 0; trail < trailing; trail++) {
+      html += '<div class="rep-todos-cal-cell empty"></div>';
+    }
+    html += '</div>';
+
+    html += '</div>';
+    return html;
+  }
+
+  // This rep's own assigned-projects view within the rep-todos screen --
+  // added 2026-10-02 per Michael: "drop in a projects view. The view
+  // should list the assigned projects in the reps list and allow them to
+  // complete the listed steps in that project from that view." Reads from
+  // the SAME state.projectsData the main Projects nav button populates
+  // (loadProjects() is also called from the 'show-rep-todos' dispatch, see
+  // onRootClick) and reuses projectChecklistStepHtml() verbatim for the
+  // checklist rows, so checking a step off here and checking it off from
+  // the main Projects screen are the exact same call -- no separate
+  // "rep's view" copy of the project/checklist data to keep in sync.
+  function repTodosAssignedProjectsList(repName) {
+    return (state.projectsData || []).filter(function (p) { return p.assigned_to_name === repName; });
+  }
+
+  function repTodosProjectsHtml(repName) {
+    var html = '<div class="rep-todos-section rep-todos-projects-section">';
+    html += '<div class="roster-title">Assigned Projects</div>';
+    if (state.projectsError) {
+      html += '<div class="error-banner">' + escapeHtml(state.projectsError) + '</div>';
+    }
+    if (state.projectsLoading && !state.projectsData) {
+      html += '<div class="loading">Loading…</div>';
+      html += '</div>';
+      return html;
+    }
+    var list = repTodosAssignedProjectsList(repName);
+    if (!list.length) {
+      html += '<div class="roster-empty">No projects currently assigned to ' + escapeHtml(repName) + '.</div>';
+    } else {
+      html += '<div class="rep-todos-projects-list">';
+      list.forEach(function (p) { html += repTodosProjectCardHtml(p); });
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  // Completion "glow" for a collapsed project card -- added 2026-10-03 per
+  // Michael: "make each project glow a certain color based on how complete
+  // they are when collapsed. A project with no steps complete, should glow
+  // red. A project with 1-3 steps complete should glow yellow. A project
+  // with 4 steps checked should glow green." completedCount only ever
+  // needs Object.keys(p.checklist).length -- api/projects.php's
+  // checklist_toggle deletes a step's row the moment it's unchecked, so a
+  // step appears in `checklist` at all if and only if it's complete; no
+  // separate completed/total tally to keep in sync. Reuses this codebase's
+  // existing green/amber/red tier palette (see .pf-tier-High/.pf-days.amber
+  // in styles.css) rather than inventing a new one.
+  function projectGlowClass(completedCount) {
+    if (completedCount <= 0) return 'project-glow-red';
+    if (completedCount >= 4) return 'project-glow-green';
+    return 'project-glow-yellow';
+  }
+
+  // Collapsible by project -- added 2026-10-03 per Michael. Single-open-id
+  // pattern (state.repTodosExpandedProjectId), same as this file's existing
+  // meetingRowHtml/projectNotesPanelHtml toggles: only one project's
+  // checklist is ever expanded at a time, and every other card collapses
+  // to its glow-colored summary row.
+  function repTodosProjectCardHtml(p) {
+    var completedCount = Object.keys(p.checklist || {}).length;
+    var totalSteps = PROJECTS_CHECKLIST_STEPS.length;
+    var expanded = String(state.repTodosExpandedProjectId) === String(p.id);
+    var cardClass = 'rep-todos-project-card' + (expanded ? ' expanded' : ' collapsed ' + projectGlowClass(completedCount));
+
+    var html = '<div class="' + cardClass + '">';
+    html += '<div class="rep-todos-project-card-head" data-action="rep-todos-project-toggle" data-project-id="' + escapeHtml(String(p.id)) + '">' +
+      '<div class="rep-todos-project-card-head-main">' +
+        '<div class="rep-todos-project-card-company">' + escapeHtml(p.company_name) + '</div>' +
+        '<div class="rep-todos-project-card-name">' + escapeHtml(p.name) + '</div>' +
+        '<div class="rep-todos-project-card-status">' + escapeHtml(p.status_name) + '</div>' +
+      '</div>' +
+      '<div class="rep-todos-project-card-head-meta">' +
+        '<div class="rep-todos-project-card-progress">' + completedCount + ' of ' + totalSteps + ' steps</div>' +
+        '<div class="rep-todos-project-card-toggle">' + (expanded ? '▴' : '▾') + '</div>' +
+      '</div>' +
+    '</div>';
+    if (expanded) {
+      html += '<div class="project-checklist">';
+      PROJECTS_CHECKLIST_STEPS.forEach(function (step) { html += projectChecklistStepHtml(p, step); });
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function drilldownHtml(pillar, customer) {
+    var customerId = customer.id;
+    var html = '<div class="drilldown">' +
+      '<div class="drilldown-header">' +
+        '<button class="drilldown-back" type="button" data-action="close-drilldown" aria-label="Close">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>' +
+        '</button>' +
+        '<div class="drilldown-title">' + escapeHtml(pillar.name) + '</div>' +
+      '</div>';
+
+    if (pillar.id === 'voip' && customer.voip_hosted_elsewhere) {
+      html += '<div class="hosted-elsewhere-note">' +
+        'This customer’s voice is hosted directly by the manufacturer' +
+        (customer.voip_hosted_agreement_name ? ' (per ConnectWise: “' + escapeHtml(customer.voip_hosted_agreement_name) + '”)' : '') +
+        ' — CodeBlue doesn’t sell or market phone/VoIP services here.' +
+      '</div>';
+    }
+
+    pillar.services.forEach(function (svc) {
+      if (svc.active) {
+        html += '<div class="service-block active">' +
+          '<div class="service-block-head">' +
+            '<div class="service-name">' + escapeHtml(svc.name) + '</div>' +
+            '<div class="service-badge active">ACTIVE</div>' +
+          '</div>' +
+          '<div class="product-list">' +
+            svc.products.map(function (p) {
+              return '<div class="product-row"><span>' + escapeHtml(p.label) + '</span><span class="product-qty">' + fmtQty(p) + '</span></div>';
+            }).join('') +
+          '</div>' +
+        '</div>';
+      } else {
+        var hubUrl = HUB_URL + '?pillar=' + encodeURIComponent(pillar.id) + '&service=' + encodeURIComponent(svc.id);
+        // Every missing service can still be opened in Solutions Hub (that's
+        // just navigation) — but the marketing link and checklist are only
+        // for the services CodeBlue actually cross-sells blanket-style.
+        // Everything else needs a rep to spot an actual need first.
+        html += '<div class="service-block inactive">' +
+          '<div class="service-block-head">' +
+            '<div class="service-name">' + escapeHtml(svc.name) + '</div>' +
+            '<div class="service-badge inactive">NOT IN USE</div>' +
+          '</div>' +
+          '<div class="service-actions">' +
+            '<a class="svc-action-btn primary" href="' + hubUrl + '" target="_blank" rel="noopener">Open in Solutions Hub →</a>' +
+            (svc.cross_sell_eligible
+              ? '<a class="svc-action-btn secondary" href="' + MARKETING_LIBRARY_URL + '" target="_blank" rel="noopener">View Marketing ↗</a>'
+              : '') +
+          '</div>' +
+          (svc.cross_sell_eligible ? checklistHtml(customerId, pillar, svc) : '') +
+        '</div>';
+      }
+    });
+
+    html += '</div>';
+    return html;
+  }
+
+  function checklistHtml(customerId, pillar, svc) {
+    var key = customerId + '::' + pillar.id + '::' + svc.id;
+    var isOpen = state.openChecklistKey === key;
+
+    var html = '<div class="checklist-toggle-row">' +
+      '<button class="checklist-toggle-btn" type="button" data-action="toggle-checklist" data-pillar="' + pillar.id + '" data-service="' + svc.id + '">' +
+        (isOpen ? 'Hide Cross-Sell Checklist ▴' : 'Cross-Sell Checklist ▾') +
+      '</button>' +
+    '</div>';
+
+    if (!isOpen) return html;
+
+    var data = state.checklists[key];
+
+    html += '<div class="checklist-panel" data-checklist-key="' + key + '">';
+
+    if (data === 'error') {
+      html += '<div class="checklist-error">Could not load the checklist — try again.</div>' + '</div>';
+      return html;
+    }
+    if (!data) {
+      html += '<div class="checklist-loading">Loading checklist…</div>' + '</div>';
+      return html;
+    }
+
+    if (data.killed) {
+      html += '<div class="checklist-killed-note">' +
+        'Marked not interested — excluded from the Cross-Sell Report.' +
+        '<button type="button" class="checklist-inline-link" data-action="checklist-unkill" data-customer="' + customerId + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '"' +
+          (state.checklistCloseoutSaving === key ? ' disabled' : '') + '>Restore opportunity</button>' +
+      '</div>';
+    }
+
+    // Contact selection -- drives the Email/Call actions on the steps
+    // below. Reuses state.contactCard.contacts (already loaded for the
+    // OutGrow card, same completeness filtering) rather than a second
+    // fetch -- per Michael: "add a contact selection drop down... actions
+    // below that step will use the contact selected."
+    var contacts = (state.contactCard && state.contactCard.contacts) || [];
+    var selectedContactId = state.checklistContactSelected[key] || null;
+    var selectedContact = null;
+    for (var sci = 0; sci < contacts.length; sci++) {
+      if (contacts[sci].id === selectedContactId) { selectedContact = contacts[sci]; break; }
+    }
+    var contactDropdownOpen = state.openChecklistContactDropdownKey === key;
+
+    if (contacts.length) {
+      html += '<div class="checklist-contact-row">' +
+        '<div class="contact-card-dropdown checklist-contact-dropdown">' +
+          '<button type="button" class="contact-card-dropdown-toggle" data-action="checklist-contact-dropdown-toggle" data-checklist-key="' + key + '" aria-expanded="' + (contactDropdownOpen ? 'true' : 'false') + '">' +
+            '<span>' + (selectedContact ? escapeHtml(selectedContact.name || 'Contact') : 'Select a contact for outreach…') + '</span>' +
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="contact-card-dropdown-chevron"><polyline points="6 9 12 15 18 9"></polyline></svg>' +
+          '</button>';
+      if (contactDropdownOpen) {
+        html += '<div class="contact-card-dropdown-panel">';
+        contacts.forEach(function (c) {
+          var rowClass = 'contact-card-dropdown-row' + (selectedContact && c.id === selectedContact.id ? ' selected' : '');
+          html += '<div class="' + rowClass + '" data-action="checklist-contact-select" data-checklist-key="' + key + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '" data-contact-id="' + escapeHtml(c.id) + '">' +
+            '<div class="contact-card-dropdown-name">' + escapeHtml(c.name || 'Contact') + '</div>' +
+            '<div class="contact-card-dropdown-meta">' + escapeHtml(c.email) + ' · ' + escapeHtml(c.phone) + '</div>' +
+          '</div>';
+        });
+        html += '</div>';
+      }
+      html += '</div>' +
+        '<div class="checklist-contact-hint">' + (selectedContact ? 'Email and call steps below will use this contact.' : 'Pick a contact to enable the Email/Call actions below.') + '</div>' +
+      '</div>';
+    }
+
+    // Notes toggle + the two-column layout it opens (steps on the right,
+    // a scrollable notes feed on the left) -- per Michael: "click (open
+    // notes) and have the notes appear in a box to the left of the
+    // outreach steps that you can scroll through."
+    var notesOpen = state.openChecklistNotesKey === key;
+    var notes = state.checklistNotes[key];
+    html += '<div class="checklist-notes-toggle-row">' +
+      '<button type="button" class="checklist-notes-toggle" data-action="checklist-notes-toggle" data-customer="' + customerId + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '">' +
+        (notesOpen ? 'Hide Notes ▴' : 'Open Notes ▾') + (notes && notes !== 'error' && notes.length ? ' (' + notes.length + ')' : '') +
+      '</button>' +
+    '</div>';
+
+    html += '<div class="checklist-notes-layout' + (notesOpen ? ' notes-open' : '') + '">';
+
+    if (notesOpen) {
+      html += '<div class="checklist-notes-panel">';
+      if (notes === 'error') {
+        html += '<div class="checklist-error">Could not load notes — try again.</div>';
+      } else if (!notes) {
+        html += '<div class="checklist-loading">Loading notes…</div>';
+      } else if (!notes.length) {
+        html += '<div class="checklist-notes-empty">No notes yet on this opportunity. A note added on any step — what the customer said, current services, contract renewal dates — shows up here.</div>';
+      } else {
+        html += '<div class="checklist-notes-scroll">' +
+          notes.map(function (n) {
+            return '<div class="checklist-note-item">' +
+              '<div class="checklist-note-item-step">Step ' + n.step_number + '</div>' +
+              '<div class="checklist-note-item-text">' + escapeHtml(n.note_text) + '</div>' +
+              '<div class="checklist-note-item-meta">' + escapeHtml(n.created_by_name || '') + ' — ' + escapeHtml(fmtTimestamp(n.created_at)) + '</div>' +
+            '</div>';
+          }).join('') +
+        '</div>';
+      }
+      html += '</div>';
+    }
+
+    html += '<div class="checklist-steps-col">';
+    data.steps.forEach(function (step) {
+      html += checklistStepRowHtml(customerId, pillar, svc, step, selectedContact, key, contacts.length > 0);
+    });
+    html += '</div>'; // .checklist-steps-col
+
+    html += '</div>'; // .checklist-notes-layout
+
+    // Recycle / Kill Opportunity -- shown once every step is checked off,
+    // per Michael's script ending in "Recycle in 180 days or Kill
+    // Opportunity Button." No automatic 180-day timer -- see recycle()'s
+    // own comment in checklist.php.
+    var allDone = data.steps.every(function (s) { return s.completed; });
+    if (allDone && !data.killed) {
+      html += '<div class="checklist-closeout-row">' +
+        '<div class="checklist-closeout-label">Fully worked — recycle for another pass, or close it out.</div>' +
+        '<div class="checklist-closeout-actions">' +
+          '<button type="button" class="svc-action-btn secondary" data-action="checklist-recycle" data-customer="' + customerId + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '"' +
+            (state.checklistCloseoutSaving === key ? ' disabled' : '') + '>Recycle in 180 Days</button>' +
+          '<button type="button" class="svc-action-btn danger" data-action="checklist-kill" data-customer="' + customerId + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '"' +
+            (state.checklistCloseoutSaving === key ? ' disabled' : '') + '>Kill Opportunity</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    html += '</div>'; // .checklist-panel
+
+    return html;
+  }
+
+  // One step row: the existing checkbox, a "+" note button, an inline
+  // note-draft form when open, and (once a contact is selected) an
+  // Email/Call action for the scripted odd/even steps. Split out of
+  // checklistHtml() above once that function started doing much more than
+  // render a plain list.
+  function checklistStepRowHtml(customerId, pillar, svc, step, selectedContact, checklistKey, hasContacts) {
+    var stepKey = checklistKey + '::' + step.step_number;
+    var draftOpen = state.checklistNoteDraftOpenKey === stepKey;
+
+    // Odd steps (1/3/5) are the scripted marketing-email steps; even steps
+    // (2/4/6) are always "Phone Call Follow-Up." The icon for either one
+    // shows as soon as there's a contact on file to eventually use -- it no
+    // longer waits for a contact to already be *selected* (added
+    // 2026-09-30, per Michael: reps were clicking the step row looking for
+    // the email action and marking the step done by mistake instead).
+    // Clicking the icon before a contact is picked opens the contact
+    // dropdown and remembers to fire once one is chosen -- see
+    // checklist-step-email/-call and checklist-contact-select below.
+    var isEmailStep = step.step_number === 1 || step.step_number === 3 || step.step_number === 5;
+    var isCallStep = step.step_number === 2 || step.step_number === 4 || step.step_number === 6;
+    var pendingHere = !!(state.checklistPendingContactAction &&
+      state.checklistPendingContactAction.key === checklistKey &&
+      state.checklistPendingContactAction.step === step.step_number);
+    var stepIconHtml = '';
+    if (hasContacts && isEmailStep && crossSellHasScript(pillar.id, svc.id, step.step_number)) {
+      var emailTitle = selectedContact ? ('Email ' + (selectedContact.name || 'contact')) : 'Pick a contact, then email';
+      stepIconHtml = '<button type="button" class="checklist-step-icon-btn' + (pendingHere ? ' pending' : '') + '"' +
+        ' title="' + escapeHtml(emailTitle) + '" aria-label="' + escapeHtml(emailTitle) + '"' +
+        ' data-action="checklist-step-email" data-checklist-key="' + checklistKey + '"' +
+        ' data-pillar="' + pillar.id + '" data-service="' + svc.id + '" data-step="' + step.step_number + '">' +
+        CHECKLIST_ICON_EMAIL +
+      '</button>';
+    } else if (hasContacts && isCallStep) {
+      var callTitle = selectedContact ? ('Call ' + (selectedContact.name || 'contact')) : 'Pick a contact, then call';
+      stepIconHtml = '<button type="button" class="checklist-step-icon-btn' + (pendingHere ? ' pending' : '') + '"' +
+        ' title="' + escapeHtml(callTitle) + '" aria-label="' + escapeHtml(callTitle) + '"' +
+        ' data-action="checklist-step-call" data-checklist-key="' + checklistKey + '"' +
+        ' data-pillar="' + pillar.id + '" data-service="' + svc.id + '" data-step="' + step.step_number + '">' +
+        CHECKLIST_ICON_PHONE +
+      '</button>';
+    }
+
+    var html = '<div class="checklist-step-row">';
+    html += '<label class="checklist-step ' + (step.completed ? 'done' : '') + '">' +
+      '<input type="checkbox" ' + (step.completed ? 'checked' : '') +
+        ' data-action="toggle-step" data-customer="' + customerId + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '"' +
+        ' data-service-name="' + escapeHtml(svc.name) + '" data-step="' + step.step_number + '" data-completed="' + (step.completed ? '1' : '0') + '">' +
+      '<div class="checklist-step-text">' +
+        '<div class="checklist-step-label">' + step.step_number + '. ' + escapeHtml(step.label) + '</div>' +
+        (step.completed
+          ? '<div class="checklist-step-meta">✓ ' + escapeHtml(step.completed_by_name) + ' — ' + escapeHtml(fmtTimestamp(step.completed_at)) + '</div>'
+          : '') +
+      '</div>' +
+    '</label>';
+    html += stepIconHtml;
+    html += '<button type="button" class="checklist-note-add-btn" title="Add a note on this step" data-action="checklist-note-open" data-checklist-key="' + checklistKey + '" data-step="' + step.step_number + '">+</button>';
+    html += '</div>'; // .checklist-step-row
+
+    if (draftOpen) {
+      html += '<div class="checklist-note-form">' +
+        '<textarea id="checklistNoteTextarea" class="checklist-note-textarea" rows="3" placeholder="What did the customer say? Current service, contract renewal date, etc.">' + escapeHtml(state.checklistNoteDraftText) + '</textarea>' +
+        '<div class="checklist-note-form-actions">' +
+          '<button type="button" class="svc-action-btn primary" data-action="checklist-note-save" data-customer="' + customerId + '" data-pillar="' + pillar.id + '" data-service="' + svc.id + '" data-step="' + step.step_number + '"' +
+            (state.checklistNoteSaving ? ' disabled' : '') + '>' + (state.checklistNoteSaving ? 'Saving…' : 'Save Note') + '</button>' +
+          '<button type="button" class="svc-action-btn secondary" data-action="checklist-note-cancel"' + (state.checklistNoteSaving ? ' disabled' : '') + '>Cancel</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    return html;
+  }
+
+  // ---- Projects view ------------------------------------------------------
+  // Added 2026-10-02 per Michael's "Projects Follow Up" request. Every
+  // ConnectWise Project on the Pre-Sales/Services Projects boards, with
+  // local-only coordinator assignment, a 5-step checklist (steps 1-4 have
+  // real email templates below; step 5's "Team Communication" template
+  // hasn't been supplied yet, so its checkbox works but has no email icon
+  // -- see PROJECTS_CHECKLIST_STEPS), and a textbox that posts a real
+  // ConnectWise Project Note. See claude/relationships-projects-module-plan.md
+  // for the full design history (board/field confirmation, and why the
+  // note's author name is prefixed into its text rather than set via a
+  // ConnectWise field -- ConnectWise always stamps notes created via this
+  // integration's API key as "Clyde", confirmed via a live test write).
+
+  var PROJECT_EMAIL_TEMPLATES = {
+    1: {
+      subject: 'Your Project Order Has Been Placed!',
+      body: [
+        '(Customer First Name)',
+        'We’ve got great news! Your project is moving forward!',
+        '',
+        '(Project Name)',
+        'Your project order has been processed. We are now awaiting the required parts to ship.',
+        'We will update you once all parts have been shipped for receiving. Our next steps are outlined below:',
+        '',
+        'Order Placed!',
+        '*\tWe have created your project for our service team to carry out to completion.',
+        '*\tAll parts and services on your order have been dispatched to distribution for shipment.',
+        '*\tYour project team is being assigned',
+        '',
+        'Michael Bergamo | Business Development Manager | CodeBlue Technology',
+        'Direct: 804.521.7684 | Richmond: 804.521.7660 | Northern Neck: 804.456.4500',
+        'When your company depends on IT'
+      ]
+    },
+    2: {
+      subject: 'Your Project Order Has Been Shipped!',
+      body: [
+        '(Customer First Name)',
+        'We’ve got great news! Your project is moving forward!',
+        '',
+        '(Project Name)',
+        'Your project order has been shipped. We are now awaiting the required parts to arrive.',
+        'We will update you once all parts have been received for prep. Our next steps are outlined below:',
+        '',
+        'Order Shipped!',
+        '*\tWe have updated your project for our service team to carry out to completion.',
+        '*\tAll parts and services on your order have been shipped from distribution to CodeBlue.',
+        '*\tYour project team is being updated for staging.',
+        '',
+        'Michael Bergamo | Business Development Manager | CodeBlue Technology',
+        'Direct: 804.521.7684 | Richmond: 804.521.7660 | Northern Neck: 804.456.4500',
+        'When your company depends on IT'
+      ]
+    },
+    3: {
+      subject: 'Your Project Order has Arrived at CodeBlue!',
+      body: [
+        '(Customer First Name)',
+        'We’ve got great news! Your project is moving forward!',
+        '',
+        '(Project Name)',
+        'Your project order has arrived at CodeBlue. We are now moving to a project kick-off with our internal team.',
+        'We will update you at the conclusion of that meeting. Our next steps are outlined below:',
+        '',
+        'Project Kick-off!',
+        '*\tAll parts have been ordered, shipped and arrived for staging.',
+        '*\tWe are scheduling your kick-off internal meeting to share the details of your project with your team.',
+        '*\tYou will receive an updated contact list for your specific project with engineering, project management and coordinators contact information.',
+        '',
+        'Michael Bergamo | Business Development Manager | CodeBlue Technology',
+        'Direct: 804.521.7684 | Richmond: 804.521.7660 | Northern Neck: 804.456.4500',
+        'When your company depends on IT'
+      ]
+    },
+    4: {
+      subject: 'Your Project is Kicking Off!',
+      body: [
+        '(Customer First Name)',
+        'We’ve got great news! Your project is starting!',
+        '',
+        '(Project Name)',
+        'Your project is kicking off internally here at CodeBlue. Your dedicated project team is going over specifics that are required for success.',
+        'We will update you at the conclusion of that meeting. Our next steps are outlined below:',
+        '',
+        'Project Kick-off!',
+        '*\tAll parts have been ordered, shipped and arrived for staging.',
+        '*\tWe have scheduled your kick-off internal meeting to share the details of your project with your team.',
+        '*\tBelow is an updated contact list for your specific project with engineering, project management and coordinators contact information.',
+        '',
+        'Project Coordination – Maz Ockaily (mockayli@codebluetechnology.com) – 804.212.6001',
+        'On-site Scheudling, Engineering feedback, Scope of Work monitoring',
+        '',
+        'Customer Service – (assigned Relationship coordinator)',
+        'Project communication, feedback and completion assurance',
+        '',
+        '*\tCasey Mayes (cmayes@codebluetechnology.com) – Client Coordinator Office: (804) 521-7660 x685',
+        '*\tClaire Hayden – (chayden@codebluetechnology.com) - Client Coordinator (804) 767-6793',
+        '*\tJake Bradshaw (jbradshaw@codebluetechnology.com) - Client Coordinator (804) 620-8865',
+        '',
+        'Michael Bergamo | Business Development Manager | CodeBlue Technology',
+        'Direct: 804.521.7684 | Richmond: 804.521.7660 | Northern Neck: 804.456.4500',
+        'When your company depends on IT'
+      ]
+    }
+  };
+
+  var PROJECTS_CHECKLIST_STEPS = [
+    { number: 1, label: 'Announce Order placement', hint: 'Call the customer to confirm their order has been successfully processed and ordering is complete', hasEmail: true, hasPhone: true },
+    { number: 2, label: 'Announce order shipment', hint: 'Email the customer and affirm that all parts have been shipped and their order is not at risk of backorder', hasEmail: true, hasPhone: false },
+    { number: 3, label: 'Announce the order has been received', hint: 'Email the customer and announce that all parts and services have been received by CodeBlue', hasEmail: true, hasPhone: false },
+    { number: 4, label: 'Confirm the kick off', hint: 'Input the date of the kickoff call with Service', hasEmail: true, hasPhone: false, hasKickoffDate: true },
+    { number: 5, label: 'Send the Team Communication email', hint: 'Update the email with project team contact info and process for engaging CodeBlue', hasEmail: false, hasPhone: false }
+    // Step 5's email icon is intentionally left off for now -- Michael
+    // hasn't supplied that template yet. The checkbox itself still works;
+    // wire hasEmail: true + a PROJECT_EMAIL_TEMPLATES[5] entry in once he
+    // sends it.
+  ];
+
+  // Plain-text stand-in for the 4 progress-bar images Michael supplied
+  // (Order Placed / Order Shipped / Order Arrived / Kick-off, 2026-10-02).
+  // He originally wanted those images at the very top of each checklist
+  // step's email -- but these emails open as mailto: drafts in the rep's
+  // own Outlook for them to review/edit before sending (his explicit
+  // choice, same conversation), and a mailto: body is plain text only, no
+  // email client renders an <img> inside one. This is the closest
+  // equivalent that still works in plain text: every label from the real
+  // images, with a checkmark on each step reached so far -- same
+  // information the image conveyed, same position (top of the email,
+  // before the customer's name line), just rendered in text.
+  var PROJECTS_PROGRESS_LABELS = ['Order Placed', 'Order Shipped', 'Order Arrived', 'Kick-off'];
+
+  function projectProgressLine(stepNumber) {
+    return PROJECTS_PROGRESS_LABELS.map(function (label, idx) {
+      var reached = (idx + 1) <= stepNumber;
+      return (reached ? '✓ ' : '  ') + label;
+    }).join('   →   ');
+  }
+
+  function projectEmailMergeFields(text, project, coordinatorName) {
+    var firstName = (project.contact_name || '').trim().split(/\s+/)[0] || 'there';
+    var merged = text.split('(Customer First Name)').join(firstName)
+      .split('(Project Name)').join(project.name || '');
+    if (coordinatorName !== undefined) {
+      merged = merged.split('(assigned Relationship coordinator)').join(coordinatorName || 'CodeBlue Technology');
+    }
+    return merged;
+  }
+
+  function loadProjects() {
+    state.projectsLoading = true;
+    state.projectsError = null;
+    render();
+    apiGet('api/projects.php?action=list').then(function (r) {
+      state.projectsLoading = false;
+      if (r.data && r.data.ok) {
+        state.projectsData = r.data.projects;
+        state.projectsRoster = r.data.roster || [];
+      } else {
+        state.projectsError = (r.data && r.data.error) || 'Could not load the Projects list.';
+      }
+      render();
+    }).catch(function () {
+      state.projectsLoading = false;
+      state.projectsError = 'Could not load the Projects list — check your connection.';
+      render();
+    });
+  }
+
+  function setProjectAssigned(projectId, assigned, assignedToName) {
+    state.projectsTogglingId = projectId;
+    render();
+    var body = assigned ? { project_id: projectId, assigned_to_name: assignedToName } : { project_id: projectId };
+    apiPost('api/projects.php?action=' + (assigned ? 'assign' : 'unassign'), body).then(function (r) {
+      state.projectsTogglingId = null;
+      if (r.data && r.data.ok) {
+        var proj = (state.projectsData || []).filter(function (p) { return String(p.id) === String(projectId); })[0];
+        if (proj) proj.assigned_to_name = assigned ? assignedToName : null;
+        delete state.projectsAssignDraft[projectId];
+      } else {
+        state.projectsError = (r.data && r.data.error) || 'Could not update that assignment.';
+      }
+      render();
+    }).catch(function () {
+      state.projectsTogglingId = null;
+      state.projectsError = 'Could not update that assignment — check your connection.';
+      render();
+    });
+  }
+
+  function onProjectAssignSelectChange(ev) {
+    var el = ev.target;
+    var projectId = el.getAttribute && el.getAttribute('data-project-assign-select');
+    if (!projectId) return;
+    state.projectsAssignDraft[projectId] = el.value;
+  }
+
+  function onProjectStatusFilterChange(ev) {
+    var el = ev.target;
+    if (!el.hasAttribute || !el.hasAttribute('data-project-status-filter')) return;
+    state.projectsStatusFilter = el.value;
+    render();
+  }
+
+  function onProjectSortSelectChange(ev) {
+    var el = ev.target;
+    if (!el.hasAttribute || !el.hasAttribute('data-project-sort-select')) return;
+    state.projectsSortBy = el.value;
+    render();
+  }
+
+  function toggleProjectChecklistStep(projectId, stepNumber, completed) {
+    var key = projectId + '::' + stepNumber;
+    state.projectsChecklistBusyKey = key;
+    render();
+    apiPost('api/projects.php?action=checklist_toggle', { project_id: projectId, step_number: stepNumber, completed: completed }).then(function (r) {
+      state.projectsChecklistBusyKey = null;
+      if (r.data && r.data.ok) {
+        var proj = (state.projectsData || []).filter(function (p) { return String(p.id) === String(projectId); })[0];
+        if (proj) {
+          if (completed) {
+            proj.checklist[stepNumber] = { completed_at: new Date().toISOString(), completed_by_name: state.user.name };
+          } else {
+            delete proj.checklist[stepNumber];
+          }
+        }
+      } else {
+        state.projectsError = (r.data && r.data.error) || 'Could not update that step.';
+      }
+      render();
+    }).catch(function () {
+      state.projectsChecklistBusyKey = null;
+      state.projectsError = 'Could not update that step — check your connection.';
+      render();
+    });
+  }
+
+  function setProjectKickoffDate(projectId) {
+    var date = state.projectsKickoffDraft[projectId];
+    if (date === undefined) return;
+    state.projectsKickoffSavingId = projectId;
+    render();
+    apiPost('api/projects.php?action=kickoff_date_set', { project_id: projectId, kickoff_date: date }).then(function (r) {
+      state.projectsKickoffSavingId = null;
+      if (r.data && r.data.ok) {
+        var proj = (state.projectsData || []).filter(function (p) { return String(p.id) === String(projectId); })[0];
+        if (proj) proj.kickoff_date = date || null;
+        delete state.projectsKickoffDraft[projectId];
+      } else {
+        state.projectsError = (r.data && r.data.error) || 'Could not save the kickoff date.';
+      }
+      render();
+    }).catch(function () {
+      state.projectsKickoffSavingId = null;
+      state.projectsError = 'Could not save the kickoff date — check your connection.';
+      render();
+    });
+  }
+
+  function fetchProjectContactInfo(contactId) {
+    if (!contactId) return Promise.resolve(null);
+    if (state.projectsContactCache[contactId]) return Promise.resolve(state.projectsContactCache[contactId]);
+    state.projectsContactLoadingId = contactId;
+    render();
+    return apiGet('api/projects.php?action=contact_info&contact_id=' + encodeURIComponent(contactId)).then(function (r) {
+      state.projectsContactLoadingId = null;
+      if (r.data && r.data.ok) {
+        var info = { email: r.data.email, phone: r.data.phone };
+        state.projectsContactCache[contactId] = info;
+        render();
+        return info;
+      }
+      state.projectsError = (r.data && r.data.error) || 'Could not look up that contact.';
+      render();
+      return null;
+    }).catch(function () {
+      state.projectsContactLoadingId = null;
+      state.projectsError = 'Could not look up that contact — check your connection.';
+      render();
+      return null;
+    });
+  }
+
+  function fireProjectStepEmail(project, stepNumber) {
+    var tpl = PROJECT_EMAIL_TEMPLATES[stepNumber];
+    if (!tpl) return;
+    fetchProjectContactInfo(project.contact_id).then(function (info) {
+      if (!info || !info.email) {
+        state.projectsError = 'No email on file for this project’s contact.';
+        render();
+        return;
+      }
+      var coordinatorName = stepNumber === 4 ? (project.assigned_to_name || null) : undefined;
+      var subject = projectEmailMergeFields(tpl.subject, project, coordinatorName);
+      var bodyText = projectProgressLine(stepNumber) + '\n\n' + tpl.body.join('\n');
+      var body = projectEmailMergeFields(bodyText, project, coordinatorName);
+      window.location.href = crossSellMailtoUrl(info.email, subject, body);
+    });
+  }
+
+  function fireProjectStepCall(project) {
+    fetchProjectContactInfo(project.contact_id).then(function (info) {
+      if (!info || !info.phone) {
+        state.projectsError = 'No phone number on file for this project’s contact.';
+        render();
+        return;
+      }
+      window.location.href = 'tel:' + info.phone;
+    });
+  }
+
+  function toggleProjectNotes(projectId) {
+    if (state.projectsNotesOpenId === projectId) {
+      state.projectsNotesOpenId = null;
+      render();
+      return;
+    }
+    state.projectsNotesOpenId = projectId;
+    state.projectsNotesData = null;
+    state.projectsNotesError = null;
+    state.projectsNoteDraftText = '';
+    render();
+    loadProjectNotes(projectId);
+  }
+
+  function loadProjectNotes(projectId) {
+    state.projectsNotesLoading = true;
+    render();
+    apiGet('api/projects.php?action=notes_list&project_id=' + projectId).then(function (r) {
+      state.projectsNotesLoading = false;
+      if (r.data && r.data.ok) {
+        state.projectsNotesData = r.data.notes;
+      } else {
+        state.projectsNotesError = (r.data && r.data.error) || 'Could not load notes.';
+      }
+      render();
+    }).catch(function () {
+      state.projectsNotesLoading = false;
+      state.projectsNotesError = 'Could not load notes — check your connection.';
+      render();
+    });
+  }
+
+  function submitProjectNote(projectId) {
+    var text = (state.projectsNoteDraftText || '').trim();
+    if (!text) return;
+    state.projectsNoteSaving = true;
+    render();
+    apiPost('api/projects.php?action=notes_add', { project_id: projectId, note_text: text }).then(function (r) {
+      state.projectsNoteSaving = false;
+      if (r.data && r.data.ok) {
+        state.projectsNoteDraftText = '';
+        state.projectsNotesError = r.data.cw_warning || null;
+        loadProjectNotes(projectId);
+      } else {
+        state.projectsNotesError = (r.data && r.data.error) || 'Could not save that note.';
+        render();
+      }
+    }).catch(function () {
+      state.projectsNoteSaving = false;
+      state.projectsNotesError = 'Could not save that note — check your connection.';
+      render();
+    });
+  }
+
+  function onProjectKickoffInputChange(ev) {
+    var el = ev.target;
+    var projectId = el.getAttribute && el.getAttribute('data-project-kickoff-input');
+    if (!projectId) return;
+    state.projectsKickoffDraft[projectId] = el.value;
+  }
+
+  function onProjectNoteTextareaInput(ev) {
+    var el = ev.target;
+    var projectId = el.getAttribute && el.getAttribute('data-project-note-textarea');
+    if (!projectId) return;
+    state.projectsNoteDraftText = el.value;
+  }
+
+  // My Projects / All Projects (added 2026-10-02 per Michael) -- 'mine'
+  // narrows to projects assigned (project_assignments, see api/projects.php)
+  // to the logged-in coordinator. Applied first, ahead of the status
+  // filter/graph and the sort, so every other Projects-view feature
+  // (the bar graph, the Status dropdown, the list itself) operates on
+  // whichever population is currently in scope.
+  function projectsScopedList() {
+    var list = (state.projectsData || []).slice();
+    if (state.projectsScope === 'mine') {
+      var myName = (state.user && state.user.name) || '';
+      list = list.filter(function (p) { return p.assigned_to_name === myName; });
+    }
+    return list;
+  }
+
+  // Distinct statuses within the current My/All scope -- backs both the
+  // Status dropdown and the bar graph below, so a status with zero
+  // projects in scope never shows up as an empty option/bar. Closed
+  // projects are excluded server-side (api/projects.php) before this list
+  // is ever populated, so every status here is an open one.
+  function projectStatusOptions() {
+    var seen = {};
+    var out = [];
+    projectsScopedList().forEach(function (p) {
+      if (!p.status_name || seen[p.status_name]) return;
+      seen[p.status_name] = true;
+      out.push({ name: p.status_name });
+    });
+    out.sort(function (a, b) { return a.name.localeCompare(b.name); });
+    return out;
+  }
+
+  // One row per status within the current My/All scope -- { name, count }
+  // -- sorted most-projects-first, for projectsStatusGraphHtml().
+  function projectStatusCounts() {
+    var byName = {};
+    projectsScopedList().forEach(function (p) {
+      var name = p.status_name || '(no status)';
+      if (!byName[name]) byName[name] = { name: name, count: 0 };
+      byName[name].count++;
+    });
+    return Object.keys(byName).map(function (k) { return byName[k]; })
+      .sort(function (a, b) { return b.count - a.count; });
+  }
+
+  // Filters + sorts the current My/All scope for display. The Status
+  // filter ('' = every open status, or an exact status name) is set either
+  // from the Status dropdown or by clicking a bar in the graph -- both
+  // write the same state.projectsStatusFilter. Purely a view-layer
+  // operation -- api/projects.php's ?action=list is still the single
+  // source of truth, fetched live, and closed projects never appear in it
+  // in the first place per Michael's "we don't need them in Relationships".
+  function projectsVisibleList() {
+    var list = projectsScopedList();
+    var filter = state.projectsStatusFilter || '';
+    if (filter) {
+      list = list.filter(function (p) { return p.status_name === filter; });
+    }
+    var sortBy = state.projectsSortBy || 'start_date_desc';
+    list.sort(function (a, b) {
+      if (sortBy === 'company_asc') return (a.company_name || '').localeCompare(b.company_name || '');
+      if (sortBy === 'company_desc') return (b.company_name || '').localeCompare(a.company_name || '');
+      if (sortBy === 'start_date_asc') return (a.start_date || '').localeCompare(b.start_date || '');
+      return (b.start_date || '').localeCompare(a.start_date || ''); // start_date_desc (default)
+    });
+    return list;
+  }
+
+  // Bar graph of project counts by status, with the My Projects/All
+  // Projects toggle in its header -- added 2026-10-02 per Michael: "a
+  // visual bar graph... show how many projects are in each status...
+  // allow you click on the bar and see only those projects". Clicking a
+  // bar sets/clears state.projectsStatusFilter (same field the Status
+  // dropdown uses), so the bar graph and the dropdown always agree on
+  // which status, if any, is currently active.
+  function projectsStatusGraphHtml() {
+    var scope = state.projectsScope === 'mine' ? 'mine' : 'all';
+    var counts = projectStatusCounts();
+    var maxCount = counts.reduce(function (m, c) { return Math.max(m, c.count); }, 0);
+    var activeFilter = state.projectsStatusFilter || '';
+
+    var html = '<div class="projects-status-graph">';
+    html += '<div class="projects-status-graph-header">' +
+      '<div class="projects-status-graph-title">Projects by Status</div>' +
+      '<div class="projects-scope-toggle">' +
+        '<button type="button" class="projects-scope-btn' + (scope === 'mine' ? ' active' : '') + '" data-action="projects-scope-set" data-scope="mine">My Projects</button>' +
+        '<button type="button" class="projects-scope-btn' + (scope === 'all' ? ' active' : '') + '" data-action="projects-scope-set" data-scope="all">All Projects</button>' +
+      '</div>' +
+    '</div>';
+
+    if (!counts.length) {
+      html += '<div class="projects-empty">' + (scope === 'mine' ? 'No projects assigned to you.' : 'No projects found.') + '</div>';
+    } else {
+      html += '<div class="projects-status-graph-bars">';
+      counts.forEach(function (c) {
+        var pct = maxCount ? Math.round((c.count / maxCount) * 100) : 0;
+        var isActive = activeFilter === c.name;
+        html += '<button type="button" class="projects-status-bar-row' + (isActive ? ' active' : '') + '" data-action="project-status-bar-click" data-status-name="' + escapeHtml(c.name) + '">' +
+          '<div class="projects-status-bar-label">' + escapeHtml(c.name) + '</div>' +
+          '<div class="projects-status-bar-track"><div class="projects-status-bar-fill" style="width:' + pct + '%"></div></div>' +
+          '<div class="projects-status-bar-count">' + c.count + '</div>' +
+        '</button>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function projectsToolbarHtml() {
+    var filter = state.projectsStatusFilter || '';
+    var sortBy = state.projectsSortBy || 'start_date_desc';
+    var statuses = projectStatusOptions();
+    var html = '<div class="projects-toolbar">';
+    html += '<label class="projects-toolbar-field">Status' +
+      '<select class="projects-filter-select" data-project-status-filter>' +
+        '<option value=""' + (filter === '' ? ' selected' : '') + '>All statuses</option>' +
+        statuses.map(function (s) {
+          return '<option value="' + escapeHtml(s.name) + '"' + (filter === s.name ? ' selected' : '') + '>' +
+            escapeHtml(s.name) + '</option>';
+        }).join('') +
+      '</select>' +
+    '</label>';
+    html += '<label class="projects-toolbar-field">Sort by' +
+      '<select class="projects-sort-select" data-project-sort-select>' +
+        '<option value="start_date_desc"' + (sortBy === 'start_date_desc' ? ' selected' : '') + '>Start Date (newest first)</option>' +
+        '<option value="start_date_asc"' + (sortBy === 'start_date_asc' ? ' selected' : '') + '>Start Date (oldest first)</option>' +
+        '<option value="company_asc"' + (sortBy === 'company_asc' ? ' selected' : '') + '>Company Name (A–Z)</option>' +
+        '<option value="company_desc"' + (sortBy === 'company_desc' ? ' selected' : '') + '>Company Name (Z–A)</option>' +
+      '</select>' +
+    '</label>';
+    html += '</div>';
+    return html;
+  }
+
+  function projectsHtml() {
+    var html = '<div class="projects-view">';
+    html += clydeHeaderHtml('projects', 'Clyde reviewing project plans',
+      '<div class="view-title">Projects</div>' +
+      '<div class="view-sub">Every ConnectWise project on the Pre-Sales and Services Projects boards.</div>');
+    if (state.projectsLoading && !state.projectsData) {
+      html += '<div class="loading">Loading projects…</div>';
+    } else if (!state.projectsData || !state.projectsData.length) {
+      html += '<div class="projects-empty">No projects found.</div>';
+    } else {
+      html += projectsStatusGraphHtml();
+      html += projectsToolbarHtml();
+      var visible = projectsVisibleList();
+      if (!visible.length) {
+        html += '<div class="projects-empty">No projects match this filter.</div>';
+      } else {
+        html += '<div class="projects-list">';
+        visible.forEach(function (p) { html += projectRowHtml(p); });
+        html += '</div>';
+      }
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function projectRowHtml(p) {
+    var isOpen = !!state.projectsOpenIds[p.id];
+    var isAssigned = !!p.assigned_to_name;
+    var isToggling = String(state.projectsTogglingId) === String(p.id);
+    var startDate = p.start_date ? fmtTimestamp(p.start_date).split(',')[0] : '—';
+    var html = '<div class="project-item' + (isOpen ? ' open' : '') + '">';
+    html += '<div class="project-item-main" data-action="toggle-project" data-project="' + p.id + '">' +
+      '<div class="project-item-company">' + escapeHtml(p.company_name) + '</div>' +
+      '<div class="project-item-name">' + escapeHtml(p.name) + '</div>' +
+      '<div class="project-item-status">' + escapeHtml(p.status_name) + '</div>' +
+      '<div class="project-item-date">' + escapeHtml(startDate) + '</div>' +
+      '<div class="project-item-assigned">' + (isAssigned ? escapeHtml(p.assigned_to_name) : '—') + '</div>' +
+      '<div class="project-item-toggle">' + (isOpen ? '‹' : '›') + '</div>' +
+    '</div>';
+    if (isOpen) {
+      html += '<div class="project-item-detail">';
+      html += '<div class="project-assign-row">' +
+        (isAssigned
+          ? '<span class="project-assigned-label">Assigned to ' + escapeHtml(p.assigned_to_name) + '</span>' +
+            '<button class="svc-action-btn secondary" type="button" data-action="project-unassign" data-project="' + p.id + '" ' + (isToggling ? 'disabled' : '') + '>' + (isToggling ? '…' : 'Unassign') + '</button>'
+          : '<select class="project-assign-select" data-project-assign-select="' + p.id + '" ' + (isToggling ? 'disabled' : '') + '>' +
+              '<option value="">Assign to…</option>' +
+              state.projectsRoster.map(function (name) {
+                return '<option value="' + escapeHtml(name) + '"' + (state.projectsAssignDraft[p.id] === name ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
+              }).join('') +
+            '</select>' +
+            '<button class="svc-action-btn primary" type="button" data-action="project-assign" data-project="' + p.id + '" ' + (isToggling ? 'disabled' : '') + '>' + (isToggling ? '…' : 'Assign') + '</button>') +
+        '</div>';
+      html += '<div class="project-checklist">';
+      PROJECTS_CHECKLIST_STEPS.forEach(function (step) { html += projectChecklistStepHtml(p, step); });
+      html += '</div>';
+      html += projectNotesPanelHtml(p);
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function projectChecklistStepHtml(p, step) {
+    var progress = (p.checklist || {})[step.number];
+    var completed = !!progress;
+    var busy = state.projectsChecklistBusyKey === (p.id + '::' + step.number);
+    var contactLoading = state.projectsContactLoadingId === p.contact_id;
+    var icons = '';
+    if (step.hasEmail && PROJECT_EMAIL_TEMPLATES[step.number] && p.contact_id) {
+      icons += '<button type="button" class="checklist-step-icon-btn" title="Email" data-action="project-step-email" data-project="' + p.id + '" data-step="' + step.number + '" ' + (contactLoading ? 'disabled' : '') + '>' + CHECKLIST_ICON_EMAIL + '</button>';
+    }
+    if (step.hasPhone && p.contact_id) {
+      icons += '<button type="button" class="checklist-step-icon-btn" title="Call" data-action="project-step-call" data-project="' + p.id + '" ' + (contactLoading ? 'disabled' : '') + '>' + CHECKLIST_ICON_PHONE + '</button>';
+    }
+    var html = '<div class="checklist-step-row">';
+    html += '<label class="checklist-step ' + (completed ? 'done' : '') + '">' +
+      '<input type="checkbox" ' + (completed ? 'checked' : '') + (busy ? ' disabled' : '') +
+        ' data-action="project-step-toggle" data-project="' + p.id + '" data-step="' + step.number + '" data-completed="' + (completed ? '1' : '0') + '">' +
+      '<div class="checklist-step-text">' +
+        '<div class="checklist-step-label">' + step.number + '. ' + escapeHtml(step.label) + '</div>' +
+        '<div class="checklist-step-meta">' + escapeHtml(step.hint) + '</div>' +
+        (completed ? '<div class="checklist-step-meta">✓ ' + escapeHtml(progress.completed_by_name || '') + ' — ' + escapeHtml(fmtTimestamp(progress.completed_at)) + '</div>' : '') +
+      '</div>' +
+    '</label>';
+    html += icons;
+    html += '</div>';
+    if (step.hasKickoffDate) {
+      var draftDate = state.projectsKickoffDraft[p.id];
+      var currentDate = draftDate !== undefined ? draftDate : (p.kickoff_date || '');
+      var savingKickoff = String(state.projectsKickoffSavingId) === String(p.id);
+      html += '<div class="project-kickoff-row">' +
+        '<label class="project-kickoff-label">Kickoff call date with Service</label>' +
+        '<input type="date" class="project-kickoff-input" data-project-kickoff-input="' + p.id + '" value="' + escapeHtml(currentDate) + '" ' + (savingKickoff ? 'disabled' : '') + '>' +
+        '<button type="button" class="svc-action-btn primary" data-action="project-kickoff-save" data-project="' + p.id + '" ' + (savingKickoff ? 'disabled' : '') + '>' + (savingKickoff ? 'Saving…' : 'Save') + '</button>' +
+      '</div>';
+    }
+    return html;
+  }
+
+  function projectNotesPanelHtml(p) {
+    var isOpen = state.projectsNotesOpenId !== null && String(state.projectsNotesOpenId) === String(p.id);
+    var html = '<div class="project-notes-toggle-row">' +
+      '<button type="button" class="checklist-notes-toggle" data-action="project-notes-toggle" data-project="' + p.id + '">' +
+        (isOpen ? 'Hide Notes' : 'Notes') +
+      '</button>' +
+    '</div>';
+    if (!isOpen) return html;
+    html += '<div class="project-notes-panel">';
+    if (state.projectsNotesError) {
+      html += '<div class="checklist-error">' + escapeHtml(state.projectsNotesError) + '</div>';
+    }
+    if (state.projectsNotesLoading && !state.projectsNotesData) {
+      html += '<div class="checklist-loading">Loading notes…</div>';
+    } else if (state.projectsNotesData && state.projectsNotesData.length) {
+      html += '<div class="checklist-notes-scroll">' +
+        state.projectsNotesData.map(function (n) {
+          return '<div class="checklist-note-item">' +
+            '<div class="checklist-note-item-text">' + escapeHtml(n.text) + '</div>' +
+            '<div class="checklist-note-item-meta">' + escapeHtml(n.updated_by || '') + ' — ' + escapeHtml(fmtTimestamp(n.last_updated)) + '</div>' +
+          '</div>';
+        }).join('') +
+      '</div>';
+    } else if (state.projectsNotesData) {
+      html += '<div class="checklist-notes-empty">No notes yet on this project.</div>';
+    }
+    html += '<div class="checklist-note-form">' +
+      '<textarea class="checklist-note-textarea" rows="3" data-project-note-textarea="' + p.id + '" placeholder="Add a note to this project’s ConnectWise record…">' + escapeHtml(state.projectsNoteDraftText) + '</textarea>' +
+      '<div class="checklist-note-form-actions">' +
+        '<button type="button" class="svc-action-btn primary" data-action="project-note-save" data-project="' + p.id + '" ' + (state.projectsNoteSaving ? 'disabled' : '') + '>' + (state.projectsNoteSaving ? 'Saving…' : 'Save Note') + '</button>' +
+      '</div>' +
+    '</div>';
+    html += '</div>';
+    return html;
+  }
+
+  // ---- Event binding ----------------------------------------------------
+
+  function bindEvents() {
+    var searchInput = document.getElementById('customerSearchInput');
+    if (searchInput) {
+      searchInput.addEventListener('input', function (e) {
+        state.query = e.target.value;
+        state.resultsOpen = true;
+        runSearch(state.query);
+      });
+    }
+
+    var outgrowDateInput = document.getElementById('outgrowDateInput');
+    if (outgrowDateInput) {
+      outgrowDateInput.addEventListener('input', function (e) {
+        state.outgrowDraftDate = e.target.value;
+      });
+    }
+
+    var vendorFieldInput = document.getElementById('vendorFieldInput');
+    if (vendorFieldInput) {
+      vendorFieldInput.addEventListener('input', function (e) {
+        state.vendorDraft = e.target.value;
+      });
+    }
+
+    var meetingSubjectInput = document.getElementById('meetingSubjectInput');
+    if (meetingSubjectInput) {
+      meetingSubjectInput.addEventListener('input', function (e) {
+        state.meetingDraftSubject = e.target.value;
+      });
+    }
+    var meetingDateInput = document.getElementById('meetingDateInput');
+    if (meetingDateInput) {
+      meetingDateInput.addEventListener('input', function (e) {
+        state.meetingDraftDate = e.target.value;
+      });
+    }
+    var ticketOutgrowText = document.getElementById('ticketOutgrowText');
+    if (ticketOutgrowText) {
+      ticketOutgrowText.addEventListener('input', function (e) {
+        state.ticketOutgrow.text = e.target.value;
+      });
+    }
+    var meetingNotesInput = document.getElementById('meetingNotesInput');
+    if (meetingNotesInput) {
+      meetingNotesInput.addEventListener('input', function (e) {
+        state.meetingDraftNotes = e.target.value;
+      });
+    }
+
+    var taskDescriptionInput = document.getElementById('taskDescriptionInput');
+    if (taskDescriptionInput) {
+      taskDescriptionInput.addEventListener('input', function (e) {
+        state.taskDraftDescription = e.target.value;
+      });
+    }
+    var taskAssigneeSelect = document.getElementById('taskAssigneeSelect');
+    if (taskAssigneeSelect) {
+      taskAssigneeSelect.addEventListener('change', function (e) {
+        state.taskDraftAssignee = e.target.value;
+      });
+    }
+    var taskDueDateInput = document.getElementById('taskDueDateInput');
+    if (taskDueDateInput) {
+      taskDueDateInput.addEventListener('input', function (e) {
+        state.taskDraftDueDate = e.target.value;
+      });
+    }
+
+    var territoryAdminEmailInput = document.getElementById('territoryAdminEmailInput');
+    if (territoryAdminEmailInput) {
+      territoryAdminEmailInput.addEventListener('input', function (e) {
+        state.territoryAdminAddEmail = e.target.value;
+      });
+    }
+    var territoryAdminTerritoryInput = document.getElementById('territoryAdminTerritoryInput');
+    if (territoryAdminTerritoryInput) {
+      territoryAdminTerritoryInput.addEventListener('input', function (e) {
+        state.territoryAdminAddTerritory = e.target.value;
+      });
+    }
+
+    var contactsNewFirstName = document.getElementById('contactsNewFirstName');
+    if (contactsNewFirstName) {
+      contactsNewFirstName.addEventListener('input', function (e) { state.accountContactsNewDraft.first_name = e.target.value; });
+    }
+    var contactsNewLastName = document.getElementById('contactsNewLastName');
+    if (contactsNewLastName) {
+      contactsNewLastName.addEventListener('input', function (e) { state.accountContactsNewDraft.last_name = e.target.value; });
+    }
+    var contactsNewType = document.getElementById('contactsNewType');
+    if (contactsNewType) {
+      contactsNewType.addEventListener('change', function (e) { state.accountContactsNewDraft.type_id = e.target.value; });
+    }
+    var contactsNewPhone = document.getElementById('contactsNewPhone');
+    if (contactsNewPhone) {
+      contactsNewPhone.addEventListener('input', function (e) { state.accountContactsNewDraft.phone = e.target.value; });
+    }
+    var contactsNewEmail = document.getElementById('contactsNewEmail');
+    if (contactsNewEmail) {
+      contactsNewEmail.addEventListener('input', function (e) { state.accountContactsNewDraft.email = e.target.value; });
+    }
+    var contactsEditFirstName = document.getElementById('contactsEditFirstName');
+    if (contactsEditFirstName) {
+      contactsEditFirstName.addEventListener('input', function (e) { state.accountContactsEditDraft.first_name = e.target.value; });
+    }
+    var contactsEditLastName = document.getElementById('contactsEditLastName');
+    if (contactsEditLastName) {
+      contactsEditLastName.addEventListener('input', function (e) { state.accountContactsEditDraft.last_name = e.target.value; });
+    }
+    var contactsEditType = document.getElementById('contactsEditType');
+    if (contactsEditType) {
+      contactsEditType.addEventListener('change', function (e) { state.accountContactsEditDraft.type_id = e.target.value; });
+    }
+    var contactsEditPhone = document.getElementById('contactsEditPhone');
+    if (contactsEditPhone) {
+      contactsEditPhone.addEventListener('input', function (e) { state.accountContactsEditDraft.phone = e.target.value; });
+    }
+    var contactsEditEmail = document.getElementById('contactsEditEmail');
+    if (contactsEditEmail) {
+      contactsEditEmail.addEventListener('input', function (e) { state.accountContactsEditDraft.email = e.target.value; });
+    }
+
+    var checklistNoteTextarea = document.getElementById('checklistNoteTextarea');
+    if (checklistNoteTextarea) {
+      checklistNoteTextarea.addEventListener('input', function (e) {
+        state.checklistNoteDraftText = e.target.value;
+      });
+    }
+
+    var riskScanFileInput = document.getElementById('riskScanFileInput');
+    if (riskScanFileInput) {
+      riskScanFileInput.addEventListener('change', function (e) {
+        state.riskScanDraftFile = (e.target.files && e.target.files[0]) || null;
+        state.riskScansError = null;
+        render();
+      });
+    }
+
+    var documentFileInput = document.getElementById('documentFileInput');
+    if (documentFileInput) {
+      documentFileInput.addEventListener('change', function (e) {
+        state.documentDraftFiles = Array.prototype.slice.call(e.target.files || []);
+        state.documentsError = null;
+        render();
+      });
+    }
+    var documentCategorySelect = document.getElementById('documentCategorySelect');
+    if (documentCategorySelect) {
+      documentCategorySelect.addEventListener('change', function (e) {
+        state.documentDraftCategory = e.target.value;
+      });
+    }
+  }
+
+  function onRootClick(e) {
+    // Click-away dismissal for the pinned Opportunity/Risk popover (added
+    // 2026-10-06) -- runs before the data-action dispatch below so a click
+    // anywhere else, including empty space with no data-action at all,
+    // closes a pinned popover rather than only another element's own click
+    // handler doing it. A click back on the badge itself (or inside the
+    // popover) is left alone -- the dispatch below handles that toggle.
+    if (state.opportunityPopover && state.opportunityPopover.pinned) {
+      var withinOpportunityPopover = e.target.closest('.opportunity-popover, [data-action="toggle-opportunity-popover"]');
+      if (!withinOpportunityPopover) {
+        state.opportunityPopover = null;
+        updateOpportunityPopoverDom();
+      }
+    }
+
+    var el = e.target.closest('[data-action]');
+    if (!el) return;
+    var action = el.getAttribute('data-action');
+
+    if (action === 'select-customer') {
+      selectCustomer(el.getAttribute('data-id'));
+    } else if (action === 'change-customer') {
+      state.selectedCustomer = null;
+      state.activePillarId = null;
+      state.query = '';
+      state.results = [];
+      state.resultsOpen = false;
+      resetActivityState();
+      resetOutgrowState();
+      resetContactCardState();
+      resetVendorState();
+      resetMeetingsState();
+      resetRiskScansState();
+      render();
+      if (!state.overview) loadOverview();
+      loadGlobalTodos();
+    } else if (action === 'open-pillar') {
+      state.activePillarId = el.getAttribute('data-pillar');
+      render();
+      var dd = document.querySelector('.drilldown');
+      if (dd) dd.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (action === 'close-drilldown') {
+      state.activePillarId = null;
+      render();
+    } else if (action === 'show-report') {
+      state.view = 'report';
+      loadReport();
+      loadPeopleFirstSummary();
+    } else if (action === 'show-dashboard') {
+      state.view = 'dashboard';
+      state.error = null;
+      render();
+      if (!state.selectedCustomer && !state.overview) loadOverview();
+      if (!state.selectedCustomer) loadGlobalTodos();
+    } else if (action === 'show-prospecting') {
+      state.view = 'prospecting';
+      state.error = null;
+      render();
+      if (!state.prospecting.loaded) loadProspecting();
+      if (state.prospecting.tab === 'mine' && !state.prospecting.claims) loadProspectClaims();
+    } else if (action === 'prospect-run') {
+      runProspectSearch();
+    } else if (action === 'prospect-select') {
+      selectProspect(parseInt(el.getAttribute('data-id'), 10));
+    } else if (action === 'prospect-close') {
+      state.prospecting.selectedId = null;
+      state.prospecting.draft = null;
+      render();
+    } else if (action === 'prospect-build-profile') {
+      buildProspectProfile();
+    } else if (action === 'prospect-save') {
+      saveProspectDraft();
+    } else if (action === 'prospect-claim') {
+      claimProspect();
+    } else if (action === 'prospect-open-customer') {
+      state.view = 'dashboard';
+      selectCustomer(el.getAttribute('data-id'));
+    } else if (action === 'prospect-tab') {
+      state.prospecting.tab = el.getAttribute('data-tab') === 'mine' ? 'mine' : 'search';
+      render();
+      if (state.prospecting.tab === 'mine' && !state.prospecting.claims) loadProspectClaims();
+    } else if (action === 'show-sync') {
+      state.view = 'sync';
+      state.error = null;
+      render();
+      loadSyncStatus();
+      loadCompanyCounts();
+    } else if (action === 'refresh-company-counts') {
+      loadCompanyCounts();
+    } else if (action === 'show-ticket-outgrow') {
+      state.view = 'ticket-outgrow';
+      state.error = null;
+      render();
+    } else if (action === 'ticket-outgrow-create') {
+      createTicketOutgrow();
+    } else if (action === 'ticket-outgrow-clear') {
+      state.ticketOutgrow = { text: '', busy: false, error: null, result: null };
+      render();
+    } else if (action === 'show-projects') {
+      state.view = 'projects';
+      state.error = null;
+      render();
+      loadProjects();
+    } else if (action === 'toggle-project') {
+      var tpId = el.getAttribute('data-project');
+      state.projectsOpenIds[tpId] = !state.projectsOpenIds[tpId];
+      render();
+    } else if (action === 'project-assign') {
+      var paId = el.getAttribute('data-project');
+      var paName = state.projectsAssignDraft[paId];
+      if (paName) setProjectAssigned(paId, true, paName);
+    } else if (action === 'project-unassign') {
+      setProjectAssigned(el.getAttribute('data-project'), false);
+    } else if (action === 'project-step-toggle') {
+      var pstWasCompleted = el.getAttribute('data-completed') === '1';
+      toggleProjectChecklistStep(
+        el.getAttribute('data-project'), parseInt(el.getAttribute('data-step'), 10), !pstWasCompleted
+      );
+    } else if (action === 'project-step-email') {
+      var peProj = (state.projectsData || []).filter(function (p) { return String(p.id) === String(el.getAttribute('data-project')); })[0];
+      if (peProj) fireProjectStepEmail(peProj, parseInt(el.getAttribute('data-step'), 10));
+    } else if (action === 'project-step-call') {
+      var pcProj = (state.projectsData || []).filter(function (p) { return String(p.id) === String(el.getAttribute('data-project')); })[0];
+      if (pcProj) fireProjectStepCall(pcProj);
+    } else if (action === 'project-kickoff-save') {
+      setProjectKickoffDate(el.getAttribute('data-project'));
+    } else if (action === 'project-notes-toggle') {
+      toggleProjectNotes(el.getAttribute('data-project'));
+    } else if (action === 'project-note-save') {
+      submitProjectNote(el.getAttribute('data-project'));
+    } else if (action === 'project-status-bar-click') {
+      var barStatusName = el.getAttribute('data-status-name');
+      state.projectsStatusFilter = (state.projectsStatusFilter === barStatusName) ? '' : barStatusName;
+      render();
+    } else if (action === 'projects-scope-set') {
+      state.projectsScope = el.getAttribute('data-scope') === 'mine' ? 'mine' : 'all';
+      render();
+    } else if (action === 'run-sync') {
+      runFullSync();
+    } else if (action === 'run-stage') {
+      runStageOnly(el.getAttribute('data-stage'));
+    } else if (action === 'retry-stage-failed') {
+      retrySyncFailed(el.getAttribute('data-stage'));
+    } else if (action === 'show-territory-admin') {
+      state.view = 'territory-admin';
+      state.error = null;
+      render();
+      loadTerritoryAdmin();
+    } else if (action === 'territory-admin-add') {
+      addTerritoryAssignment();
+    } else if (action === 'territory-admin-remove') {
+      removeTerritoryAssignment(parseInt(el.getAttribute('data-id'), 10));
+    } else if (action === 'report-cell') {
+      state.view = 'queue';
+      loadQueue(
+        el.getAttribute('data-pillar'), el.getAttribute('data-service'), el.getAttribute('data-step'),
+        el.getAttribute('data-pillar-name'), el.getAttribute('data-service-name')
+      );
+    } else if (action === 'queue-back') {
+      state.view = 'report';
+      state.error = null;
+      render();
+    } else if (action === 'open-queue-customer') {
+      var qp = state.queueParams;
+      openCustomerAtChecklist(el.getAttribute('data-customer'), qp.pillarId, qp.serviceId, qp.serviceName);
+    } else if (action === 'pf-open-queue') {
+      state.view = 'pf-queue';
+      loadPeopleFirstQueue(el.getAttribute('data-type'));
+    } else if (action === 'pf-queue-back') {
+      state.view = 'report';
+      state.error = null;
+      render();
+    } else if (action === 'open-pf-queue-customer') {
+      state.view = 'dashboard';
+      selectCustomer(el.getAttribute('data-customer'));
+    } else if (action === 'log-peoplefirst') {
+      logPeopleFirst(parseInt(el.getAttribute('data-customer'), 10), el.getAttribute('data-type'));
+    } else if (action === 'toggle-checklist') {
+      var custId = state.selectedCustomer.customer.id;
+      var checklistKey = custId + '::' + el.getAttribute('data-pillar') + '::' + el.getAttribute('data-service');
+      if (state.openChecklistKey === checklistKey) {
+        state.openChecklistKey = null;
+        render();
+      } else {
+        state.openChecklistKey = checklistKey;
+        render();
+        if (!state.checklists[checklistKey]) {
+          loadChecklist(custId, el.getAttribute('data-pillar'), el.getAttribute('data-service'));
+        }
+      }
+    } else if (action === 'toggle-step') {
+      var wasCompleted = el.getAttribute('data-completed') === '1';
+      setChecklistStep(
+        el.getAttribute('data-customer'), el.getAttribute('data-pillar'), el.getAttribute('data-service'),
+        el.getAttribute('data-service-name'), parseInt(el.getAttribute('data-step'), 10), !wasCompleted
+      );
+    } else if (action === 'checklist-step-email' || action === 'checklist-step-call') {
+      var iceKey = el.getAttribute('data-checklist-key');
+      var iceType = action === 'checklist-step-email' ? 'email' : 'call';
+      var iceStep = parseInt(el.getAttribute('data-step'), 10);
+      var iceContacts = (state.contactCard && state.contactCard.contacts) || [];
+      var iceContactId = state.checklistContactSelected[iceKey] || null;
+      var iceContact = null;
+      for (var icei = 0; icei < iceContacts.length; icei++) {
+        if (iceContacts[icei].id === iceContactId) { iceContact = iceContacts[icei]; break; }
+      }
+      if (iceContact) {
+        fireChecklistContactAction(iceType, el.getAttribute('data-pillar'), el.getAttribute('data-service'), iceStep, iceContact);
+      } else {
+        // No contact picked for this checklist yet -- remember what the
+        // rep asked for, then open the same contact dropdown the row
+        // above already offers. checklist-contact-select below fires it
+        // the moment a contact is chosen.
+        state.checklistPendingContactAction = { key: iceKey, step: iceStep, type: iceType };
+        state.openChecklistContactDropdownKey = iceKey;
+        render();
+      }
+    } else if (action === 'checklist-contact-dropdown-toggle') {
+      var ccdKey = el.getAttribute('data-checklist-key');
+      state.openChecklistContactDropdownKey = state.openChecklistContactDropdownKey === ccdKey ? null : ccdKey;
+      state.checklistPendingContactAction = null;
+      render();
+    } else if (action === 'checklist-contact-select') {
+      var ccsKey = el.getAttribute('data-checklist-key');
+      var ccsContactId = el.getAttribute('data-contact-id');
+      state.checklistContactSelected[ccsKey] = ccsContactId;
+      state.openChecklistContactDropdownKey = null;
+      var ccsPending = state.checklistPendingContactAction;
+      if (ccsPending && ccsPending.key === ccsKey) {
+        state.checklistPendingContactAction = null;
+        var ccsContacts = (state.contactCard && state.contactCard.contacts) || [];
+        var ccsContact = null;
+        for (var ccsi = 0; ccsi < ccsContacts.length; ccsi++) {
+          if (ccsContacts[ccsi].id === ccsContactId) { ccsContact = ccsContacts[ccsi]; break; }
+        }
+        if (ccsContact) {
+          fireChecklistContactAction(ccsPending.type, el.getAttribute('data-pillar'), el.getAttribute('data-service'), ccsPending.step, ccsContact);
+        }
+      }
+      render();
+    } else if (action === 'checklist-notes-toggle') {
+      var cnCustId = state.selectedCustomer.customer.id;
+      var cnKey = cnCustId + '::' + el.getAttribute('data-pillar') + '::' + el.getAttribute('data-service');
+      if (state.openChecklistNotesKey === cnKey) {
+        state.openChecklistNotesKey = null;
+        render();
+      } else {
+        state.openChecklistNotesKey = cnKey;
+        render();
+        if (!state.checklistNotes[cnKey]) {
+          loadChecklistNotes(cnCustId, el.getAttribute('data-pillar'), el.getAttribute('data-service'));
+        }
+      }
+    } else if (action === 'checklist-note-open') {
+      state.checklistNoteDraftOpenKey = el.getAttribute('data-checklist-key') + '::' + el.getAttribute('data-step');
+      state.checklistNoteDraftText = '';
+      render();
+      var newNoteTextarea = document.getElementById('checklistNoteTextarea');
+      if (newNoteTextarea) newNoteTextarea.focus();
+    } else if (action === 'checklist-note-cancel') {
+      state.checklistNoteDraftOpenKey = null;
+      state.checklistNoteDraftText = '';
+      render();
+    } else if (action === 'checklist-note-save') {
+      addChecklistNote(
+        el.getAttribute('data-customer'), el.getAttribute('data-pillar'), el.getAttribute('data-service'),
+        parseInt(el.getAttribute('data-step'), 10)
+      );
+    } else if (action === 'checklist-recycle') {
+      recycleChecklist(el.getAttribute('data-customer'), el.getAttribute('data-pillar'), el.getAttribute('data-service'));
+    } else if (action === 'checklist-kill') {
+      setChecklistKilled(el.getAttribute('data-customer'), el.getAttribute('data-pillar'), el.getAttribute('data-service'), true);
+    } else if (action === 'checklist-unkill') {
+      setChecklistKilled(el.getAttribute('data-customer'), el.getAttribute('data-pillar'), el.getAttribute('data-service'), false);
+    } else if (action === 'open-tickets') {
+      loadActivityTickets(state.selectedCustomer.customer.id);
+    } else if (action === 'open-invoices') {
+      var periodType = el.getAttribute('data-year') !== null ? 'year' : 'month';
+      var periodValue = periodType === 'year' ? el.getAttribute('data-year') : el.getAttribute('data-month');
+      loadActivityInvoices(state.selectedCustomer.customer.id, periodType, periodValue, el.getAttribute('data-label'));
+    } else if (action === 'open-invoice-detail') {
+      loadActivityInvoiceDetail(el.getAttribute('data-invoice'), el.getAttribute('data-number'));
+    } else if (action === 'open-contacts') {
+      loadAccountContacts(state.selectedCustomer.customer.id);
+    } else if (action === 'contacts-edit') {
+      var editContactId = parseInt(el.getAttribute('data-contact'), 10);
+      var editContact = null;
+      (state.accountContacts || []).forEach(function (cc) { if (cc.id === editContactId) editContact = cc; });
+      if (editContact) accountContactsStartEdit(editContact);
+    } else if (action === 'contacts-cancel-edit') {
+      accountContactsCancelEdit();
+    } else if (action === 'contacts-save') {
+      var saveContactId = parseInt(el.getAttribute('data-contact'), 10);
+      var saveContact = null;
+      (state.accountContacts || []).forEach(function (cc) { if (cc.id === saveContactId) saveContact = cc; });
+      if (saveContact) saveAccountContact(el.getAttribute('data-customer'), saveContact);
+    } else if (action === 'contacts-toggle-inactive') {
+      var toggleContactId = parseInt(el.getAttribute('data-contact'), 10);
+      var toggleContact = null;
+      (state.accountContacts || []).forEach(function (cc) { if (cc.id === toggleContactId) toggleContact = cc; });
+      if (toggleContact) toggleAccountContactInactive(el.getAttribute('data-customer'), toggleContact);
+    } else if (action === 'contacts-new') {
+      state.accountContactsCreating = true;
+      state.accountContactsNewDraft = { first_name: '', last_name: '', type_id: '', phone: '', email: '' };
+      state.accountContactsCreateError = null;
+      render();
+    } else if (action === 'contacts-new-cancel') {
+      state.accountContactsCreating = false;
+      state.accountContactsCreateError = null;
+      render();
+    } else if (action === 'contacts-new-save') {
+      createAccountContact(el.getAttribute('data-customer'));
+    } else if (action === 'activity-close') {
+      state.activityView = null;
+      render();
+    } else if (action === 'activity-back-to-invoices') {
+      state.activityView = 'invoices';
+      render();
+    } else if (action === 'sort-overview') {
+      var sortCol = el.getAttribute('data-column');
+      if (!state.overviewSort || state.overviewSort.column !== sortCol) {
+        state.overviewSort = { column: sortCol, direction: 'asc' };
+      } else {
+        state.overviewSort.direction = state.overviewSort.direction === 'asc' ? 'desc' : 'asc';
+      }
+      render();
+    } else if (action === 'sort-outgrow') {
+      state.outgrowSortDir = state.outgrowSortDir === 'asc' ? 'desc' : 'asc';
+      render();
+    } else if (action === 'toggle-overview-list') {
+      var mode = el.getAttribute('data-mode');
+      state.overviewListMode = state.overviewListMode === mode ? null : mode;
+      // Per-status Prospect filters never persist across list opens --
+      // 2026-09-26, per Michael's explicit "Resets every time" answer --
+      // so every status starts shown again each time a list is (re)opened.
+      state.overviewStatusFilter = {};
+      state.outgrowTerritory = null;
+      render();
+    } else if (action === 'set-outgrow-territory') {
+      state.outgrowTerritory = el.getAttribute('data-all') ? null : el.getAttribute('data-territory');
+      render();
+    } else if (action === 'toggle-overview-peoplefirst') {
+      state.overviewPeopleFirstOnly = !state.overviewPeopleFirstOnly;
+      render();
+    } else if (action === 'toggle-overview-group-territory') {
+      state.overviewGroupByTerritory = !state.overviewGroupByTerritory;
+      render();
+    } else if (action === 'toggle-opportunity-popover') {
+      var oppId = el.getAttribute('data-id');
+      if (state.opportunityPopover && state.opportunityPopover.pinned && String(state.opportunityPopover.customerId) === String(oppId)) {
+        state.opportunityPopover = null;
+      } else {
+        var oppPos = computeOpportunityPopoverPosition(el.getBoundingClientRect());
+        state.opportunityPopover = { customerId: oppId, left: oppPos.left, top: oppPos.top, pinned: true };
+      }
+      updateOpportunityPopoverDom();
+    } else if (action === 'toggle-overview-status') {
+      var status = el.getAttribute('data-status');
+      var filterMap = state.overviewStatusFilter || {};
+      var currentlyOn = filterMap[status] !== false;
+      filterMap[status] = currentlyOn ? false : true;
+      state.overviewStatusFilter = filterMap;
+      render();
+    } else if (action === 'open-print-summary') {
+      state.printSummaryOpen = true;
+      render();
+      if (state.printTickets === null && !state.printTicketsLoading) {
+        loadPrintTickets(state.selectedCustomer.customer.id);
+      }
+      var psPanel = document.querySelector('.print-summary-panel');
+      if (psPanel) psPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (action === 'close-print-summary') {
+      state.printSummaryOpen = false;
+      render();
+    } else if (action === 'print-summary-go') {
+      window.print();
+    } else if (action === 'outgrow-edit-start') {
+      state.outgrowEditing = true;
+      state.outgrowDraftDate = (state.outgrowCurrent && state.outgrowCurrent.touch_date) || outgrowTodayYmd();
+      state.outgrowError = null;
+      render();
+    } else if (action === 'outgrow-edit-cancel') {
+      state.outgrowEditing = false;
+      state.outgrowError = null;
+      render();
+    } else if (action === 'outgrow-save') {
+      saveOutgrow(state.selectedCustomer.customer.id);
+    } else if (action === 'outgrow-history-toggle') {
+      state.outgrowHistoryOpen = !state.outgrowHistoryOpen;
+      render();
+    } else if (action === 'contact-dropdown-toggle') {
+      state.contactCardOpen = !state.contactCardOpen;
+      render();
+    } else if (action === 'contact-select') {
+      state.contactCardSelectedId = el.getAttribute('data-contact-id');
+      state.contactCardOpen = false;
+      // Switching contacts mid-confirm would log the touch against
+      // whichever one happens to be selected when "Yes" is tapped --
+      // clear any pending confirmation rather than let that happen.
+      state.outgrowConfirm = null;
+      render();
+    } else if (action === 'contact-call') {
+      // Doesn't preventDefault -- the <a href="tel:..."> still opens the
+      // dialer as normal. This just surfaces the confirm banner alongside
+      // it; per Michael's explicit choice, the touch is NOT logged yet.
+      state.outgrowConfirm = { source: 'call' };
+      render();
+    } else if (action === 'contact-email') {
+      state.outgrowConfirm = { source: 'email' };
+      render();
+    } else if (action === 'contact-confirm-yes') {
+      var confirmedSource = state.outgrowConfirm ? state.outgrowConfirm.source : 'manual';
+      state.outgrowConfirm = null;
+      logOutgrowTouch(state.selectedCustomer.customer.id, confirmedSource);
+    } else if (action === 'contact-confirm-no') {
+      state.outgrowConfirm = null;
+      render();
+    } else if (action === 'vendor-edit-start') {
+      var vPillarId = el.getAttribute('data-pillar');
+      var vNote = state.vendorNotes ? state.vendorNotes[vPillarId] : null;
+      state.vendorEditingPillarId = vPillarId;
+      state.vendorDraft = (vNote && vNote.vendor_name) || '';
+      state.vendorError = null;
+      render();
+    } else if (action === 'vendor-edit-cancel') {
+      state.vendorEditingPillarId = null;
+      state.vendorError = null;
+      render();
+    } else if (action === 'vendor-save') {
+      saveVendorNote(state.selectedCustomer.customer.id, el.getAttribute('data-pillar'));
+    } else if (action === 'meeting-add-open') {
+      state.meetingAddOpen = true;
+      state.meetingDraftDate = outgrowTodayYmd();
+      state.meetingsError = null;
+      render();
+    } else if (action === 'meeting-add-cancel') {
+      state.meetingAddOpen = false;
+      state.meetingsError = null;
+      render();
+    } else if (action === 'meeting-save') {
+      saveMeeting(state.selectedCustomer.customer.id);
+    } else if (action === 'meeting-toggle') {
+      var mId = parseInt(el.getAttribute('data-meeting'), 10);
+      state.openMeetingId = state.openMeetingId === mId ? null : mId;
+      state.taskAddOpenForMeeting = null;
+      render();
+    } else if (action === 'task-add-open') {
+      state.taskAddOpenForMeeting = parseInt(el.getAttribute('data-meeting'), 10);
+      state.taskDraftDescription = '';
+      // Blank, not state.meetingsRoster[0] -- per Michael's "by default,
+      // the to-do should not show any rep," a rep has to actively choose
+      // an assignment for someone (see the blank placeholder option in
+      // the taskAssigneeSelect markup below, and saveTask()'s existing
+      // "pick who it's assigned to" validation, which now actually fires
+      // instead of always passing against the old Claire Hayden default).
+      state.taskDraftAssignee = '';
+      state.taskDraftDueDate = '';
+      state.meetingsError = null;
+      render();
+    } else if (action === 'task-add-cancel') {
+      state.taskAddOpenForMeeting = null;
+      state.taskDraftDueDate = '';
+      state.meetingsError = null;
+      render();
+    } else if (action === 'task-save') {
+      saveTask(parseInt(el.getAttribute('data-meeting'), 10));
+    } else if (action === 'task-toggle-done') {
+      var wasDone = el.getAttribute('data-completed') === '1';
+      var completing = !wasDone;
+      // Reserve a blank tab HERE, synchronously inside the click gesture --
+      // see toggleTaskDone()'s formstackTab docblock for why this can't
+      // happen after the async save resolves. Only on completion, never on
+      // an un-check (matches Michael's choice: one Formstack entry per
+      // to-do, filed at completion).
+      var formstackTab = completing ? window.open('', '_blank') : null;
+      toggleTaskDone(parseInt(el.getAttribute('data-task'), 10), completing, formstackTab);
+    } else if (action === 'open-customer-task') {
+      openCustomerAtTask(
+        parseInt(el.getAttribute('data-customer'), 10),
+        parseInt(el.getAttribute('data-meeting'), 10),
+        parseInt(el.getAttribute('data-task'), 10)
+      );
+    } else if (action === 'open-customer-riskscan') {
+      openCustomerAtRiskScan(
+        parseInt(el.getAttribute('data-customer'), 10),
+        parseInt(el.getAttribute('data-scan'), 10)
+      );
+    } else if (action === 'riskscan-upload') {
+      uploadRiskScan(parseInt(el.getAttribute('data-customer'), 10));
+    } else if (action === 'riskscan-retry-cw') {
+      retryRiskScanCw(parseInt(el.getAttribute('data-scan'), 10));
+    } else if (action === 'layout-edit-toggle') {
+      state.layoutEdit = !state.layoutEdit;
+      render();
+    } else if (action === 'layout-reset') {
+      state.layout = null;
+      render();
+      apiPost('api/layout.php?action=reset', {});
+    } else if (action === 'layout-nudge') {
+      nudgeLayoutCard(el.getAttribute('data-card'), parseInt(el.getAttribute('data-dir'), 10));
+    } else if (action === 'layout-side') {
+      moveLayoutCard(el.getAttribute('data-card'), el.getAttribute('data-col'), null);
+    } else if (action === 'automate-toggle') {
+      state.automateOpen = !state.automateOpen;
+      render();
+    } else if (action === 'automate-showall') {
+      state.automateShowAll = !state.automateShowAll;
+      render();
+    } else if (action === 'solutions-toggle') {
+      state.solutionsOpen = !state.solutionsOpen;
+      render();
+    } else if (action === 'solution-files') {
+      toggleSolutionFiles(parseInt(el.getAttribute('data-solution'), 10));
+    } else if (action === 'solution-file-retry') {
+      retrySolutionFile(parseInt(el.getAttribute('data-file'), 10), parseInt(el.getAttribute('data-solution'), 10));
+    } else if (action === 'solution-copy') {
+      copySolutionLink(parseInt(el.getAttribute('data-solution'), 10));
+    } else if (action === 'solution-delete') {
+      deleteSolution(parseInt(el.getAttribute('data-solution'), 10));
+    } else if (action === 'document-upload') {
+      uploadDocuments(parseInt(el.getAttribute('data-customer'), 10));
+    } else if (action === 'document-retry-cw') {
+      retryDocumentCw(parseInt(el.getAttribute('data-doc'), 10));
+    } else if (action === 'riskscan-mark-reviewed') {
+      setRiskScanReviewed(parseInt(el.getAttribute('data-scan'), 10), true);
+    } else if (action === 'riskscan-unmark-reviewed') {
+      setRiskScanReviewed(parseInt(el.getAttribute('data-scan'), 10), false);
+    } else if (action === 'riskscan-assign') {
+      var riskScanAssignId = parseInt(el.getAttribute('data-scan'), 10);
+      var riskScanAssignName = state.riskScanAssignDraft[riskScanAssignId];
+      if (!riskScanAssignName) {
+        state.riskScansError = 'Pick who to assign this scan to first.';
+        render();
+      } else {
+        setRiskScanAssigned(riskScanAssignId, true, riskScanAssignName);
+      }
+    } else if (action === 'riskscan-unassign') {
+      setRiskScanAssigned(parseInt(el.getAttribute('data-scan'), 10), false);
+    } else if (action === 'show-rep-todos') {
+      var repName = el.getAttribute('data-rep');
+      var today = new Date();
+      state.view = 'rep-todos';
+      state.error = null;
+      state.repTodosName = repName;
+      state.repTodosData = null;
+      state.repTodosError = null;
+      state.repTodosCalYear = today.getFullYear();
+      state.repTodosCalMonth = today.getMonth() + 1;
+      state.repTodosExpandedProjectId = null;
+      render();
+      loadRepTodos(repName);
+      // Added 2026-10-02 per Michael: the rep-todos screen now also shows
+      // this rep's assigned projects (see repTodosProjectsHtml()) -- same
+      // live-every-time-the-screen-opens fetch as the main Projects nav
+      // button, just scoped client-side to this rep's assignments once it
+      // loads into the same state.projectsData the Projects view itself
+      // uses, so a checklist step checked off here and there always agree.
+      loadProjects();
+    } else if (action === 'rep-todos-project-toggle') {
+      var repProjToggleId = el.getAttribute('data-project-id');
+      state.repTodosExpandedProjectId = (String(state.repTodosExpandedProjectId) === String(repProjToggleId))
+        ? null
+        : repProjToggleId;
+      render();
+    } else if (action === 'rep-todos-back') {
+      state.view = 'dashboard';
+      state.error = null;
+      render();
+      if (!state.selectedCustomer && !state.overview) loadOverview();
+      if (!state.selectedCustomer) loadGlobalTodos();
+    } else if (action === 'rep-todos-prev-month') {
+      shiftRepTodosMonth(-1);
+    } else if (action === 'rep-todos-next-month') {
+      shiftRepTodosMonth(1);
+    } else if (action === 'signout') {
+      signOut();
+    }
+  }
+
+  // Close the search dropdown on an outside click, without a rebind loop.
+  function onDocumentClick(e) {
+    var changed = false;
+    if (state.resultsOpen && !e.target.closest('.search-wrap')) {
+      state.resultsOpen = false;
+      changed = true;
+    }
+    // Contact card dropdown -- added 2026-09-23, same outside-click-closes
+    // pattern as the customer search box above.
+    if (state.contactCardOpen && !e.target.closest('.contact-card-dropdown')) {
+      state.contactCardOpen = false;
+      changed = true;
+    }
+    // Checklist contact dropdown -- same pattern, separate open-key since
+    // more than one checklist's dropdown can exist on the page at once.
+    if (state.openChecklistContactDropdownKey && !e.target.closest('.checklist-contact-dropdown')) {
+      state.openChecklistContactDropdownKey = null;
+      state.checklistPendingContactAction = null;
+      changed = true;
+    }
+    if (changed) render();
+  }
+
+  // Bound once — root's contents are replaced on every render(), so these
+  // rely on event delegation rather than being rebound each time.
+  root.addEventListener('click', onRootClick);
+  root.addEventListener('dragstart', onLayoutDragStart);
+  root.addEventListener('dragover', onLayoutDragOver);
+  root.addEventListener('drop', onLayoutDrop);
+  root.addEventListener('dragend', onLayoutDragEnd);
+  // Opportunity/Risk popover hover support (added 2026-10-06) -- mouseover/
+  // mouseout don't bubble in the usual sense (they fire per-element, not
+  // delegatable the way 'click' is), but their non-bubbling cousins
+  // 'mouseenter'/'mouseleave' aren't delegatable either; 'mouseover'/
+  // 'mouseout' DO bubble, so the same single-listener-on-root pattern as
+  // onRootClick works here too -- see onOpportunityMouseOver/Out for the
+  // e.target.closest() delegation.
+  root.addEventListener('mouseover', onOpportunityMouseOver);
+  root.addEventListener('mouseout', onOpportunityMouseOut);
+  root.addEventListener('input', onProspectInput);
+  root.addEventListener('change', onProspectInput);
+  root.addEventListener('change', onProspectFilterCommit);
+  root.addEventListener('change', onRiskScanAssignSelectChange);
+  root.addEventListener('change', onProjectAssignSelectChange);
+  root.addEventListener('change', onProjectStatusFilterChange);
+  root.addEventListener('change', onProjectSortSelectChange);
+  root.addEventListener('input', onProjectKickoffInputChange);
+  root.addEventListener('change', onProjectKickoffInputChange);
+  root.addEventListener('input', onProjectNoteTextareaInput);
+  document.addEventListener('click', onDocumentClick);
+
+  boot();
+})();

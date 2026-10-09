@@ -310,6 +310,29 @@
     activityInvoiceDetail: null, // object | 'error' | null
     activityInvoiceDetailLoading: false,
 
+    // Account Contacts (added 2026-10-09, per Michael) -- the live, ALL-
+    // contacts (active + inactive) editable list behind the new Account
+    // Contacts tile below the activity cards (contacts-admin.php).
+    // accountContacts holds the array from its 'list' action, 'error', or
+    // null while loading; accountContactTypes is that same response's
+    // {id, name} Contact Type dropdown list, loaded together with the
+    // contacts. Only one contact row is ever editable at a time
+    // (accountContactsEditingId), buffered in accountContactsEditDraft
+    // until Save -- same fixed-id-input pattern as every other
+    // single-draft form in this file (e.g. taskDraftDescription).
+    accountContactsLoading: false,
+    accountContacts: null,
+    accountContactTypes: [],
+    accountContactsError: null,
+    accountContactsEditingId: null,
+    accountContactsEditDraft: { first_name: '', last_name: '', type_id: '', phone: '', email: '' },
+    accountContactsSaving: false,
+    accountContactsSaveError: null,
+    accountContactsCreating: false,
+    accountContactsNewDraft: { first_name: '', last_name: '', type_id: '', phone: '', email: '' },
+    accountContactsCreateSaving: false,
+    accountContactsCreateError: null,
+
     // Customer Service Summary print view (added 2026-09-14, per Michael) --
     // a formatted, printable page for Relationship Coordinators: Service
     // Tickets YTD + top-3-by-hours tickets as check-in talking points,
@@ -708,6 +731,18 @@
     state.printSummaryOpen = false;
     state.printTickets = null;
     state.printTicketsLoading = false;
+    state.accountContactsLoading = false;
+    state.accountContacts = null;
+    state.accountContactTypes = [];
+    state.accountContactsError = null;
+    state.accountContactsEditingId = null;
+    state.accountContactsEditDraft = { first_name: '', last_name: '', type_id: '', phone: '', email: '' };
+    state.accountContactsSaving = false;
+    state.accountContactsSaveError = null;
+    state.accountContactsCreating = false;
+    state.accountContactsNewDraft = { first_name: '', last_name: '', type_id: '', phone: '', email: '' };
+    state.accountContactsCreateSaving = false;
+    state.accountContactsCreateError = null;
   }
 
   function resetOutgrowState() {
@@ -5031,6 +5066,12 @@
       '<div class="activity-card-sub">Professional Services board — click to view</div>' +
     '</button>';
 
+    html += '<button class="activity-card" type="button" data-action="open-contacts">' +
+      '<div class="activity-card-label">Active Contacts</div>' +
+      '<div class="activity-card-value">' + (detail.customer.active_contact_count || 0) + '</div>' +
+      '<div class="activity-card-sub">Synced nightly — click to view every contact, edit, or add one</div>' +
+    '</button>';
+
     // Monthly Billing is read from the nightly sync, not live (see
     // activity.php) -- billing_synced_at is null when this customer hasn't
     // been covered by a billing sync run yet, which reads as a real,
@@ -5146,10 +5187,244 @@
       } else {
         html += invoiceDetailHtml(state.activityInvoiceDetail);
       }
+    } else if (state.activityView === 'contacts') {
+      html += accountContactsDrilldownHtml(detail);
     }
 
     html += '</div>';
     return html;
+  }
+
+  function accountContactsDrilldownHtml(detail) {
+    var customerId = detail.customer.id;
+    var html = '<div class="drilldown-header">' + activityDrilldownBackBtn('activity-close', 'Close') +
+      '<div class="drilldown-title">Account Contacts — ' + escapeHtml(detail.customer.name) + '</div>' +
+    '</div>';
+
+    if (state.accountContactsLoading || state.accountContacts === null) {
+      return html + '<div class="loading">Loading contacts…</div>';
+    }
+    if (state.accountContacts === 'error') {
+      return html + '<div class="activity-error">' + escapeHtml(state.accountContactsError || 'Could not load contacts from ConnectWise.') + '</div>';
+    }
+
+    html += '<div class="meeting-form-actions" style="margin-bottom:12px;">' +
+      '<button type="button" class="vendor-field-btn primary" data-action="contacts-new" ' + (state.accountContactsCreating ? 'disabled' : '') + '>+ Add Contact</button>' +
+    '</div>';
+
+    if (state.accountContactsCreating) {
+      html += '<div class="vendor-field editing" style="margin-bottom:16px;">' +
+        '<input type="text" id="contactsNewFirstName" class="meeting-form-input" placeholder="First name" value="' + escapeHtml(state.accountContactsNewDraft.first_name) + '" maxlength="100">' +
+        '<input type="text" id="contactsNewLastName" class="meeting-form-input" placeholder="Last name" value="' + escapeHtml(state.accountContactsNewDraft.last_name) + '" maxlength="100">' +
+        '<select id="contactsNewType" class="meeting-form-select"><option value="">Contact Type…</option>' +
+          accountContactTypeOptionsHtml(state.accountContactsNewDraft.type_id ? parseInt(state.accountContactsNewDraft.type_id, 10) : null) +
+        '</select>' +
+        '<input type="text" id="contactsNewPhone" class="meeting-form-input" placeholder="Phone" value="' + escapeHtml(state.accountContactsNewDraft.phone) + '" maxlength="40">' +
+        '<input type="text" id="contactsNewEmail" class="meeting-form-input" placeholder="Email" value="' + escapeHtml(state.accountContactsNewDraft.email) + '" maxlength="200">' +
+        (state.accountContactsCreateError ? '<div class="vendor-field-error">' + escapeHtml(state.accountContactsCreateError) + '</div>' : '') +
+        '<div class="vendor-field-actions">' +
+          '<button type="button" class="vendor-field-btn primary" data-action="contacts-new-save" data-customer="' + customerId + '" ' + (state.accountContactsCreateSaving ? 'disabled' : '') + '>' + (state.accountContactsCreateSaving ? 'Creating…' : 'Create Contact') + '</button>' +
+          '<button type="button" class="vendor-field-btn secondary" data-action="contacts-new-cancel" ' + (state.accountContactsCreateSaving ? 'disabled' : '') + '>Cancel</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    if (state.accountContacts.length === 0) {
+      return html + '<div class="empty-state">No contacts on file for this customer in ConnectWise.</div>';
+    }
+
+    html += '<div class="activity-table-wrap"><table class="activity-table"><thead><tr>' +
+      '<th>Status</th><th>First Name</th><th>Last Name</th><th>Email</th><th>Phone</th><th>Type</th><th></th>' +
+    '</tr></thead><tbody>';
+    state.accountContacts.forEach(function (c) {
+      if (state.accountContactsEditingId === c.id) {
+        var d = state.accountContactsEditDraft;
+        html += '<tr>' +
+          '<td>' + (c.inactive ? 'Inactive' : 'Active') + '</td>' +
+          '<td><input type="text" id="contactsEditFirstName" class="meeting-form-input" value="' + escapeHtml(d.first_name) + '" maxlength="100"></td>' +
+          '<td><input type="text" id="contactsEditLastName" class="meeting-form-input" value="' + escapeHtml(d.last_name) + '" maxlength="100"></td>' +
+          '<td><input type="text" id="contactsEditEmail" class="meeting-form-input" value="' + escapeHtml(d.email) + '" maxlength="200"></td>' +
+          '<td><input type="text" id="contactsEditPhone" class="meeting-form-input" value="' + escapeHtml(d.phone) + '" maxlength="40"></td>' +
+          '<td><select id="contactsEditType" class="meeting-form-select"><option value="">—</option>' + accountContactTypeOptionsHtml(d.type_id ? parseInt(d.type_id, 10) : null) + '</select></td>' +
+          '<td><div class="vendor-field-actions">' +
+            '<button type="button" class="vendor-field-btn primary" data-action="contacts-save" data-customer="' + customerId + '" data-contact="' + c.id + '" ' + (state.accountContactsSaving ? 'disabled' : '') + '>' + (state.accountContactsSaving ? 'Saving…' : 'Save') + '</button>' +
+            '<button type="button" class="vendor-field-btn secondary" data-action="contacts-cancel-edit" ' + (state.accountContactsSaving ? 'disabled' : '') + '>Cancel</button>' +
+          '</div></td>' +
+        '</tr>';
+        if (state.accountContactsSaveError) {
+          html += '<tr><td colspan="7"><div class="vendor-field-error">' + escapeHtml(state.accountContactsSaveError) + '</div></td></tr>';
+        }
+      } else {
+        html += '<tr>' +
+          '<td>' + (c.inactive ? 'Inactive' : 'Active') + '</td>' +
+          '<td>' + escapeHtml(c.first_name) + '</td>' +
+          '<td>' + escapeHtml(c.last_name) + '</td>' +
+          '<td>' + (c.email ? escapeHtml(c.email) : '—') + '</td>' +
+          '<td>' + (c.phone ? escapeHtml(c.phone) : '—') + '</td>' +
+          '<td>' + (c.type_name ? escapeHtml(c.type_name) : '—') + '</td>' +
+          '<td><div class="vendor-field-actions">' +
+            '<button type="button" class="vendor-field-btn secondary" data-action="contacts-edit" data-contact="' + c.id + '">Edit</button>' +
+            '<button type="button" class="vendor-field-btn secondary" data-action="contacts-toggle-inactive" data-customer="' + customerId + '" data-contact="' + c.id + '" ' + (state.accountContactsSaving ? 'disabled' : '') + '>' + (c.inactive ? 'Mark Active' : 'Mark Inactive') + '</button>' +
+          '</div></td>' +
+        '</tr>';
+      }
+    });
+    html += '</tbody></table></div>';
+    return html;
+  }
+
+  function accountContactTypeOptionsHtml(selectedId) {
+    var types = state.accountContactTypes || [];
+    var html = '';
+    types.forEach(function (t) {
+      html += '<option value="' + t.id + '"' + (t.id === selectedId ? ' selected' : '') + '>' + escapeHtml(t.name) + '</option>';
+    });
+    return html;
+  }
+
+  function loadAccountContacts(customerId) {
+    state.activityView = 'contacts';
+    state.accountContactsLoading = true;
+    state.accountContacts = null;
+    state.accountContactsError = null;
+    state.accountContactsEditingId = null;
+    state.accountContactsCreating = false;
+    state.error = null;
+    render();
+    apiGet('api/contacts-admin.php?action=list&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      state.accountContactsLoading = false;
+      if (r.data && r.data.ok) {
+        state.accountContacts = r.data.contacts;
+        state.accountContactTypes = r.data.contact_types || [];
+      } else {
+        state.accountContacts = 'error';
+        state.accountContactsError = (r.data && r.data.error) || 'Could not load contacts from ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      state.accountContactsLoading = false;
+      state.accountContacts = 'error';
+      state.accountContactsError = 'Could not load contacts — check your connection.';
+      render();
+    });
+  }
+
+  function accountContactsStartEdit(contact) {
+    state.accountContactsEditingId = contact.id;
+    state.accountContactsEditDraft = {
+      first_name: contact.first_name || '',
+      last_name: contact.last_name || '',
+      type_id: contact.type_id || '',
+      phone: contact.phone || '',
+      email: contact.email || ''
+    };
+    state.accountContactsSaveError = null;
+    render();
+  }
+
+  function accountContactsCancelEdit() {
+    state.accountContactsEditingId = null;
+    state.accountContactsSaveError = null;
+    render();
+  }
+
+  function saveAccountContact(customerId, contact) {
+    var draft = state.accountContactsEditDraft;
+    state.accountContactsSaving = true;
+    state.accountContactsSaveError = null;
+    render();
+    apiPost('api/contacts-admin.php?action=update', {
+      customer_id: customerId,
+      contact_id: contact.id,
+      first_name: draft.first_name,
+      last_name: draft.last_name,
+      type_id: draft.type_id ? parseInt(draft.type_id, 10) : null,
+      phone: draft.phone,
+      phone_comm_id: contact.phone_comm_id,
+      email: draft.email,
+      email_comm_id: contact.email_comm_id
+    }).then(function (r) {
+      state.accountContactsSaving = false;
+      if (r.data && r.data.ok) {
+        var list = state.accountContacts;
+        if (list && list !== 'error') {
+          for (var i = 0; i < list.length; i++) {
+            if (list[i].id === contact.id) { list[i] = r.data.contact; break; }
+          }
+        }
+        state.accountContactsEditingId = null;
+      } else {
+        state.accountContactsSaveError = (r.data && r.data.error) || 'Could not save this contact to ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      state.accountContactsSaving = false;
+      state.accountContactsSaveError = 'Could not save this contact — check your connection.';
+      render();
+    });
+  }
+
+  function toggleAccountContactInactive(customerId, contact) {
+    state.accountContactsSaving = true;
+    state.accountContactsSaveError = null;
+    render();
+    apiPost('api/contacts-admin.php?action=update', {
+      customer_id: customerId,
+      contact_id: contact.id,
+      inactive: !contact.inactive
+    }).then(function (r) {
+      state.accountContactsSaving = false;
+      if (r.data && r.data.ok) {
+        var list = state.accountContacts;
+        if (list && list !== 'error') {
+          for (var i = 0; i < list.length; i++) {
+            if (list[i].id === contact.id) { list[i] = r.data.contact; break; }
+          }
+        }
+      } else {
+        state.accountContactsSaveError = (r.data && r.data.error) || 'Could not update this contact in ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      state.accountContactsSaving = false;
+      state.accountContactsSaveError = 'Could not update this contact — check your connection.';
+      render();
+    });
+  }
+
+  function createAccountContact(customerId) {
+    var draft = state.accountContactsNewDraft;
+    if (!draft.first_name || !draft.last_name) {
+      state.accountContactsCreateError = 'First and last name are both required.';
+      render();
+      return;
+    }
+    state.accountContactsCreateSaving = true;
+    state.accountContactsCreateError = null;
+    render();
+    apiPost('api/contacts-admin.php?action=create', {
+      customer_id: customerId,
+      first_name: draft.first_name,
+      last_name: draft.last_name,
+      type_id: draft.type_id ? parseInt(draft.type_id, 10) : null,
+      phone: draft.phone,
+      email: draft.email
+    }).then(function (r) {
+      state.accountContactsCreateSaving = false;
+      if (r.data && r.data.ok) {
+        var list = state.accountContacts;
+        if (list && list !== 'error') { list.push(r.data.contact); }
+        state.accountContactsCreating = false;
+        state.accountContactsNewDraft = { first_name: '', last_name: '', type_id: '', phone: '', email: '' };
+      } else {
+        state.accountContactsCreateError = (r.data && r.data.error) || 'Could not create this contact in ConnectWise.';
+      }
+      render();
+    }).catch(function () {
+      state.accountContactsCreateSaving = false;
+      state.accountContactsCreateError = 'Could not create this contact — check your connection.';
+      render();
+    });
   }
 
   function invoicesByAgreementTypeHtml(invoices) {
@@ -7553,6 +7828,47 @@
       });
     }
 
+    var contactsNewFirstName = document.getElementById('contactsNewFirstName');
+    if (contactsNewFirstName) {
+      contactsNewFirstName.addEventListener('input', function (e) { state.accountContactsNewDraft.first_name = e.target.value; });
+    }
+    var contactsNewLastName = document.getElementById('contactsNewLastName');
+    if (contactsNewLastName) {
+      contactsNewLastName.addEventListener('input', function (e) { state.accountContactsNewDraft.last_name = e.target.value; });
+    }
+    var contactsNewType = document.getElementById('contactsNewType');
+    if (contactsNewType) {
+      contactsNewType.addEventListener('change', function (e) { state.accountContactsNewDraft.type_id = e.target.value; });
+    }
+    var contactsNewPhone = document.getElementById('contactsNewPhone');
+    if (contactsNewPhone) {
+      contactsNewPhone.addEventListener('input', function (e) { state.accountContactsNewDraft.phone = e.target.value; });
+    }
+    var contactsNewEmail = document.getElementById('contactsNewEmail');
+    if (contactsNewEmail) {
+      contactsNewEmail.addEventListener('input', function (e) { state.accountContactsNewDraft.email = e.target.value; });
+    }
+    var contactsEditFirstName = document.getElementById('contactsEditFirstName');
+    if (contactsEditFirstName) {
+      contactsEditFirstName.addEventListener('input', function (e) { state.accountContactsEditDraft.first_name = e.target.value; });
+    }
+    var contactsEditLastName = document.getElementById('contactsEditLastName');
+    if (contactsEditLastName) {
+      contactsEditLastName.addEventListener('input', function (e) { state.accountContactsEditDraft.last_name = e.target.value; });
+    }
+    var contactsEditType = document.getElementById('contactsEditType');
+    if (contactsEditType) {
+      contactsEditType.addEventListener('change', function (e) { state.accountContactsEditDraft.type_id = e.target.value; });
+    }
+    var contactsEditPhone = document.getElementById('contactsEditPhone');
+    if (contactsEditPhone) {
+      contactsEditPhone.addEventListener('input', function (e) { state.accountContactsEditDraft.phone = e.target.value; });
+    }
+    var contactsEditEmail = document.getElementById('contactsEditEmail');
+    if (contactsEditEmail) {
+      contactsEditEmail.addEventListener('input', function (e) { state.accountContactsEditDraft.email = e.target.value; });
+    }
+
     var checklistNoteTextarea = document.getElementById('checklistNoteTextarea');
     if (checklistNoteTextarea) {
       checklistNoteTextarea.addEventListener('input', function (e) {
@@ -7867,6 +8183,36 @@
       loadActivityInvoices(state.selectedCustomer.customer.id, periodType, periodValue, el.getAttribute('data-label'));
     } else if (action === 'open-invoice-detail') {
       loadActivityInvoiceDetail(el.getAttribute('data-invoice'), el.getAttribute('data-number'));
+    } else if (action === 'open-contacts') {
+      loadAccountContacts(state.selectedCustomer.customer.id);
+    } else if (action === 'contacts-edit') {
+      var editContactId = parseInt(el.getAttribute('data-contact'), 10);
+      var editContact = null;
+      (state.accountContacts || []).forEach(function (cc) { if (cc.id === editContactId) editContact = cc; });
+      if (editContact) accountContactsStartEdit(editContact);
+    } else if (action === 'contacts-cancel-edit') {
+      accountContactsCancelEdit();
+    } else if (action === 'contacts-save') {
+      var saveContactId = parseInt(el.getAttribute('data-contact'), 10);
+      var saveContact = null;
+      (state.accountContacts || []).forEach(function (cc) { if (cc.id === saveContactId) saveContact = cc; });
+      if (saveContact) saveAccountContact(el.getAttribute('data-customer'), saveContact);
+    } else if (action === 'contacts-toggle-inactive') {
+      var toggleContactId = parseInt(el.getAttribute('data-contact'), 10);
+      var toggleContact = null;
+      (state.accountContacts || []).forEach(function (cc) { if (cc.id === toggleContactId) toggleContact = cc; });
+      if (toggleContact) toggleAccountContactInactive(el.getAttribute('data-customer'), toggleContact);
+    } else if (action === 'contacts-new') {
+      state.accountContactsCreating = true;
+      state.accountContactsNewDraft = { first_name: '', last_name: '', type_id: '', phone: '', email: '' };
+      state.accountContactsCreateError = null;
+      render();
+    } else if (action === 'contacts-new-cancel') {
+      state.accountContactsCreating = false;
+      state.accountContactsCreateError = null;
+      render();
+    } else if (action === 'contacts-new-save') {
+      createAccountContact(el.getAttribute('data-customer'));
     } else if (action === 'activity-close') {
       state.activityView = null;
       render();
