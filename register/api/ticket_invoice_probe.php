@@ -327,4 +327,33 @@ if ($action === 'probe-invoice-detail') {
     register_respond(200, ['ok' => true, 'probe' => $out]);
 }
 
+if ($action === 'probe-invoice-statuses-sample') {
+    // /finance/invoices/types and /finance/invoices/statuses both 404
+    // ("The endpoint does not exist.") -- unlike boards/tax codes/billing
+    // terms, this ConnectWise instance has no dedicated reference-list
+    // endpoint for invoice status/type. The two real invoices probed
+    // directly so far (124347, 124352) were both already status id 3
+    // "Closed" or id 6 "Closed - Emailed" -- same-day closed, so neither
+    // shows what a brand-new, not-yet-closed invoice's status actually
+    // is. This instead samples a wider, most-recent page of real invoices
+    // (fields kept light) and reports every distinct status {id,name}
+    // actually seen, hoping to catch one still open.
+    $out = register_probe_try('finance/invoices, pageSize 50, id desc, status field only', function () {
+        $rows = register_cw_request('/finance/invoices', [
+            'pageSize' => 50,
+            'orderBy' => 'id desc',
+            'fields' => 'id,invoiceNumber,status,type,applyToType,date,total',
+        ], 'GET', null, 25, 6);
+        $seen = [];
+        foreach ($rows as $r) {
+            $s = $r['status'] ?? null;
+            if (is_array($s) && isset($s['id'])) {
+                $seen[$s['id']] = $s['name'] ?? ('#' . $s['id']);
+            }
+        }
+        return ['distinct_statuses_seen' => $seen, 'sample_count' => count($rows), 'rows' => $rows];
+    });
+    register_respond(200, ['ok' => true, 'probe' => $out]);
+}
+
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
