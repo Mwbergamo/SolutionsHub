@@ -307,4 +307,24 @@ if ($action === 'probe-invoiced-ticket-time') {
     register_respond(200, ['ok' => true, 'probe' => $out]);
 }
 
+if ($action === 'probe-invoice-detail') {
+    // probe-invoiced-ticket-time found 25 real ticket time entries with
+    // real invoices attached (ids 124323-124352), 24 of 25 with NO
+    // agreement field at all (the one exception, a PeopleFirst Support
+    // Agreement-billed entry, still got its own invoice too). This fetches
+    // one invoice's own record directly -- specifically its `type` field
+    // -- to confirm what kind of invoice ticket time actually lands on.
+    // Pass invoice_id for a clean no-agreement example (e.g. 124347) and,
+    // separately, the one agreement-billed example (124352) for
+    // comparison -- do NOT assume they're the same type.
+    $invoiceId = (int) ($_GET['invoice_id'] ?? 0);
+    if ($invoiceId <= 0) {
+        register_respond(400, ['ok' => false, 'error' => 'invoice_id is required.']);
+    }
+    $out = register_probe_try("finance/invoices/$invoiceId", function () use ($invoiceId) {
+        return register_cw_request('/finance/invoices/' . $invoiceId, [], 'GET', null, 20, 6);
+    });
+    register_respond(200, ['ok' => true, 'probe' => $out]);
+}
+
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
