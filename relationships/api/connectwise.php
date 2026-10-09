@@ -471,3 +471,59 @@ function relationships_cw_offending_field(string $errorMessage, array $payload):
     }
     return null;
 }
+
+/**
+ * Generic PUT-with-field-strip-retry -- same mechanism as
+ * relationships_cw_put_company_with_retry() above, generalized to any
+ * entity path (not just /company/companies/{id}) for the Account Contacts
+ * feature's write-test (claude/relationships-account-contacts.md). Fetches
+ * the full record at $path, overlays $fieldsToSet, PUTs the whole thing
+ * back, and on a ConnectWise error naming a specific field
+ * (relationships_cw_offending_field()), strips that field and retries --
+ * same "can only be used when creating" class of error already seen on
+ * Company, and on Register's identical Company helper.
+ */
+function relationships_cw_put_entity_with_retry(string $path, array $fieldsToSet, int $maxAttempts = 5): array
+{
+    $full = relationships_cw_request($path, []);
+    $modified = $fieldsToSet + $full;
+
+    for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+        try {
+            return relationships_cw_request($path, [], 'PUT', $modified);
+        } catch (RelationshipsConnectWiseError $e) {
+            $realKey = relationships_cw_offending_field($e->getMessage(), $modified);
+            if ($realKey === null) {
+                throw $e;
+            }
+            unset($modified[$realKey]);
+        }
+    }
+
+    throw new RelationshipsConnectWiseError('Could not update ' . $path . ' after ' . $maxAttempts . ' attempts.');
+}
+
+/**
+ * Tries a plain JSON-Patch PATCH first ($patchOps, e.g. a single
+ * [{op:replace,path:/firstName,value:...}] or several ops together),
+ * falling back to relationships_cw_put_entity_with_retry() with
+ * $fieldsToSetOnFallback if PATCH fails for any reason. Mirrors Register's
+ * register_cw_patch_then_put() (register/api/connectwise.php) -- Company
+ * PATCH is confirmed broken on this ConnectWise instance
+ * (relationships_cw_put_company_with_retry()'s own header), but Ticket
+ * PATCH was confirmed working cleanly on the first attempt elsewhere in
+ * this project (see claude/register-app.md, Part 2), so each entity needs
+ * its own check rather than assuming either way -- this helper makes that
+ * check automatic and safe (PUT fallback) for any entity going forward,
+ * added 2026-10-09 for the Account Contacts write-test.
+ */
+function relationships_cw_patch_then_put(string $path, array $patchOps, array $fieldsToSetOnFallback): array
+{
+    try {
+        $result = relationships_cw_request($path, [], 'PATCH', $patchOps);
+        return ['method' => 'PATCH', 'result' => $result];
+    } catch (Throwable $e) {
+        $result = relationships_cw_put_entity_with_retry($path, $fieldsToSetOnFallback);
+        return ['method' => 'PUT', 'result' => $result, 'patch_error' => $e->getMessage()];
+    }
+}
