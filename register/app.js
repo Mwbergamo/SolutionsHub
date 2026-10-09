@@ -78,6 +78,12 @@
     // filteredServiceTickets()), no per-keystroke round trip.
     serviceTickets: { items: null, loading: false, error: null, search: '' },
 
+    // Ticket detail popover (added 2026-10-09, Part 2 of Michael's
+    // 2026-09-30 Register request, scoped to the ticket detail + status-
+    // change piece -- see api/tickets.php's action=detail/update-status
+    // docblock). Opened by clicking a row in Pending Service Tickets.
+    ticketDetail: initialTicketDetailState(),
+
     // New Customer Sign Up screen's Terms & Conditions confirmation email
     // (added 2026-09-14) -- see api/signup-email.php. manualEmail is only
     // used when the resolved contact has no email on file in ConnectWise.
@@ -208,6 +214,19 @@
       submitting: false,
       error: null,
       result: null      // set after a successful submit -- shows the confirmation panel
+    };
+  }
+
+  function initialTicketDetailState() {
+    return {
+      open: false,
+      ticketId: null,
+      ticket: null,     // from api/tickets.php?action=detail
+      loading: false,
+      error: null,
+      selectedStatusId: null,
+      saving: false,
+      saveError: null
     };
   }
 
@@ -1881,11 +1900,67 @@
     });
   }
 
+  // ---- Ticket detail popover (added 2026-10-09) --------------------------
+
+  function openTicketDetail(ticketId) {
+    state.ticketDetail = initialTicketDetailState();
+    state.ticketDetail.open = true;
+    state.ticketDetail.ticketId = ticketId;
+    state.ticketDetail.loading = true;
+    render();
+    apiGet('api/tickets.php?action=detail&ticket_id=' + ticketId).then(function (r) {
+      state.ticketDetail.loading = false;
+      if (r.data && r.data.ok) {
+        state.ticketDetail.ticket = r.data.ticket;
+        state.ticketDetail.selectedStatusId = r.data.ticket.status_id;
+      } else {
+        state.ticketDetail.error = (r.data && r.data.error) || 'Could not load this ticket.';
+      }
+      render();
+    }).catch(function () {
+      state.ticketDetail.loading = false;
+      state.ticketDetail.error = 'Could not load this ticket — check your connection.';
+      render();
+    });
+  }
+
+  function closeTicketDetail() {
+    state.ticketDetail = initialTicketDetailState();
+    render();
+    // A status change (or just closing after one was saved) can move this
+    // ticket off the open-tickets list (e.g. once Closed) -- refresh so
+    // the list reflects reality rather than showing a stale row.
+    loadServiceTickets();
+  }
+
+  function saveTicketStatus() {
+    var d = state.ticketDetail;
+    if (!d.ticket || !d.selectedStatusId || d.selectedStatusId === d.ticket.status_id) return;
+    d.saving = true;
+    d.saveError = null;
+    render();
+    apiPost('api/tickets.php?action=update-status', { ticket_id: d.ticket.id, status_id: d.selectedStatusId }).then(function (r) {
+      d.saving = false;
+      if (r.data && r.data.ok) {
+        d.ticket.status_id = r.data.ticket.status_id;
+        d.ticket.status_name = r.data.ticket.status_name;
+        d.saveError = null;
+      } else {
+        d.saveError = (r.data && r.data.error) || 'Could not update this ticket\'s status.';
+      }
+      render();
+    }).catch(function () {
+      d.saving = false;
+      d.saveError = 'Could not update this ticket\'s status — check your connection.';
+      render();
+    });
+  }
+
   // ---- Rendering ----------------------------------------------------
 
   function render() {
     var searchFocus = captureSearchFocus();
-    root.innerHTML = topbarHtml() + '<div class="main">' + mainHtml() + '</div>' + computerBuilderModalHtml() + checkoutModalHtml() + receiptOverlayHtml() + returnFlowModalHtml();
+    root.innerHTML = topbarHtml() + '<div class="main">' + mainHtml() + '</div>' + computerBuilderModalHtml() + checkoutModalHtml() + receiptOverlayHtml() + returnFlowModalHtml() + ticketDetailModalHtml();
     bindEvents();
     restoreSearchFocus(searchFocus);
   }
@@ -2214,7 +2289,7 @@
       '<th>Ticket #</th><th>Company</th><th>Contact</th><th>Summary</th><th>Status</th><th>Date Entered</th><th>Phone</th>' +
     '</tr></thead><tbody>';
     tickets.forEach(function (t) {
-      html += '<tr class="history-row">' +
+      html += '<tr class="history-row ticket-row-clickable" data-action="open-ticket-detail" data-id="' + t.id + '">' +
         '<td>#' + t.ticket_number + '</td>' +
         '<td>' + escapeHtml(t.company_name || '—') + '</td>' +
         '<td>' + escapeHtml(t.contact_name || '—') + '</td>' +
@@ -3263,6 +3338,115 @@
     );
   }
 
+  // ---- Ticket detail modal (added 2026-10-09) -----------------------------
+
+  function ticketDetailModalHtml() {
+    var d = state.ticketDetail;
+    if (!d.open) return '';
+
+    var html = '<div class="modal-backdrop" data-action="close-ticket-detail-backdrop">' +
+      '<div class="modal ticket-detail-modal" data-stop-propagation="1">';
+
+    if (d.loading) {
+      html += '<div class="modal-title">Ticket #' + d.ticketId + '</div>';
+      html += '<div class="loading">Loading ticket…</div>';
+      html += '<div class="modal-actions"><button type="button" class="modal-cancel" data-action="close-ticket-detail">Close</button></div>';
+      html += '</div></div>';
+      return html;
+    }
+
+    if (d.error || !d.ticket) {
+      html += '<div class="modal-title">Ticket #' + d.ticketId + '</div>';
+      html += '<div class="error-banner">' + escapeHtml(d.error || 'Could not load this ticket.') + '</div>';
+      html += '<div class="modal-actions"><button type="button" class="modal-cancel" data-action="close-ticket-detail">Close</button></div>';
+      html += '</div></div>';
+      return html;
+    }
+
+    var t = d.ticket;
+    html += '<div class="modal-title">Ticket #' + t.id + ' — ' + escapeHtml(t.summary || '') + '</div>';
+    html += '<div class="ticket-detail-meta">' +
+      '<span>' + escapeHtml(t.company_name || '—') + '</span>' +
+      '<span>' + escapeHtml(t.contact_name || '—') + '</span>' +
+      '<span>' + escapeHtml(t.board_name || '') + '</span>' +
+      '<span>' + fmtTimestamp(t.date_entered) + '</span>' +
+    '</div>';
+
+    // ---- Status change ----
+    html += '<div class="ticket-detail-section">';
+    html += '<div class="ticket-detail-section-title">Status</div>';
+    if (d.saveError) {
+      html += '<div class="error-banner">' + escapeHtml(d.saveError) + '</div>';
+    }
+    html += '<div class="ticket-status-row">';
+    if (t.status_options && t.status_options.length > 0) {
+      html += '<select data-action="ticket-status-select" ' + (d.saving ? 'disabled' : '') + '>';
+      t.status_options.forEach(function (s) {
+        html += '<option value="' + s.id + '" ' + (d.selectedStatusId === s.id ? 'selected' : '') + '>' + escapeHtml(s.name) + '</option>';
+      });
+      html += '</select>';
+      var canSave = !d.saving && d.selectedStatusId !== t.status_id;
+      html += '<button type="button" class="modal-confirm ticket-status-save" data-action="save-ticket-status" ' + (canSave ? '' : 'disabled') + '>' +
+        (d.saving ? 'Saving…' : 'Update Status') +
+      '</button>';
+    } else {
+      html += '<span>' + escapeHtml(t.status_name || '—') + '</span>';
+    }
+    html += '</div></div>';
+
+    // ---- Notes ----
+    html += '<div class="ticket-detail-section">';
+    html += '<div class="ticket-detail-section-title">Notes</div>';
+    if (t.notes && t.notes.length > 0) {
+      html += '<div class="ticket-notes-list">';
+      t.notes.forEach(function (n) {
+        html += '<div class="ticket-note-row">' +
+          '<div class="ticket-note-label">' + escapeHtml(n.label) + (n.member_name ? ' — ' + escapeHtml(n.member_name) : '') + '</div>' +
+          '<div class="ticket-note-text">' + escapeHtml(n.text) + '</div>' +
+        '</div>';
+      });
+      html += '</div>';
+    } else {
+      html += '<div class="ticket-notes-empty">No notes on file.</div>';
+    }
+    html += '</div>';
+
+    // ---- Time entries ----
+    html += '<div class="ticket-detail-section">';
+    html += '<div class="ticket-detail-section-title">Time</div>';
+    if (t.time_entries && t.time_entries.length > 0) {
+      html += '<div class="history-table-wrap"><table class="history-table ticket-time-table"><thead><tr>' +
+        '<th>Date</th><th>Tech</th><th>Type</th><th>Hours</th><th>Rate</th><th>Amount</th><th>Notes</th>' +
+      '</tr></thead><tbody>';
+      t.time_entries.forEach(function (e) {
+        html += '<tr>' +
+          '<td>' + fmtTimestamp(e.date_entered) + '</td>' +
+          '<td>' + escapeHtml(e.member_name || '—') + '</td>' +
+          '<td>' + escapeHtml(e.billable_label) + '</td>' +
+          '<td>' + fmtQty(e.hours) + '</td>' +
+          '<td>' + fmtMoney(e.hourly_rate) + '</td>' +
+          '<td>' + fmtMoney(e.extended_amount) + '</td>' +
+          '<td>' + escapeHtml(e.notes || '') + '</td>' +
+        '</tr>';
+      });
+      html += '</tbody></table></div>';
+
+      html += '<div class="ticket-time-totals">';
+      (t.time_totals || []).forEach(function (tot) {
+        html += '<div class="ticket-time-total-row"><span>' + escapeHtml(tot.label) + '</span><span>' + fmtQty(tot.hours) + ' hrs</span><span>' + fmtMoney(tot.amount) + '</span></div>';
+      });
+      html += '<div class="ticket-time-total-row ticket-time-grand-total"><span>Ticket Total</span><span></span><span>' + fmtMoney(t.ticket_total) + '</span></div>';
+      html += '</div>';
+    } else {
+      html += '<div class="ticket-notes-empty">No time logged on this ticket yet.</div>';
+    }
+    html += '</div>';
+
+    html += '<div class="modal-actions"><button type="button" class="modal-cancel" data-action="close-ticket-detail">Close</button></div>';
+    html += '</div></div>';
+    return html;
+  }
+
   // ---- Event binding ----------------------------------------------------
 
   function bindEvents() {
@@ -3309,6 +3493,10 @@
       else if (action === 'send-signup-email') handler = sendSignupEmail;
       else if (action === 'new-customer-done') handler = finishNewCustomer;
       else if (action === 'refresh-service-tickets') handler = loadServiceTickets;
+      else if (action === 'open-ticket-detail') handler = function () { openTicketDetail(Number(el.dataset.id)); };
+      else if (action === 'close-ticket-detail') handler = closeTicketDetail;
+      else if (action === 'close-ticket-detail-backdrop') handler = closeTicketDetail;
+      else if (action === 'save-ticket-status') handler = saveTicketStatus;
       else if (action === 'signout') handler = signOut;
       else if (action === 'sync') handler = runSync;
       else if (action === 'add-to-cart') handler = function () { addToCart(el.dataset.id); };
@@ -3447,6 +3635,13 @@
       el.addEventListener('input', function () { state.returnsQueueRmaInputs[el.dataset.id] = el.value; });
     });
 
+    var ticketStatusSelect = root.querySelector('[data-action="ticket-status-select"]');
+    if (ticketStatusSelect) {
+      ticketStatusSelect.addEventListener('change', function () {
+        state.ticketDetail.selectedStatusId = Number(ticketStatusSelect.value);
+        render();
+      });
+    }
     var paymentSelect = root.querySelector('[data-action="payment-method-select"]');
     if (paymentSelect) {
       paymentSelect.addEventListener('change', function () {

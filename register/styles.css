@@ -697,3 +697,46 @@ a { color: inherit; }
   .modal-backdrop { background: white !important; position: static !important; padding: 0 !important; }
   .modal { box-shadow: none !important; max-height: none !important; overflow: visible !important; background: white !important; max-width: none !important; }
 }
+
+/* ---- Ticket detail modal (added 2026-10-09) ---------------------------- */
+
+.ticket-detail-modal { max-width: 640px; }
+
+.ticket-detail-meta {
+  display: flex; flex-wrap: wrap; gap: 10px 18px; font-size: 13px;
+  color: oklch(0.45 0.02 255); margin-bottom: 18px;
+}
+
+.ticket-detail-section { margin-top: 20px; }
+.ticket-detail-section-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  color: oklch(0.5 0.02 255); margin-bottom: 8px;
+}
+
+.ticket-status-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ticket-status-row select {
+  font-size: 14px; padding: 9px 12px; border: 1px solid oklch(0.85 0.006 255);
+  border-radius: 8px; font-family: 'IBM Plex Sans', sans-serif;
+}
+.ticket-status-save { padding: 9px 16px; border-radius: 8px; font-size: 13.5px; font-weight: 600; }
+
+.ticket-notes-list { display: flex; flex-direction: column; gap: 10px; }
+.ticket-note-row { background: oklch(0.94 0.006 255); border-radius: 10px; padding: 10px 12px; }
+.ticket-note-label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+  color: oklch(0.5 0.02 255); margin-bottom: 4px;
+}
+.ticket-note-text { font-size: 13.5px; white-space: pre-wrap; }
+.ticket-notes-empty { font-size: 13.5px; color: oklch(0.55 0.02 255); font-style: italic; }
+
+.ticket-time-table th, .ticket-time-table td { font-size: 13px; }
+
+.ticket-time-totals { background: oklch(0.94 0.006 255); border-radius: 10px; padding: 12px 14px; margin-top: 10px; }
+.ticket-time-total-row {
+  display: flex; justify-content: space-between; gap: 14px; font-size: 13.5px; padding: 3px 0;
+}
+.ticket-time-total-row span:first-child { flex: 1; }
+.ticket-time-grand-total {
+  margin-top: 6px; padding-top: 10px; border-top: 1px solid oklch(0.85 0.006 255);
+  font-weight: 700; font-size: 14.5px;
+}

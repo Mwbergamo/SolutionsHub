@@ -274,3 +274,86 @@ function register_cw_list(string $path, string $conditions, array $fields, int $
     }
     return $all;
 }
+
+/**
+ * Generalized version of customers.php's register_cw_put_company_with_retry()
+ * -- fetch the full record, overlay the fields to change, PUT the whole
+ * thing back, and if ConnectWise names a specific "<field> can only be
+ * used when creating" offender, strip that exact field (resolving
+ * ConnectWise's internal name, e.g. "typeIds", back to the real JSON key,
+ * e.g. "types", when they differ) and retry. Used as the fallback when a
+ * plain PATCH fails -- proven against Company (always needs this path,
+ * PATCH is broken on this instance for Company) and against Service
+ * Ticket (PATCH succeeded on the first live test, 2026-10-09, so this
+ * fallback has not actually been exercised for Tickets yet, but is kept
+ * as a safety net in case a future ticket/status combination hits a case
+ * plain PATCH can't handle).
+ */
+function register_cw_put_entity_with_retry(string $path, array $fieldsToSet, int $maxAttempts = 5): array
+{
+    $full = register_cw_request($path, [], 'GET', null, 20, 6);
+    $modified = $fieldsToSet + $full;
+
+    for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+        try {
+            return register_cw_request($path, [], 'PUT', $modified, 20, 6);
+        } catch (Throwable $e) {
+            $msg = $e->getMessage();
+            $jsonStart = strpos($msg, '{');
+            $decoded = $jsonStart !== false ? json_decode(substr($msg, $jsonStart), true) : null;
+            $offendingField = null;
+            if (is_array($decoded) && isset($decoded['errors']) && is_array($decoded['errors'])) {
+                foreach ($decoded['errors'] as $err) {
+                    $field = $err['field'] ?? null;
+                    $errMsg = $err['message'] ?? '';
+                    if (is_string($field) && $field !== '' && stripos($errMsg, 'can only be used when creating') !== false) {
+                        $offendingField = $field;
+                        break;
+                    }
+                }
+            }
+            $realKey = null;
+            if ($offendingField !== null) {
+                $candidates = [$offendingField];
+                if (substr($offendingField, -3) === 'Ids') {
+                    $base = substr($offendingField, 0, -3);
+                    $candidates[] = $base . 's';
+                    $candidates[] = $base;
+                }
+                foreach ($candidates as $candidate) {
+                    if (array_key_exists($candidate, $modified)) {
+                        $realKey = $candidate;
+                        break;
+                    }
+                }
+            }
+            if ($realKey === null) {
+                throw new RegisterConnectWiseError('Could not update ' . $path . ': ' . $msg);
+            }
+            unset($modified[$realKey]);
+        }
+    }
+
+    throw new RegisterConnectWiseError('Could not update ' . $path . ' after ' . $maxAttempts . ' attempts.');
+}
+
+/**
+ * Tries a plain PATCH (a single JSON-Patch replace op) first -- proven to
+ * work for Service Ticket status (2026-10-09 live test) -- and falls back
+ * to register_cw_put_entity_with_retry() if PATCH fails, same pattern the
+ * ticket_invoice_write_test.php probe proved out. Returns an array shaped
+ * ['method' => 'PATCH'|'PUT', 'result' => <decoded response>] so a caller
+ * can tell which path actually worked.
+ */
+function register_cw_patch_then_put(string $path, string $fieldPath, array $fieldsToSet): array
+{
+    try {
+        $result = register_cw_request($path, [], 'PATCH', [
+            ['op' => 'replace', 'path' => $fieldPath, 'value' => reset($fieldsToSet)],
+        ], 20, 6);
+        return ['method' => 'PATCH', 'result' => $result];
+    } catch (Throwable $e) {
+        $result = register_cw_put_entity_with_retry($path, $fieldsToSet);
+        return ['method' => 'PUT', 'result' => $result];
+    }
+}

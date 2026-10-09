@@ -6,6 +6,16 @@
  * Per Michael: a list of OPEN tickets on CBT's two Professional Services
  * boards, searchable by ticket number, company name, or telephone number.
  *
+ * Extended 2026-10-09 (Part 2 of Michael's 2026-09-30 Register request,
+ * scoped down to the ticket detail popover + status-change piece -- the
+ * "Create Invoice" half was found to be a hard ConnectWise platform
+ * limitation with no REST equivalent, see claude/register-app.md's Part 2
+ * section, and was dropped from scope per Michael's explicit choice):
+ * clicking a ticket now opens a detail popover (notes, time entries broken
+ * out by billable/non-billable/no-charge with per-type and ticket totals,
+ * applied hourly rate per line) and lets the tech change the ticket's
+ * status, pushed live to ConnectWise.
+ *
  * ---- Board condition (reused, already confirmed) ----
  * The two-board OR condition and its exact spelling --
  * "Professional Services - RIC" / "Professional Services - WAR" (space on
@@ -53,6 +63,40 @@
  *   -> { ok: true, tickets: [{ id, ticket_number, summary, date_entered,
  *        board_name, status_name, company_id, company_name, company_phone,
  *        contact_name, contact_phone, contact_email }] }
+ *
+ * GET /register/api/tickets.php?action=detail&ticket_id=N
+ *   -> { ok: true, ticket: { id, summary, board_id, board_name,
+ *        status_id, status_name, status_options: [{id,name,closed_flag}],
+ *        company_name, contact_name, date_entered, closed_flag,
+ *        notes: [{ text, label, member_name }],
+ *        time_entries: [{ id, member_name, date_entered, billable_option,
+ *          billable_label, hours, hourly_rate, extended_amount, notes,
+ *          work_role_name }],
+ *        time_totals: { <billable_option>: { label, hours, amount } },
+ *        ticket_total } }
+ *   Ticket notes (`/service/tickets/{id}/notes`) were NOT independently
+ *   confirmed against this ConnectWise instance before shipping (same
+ *   build-environment network restriction as above) -- the real field
+ *   shape (text/detailDescriptionFlag/internalAnalysisFlag/resolutionFlag/
+ *   member) comes from inspecting a real, independently-generated
+ *   ConnectWise Manage REST API client's model (github.com/HealthITAU/
+ *   pyconnectwise), not a blind guess, but treat the first real ticket
+ *   popover open as this feature's live check for the Notes section
+ *   specifically -- everything else on this action (time entries, board
+ *   statuses) reuses fields already confirmed live earlier in this project
+ *   (see claude/register-app.md's Part 2 section).
+ *
+ * POST /register/api/tickets.php?action=update-status
+ *   body: { ticket_id, status_id }
+ *   -> { ok: true, ticket: { id, status_id, status_name } }
+ *   Pushes the status change to ConnectWise -- tries a plain PATCH first
+ *   (confirmed working live, 2026-10-09, against Service Ticket #953916),
+ *   falling back to the proven PUT-fetch-modify-send-back-with-auto-strip
+ *   approach if PATCH ever fails for a status/ticket combination it
+ *   hasn't been tried against yet (same register_cw_patch_then_put()
+ *   helper in connectwise.php, shared with any future write of this
+ *   shape). Refuses if status_id isn't actually one of the target
+ *   ticket's own board's statuses, as a guard against a stale dropdown.
  */
 
 declare(strict_types=1);
@@ -104,6 +148,194 @@ if ($action === 'open') {
         register_respond(200, ['ok' => true, 'tickets' => $tickets]);
     } catch (Throwable $e) {
         register_respond(502, ['ok' => false, 'error' => 'Could not load service tickets from ConnectWise: ' . $e->getMessage()]);
+    }
+}
+
+// Human-friendly labels for the three ConnectWise billableOption values
+// expected on a time entry. "Billable" is confirmed live; "DoNotBill" and
+// "NoCharge" are the documented ConnectWise enum values for the other two
+// but have not yet been observed on a real entry against this instance --
+// any other/unexpected value still displays (using the raw value itself
+// as its own label) rather than silently disappearing from the popover.
+function register_ticket_billable_label(string $billableOption): string
+{
+    return match ($billableOption) {
+        'Billable' => 'Billable',
+        'DoNotBill' => 'Non-Billable',
+        'NoCharge' => 'No Charge',
+        default => $billableOption !== '' ? $billableOption : 'Unspecified',
+    };
+}
+
+if ($action === 'detail') {
+    $ticketId = (int) ($_GET['ticket_id'] ?? 0);
+    if ($ticketId <= 0) {
+        register_respond(400, ['ok' => false, 'error' => 'ticket_id is required.']);
+    }
+
+    try {
+        $ticket = register_cw_request('/service/tickets/' . $ticketId, [
+            'fields' => 'id,summary,dateEntered,closedFlag,board,status,company,contactName,contactPhoneNumber,contactEmailAddress',
+        ], 'GET', null, 20, 6);
+
+        $board = is_array($ticket['board'] ?? null) ? $ticket['board'] : [];
+        $status = is_array($ticket['status'] ?? null) ? $ticket['status'] : [];
+        $company = is_array($ticket['company'] ?? null) ? $ticket['company'] : [];
+        $boardId = isset($board['id']) ? (int) $board['id'] : 0;
+
+        $statusOptions = [];
+        if ($boardId > 0) {
+            $statusRows = register_cw_request('/service/boards/' . $boardId . '/statuses', [
+                'pageSize' => 50,
+                'fields' => 'id,name,closedStatus,inactive,sortOrder',
+            ], 'GET', null, 20, 6);
+            usort($statusRows, static fn (array $a, array $b): int => ((int) ($a['sortOrder'] ?? 0)) <=> ((int) ($b['sortOrder'] ?? 0)));
+            foreach ($statusRows as $s) {
+                if (!empty($s['inactive'])) {
+                    continue; // don't offer a retired status in the dropdown
+                }
+                $statusOptions[] = [
+                    'id' => (int) ($s['id'] ?? 0),
+                    'name' => (string) ($s['name'] ?? ''),
+                    'closed_flag' => (bool) ($s['closedStatus'] ?? false),
+                ];
+            }
+        }
+
+        $notes = [];
+        try {
+            $noteRows = register_cw_request('/service/tickets/' . $ticketId . '/notes', ['pageSize' => 50], 'GET', null, 20, 6);
+            foreach ($noteRows as $n) {
+                $text = trim((string) ($n['text'] ?? ''));
+                if ($text === '') {
+                    continue;
+                }
+                $label = 'Note';
+                if (!empty($n['detailDescriptionFlag'])) {
+                    $label = 'Initial Description';
+                } elseif (!empty($n['resolutionFlag'])) {
+                    $label = 'Resolution';
+                } elseif (!empty($n['internalAnalysisFlag'])) {
+                    $label = 'Internal Analysis';
+                }
+                $member = is_array($n['member'] ?? null) ? $n['member'] : [];
+                $notes[] = [
+                    'text' => $text,
+                    'label' => $label,
+                    'member_name' => $member['name'] ?? $member['identifier'] ?? '',
+                ];
+            }
+        } catch (Throwable $e) {
+            // Read-only, non-critical to the rest of the popover -- if the
+            // notes sub-resource's real shape turns out to differ on this
+            // instance, surface that as an empty Notes section rather than
+            // failing the whole detail fetch.
+            $notes = [];
+        }
+
+        $timeRows = register_cw_request('/time/entries', [
+            'conditions' => "chargeToId=$ticketId",
+            'pageSize' => 100,
+            'fields' => 'id,member,dateEntered,billableOption,hoursBilled,actualHours,hourlyRate,extendedInvoiceAmount,notes,workRole',
+        ], 'GET', null, 20, 6);
+
+        $timeEntries = [];
+        $totals = []; // billableOption -> ['label','hours','amount']
+        $ticketTotal = 0.0;
+        foreach ($timeRows as $t) {
+            $billableOption = (string) ($t['billableOption'] ?? '');
+            $label = register_ticket_billable_label($billableOption);
+            $hours = (float) ($t['hoursBilled'] ?? $t['actualHours'] ?? 0);
+            $rate = (float) ($t['hourlyRate'] ?? 0);
+            $amount = (float) ($t['extendedInvoiceAmount'] ?? ($hours * $rate));
+            $member = is_array($t['member'] ?? null) ? $t['member'] : [];
+            $workRole = is_array($t['workRole'] ?? null) ? $t['workRole'] : [];
+
+            $timeEntries[] = [
+                'id' => (int) ($t['id'] ?? 0),
+                'member_name' => $member['name'] ?? $member['identifier'] ?? '',
+                'date_entered' => $t['dateEntered'] ?? null,
+                'billable_option' => $billableOption,
+                'billable_label' => $label,
+                'hours' => $hours,
+                'hourly_rate' => $rate,
+                'extended_amount' => $amount,
+                'notes' => (string) ($t['notes'] ?? ''),
+                'work_role_name' => $workRole['name'] ?? '',
+            ];
+
+            if (!isset($totals[$billableOption])) {
+                $totals[$billableOption] = ['label' => $label, 'hours' => 0.0, 'amount' => 0.0];
+            }
+            $totals[$billableOption]['hours'] += $hours;
+            $totals[$billableOption]['amount'] += $amount;
+            $ticketTotal += $amount;
+        }
+
+        register_respond(200, ['ok' => true, 'ticket' => [
+            'id' => $ticketId,
+            'summary' => (string) ($ticket['summary'] ?? ''),
+            'board_id' => $boardId,
+            'board_name' => $board['name'] ?? '',
+            'status_id' => isset($status['id']) ? (int) $status['id'] : 0,
+            'status_name' => $status['name'] ?? '',
+            'status_options' => $statusOptions,
+            'company_name' => $company['name'] ?? '',
+            'contact_name' => $ticket['contactName'] ?? '',
+            'date_entered' => $ticket['dateEntered'] ?? null,
+            'closed_flag' => (bool) ($ticket['closedFlag'] ?? false),
+            'notes' => $notes,
+            'time_entries' => $timeEntries,
+            'time_totals' => array_values($totals),
+            'ticket_total' => $ticketTotal,
+        ]]);
+    } catch (Throwable $e) {
+        register_respond(502, ['ok' => false, 'error' => 'Could not load this ticket from ConnectWise: ' . $e->getMessage()]);
+    }
+}
+
+if ($action === 'update-status') {
+    $body = json_decode(file_get_contents('php://input') ?: '[]', true);
+    $ticketId = (int) ($body['ticket_id'] ?? 0);
+    $statusId = (int) ($body['status_id'] ?? 0);
+    if ($ticketId <= 0 || $statusId <= 0) {
+        register_respond(400, ['ok' => false, 'error' => 'ticket_id and status_id are required.']);
+    }
+
+    try {
+        $ticket = register_cw_request('/service/tickets/' . $ticketId, [
+            'fields' => 'id,board,status',
+        ], 'GET', null, 20, 6);
+        $board = is_array($ticket['board'] ?? null) ? $ticket['board'] : [];
+        $boardId = isset($board['id']) ? (int) $board['id'] : 0;
+        if ($boardId <= 0) {
+            register_respond(502, ['ok' => false, 'error' => 'This ticket has no board on file -- cannot change its status.']);
+        }
+
+        $statusRows = register_cw_request('/service/boards/' . $boardId . '/statuses', [
+            'pageSize' => 50,
+            'fields' => 'id,name',
+        ], 'GET', null, 20, 6);
+        $statusName = null;
+        foreach ($statusRows as $s) {
+            if ((int) ($s['id'] ?? 0) === $statusId) {
+                $statusName = (string) ($s['name'] ?? '');
+                break;
+            }
+        }
+        if ($statusName === null) {
+            register_respond(400, ['ok' => false, 'error' => 'That status is not valid for this ticket\'s board. Reload the ticket and try again.']);
+        }
+
+        register_cw_patch_then_put('/service/tickets/' . $ticketId, '/status', ['status' => ['id' => $statusId]]);
+
+        register_respond(200, ['ok' => true, 'ticket' => [
+            'id' => $ticketId,
+            'status_id' => $statusId,
+            'status_name' => $statusName,
+        ]]);
+    } catch (Throwable $e) {
+        register_respond(502, ['ok' => false, 'error' => 'Could not update this ticket\'s status in ConnectWise: ' . $e->getMessage()]);
     }
 }
 
