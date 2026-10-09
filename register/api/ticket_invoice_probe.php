@@ -216,9 +216,17 @@ if ($action === 'probe-board-statuses') {
     // to ConnectWise, since each board has its own status list and a
     // status's own `closedFlag` (not just the ticket's top-level
     // `closedFlag`) is what actually marks a ticket closed on this board.
+    //
+    // NOTE (fixed after first live run): /service/boards is queried by
+    // the board's OWN `name` field, not the related-entity `board/name`
+    // condition used against /service/tickets -- a board has no "board"
+    // relation to itself. The first attempt sent board/name and got back
+    // ConnectWise's real error: {"code":"ApiFindCondition","message":
+    // "board\/name is not a recognized name."} -- confirming the fix
+    // rather than guessing it.
     $out = register_probe_try('both Professional Services boards + their status lists', function () {
         $boards = register_cw_request('/service/boards', [
-            'conditions' => REGISTER_PROBE_BOARD_CONDITION,
+            'conditions' => "(name='Professional Services - RIC' or name='Professional Services - WAR')",
             'fields' => 'id,name',
         ], 'GET', null, 20, 6);
         $result = [];
@@ -274,6 +282,27 @@ if ($action === 'probe-tickets-no-agreement') {
             return empty($t['agreement']);
         }));
         return array_slice($noAgreement, 0, 15);
+    });
+    register_respond(200, ['ok' => true, 'probe' => $out]);
+}
+
+if ($action === 'probe-invoiced-ticket-time') {
+    // probe-invoice-time-entries&invoice_id=124363 came back empty --
+    // that one sampled Standard invoice has no linked time entries, same
+    // as the earlier 8-invoice sample (all applyToType=SalesOrder). Rather
+    // than keep guessing invoice ids one at a time, this searches
+    // /time/entries directly for ANY entry that already has a real
+    // invoice attached (invoice/id>0), newest first, to find a genuine
+    // ticket-sourced example (chargeToType should read 'ServiceTicket' or
+    // 'Ticket' for one) and see what invoice type it actually landed on --
+    // still unconfirmed whether ticket time ever reaches a plain Standard
+    // invoice at all, or only ever flows through Agreement billing.
+    $out = register_probe_try('time/entries?conditions=invoice/id>0, newest first', function () {
+        return register_cw_request('/time/entries', [
+            'conditions' => 'invoice/id>0',
+            'orderBy' => 'id desc',
+            'pageSize' => 25,
+        ], 'GET', null, 20, 6);
     });
     register_respond(200, ['ok' => true, 'probe' => $out]);
 }
