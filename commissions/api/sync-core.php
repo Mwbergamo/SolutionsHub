@@ -47,7 +47,7 @@ const COMMISSIONS_PENDING_LOOKBACK_DAYS = 180;
  * lines saved under the old rules can't linger until ConnectWise happens to
  * change the invoice.
  */
-const COMMISSIONS_RULES_VERSION = '2026-10-09-nc-time';
+const COMMISSIONS_RULES_VERSION = '2026-10-09-round-hours';
 
 /** Bump when how payees share a line changes; the next API call re-applies it to unlocked months. */
 const COMMISSIONS_PAYOUT_RULES_VERSION = '2026-10-06-chester-arcus';
@@ -463,6 +463,36 @@ function commissions_agreement_work_rate(int $agreementId, string $invoiceDate):
 // ---------------------------------------------------------------------
 
 /**
+ * Rounds worked hours up to CodeBlue's billing bracket, per the rate sheet
+ * (codebluetechnology.com/rates):
+ *   Onsite:  1-hour minimum, 30-minute increments thereafter
+ *   Remote:  30-minute minimum, 30-minute increments thereafter
+ * Both tiers round UP in 30-minute steps once past their minimum -- only the
+ * floor differs. ConnectWise time entries don't tell us onsite vs remote, so
+ * this uses the lower (remote) 30-minute floor: it never rounds a short
+ * visit up further than policy guarantees, so it can't inflate cost past
+ * what commissions should recognize.
+ *
+ * This is what labor cost should be based on instead of raw clock minutes.
+ * A tech who logs 31 minutes was always going to be billed for a full hour
+ * (or, at minimum, a half hour) under these rules, so cost should recognize
+ * that same rounded bracket -- not the sub-bracket actual -- otherwise a
+ * routine short visit prices out as a commission loss that never really
+ * happened. (Michael, 2026-10-09)
+ */
+function commissions_round_worked_hours(float $hours, float $minimum = 0.5, float $increment = 0.5): float
+{
+    if ($hours <= 0) {
+        return 0.0;
+    }
+    if ($hours <= $minimum) {
+        return $minimum;
+    }
+    $steps = ceil((($hours - $minimum) / $increment) - 1e-9);
+    return round($minimum + $steps * $increment, 4);
+}
+
+/**
  * Builds the commission lines for ONE invoice from already-fetched data.
  * Pure (no I/O) so it can be unit-tested. Returns
  * ['lines' => [...], 'detail_state' => ..., 'detail_note' => ..., 'lines_total' => float].
@@ -570,7 +600,13 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
         }
         // Same basis as the existing Service Commission report: price is the
         // BILLED hours x rate; cost is the hours actually worked x hourly cost.
-        $actual = (isset($t['actualHours']) && (float) $t['actualHours'] > 0) ? (float) $t['actualHours'] : $hours;
+        // "Actually worked" is rounded up to CodeBlue's billing bracket first
+        // (see commissions_round_worked_hours) -- a short visit that would
+        // only ever be billed for the minimum isn't a labor-cost loss just
+        // because the raw clock time undershoots it. Confirmed by Michael
+        // 2026-10-09 against the rate sheet's rounding rules.
+        $actualRaw = (isset($t['actualHours']) && (float) $t['actualHours'] > 0) ? (float) $t['actualHours'] : $hours;
+        $actual = commissions_round_worked_hours($actualRaw);
         $rate = (float) ($t['hourlyRate'] ?? 0);
         $chargeType = (string) ($t['chargeToType'] ?? '');
         $ticketId = (isset($t['chargeToId']) && stripos($chargeType, 'Ticket') !== false) ? (int) $t['chargeToId'] : (isset($t['ticket']['id']) ? (int) $t['ticket']['id'] : null);
@@ -587,7 +623,8 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
             'price' => round($hours * $rate, 2),
             'unit_cost' => null,
             'cost' => round($actual * $laborCost, 2),
-            'cost_note' => 'Assumed labor cost $' . number_format($laborCost, 2) . '/hr x ' . $actual . ' actual hrs',
+            'cost_note' => 'Assumed labor cost $' . number_format($laborCost, 2) . '/hr x ' . $actual . ' actual hrs'
+                . (abs($actual - $actualRaw) > 0.0001 ? ' (rounded up from ' . $actualRaw . ' raw hrs per billing-bracket rule)' : ''),
         ];
     }
 
@@ -972,6 +1009,10 @@ function commissions_recompute(PDO $pdo, bool $includeLocked = false): int
             $cost = (float) $l['cost'];
             if ($l['kind'] === 'time') {
                 $worked = ($l['actual_hours'] !== null && (float) $l['actual_hours'] > 0) ? (float) $l['actual_hours'] : (float) $l['hours'];
+                // Safety net: a stored actual_hours from before the 2026-10-09
+                // rounding fix may still be raw; re-rounding here is a no-op
+                // once it's already bracket-aligned.
+                $worked = commissions_round_worked_hours($worked);
                 $cost = round($worked * $laborCost, 2);
             }
             $m = commissions_line_money((float) $l['price'], $cost, 0.0);
