@@ -3539,3 +3539,23 @@ a { color: inherit; }
 .automate-dot.off { background: oklch(0.6 0.2 25); }
 .automate-more { margin-top: 10px; }
 @media (max-width: 700px) { .automate-row { grid-template-columns: 1fr 1fr; } .automate-row.automate-head { display: none; } }
+
+
+/* Ticket -> OutGrow view (added 2026-10-09) */
+.ticket-outgrow-card { max-width: 860px; }
+.ticket-outgrow-textarea { min-height: 260px; font-family: 'IBM Plex Mono', 'IBM Plex Sans', monospace; }
+.ticket-outgrow-error { margin-top: 12px; }
+.ticket-outgrow-result {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid oklch(0.3 0.02 255);
+  border-radius: 10px;
+  background: oklch(0.17 0.014 255);
+}
+.ticket-outgrow-result-title { font-size: 13px; font-weight: 700; margin-bottom: 10px; color: #8fc3ff; }
+.ticket-outgrow-row { display: flex; gap: 14px; padding: 6px 0; border-top: 1px solid oklch(0.24 0.015 255); font-size: 12.5px; }
+.ticket-outgrow-row:first-of-type { border-top: none; }
+.ticket-outgrow-label { flex: 0 0 230px; color: oklch(0.7 0.02 255); }
+.ticket-outgrow-value { flex: 1; white-space: pre-wrap; word-break: break-word; }
+.ticket-outgrow-warn { margin-top: 10px; font-size: 12px; color: #fbbf24; }
+.ticket-outgrow-actions { margin-top: 12px; }

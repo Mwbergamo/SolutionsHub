@@ -433,6 +433,14 @@
     // first when the screen opens.
     repTodosExpandedProjectId: null,
 
+    // Ticket -> OutGrow view (state.view === 'ticket-outgrow') -- added
+    // 2026-10-09 per Michael: paste a ConnectWise "OutGrow Action" service
+    // ticket and get CBT's OutGrow (Formstack) call-activity form opened
+    // pre-filled (api/outgrow-ticket.php). The rep still clicks Submit on
+    // the form itself -- it has a reCAPTCHA (see meetings.php's
+    // relationships_formstack_todo_url()).
+    ticketOutgrow: { text: '', busy: false, error: null, result: null },
+
     // Projects view (state.view === 'projects') -- added 2026-10-02 per
     // Michael's "Projects Follow Up" request: every ConnectWise Project on
     // the Pre-Sales/Services Projects boards, with coordinator assignment,
@@ -3130,6 +3138,7 @@
       back = '<a class="back-to-hub" href="' + HUB_URL + '">← Solutions Hub</a>';
       nav =
         '<button class="nav-btn ' + (state.view === 'dashboard' ? 'active' : '') + '" type="button" data-action="show-dashboard">Dashboard</button>' +
+        '<button class="nav-btn ' + (state.view === 'ticket-outgrow' ? 'active' : '') + '" type="button" data-action="show-ticket-outgrow">Ticket \u2192 OutGrow</button>' +
         '<button class="nav-btn ' + (state.view === 'sync' ? 'active' : '') + '" type="button" data-action="show-sync">ConnectWise Sync</button>' +
         (state.user.is_territory_admin
           ? '<button class="nav-btn ' + (state.view === 'territory-admin' ? 'active' : '') + '" type="button" data-action="show-territory-admin">Territory Admin</button>'
@@ -3151,6 +3160,77 @@
         '</div>' +
       '</div>'
     );
+  }
+
+  // ---- Ticket -> OutGrow (state.view === 'ticket-outgrow') --------------
+
+  function ticketOutgrowHtml() {
+    var t = state.ticketOutgrow;
+    var html = '<div class="view-header">' +
+      '<div class="view-title">Ticket → OutGrow</div>' +
+      '<div class="view-sub">Paste the text of a ConnectWise “OutGrow Action” service ticket. The OutGrow form opens already filled in — you just review it and click Submit.</div>' +
+    '</div>';
+    html += '<div class="ticket-outgrow-card">' +
+      '<textarea id="ticketOutgrowText" class="checklist-note-textarea ticket-outgrow-textarea" rows="14" placeholder="Paste the whole ticket here — company, contact and the Discussion section.">' + escapeHtml(t.text) + '</textarea>' +
+      '<div class="checklist-note-form-actions">' +
+        '<button type="button" class="svc-action-btn primary" data-action="ticket-outgrow-create" ' + (t.busy ? 'disabled' : '') + '>' + (t.busy ? 'Reading ticket…' : 'Create OutGrow entry') + '</button>' +
+        '<button type="button" class="svc-action-btn secondary" data-action="ticket-outgrow-clear" ' + (t.busy ? 'disabled' : '') + '>Clear</button>' +
+      '</div>';
+    if (t.error) {
+      html += '<div class="error-banner ticket-outgrow-error">' + escapeHtml(t.error) + '</div>';
+    }
+    if (t.result) {
+      var v = t.result.values;
+      function row(label, value) {
+        return '<div class="ticket-outgrow-row"><div class="ticket-outgrow-label">' + label + '</div><div class="ticket-outgrow-value">' + escapeHtml(value || '—') + '</div></div>';
+      }
+      html += '<div class="ticket-outgrow-result">' +
+        '<div class="ticket-outgrow-result-title">OutGrow form opened in a new tab' + (v.ticket ? ' — ticket #' + escapeHtml(v.ticket) : '') + '</div>' +
+        row('Your Email', v.email) + row('Your Name', v.name) + row('Client/Prospect Type', v.type) +
+        row('Client/Prospect Company', v.company) + row('Contact', v.contact) +
+        row('Your Actions, Opportunities Discussed & F/U Plan', v.actions) +
+        row('Proactive Call', v.proactive_call) + row('Call Type', v.call_type) +
+        row('DYK', v.dyk) + row('Pivot to Sale or Next Conversation', v.pivot);
+      (t.result.warnings || []).forEach(function (w) {
+        html += '<div class="ticket-outgrow-warn">' + escapeHtml(w) + '</div>';
+      });
+      html += '<div class="ticket-outgrow-actions"><a class="svc-action-btn secondary" href="' + escapeHtml(t.result.formstack_url) + '" target="_blank" rel="noopener">Reopen the form</a></div>' +
+        '</div>';
+    }
+    return html + '</div>';
+  }
+
+  function createTicketOutgrow() {
+    var t = state.ticketOutgrow;
+    if (!t.text.trim()) {
+      t.error = 'Paste the ticket text first.';
+      t.result = null;
+      render();
+      return;
+    }
+    // Opened synchronously, inside the click, so the browser's pop-up
+    // blocker allows it -- same trick toggleTaskDone() uses for the same form.
+    var tab = window.open('', '_blank');
+    t.busy = true;
+    t.error = null;
+    t.result = null;
+    render();
+    apiPost('api/outgrow-ticket.php', { ticket_text: t.text }).then(function (r) {
+      t.busy = false;
+      if (r.data && r.data.ok) {
+        t.result = r.data;
+        if (tab) { tab.location.href = r.data.formstack_url; }
+      } else {
+        t.error = (r.data && r.data.error) || 'Could not read that ticket.';
+        if (tab) tab.close();
+      }
+      render();
+    }).catch(function () {
+      t.busy = false;
+      t.error = 'Could not read the ticket — check your connection.';
+      if (tab) tab.close();
+      render();
+    });
   }
 
   function mainHtml() {
@@ -3179,6 +3259,9 @@
     }
     if (state.view === 'projects') {
       return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + projectsHtml();
+    }
+    if (state.view === 'ticket-outgrow') {
+      return ticketOutgrowHtml();
     }
 
     var html;
@@ -7423,6 +7506,12 @@
         state.meetingDraftDate = e.target.value;
       });
     }
+    var ticketOutgrowText = document.getElementById('ticketOutgrowText');
+    if (ticketOutgrowText) {
+      ticketOutgrowText.addEventListener('input', function (e) {
+        state.ticketOutgrow.text = e.target.value;
+      });
+    }
     var meetingNotesInput = document.getElementById('meetingNotesInput');
     if (meetingNotesInput) {
       meetingNotesInput.addEventListener('input', function (e) {
@@ -7583,6 +7672,15 @@
       loadCompanyCounts();
     } else if (action === 'refresh-company-counts') {
       loadCompanyCounts();
+    } else if (action === 'show-ticket-outgrow') {
+      state.view = 'ticket-outgrow';
+      state.error = null;
+      render();
+    } else if (action === 'ticket-outgrow-create') {
+      createTicketOutgrow();
+    } else if (action === 'ticket-outgrow-clear') {
+      state.ticketOutgrow = { text: '', busy: false, error: null, result: null };
+      render();
     } else if (action === 'show-projects') {
       state.view = 'projects';
       state.error = null;
