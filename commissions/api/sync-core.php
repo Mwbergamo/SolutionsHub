@@ -47,7 +47,7 @@ const COMMISSIONS_PENDING_LOOKBACK_DAYS = 180;
  * lines saved under the old rules can't linger until ConnectWise happens to
  * change the invoice.
  */
-const COMMISSIONS_RULES_VERSION = '2026-10-06-c';
+const COMMISSIONS_RULES_VERSION = '2026-10-09-nc-time';
 
 /** Bump when how payees share a line changes; the next API call re-applies it to unlocked months. */
 const COMMISSIONS_PAYOUT_RULES_VERSION = '2026-10-06-chester-arcus';
@@ -545,8 +545,18 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
     }
 
     foreach ($times as $t) {
-        if (strcasecmp((string) ($t['billableOption'] ?? ''), 'DoNotBill') === 0) {
-            continue; // Do Not Bill time is ignored by commissions, like Do Not Bill products
+        // Do Not Bill and No Charge time is ignored by commissions entirely --
+        // like Do Not Bill products -- confirmed by Michael 2026-10-09 against
+        // ConnectWise's own active Work Types list: every non-billable work
+        // type here (Correspondence/Meeting, Int. Assist, Project Management,
+        // Pre-Sales, System Prep, Travel, Travel To CBT, Warranty - Labor/Parts,
+        // etc.) defaults to Bill = NC (No Charge) or NB (Non-Billable, i.e.
+        // ConnectWise's DoNotBill); neither is ever invoiced, so neither should
+        // cost a rep. Only a real 'Billable' entry (or one with no
+        // billableOption set at all) still counts.
+        $billable = strtolower((string) ($t['billableOption'] ?? ''));
+        if ($billable === 'donotbill' || $billable === 'nocharge') {
+            continue;
         }
         $hours = 0.0;
         foreach (['invoiceHours', 'hoursBilled', 'actualHours'] as $f) {
