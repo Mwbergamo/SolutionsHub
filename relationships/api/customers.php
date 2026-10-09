@@ -206,7 +206,7 @@ if ($action === 'detail') {
     $custStmt = $pdo->prepare(
         'SELECT id, connectwise_id, name, is_peoplefirst, last_client_checkin_at, last_client_checkin_by, last_risk_scan_at, last_risk_scan_by,
                 voip_hosted_elsewhere, voip_hosted_agreement_name, is_prospect_only, is_residential, cw_status_name, territory_name,
-                cx_issue_ticket_count_90d, cx_issue_synced_at
+                cx_issue_ticket_count_90d, cx_issue_synced_at, active_contact_count
          FROM customers WHERE id = :id'
     );
     $custStmt->execute([':id' => $id]);
@@ -298,6 +298,14 @@ if ($action === 'detail') {
             'is_prospect_only' => (bool) $customer['is_prospect_only'],
             'is_residential' => (bool) $customer['is_residential'],
             'cw_status_name' => $customer['cw_status_name'],
+            // Nightly-synced Active Contacts count (connectwise-contacts-
+            // sync-core.php) -- added 2026-10-09 for the new Account
+            // Contacts feature's dashboard tile, which shows this as a
+            // quick, already-known number before the rep ever clicks it;
+            // the click opens contacts-admin.php's live, all-contacts
+            // (active + inactive) editable list instead, which is the
+            // real "total."
+            'active_contact_count' => (int) ($customer['active_contact_count'] ?? 0),
             // Prospecting's 90-day claim (null unless claimed via Prospecting
             // and not yet promoted) -- see prospecting-core.php.
             'prospect_claim' => (bool) $customer['is_prospect_only'] ? relationships_prospect_claim_for_customer($pdo, (int) $customer['id']) : null,
