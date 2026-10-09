@@ -356,4 +356,21 @@ if ($action === 'probe-invoice-statuses-sample') {
     register_respond(200, ['ok' => true, 'probe' => $out]);
 }
 
+if ($action === 'probe-billing-statuses') {
+    // The real reference-list endpoint for invoice/billing status --
+    // NOT /finance/invoices/statuses (confirmed 404, see
+    // probe-invoice-statuses-sample above). Found by inspecting a real,
+    // generated ConnectWise Manage REST API client's endpoint tree
+    // (github.com/HealthITAU/pyconnectwise) rather than guessing another
+    // path blind: /finance/billingStatuses is GET-able and returns the
+    // full BillingStatus list, each with id/name/closedFlag/defaultFlag/
+    // inactiveFlag/sortOrder -- defaultFlag is exactly what should
+    // confirm the real numeric id for "New" without needing a live
+    // invoice-create to observe it.
+    $out = register_probe_try('finance/billingStatuses', function () {
+        return register_cw_request('/finance/billingStatuses', ['pageSize' => 50], 'GET', null, 20, 6);
+    });
+    register_respond(200, ['ok' => true, 'probe' => $out]);
+}
+
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
