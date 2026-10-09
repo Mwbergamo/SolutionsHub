@@ -26,7 +26,7 @@
           notes: ['Your name appears as the Requestor on Send to Inside Sales emails.', 'Some tools (Commissions, Collections) are limited to specific people even after you sign in.'],
           added: '2026-09-15', updated: '2026-10-07', kw: ['login', 'microsoft', 'password', 'sso'] },
         { id: 'home-screen', title: 'Home screen and tiles',
-          def: 'The first screen of the Hub ("What can we build for you today?"). Each numbered tile launches a tool or opens a group of tools.',
+          def: 'The first screen of the Hub ("Welcome in!"). Each numbered tile launches a tool or opens a group of tools.',
           where: 'Hub home. Click the CodeBlue logo in the header from anywhere to return here.',
           link: { href: HUB, label: 'Open the Hub home screen' },
           why: 'One launch point for every tool: Solutions Creator, Relationships, Finance (Commissions and Collections), Sales (Cross-Sell Report and Prospecting), Customer Rate Sheet, Project Management (Projects) and Retail (Register).',
