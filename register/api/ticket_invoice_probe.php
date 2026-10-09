@@ -210,4 +210,72 @@ if ($action === 'probe-invoice-reference-lists') {
     register_respond(200, ['ok' => true, 'probe' => $results]);
 }
 
+if ($action === 'probe-board-statuses') {
+    // Confirms the real "Closed" status id(s) on each Professional
+    // Services board -- needed before this app can push a status change
+    // to ConnectWise, since each board has its own status list and a
+    // status's own `closedFlag` (not just the ticket's top-level
+    // `closedFlag`) is what actually marks a ticket closed on this board.
+    $out = register_probe_try('both Professional Services boards + their status lists', function () {
+        $boards = register_cw_request('/service/boards', [
+            'conditions' => REGISTER_PROBE_BOARD_CONDITION,
+            'fields' => 'id,name',
+        ], 'GET', null, 20, 6);
+        $result = [];
+        foreach ($boards as $b) {
+            $statuses = register_cw_request('/service/boards/' . $b['id'] . '/statuses', [
+                'pageSize' => 50,
+            ], 'GET', null, 20, 6);
+            $result[] = ['board' => $b, 'statuses' => $statuses];
+        }
+        return $result;
+    });
+    register_respond(200, ['ok' => true, 'probe' => $out]);
+}
+
+if ($action === 'probe-invoice-time-entries') {
+    // Checks whether a real, already-closed Standard invoice actually has
+    // any ticket-sourced time entries linked to it (invoice/id=N) -- the
+    // 8-invoice sample from probe-invoices were all applyToType=SalesOrder,
+    // so this checks a specific real invoice id (pass one from that probe)
+    // for whether ticket time ever lands on a plain Standard invoice at
+    // all, or only ever flows through Agreement billing.
+    $invoiceId = (int) ($_GET['invoice_id'] ?? 0);
+    if ($invoiceId <= 0) {
+        register_respond(400, ['ok' => false, 'error' => 'invoice_id is required.']);
+    }
+    $out = register_probe_try("time/entries?conditions=invoice/id=$invoiceId", function () use ($invoiceId) {
+        return register_cw_request('/time/entries', [
+            'conditions' => 'invoice/id=' . $invoiceId,
+            'pageSize' => 25,
+        ], 'GET', null, 20, 6);
+    });
+    register_respond(200, ['ok' => true, 'probe' => $out]);
+}
+
+if ($action === 'probe-tickets-no-agreement') {
+    // probe-ticket&ticket_id=906874 turned out to be tied to a real
+    // Agreement ("Voice Agreement", ActualRates billing) -- so it's NOT a
+    // clean example of the plain Standard/T&M path Michael chose to scope
+    // "Create Invoice" to first. This looks for an open ticket on either
+    // board that has NO agreement attached at all, a better candidate for
+    // that path. Pulls a modest page of open tickets with their `agreement`
+    // field included and filters client-side (never confirmed whether
+    // `agreement=null`/`agreement/id=null` is valid ConnectWise condition
+    // syntax, so this avoids guessing at one).
+    $out = register_probe_try('open tickets with no agreement attached', function () {
+        $tickets = register_cw_list(
+            '/service/tickets',
+            'closedFlag=false and ' . REGISTER_PROBE_BOARD_CONDITION,
+            ['id', 'summary', 'company', 'agreement', 'billingMethod'],
+            100
+        );
+        $noAgreement = array_values(array_filter($tickets, static function (array $t): bool {
+            return empty($t['agreement']);
+        }));
+        return array_slice($noAgreement, 0, 15);
+    });
+    register_respond(200, ['ok' => true, 'probe' => $out]);
+}
+
 register_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
