@@ -62,7 +62,8 @@ function relationships_cw_billing_sync_start(PDO $pdo): array
     $rows = $pdo->query(
         "SELECT id, connectwise_id, name FROM customers
          WHERE is_mock = 0 AND connectwise_id IS NOT NULL AND connectwise_id != ''
-           AND connectwise_id NOT LIKE 'MOCK-%'"
+           AND connectwise_id NOT LIKE 'MOCK-%'
+           AND COALESCE(is_duplicate_hidden, 0) = 0"
     )->fetchAll(PDO::FETCH_ASSOC);
 
     $insert = $pdo->prepare(

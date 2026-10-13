@@ -176,7 +176,7 @@ if ($action === 'overview') {
     // rather than reintroducing a LIMIT that silently drops real data.
     $customerStmt = $pdo->prepare(
         "SELECT id, name, is_peoplefirst, is_prospect_only, is_residential, cw_status_name, ticket_count_ytd, active_contact_count, has_recent_billing, territory_name, cx_issue_ticket_count_90d, cx_issue_synced_at
-         FROM customers WHERE COALESCE(cw_bucket, '') != 'excluded' {$territoryFilter['sql']} ORDER BY name ASC"
+         FROM customers WHERE COALESCE(cw_bucket, '') != 'excluded' AND COALESCE(is_duplicate_hidden, 0) = 0 {$territoryFilter['sql']} ORDER BY name ASC"
     );
     $customerStmt->execute($territoryFilter['params']);
     $customerRows = $customerStmt->fetchAll(PDO::FETCH_ASSOC);

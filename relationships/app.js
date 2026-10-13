@@ -127,6 +127,15 @@
     territorySyncStartedAt: null,
     territorySyncErrors: [],
 
+    // Duplicates screen (api/duplicates-admin.php) -- added 2026-10-13.
+    dupData: null, // { groups: [...], hidden: [...] }
+    dupLoading: false,
+    dupError: null,
+    dupNotice: null,
+    dupPick: {}, // group key -> customer id chosen to keep
+    dupBusy: null, // group key (or 'r<id>') currently saving
+    dupFilter: '',
+
     // Territory Admin screen (api/territory-admin.php) -- added 2026-09-16
     // per Michael, restricted to territory admins only (state.user.is_territory_admin
     // -- see territory-access.php). Manages which CRC email is restricted
@@ -2800,6 +2809,141 @@
     });
   }
 
+  // ---- Duplicates (api/duplicates-admin.php) ---------------------------
+
+  function loadDuplicates() {
+    state.dupLoading = true;
+    state.dupError = null;
+    render();
+    apiGet('api/duplicates-admin.php?action=list').then(function (r) {
+      state.dupLoading = false;
+      if (r.data && r.data.ok) {
+        state.dupData = { groups: r.data.groups || [], hidden: r.data.hidden || [] };
+        state.dupData.groups.forEach(function (g) {
+          if (!state.dupPick[g.key]) { state.dupPick[g.key] = g.suggested_id; }
+        });
+      } else {
+        state.dupError = (r.data && r.data.error) || 'Could not load duplicates.';
+      }
+      render();
+    }).catch(function () {
+      state.dupLoading = false;
+      state.dupError = 'Could not load duplicates — check your connection.';
+      render();
+    });
+  }
+
+  function dupPost(action, body, busyKey, okNotice) {
+    state.dupBusy = busyKey;
+    state.dupError = null;
+    state.dupNotice = null;
+    render();
+    apiPost('api/duplicates-admin.php?action=' + action, body).then(function (r) {
+      state.dupBusy = null;
+      if (!r.data || !r.data.ok) {
+        state.dupError = (r.data && r.data.error) || 'That did not save.';
+        render();
+        return;
+      }
+      state.dupNotice = okNotice(r.data);
+      loadDuplicates();
+    }).catch(function () {
+      state.dupBusy = null;
+      state.dupError = 'That did not save — check your connection.';
+      render();
+    });
+  }
+
+  function dupFindGroup(key) {
+    var gs = (state.dupData && state.dupData.groups) || [];
+    for (var i = 0; i < gs.length; i++) { if (gs[i].key === key) { return gs[i]; } }
+    return null;
+  }
+
+  function dupKeep(key) {
+    var g = dupFindGroup(key);
+    var keeper = state.dupPick[key];
+    if (!g || !keeper) { return; }
+    var hide = g.customers.map(function (c) { return c.id; }).filter(function (id) { return id !== keeper; });
+    dupPost('keep', { keeper_id: keeper, hide_ids: hide }, key, function (d) {
+      return 'Kept the selected “' + g.name + '” and hid ' + d.hidden + ' duplicate' + (d.hidden === 1 ? '' : 's') +
+        (d.services_moved ? ' (moved ' + d.services_moved + ' service row' + (d.services_moved === 1 ? '' : 's') + ' to it)' : '') + '.';
+    });
+  }
+
+  function dupDismiss(key) {
+    var g = dupFindGroup(key);
+    dupPost('dismiss', { key: key }, key, function () {
+      return '“' + (g ? g.name : key) + '” marked as separate companies — it won’t be flagged again.';
+    });
+  }
+
+  function dupRestore(id) {
+    dupPost('restore', { customer_id: id }, 'r' + id, function () {
+      return 'Restored. Run a ConnectWise Sync to refresh its data.';
+    });
+  }
+
+  function duplicatesHtml() {
+    var html = '<div class="view-header">' +
+      '<div class="view-title">Duplicate Customers</div>' +
+      '<div class="view-sub">ConnectWise can hold the same company more than once, and each copy syncs here as its own customer — which is why Ticket → OutGrow often can’t tell which one to update. Pick the correct one and the others are hidden everywhere (lists, search, dashboard, OutGrow) and skipped by every sync. Nothing is deleted, and a hidden customer can be restored below.</div>' +
+    '</div>';
+    if (state.dupLoading && !state.dupData) {
+      return html + '<div class="loading">Looking for duplicates…</div>';
+    }
+    if (!state.dupData) {
+      return html + (state.dupError ? '<div class="error-banner">' + escapeHtml(state.dupError) + '</div>' : '');
+    }
+    html += '<div class="dup-panel">';
+    if (state.dupError) { html += '<div class="error-banner">' + escapeHtml(state.dupError) + '</div>'; }
+    if (state.dupNotice) { html += '<div class="dup-notice">' + escapeHtml(state.dupNotice) + '</div>'; }
+
+    var f = state.dupFilter.trim().toLowerCase();
+    var groups = state.dupData.groups.filter(function (g) { return !f || g.name.toLowerCase().indexOf(f) >= 0; });
+    html += '<div class="dup-toolbar"><input type="text" id="dupFilterInput" placeholder="Filter by company name" value="' + escapeHtml(state.dupFilter) + '" autocomplete="off">' +
+      '<span class="dup-count">' + state.dupData.groups.length + ' possible duplicate group' + (state.dupData.groups.length === 1 ? '' : 's') + '</span></div>';
+
+    if (!state.dupData.groups.length) {
+      html += '<div class="territory-admin-empty">No duplicate customers found.</div>';
+    }
+    groups.forEach(function (g) {
+      var busy = state.dupBusy === g.key;
+      html += '<div class="dup-group"><div class="dup-group-title">' + escapeHtml(g.name) + '</div>' +
+        '<div class="dup-table-wrap"><table class="dup-table"><thead><tr><th>Keep</th><th>Customer</th><th>CW id</th><th>Status</th><th>Territory</th>' +
+        '<th>Services</th><th>Contacts</th><th>Billing</th><th>Tickets YTD</th><th>Meetings</th><th>Last OutGrow</th></tr></thead><tbody>';
+      g.customers.forEach(function (c) {
+        var picked = state.dupPick[g.key] === c.id;
+        html += '<tr class="' + (picked ? 'dup-picked' : '') + '" data-action="dup-pick" data-key="' + escapeHtml(g.key) + '" data-id="' + c.id + '">' +
+          '<td><input type="radio" name="dup-' + escapeHtml(g.key) + '"' + (picked ? ' checked' : '') + '></td>' +
+          '<td>' + escapeHtml(c.name) + (c.id === g.suggested_id ? ' <span class="dup-tag">suggested</span>' : '') + '</td>' +
+          '<td>' + escapeHtml(c.connectwise_id || '—') + '</td>' +
+          '<td>' + escapeHtml(c.status || c.bucket || '—') + '</td>' +
+          '<td>' + escapeHtml(c.territory || '—') + '</td>' +
+          '<td>' + c.services + '</td><td>' + c.contacts + '</td>' +
+          '<td>' + (c.recent_billing ? 'Yes' : '—') + '</td><td>' + c.tickets_ytd + '</td><td>' + c.meetings + '</td>' +
+          '<td>' + escapeHtml(c.last_outgrow_touch || '—') + '</td></tr>';
+      });
+      html += '</tbody></table></div>' +
+        '<div class="dup-actions">' +
+          '<button type="button" class="dup-btn primary" data-action="dup-keep" data-key="' + escapeHtml(g.key) + '"' + (busy ? ' disabled' : '') + '>' + (busy ? 'Saving…' : 'Keep selected, hide the others') + '</button>' +
+          '<button type="button" class="dup-btn" data-action="dup-dismiss" data-key="' + escapeHtml(g.key) + '"' + (busy ? ' disabled' : '') + '>Not duplicates</button>' +
+        '</div></div>';
+    });
+
+    if (state.dupData.hidden.length) {
+      html += '<div class="dup-hidden-title">Hidden duplicates</div><div class="dup-hidden-list">';
+      state.dupData.hidden.forEach(function (h) {
+        html += '<div class="dup-hidden-row"><div><strong>' + escapeHtml(h.name) + '</strong> <span class="dup-muted">CW ' + escapeHtml(h.connectwise_id || '—') + '</span>' +
+          '<div class="dup-muted">Kept: ' + escapeHtml(h.keeper_name || '—') + ' (CW ' + escapeHtml(h.keeper_connectwise_id || '—') + ')' +
+          (h.created_by ? ' · hidden by ' + escapeHtml(h.created_by) : '') + '</div></div>' +
+          '<button type="button" class="dup-btn" data-action="dup-restore" data-id="' + h.customer_id + '"' + (state.dupBusy === 'r' + h.customer_id ? ' disabled' : '') + '>Restore</button></div>';
+      });
+      html += '</div>';
+    }
+    return html + '</div>';
+  }
+
   // ---- Territory Admin (api/territory-admin.php) -----------------------
 
   function loadTerritoryAdmin() {
@@ -3177,7 +3321,8 @@
         '<button class="nav-btn ' + (state.view === 'ticket-outgrow' ? 'active' : '') + '" type="button" data-action="show-ticket-outgrow">Ticket \u2192 OutGrow</button>' +
         '<button class="nav-btn ' + (state.view === 'sync' ? 'active' : '') + '" type="button" data-action="show-sync">ConnectWise Sync</button>' +
         (state.user.is_territory_admin
-          ? '<button class="nav-btn ' + (state.view === 'territory-admin' ? 'active' : '') + '" type="button" data-action="show-territory-admin">Territory Admin</button>'
+          ? '<button class="nav-btn ' + (state.view === 'territory-admin' ? 'active' : '') + '" type="button" data-action="show-territory-admin">Territory Admin</button>' +
+            '<button class="nav-btn ' + (state.view === 'duplicates' ? 'active' : '') + '" type="button" data-action="show-duplicates">Duplicates</button>'
           : '');
     }
     return (
@@ -3287,6 +3432,9 @@
     }
     if (state.view === 'sync') {
       return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + syncHtml();
+    }
+    if (state.view === 'duplicates') {
+      return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + duplicatesHtml();
     }
     if (state.view === 'territory-admin') {
       return (state.error ? '<div class="error-banner">' + escapeHtml(state.error) + '</div>' : '') + territoryAdminHtml();
@@ -7815,6 +7963,16 @@
       });
     }
 
+    var dupFilterInput = document.getElementById('dupFilterInput');
+    if (dupFilterInput) {
+      dupFilterInput.addEventListener('input', function (e) {
+        state.dupFilter = e.target.value;
+        var pos = e.target.selectionStart;
+        render();
+        var again = document.getElementById('dupFilterInput');
+        if (again) { again.focus(); again.setSelectionRange(pos, pos); }
+      });
+    }
     var territoryAdminEmailInput = document.getElementById('territoryAdminEmailInput');
     if (territoryAdminEmailInput) {
       territoryAdminEmailInput.addEventListener('input', function (e) {
@@ -8044,6 +8202,20 @@
       runStageOnly(el.getAttribute('data-stage'));
     } else if (action === 'retry-stage-failed') {
       retrySyncFailed(el.getAttribute('data-stage'));
+    } else if (action === 'show-duplicates') {
+      state.view = 'duplicates';
+      state.error = null;
+      render();
+      loadDuplicates();
+    } else if (action === 'dup-pick') {
+      state.dupPick[el.getAttribute('data-key')] = parseInt(el.getAttribute('data-id'), 10);
+      render();
+    } else if (action === 'dup-keep') {
+      dupKeep(el.getAttribute('data-key'));
+    } else if (action === 'dup-dismiss') {
+      dupDismiss(el.getAttribute('data-key'));
+    } else if (action === 'dup-restore') {
+      dupRestore(parseInt(el.getAttribute('data-id'), 10));
     } else if (action === 'show-territory-admin') {
       state.view = 'territory-admin';
       state.error = null;

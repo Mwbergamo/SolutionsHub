@@ -133,7 +133,7 @@ function relationships_cw_sync_step(PDO $pdo, int $batchSize = 20): array
     ];
 }
 
-function relationships_cw_sync_one_agreement(PDO $pdo, array $catalog, int $agreementId, int $agreementTypeId, string $agreementName, string $companyCwId, string $companyName): void
+function relationships_cw_sync_one_agreement(PDO $pdo, array $catalog, int $agreementId, int $agreementTypeId, string $agreementName, string $companyCwId, ?string $companyName): void
 {
     $additions = relationships_cw_list(
         "/finance/agreements/$agreementId/additions",
@@ -146,8 +146,22 @@ function relationships_cw_sync_one_agreement(PDO $pdo, array $catalog, int $agre
     // addition -- even if none classify to anything -- at least gets its
     // customer registered as a real (non-mock) account.
     $custStmt = $pdo->prepare('SELECT id FROM customers WHERE connectwise_id = :cw');
-    $custStmt->execute([':cw' => $companyCwId]);
-    $existing = $custStmt->fetch(PDO::FETCH_ASSOC);
+    // A company hidden as a duplicate (Duplicates screen) has its agreement
+    // services booked on the chosen keeper instead, so no coverage is lost.
+    $keeperStmt = $pdo->prepare('SELECT keeper_customer_id FROM customer_duplicate_overrides WHERE hidden_connectwise_id = :cw');
+    $keeperStmt->execute([':cw' => $companyCwId]);
+    $keeperId = $keeperStmt->fetchColumn();
+    if ($keeperId !== false) {
+        $custStmt = $pdo->prepare('SELECT id FROM customers WHERE id = :cw');
+        $custStmt->execute([':cw' => (int) $keeperId]);
+        $existing = $custStmt->fetch(PDO::FETCH_ASSOC);
+        if ($existing) {
+            $companyName = null; // never rename the keeper after the hidden duplicate
+        }
+    } else {
+        $custStmt->execute([':cw' => $companyCwId]);
+        $existing = $custStmt->fetch(PDO::FETCH_ASSOC);
+    }
     // 2026-10-05: this sync no longer touches is_prospect_only /
     // is_residential / cw_bucket. Which list a company belongs to is decided
     // ONLY by its ConnectWise Company Status (Company Status sync,
@@ -155,8 +169,10 @@ function relationships_cw_sync_one_agreement(PDO $pdo, array $catalog, int $agre
     // company "Active" by itself.
     if ($existing) {
         $customerId = (int) $existing['id'];
-        $pdo->prepare('UPDATE customers SET name = :name, is_mock = 0 WHERE id = :id')
-            ->execute([':name' => $companyName, ':id' => $customerId]);
+        if ($companyName !== null) {
+            $pdo->prepare('UPDATE customers SET name = :name, is_mock = 0 WHERE id = :id')
+                ->execute([':name' => $companyName, ':id' => $customerId]);
+        }
     } else {
         $pdo->prepare('INSERT INTO customers (connectwise_id, name, is_mock, is_prospect_only) VALUES (:cw, :name, 0, 0)')
             ->execute([':cw' => $companyCwId, ':name' => $companyName]);

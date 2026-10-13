@@ -64,7 +64,7 @@ function relationships_outgrow_find_customer(PDO $pdo, string $company): array
         return ['status' => 'none'];
     }
 
-    $rows = $pdo->query('SELECT id, name, connectwise_id, territory_name FROM customers')->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    $rows = $pdo->query('SELECT id, name, connectwise_id, territory_name FROM customers WHERE COALESCE(is_duplicate_hidden, 0) = 0')->fetchAll(PDO::FETCH_ASSOC) ?: [];
     $isReal = static fn (array $r): bool => ($r['connectwise_id'] ?? '') !== '' && !str_starts_with((string) $r['connectwise_id'], 'MOCK-');
 
     foreach (['strict', 'loose'] as $pass) {
@@ -116,7 +116,7 @@ function relationships_outgrow_apply_touch(PDO $pdo, array $user, ?array $allowe
         return ['status' => 'no_match', 'message' => 'No Relationships customer named “' . $company . '”, so Last OutGrow Touch was not updated.'];
     }
     if ($found['status'] === 'ambiguous') {
-        return ['status' => 'ambiguous', 'message' => 'More than one customer matches “' . $company . '” (' . implode('; ', $found['candidates']) . '), so Last OutGrow Touch was not updated.'];
+        return ['status' => 'ambiguous', 'message' => 'More than one customer matches “' . $company . '” (' . implode('; ', $found['candidates']) . '), so Last OutGrow Touch was not updated. An admin can pick the correct one under Duplicates.'];
     }
 
     $customer = $found['customer'];

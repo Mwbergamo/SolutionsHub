@@ -3563,3 +3563,28 @@ a { color: inherit; }
 .ticket-outgrow-touch { margin-bottom: 10px; padding: 8px 10px; border-radius: 8px; font-size: 12.5px; }
 .ticket-outgrow-touch--ok { background: oklch(0.24 0.06 150); color: #86efac; }
 .ticket-outgrow-touch--note { background: oklch(0.26 0.05 85); color: #fbbf24; }
+
+/* ==========================================================================
+   Duplicates screen (api/duplicates-admin.php) -- 2026-10-13
+   ========================================================================== */
+.dup-panel { display: flex; flex-direction: column; gap: 16px; max-width: 1100px; }
+.dup-toolbar { display: flex; align-items: center; gap: 14px; }
+.dup-toolbar input { background: oklch(0.16 0.012 255); border: 1px solid oklch(0.28 0.02 255); border-radius: 10px; color: inherit; padding: 8px 12px; min-width: 260px; }
+.dup-count, .dup-muted { color: oklch(0.65 0.015 255); font-size: 12px; }
+.dup-notice { background: oklch(0.28 0.06 160); border: 1px solid oklch(0.4 0.09 160); border-radius: 10px; padding: 10px 14px; font-size: 13px; }
+.dup-group { background: oklch(0.19 0.014 255); border: 1px solid oklch(0.26 0.02 255); border-radius: 16px; padding: 16px 18px; }
+.dup-group-title { font-weight: 600; margin-bottom: 10px; }
+.dup-table-wrap { overflow-x: auto; }
+.dup-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dup-table th { text-align: left; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: oklch(0.65 0.015 255); padding: 6px 8px; white-space: nowrap; }
+.dup-table td { padding: 8px; border-top: 1px solid oklch(0.26 0.02 255); white-space: nowrap; }
+.dup-table tbody tr { cursor: pointer; }
+.dup-table tbody tr:hover { background: oklch(0.22 0.02 255); }
+.dup-table tr.dup-picked { background: oklch(0.26 0.06 250); }
+.dup-tag { font-size: 10px; background: oklch(0.32 0.08 160); border-radius: 999px; padding: 1px 7px; margin-left: 6px; }
+.dup-actions { display: flex; gap: 10px; margin-top: 12px; }
+.dup-btn { background: oklch(0.24 0.02 255); border: 1px solid oklch(0.32 0.02 255); color: inherit; border-radius: 10px; padding: 8px 14px; cursor: pointer; font-size: 13px; }
+.dup-btn.primary { background: oklch(0.5 0.16 250); border-color: oklch(0.55 0.16 250); }
+.dup-btn:disabled { opacity: .6; cursor: default; }
+.dup-hidden-title { font-weight: 600; margin-top: 8px; }
+.dup-hidden-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; border: 1px solid oklch(0.26 0.02 255); border-radius: 12px; margin-top: 8px; }

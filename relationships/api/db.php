@@ -1074,6 +1074,37 @@ function relationships_migrate(PDO $pdo): void
     relationships_add_column_if_missing($pdo, 'customers', 'cx_issue_ticket_count_90d', 'INTEGER NOT NULL DEFAULT 0');
     relationships_add_column_if_missing($pdo, 'customers', 'cx_issue_synced_at', 'TEXT');
 
+    // Duplicate-customer management (2026-10-13, api/duplicates-admin.php).
+    // ConnectWise can hold several companies with the same name; each syncs
+    // as its own customers row. A hidden duplicate keeps its row (nothing is
+    // deleted) but is skipped by every sync stage, lists, search and the
+    // Ticket -> OutGrow matcher. The override table is keyed by the
+    // ConnectWise company id so a re-sync can never un-hide it.
+    relationships_add_column_if_missing($pdo, 'customers', 'is_duplicate_hidden', 'INTEGER NOT NULL DEFAULT 0');
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS customer_duplicate_overrides (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL,
+            hidden_connectwise_id TEXT,
+            keeper_customer_id INTEGER NOT NULL,
+            keeper_connectwise_id TEXT,
+            prev_bucket TEXT,
+            prev_is_prospect_only INTEGER NOT NULL DEFAULT 0,
+            prev_is_residential INTEGER NOT NULL DEFAULT 0,
+            created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+    $pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_dup_override_customer ON customer_duplicate_overrides(customer_id)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_dup_override_cw ON customer_duplicate_overrides(hidden_connectwise_id)');
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS customer_duplicate_dismissals (
+            group_key TEXT PRIMARY KEY,
+            dismissed_by TEXT,
+            dismissed_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+
     // One row per Service Ticket seen in the trailing 90-day window (see
     // connectwise-opportunity-sync-core.php) -- kept at ticket granularity,
     // not just a per-customer count, specifically so the dashboard can

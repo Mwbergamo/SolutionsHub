@@ -121,13 +121,13 @@ if ($action === 'list') {
         : relationships_territory_filter_sql($allowedTerritories, 'c');
 
     if ($q === '') {
-        $stmt = $pdo->prepare("SELECT id, name, is_peoplefirst, is_prospect_only, is_residential FROM customers WHERE 1=1 {$territoryFilter['sql']} ORDER BY name ASC LIMIT 200");
+        $stmt = $pdo->prepare("SELECT id, name, is_peoplefirst, is_prospect_only, is_residential FROM customers WHERE COALESCE(is_duplicate_hidden, 0) = 0 {$territoryFilter['sql']} ORDER BY name ASC LIMIT 200");
         $stmt->execute($territoryFilter['params']);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } else {
         $like = '%' . $q . '%';
 
-        $nameStmt = $pdo->prepare("SELECT id, name, is_peoplefirst, is_prospect_only, is_residential FROM customers WHERE name LIKE :q {$territoryFilter['sql']} ORDER BY name ASC LIMIT 50");
+        $nameStmt = $pdo->prepare("SELECT id, name, is_peoplefirst, is_prospect_only, is_residential FROM customers WHERE COALESCE(is_duplicate_hidden, 0) = 0 AND name LIKE :q {$territoryFilter['sql']} ORDER BY name ASC LIMIT 50");
         $nameStmt->execute(array_merge([':q' => $like], $territoryFilter['params']));
         $nameRows = $nameStmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -139,7 +139,7 @@ if ($action === 'list') {
                     ct.first_name AS matched_first_name, ct.last_name AS matched_last_name
              FROM contacts ct
              JOIN customers c ON c.id = ct.customer_id
-             WHERE (ct.first_name LIKE :q1 OR ct.last_name LIKE :q2 OR ct.email LIKE :q3
+             WHERE COALESCE(c.is_duplicate_hidden, 0) = 0 AND (ct.first_name LIKE :q1 OR ct.last_name LIKE :q2 OR ct.email LIKE :q3
                 OR (ct.first_name || ' ' || ct.last_name) LIKE :q4)
                 {$territoryFilterC['sql']}
              ORDER BY c.name ASC LIMIT 50"

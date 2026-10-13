@@ -276,6 +276,10 @@ function relationships_cw_prospect_sync_step(PDO $pdo, int $batchSize = 50): arr
          VALUES (:cw, :name, 0, :status_name, :bucket, :is_prospect, :is_res)'
     );
 
+    // Companies Michael marked as hidden duplicates (Duplicates screen) stay
+    // 'excluded' no matter what their ConnectWise status says.
+    $isHiddenDup = $pdo->prepare('SELECT 1 FROM customer_duplicate_overrides WHERE hidden_connectwise_id = :cw');
+
     $processed = 0;
     $errors = [];
     foreach ($rows as $row) {
@@ -284,6 +288,10 @@ function relationships_cw_prospect_sync_step(PDO $pdo, int $batchSize = 50): arr
         $isVendor = (int) ($row['is_vendor'] ?? 0) === 1;
         try {
             $bucket = relationships_cw_classify_company_bucket($statusName, $isVendor);
+            $isHiddenDup->execute([':cw' => $cwId]);
+            if ($isHiddenDup->fetchColumn() !== false) {
+                $bucket = 'excluded';
+            }
 
             $findCustomer->execute([':cw' => $cwId]);
             $existing = $findCustomer->fetch(PDO::FETCH_ASSOC);

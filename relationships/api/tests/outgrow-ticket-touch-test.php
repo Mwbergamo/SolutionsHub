@@ -18,7 +18,7 @@ check('header date invalid', relationships_outgrow_header_date('Fri 13/45/2026/8
 check('not a header', relationships_outgrow_header_date('Good morning Robin'), null);
 
 $pdo = new PDO('sqlite::memory:');
-$pdo->exec('CREATE TABLE customers (id INTEGER PRIMARY KEY AUTOINCREMENT, connectwise_id TEXT, name TEXT NOT NULL, territory_name TEXT)');
+$pdo->exec('CREATE TABLE customers (id INTEGER PRIMARY KEY AUTOINCREMENT, connectwise_id TEXT, name TEXT NOT NULL, territory_name TEXT, is_duplicate_hidden INTEGER NOT NULL DEFAULT 0)');
 $pdo->exec('CREATE TABLE outgrow_last_touch_history (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_id INTEGER NOT NULL, touch_date TEXT NOT NULL, source TEXT NOT NULL DEFAULT \'manual\', set_by_user_id INTEGER, set_by_name TEXT NOT NULL, cw_push_status TEXT, cw_push_error TEXT, created_at TEXT NOT NULL DEFAULT (datetime(\'now\')))');
 $ins = $pdo->prepare('INSERT INTO customers (connectwise_id, name, territory_name) VALUES (?,?,?)');
 foreach ([
@@ -65,6 +65,10 @@ check('real beats mock', $apply('Dup Co', '2026-10-02')['customer_id'], 4);
 
 // 7. ambiguous / none
 check('ambiguous', $apply('Twin Dental', '2026-10-03')['status'], 'ambiguous');
+// hidden duplicate is ignored: hiding the Inc row makes the LLC row the only match
+$pdo->exec("UPDATE customers SET is_duplicate_hidden = 1 WHERE id = 6");
+check('hidden duplicate ignored', relationships_outgrow_find_customer($pdo, 'Twin Dental')['customer']['id'] ?? null, 5);
+$pdo->exec("UPDATE customers SET is_duplicate_hidden = 0 WHERE id = 6");
 check('none', $apply('Nobody Here LLC', '2026-10-03')['status'], 'no_match');
 check('no company', $apply('  ', '2026-10-03')['status'], 'no_company');
 check('no date', $apply('Acme Widgets', null)['status'], 'no_date');
