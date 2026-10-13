@@ -1803,6 +1803,7 @@
         loadSolutions(id);
         resetAutomateState();
         loadAutomate(id);
+        resetActiveServicesState();
         if (state.pendingFocus) {
           var pf = state.pendingFocus;
           state.pendingFocus = null;
@@ -5647,8 +5648,8 @@
   // ---- Arrangeable dashboard cards (added 2026-10-07 per Michael) ---------
   // "Edit view" lets a rep drag the cards between two columns; the arrangement is saved per rep
   // (api/layout.php) and applied to every customer they open.
-  var LAYOUT_DEFAULT = { left: ['opportunity', 'contact', 'outgrow'], right: ['riskscans', 'documents', 'solutions', 'computers'] };
-  var LAYOUT_CARD_NAMES = { opportunity: 'Opportunity/Risk Report', contact: 'Contacts', outgrow: 'Outgrow Last Touch', riskscans: 'Risk Scans', documents: 'Documents', solutions: 'Solutions', computers: 'Computers (Automate)' };
+  var LAYOUT_DEFAULT = { left: ['opportunity', 'contact', 'outgrow'], right: ['riskscans', 'documents', 'solutions', 'computers', 'activeservices'] };
+  var LAYOUT_CARD_NAMES = { opportunity: 'Opportunity/Risk Report', contact: 'Contacts', outgrow: 'Outgrow Last Touch', riskscans: 'Risk Scans', documents: 'Documents', solutions: 'Solutions', computers: 'Computers (Automate)', activeservices: 'Active Services' };
 
   function normalizeLayout(l) {
     var out = { left: [], right: [] }, seen = {};
@@ -5707,6 +5708,7 @@
     if (id === 'documents') return documentsPanelHtml(detail.customer.id);
     if (id === 'solutions') return solutionsPanelHtml(detail.customer);
     if (id === 'computers') return automatePanelHtml(detail.customer);
+    if (id === 'activeservices') return activeServicesPanelHtml(detail.customer);
     return '';
   }
 
@@ -6033,6 +6035,59 @@
     state.automateError = null;
     state.automateOpen = false;
     state.automateShowAll = false;
+  }
+
+  // ---- Active Services card (links out to clients.codebluetechnology.com) ----
+  // Added 2026-10-13 per Michael: a card (placed under Computers, like the other
+  // per-customer cards) listing the 6 pillars shown on that customer's page in the
+  // separate "Clients" tool (Identity/Email/Devices/Network/Backup/Billing), each
+  // opening that customer's one services page there. No live data, no API call --
+  // the URL is computed purely from the customer's name. Confirmed live 2026-10-13
+  // against all 354 real customer pages on clients.codebluetechnology.com (0
+  // mismatches, no duplicate names): the site's URL for a company is
+  // "<name with every run of non [A-Za-z0-9-] characters collapsed to a single
+  // underscore, trimmed>-services.html". The per-customer page has no anchors for
+  // individual pillars (confirmed by inspecting the live page), so every pillar
+  // link below goes to the same one URL -- matches Michael's own description
+  // ("click on one, it takes you to their client page in Clients").
+  var ACTIVE_SERVICES_PILLARS = ['Identity', 'Email', 'Devices', 'Network', 'Backup', 'Billing'];
+
+  function clientsServicesSlug(name) {
+    var s = String(name || '').replace(/[^A-Za-z0-9-]+/g, '_');
+    s = s.replace(/_+/g, '_');
+    s = s.replace(/^_+|_+$/g, '');
+    return s;
+  }
+
+  function clientsServicesUrl(name) {
+    var slug = clientsServicesSlug(name);
+    if (!slug) return null;
+    return 'https://clients.codebluetechnology.com/' + slug + '-services.html';
+  }
+
+  function resetActiveServicesState() {
+    state.activeServicesOpen = false;
+  }
+
+  function activeServicesPanelHtml(customer) {
+    var open = !!state.activeServicesOpen;
+    var url = clientsServicesUrl(customer.name);
+    var h = '<div class="risk-scans-panel solutions-panel active-services-panel">' +
+      '<div class="risk-scans-panel-header">' +
+        '<button type="button" class="solutions-toggle" data-action="activeservices-toggle" aria-expanded="' + open + '">' +
+          '<span class="solutions-chevron">' + (open ? '▾' : '▸') + '</span>' +
+          '<span class="view-title">Active Services</span>' +
+        '</button>' +
+      '</div>';
+    if (!open) return h + '</div>';
+    if (!url) return h + '<div class="roster-empty">No client name on file to link to.</div></div>';
+    h += '<div class="roster-sub">Opens this customer\'s page in the Clients services tool.</div>';
+    h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;">';
+    ACTIVE_SERVICES_PILLARS.forEach(function (name) {
+      h += '<a class="solution-btn" href="' + escapeHtml(url) + '" target="_blank" rel="noopener">' + escapeHtml(name) + '</a>';
+    });
+    h += '</div>';
+    return h + '</div>';
   }
 
   function loadAutomate(customerId) {
@@ -8580,6 +8635,9 @@
       render();
     } else if (action === 'automate-showall') {
       state.automateShowAll = !state.automateShowAll;
+      render();
+    } else if (action === 'activeservices-toggle') {
+      state.activeServicesOpen = !state.activeServicesOpen;
       render();
     } else if (action === 'solutions-toggle') {
       state.solutionsOpen = !state.solutionsOpen;
