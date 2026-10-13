@@ -1,0 +1,3590 @@
+/* relationships/styles.css — CRC "Relationships" dashboard.
+   Shares SolutionsHub's dark-navy / Space Grotesk + IBM Plex Sans look,
+   but this app is small enough not to need the runtime.js template engine —
+   app.js renders straight into #app-root with plain DOM/innerHTML. */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: oklch(0.15 0.028 255);
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: oklch(0.9 0.006 255);
+}
+
+a { color: inherit; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 40px;
+  border-bottom: 1px solid oklch(0.26 0.03 255);
+  flex-wrap: wrap;
+}
+
+.topbar-left { display: flex; align-items: center; gap: 14px; }
+
+.brand {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  color: white;
+}
+
+.brand-sub {
+  font-size: 12.5px;
+  color: oklch(0.6 0.02 255);
+}
+
+.topbar-nav {
+  display: flex;
+  gap: 4px;
+  background: oklch(0.2 0.02 255);
+  border-radius: 999px;
+  padding: 3px;
+}
+
+.nav-btn {
+  background: transparent;
+  border: none;
+  color: oklch(0.62 0.02 255);
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 7px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.nav-btn.active { background: #2f8fef; color: white; }
+
+.back-to-hub {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: oklch(0.7 0.02 255);
+  text-decoration: none;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid oklch(0.32 0.03 255);
+}
+.back-to-hub:hover { border-color: oklch(0.45 0.03 255); }
+
+.topbar-right { display: flex; align-items: center; gap: 14px; font-size: 13px; color: oklch(0.65 0.02 255); }
+
+.signout-btn {
+  background: transparent;
+  border: 1px solid oklch(0.32 0.03 255);
+  color: oklch(0.75 0.02 255);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.signout-btn:hover { border-color: oklch(0.45 0.03 255); }
+
+.main {
+  padding: 36px 40px 60px;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.search-wrap { position: relative; max-width: 560px; }
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: oklch(0.98 0.006 255);
+  border-radius: 999px;
+  padding: 6px 8px 6px 20px;
+}
+
+.search-box input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 14.5px;
+  color: oklch(0.2 0.03 255);
+  padding: 12px 0;
+}
+
+.search-results {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: oklch(0.98 0.006 255);
+  border-radius: 16px;
+  padding: 8px;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 20;
+}
+
+.search-result-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: oklch(0.2 0.03 255);
+}
+.search-result-row:hover { background: oklch(0.93 0.006 255); }
+.search-result-row.peoplefirst { background: oklch(0.94 0.05 85); }
+.search-result-row.peoplefirst:hover { background: oklch(0.91 0.06 85); }
+.search-result-row.prospect { background: oklch(0.93 0.045 300); }
+.search-result-row.prospect:hover { background: oklch(0.9 0.055 300); }
+.search-result-row.residential { background: oklch(0.93 0.05 40); }
+.search-result-row.residential:hover { background: oklch(0.9 0.06 40); }
+
+.search-empty {
+  padding: 14px;
+  font-size: 13px;
+  color: oklch(0.5 0.02 255);
+}
+
+.empty-state {
+  margin-top: 80px;
+  text-align: center;
+  color: oklch(0.55 0.02 255);
+  font-size: 14px;
+}
+
+/* Primary Relationship Dashboard front page (api/dashboard.php) -- added
+   2026-09-10. Gauges are rectangular tiles directly under the search bar
+   per Michael ("rectangular blocks under the search bar, there will be a
+   dozen gauges very soon") -- auto-fill grid so more tiles added later
+   just flow in without a layout change. */
+
+.gauges-grid {
+  margin-top: 20px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.gauge-tile {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 16px;
+  padding: 16px 18px;
+}
+
+.gauge-tile-clickable {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+
+.gauge-tile-clickable:hover,
+.gauge-tile-clickable.active {
+  border-color: oklch(0.55 0.12 255);
+  background: oklch(0.22 0.02 255);
+}
+
+.risk-scan-cw-status {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.risk-scan-cw-status.ok { color: oklch(0.75 0.13 155); }
+.risk-scan-cw-status.muted { color: oklch(0.55 0.015 255); }
+.risk-scan-cw-status.bad { color: oklch(0.72 0.15 25); }
+.risk-scan-cw-retry {
+  margin-left: 6px;
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: white;
+  background: oklch(0.45 0.1 255);
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.risk-scan-cw-retry:disabled { opacity: .6; cursor: default; }
+
+/* Alert-styled gauge (60+ Days Since Last OutGrow Touch) -- red accent per
+   Michael's mock-up. */
+.gauge-tile-alert { border-color: oklch(0.5 0.16 27); }
+.gauge-tile-alert .gauge-label,
+.gauge-tile-alert .gauge-value { color: oklch(0.72 0.17 27); }
+.gauge-tile-alert:hover,
+.gauge-tile-alert.active { border-color: oklch(0.65 0.2 27); background: oklch(0.21 0.03 27); }
+.gauge-tile-alert .gauge-hint { color: oklch(0.72 0.14 27); }
+.outgrow-none { color: oklch(0.72 0.15 27); font-weight: 600; }
+
+.gauge-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: oklch(0.65 0.1 255);
+}
+
+.gauge-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: oklch(0.55 0.015 255);
+}
+
+.gauge-value {
+  margin-top: 6px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 30px;
+  font-weight: 700;
+  color: white;
+}
+
+.gauge-value-row {
+  margin-top: 10px;
+}
+
+.trend-badge-lg {
+  font-size: 15px;
+  padding: 5px 12px;
+}
+
+/* Weekly rep leaderboards -- added 2026-09-23, per Michael: "Top 3 reps
+   based on closed tasks for the week" / "Top 3 reps based on number of
+   meetings created," gold star on #1, "match size of the current pills."
+   .leaderboard-tile reuses .gauge-tile's own background/border/radius/
+   padding (added via a second class on the element, see leaderboardsHtml()
+   in app.js) so the visual language matches exactly; only the grid
+   wrapper and the internal ranked-list rows are new here. auto-fit (not
+   auto-fill) so the two tiles stretch to fill the row evenly -- "side by
+   side" -- rather than reserving room for a phantom third column, while
+   still stacking to one column on a narrow/mobile width same as
+   .gauges-grid above. */
+
+.leaderboard-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.leaderboard-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.leaderboard-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.leaderboard-star {
+  flex: none;
+  width: 16px;
+  font-size: 14px;
+  line-height: 1;
+  text-align: center;
+  color: #f5c518;
+}
+
+.leaderboard-rank-spacer {
+  flex: none;
+  width: 16px;
+}
+
+.leaderboard-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: oklch(0.9 0.006 255);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.leaderboard-count {
+  flex: none;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: white;
+}
+
+.leaderboard-empty {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: oklch(0.55 0.015 255);
+}
+
+/* Per-customer trend list -- 6-month Agreement Billing trend, Service
+   Tickets YTD + trend, Active Contacts + trend, all from synced local
+   data. Clicking a row opens that customer's account summary (reuses
+   data-action="select-customer", same as a search result). */
+
+.overview-list-wrap {
+  margin-top: 22px;
+}
+
+.overview-list-header,
+.overview-row {
+  display: grid;
+  /* Widened from repeat(3,...) to repeat(4,...) 2026-10-05 to fit the new
+     Opportunity/Risk column (see opportunityBadgeHtml() in app.js). */
+  grid-template-columns: minmax(0, 1.6fr) repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  align-items: center;
+}
+
+.overview-list-header {
+  padding: 0 18px 8px;
+}
+
+/* Sortable column headers -- added 2026-09-10. Buttons don't inherit font
+   styling the way plain text in .overview-list-header used to, so every
+   property that row used to get for free is set directly here instead of
+   relying on inheritance. */
+.overview-col-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: oklch(0.5 0.015 255);
+}
+.overview-col-sort:hover { color: oklch(0.75 0.01 255); }
+.overview-col-sort.active { color: #2f8fef; }
+
+/* Once the list has more than ~25 rows, app.js's adjustOverviewListScroll()
+   sets an inline max-height here (measured from the actual rendered row
+   height, so it stays correct on both the desktop single-line layout and
+   the stacked mobile layout below) -- the list then scrolls inside its own
+   box instead of stretching the whole page. */
+.overview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.overview-row {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 14px;
+  padding: 14px 18px;
+  cursor: pointer;
+}
+.overview-row:hover { border-color: #2f8fef; }
+
+.overview-col-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.overview-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: white;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.overview-col {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: oklch(0.75 0.01 255);
+}
+
+.overview-count {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  color: white;
+}
+
+.overview-dash { color: oklch(0.5 0.015 255); }
+
+/* Customer-list filter toggle buttons (added 2026-09-15 per Michael) --
+   Prospects on/off, and singling out PeopleFirst-only. Sit above the
+   sortable column header, inside the same .overview-list-wrap. Active
+   colors intentionally match .prospect-badge / .peoplefirst-badge so a
+   button's "on" color always means the same thing its badge does
+   elsewhere in this app. */
+.overview-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 18px 14px;
+}
+
+.overview-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.3 0.02 255);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: oklch(0.6 0.015 255);
+  cursor: pointer;
+}
+.overview-filter-btn:hover { border-color: oklch(0.42 0.02 255); color: oklch(0.85 0.01 255); }
+
+.overview-filter-count {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  opacity: .85;
+}
+
+.overview-filter-btn.prospects.active {
+  background: oklch(0.72 0.14 300 / 0.16);
+  border-color: oklch(0.72 0.14 300 / 0.55);
+  color: oklch(0.72 0.14 300);
+}
+
+.overview-filter-btn.peoplefirst.active {
+  background: oklch(0.78 0.15 85 / 0.16);
+  border-color: oklch(0.78 0.15 85 / 0.55);
+  color: oklch(0.78 0.15 85);
+}
+
+/* Per-ConnectWise-status toggle chips above the Prospects list (added
+   2026-09-26, per Michael: "Reps should be able to toggle on/off each
+   status to make their lists"). Same violet hue as .prospect-badge --
+   every one of these chips is filtering within the Prospects bucket. */
+.overview-filter-btn.status.active {
+  background: oklch(0.72 0.14 300 / 0.16);
+  border-color: oklch(0.72 0.14 300 / 0.55);
+  color: oklch(0.72 0.14 300);
+}
+
+/* "Group by Territory" toggle (added 2026-10-05, per Michael's "organized
+   by ... territory" ask) -- blue, matching .overview-col-sort.active, since
+   this changes how the list is laid out rather than filtering it down. */
+.overview-filter-btn.territory-group.active {
+  background: rgba(47,143,239,0.16);
+  border-color: rgba(47,143,239,0.55);
+  color: #2f8fef;
+}
+
+/* Account Opportunity/Risk badge -- added 2026-10-05 per Michael's
+   "routine recommendation agent" request (see dashboard.php's
+   relationships_account_opportunity_score() for how score/label are
+   computed). Same pill shape and oklch hues as .pf-tier/.pf-days
+   (green 155 / amber 80 / red 27) so the color means the same thing
+   everywhere in this app: green is good, amber is neutral/watch, red is
+   trouble. */
+.overview-col-opportunity {
+  flex-wrap: wrap;
+}
+
+.opportunity-badge {
+  display: inline-block;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+  /* "help" rather than this app's usual pointer -- hovering/clicking opens
+     the rank-explainer popover (see opportunityPopoverHtml() in app.js)
+     instead of navigating anywhere, unlike the rest of the row underneath
+     it which still opens the customer on click. */
+  cursor: help;
+}
+.opportunity-badge.opportunity { background: oklch(0.3 0.08 155); color: oklch(0.85 0.13 155); }
+.opportunity-badge.stable { background: oklch(0.26 0.02 255); color: oklch(0.75 0.01 255); }
+.opportunity-badge.risk { background: oklch(0.32 0.1 27); color: oklch(0.85 0.14 27); }
+
+.opportunity-score {
+  font-weight: 600;
+  opacity: .85;
+  margin-left: 2px;
+}
+
+/* Customer-Experience ticket chip -- shown only when
+   cx_issue_ticket_count_90d > 0 (a ticket in the trailing 90 days needed
+   more than one scheduled dispatch; see
+   connectwise-opportunity-sync-core.php). Amber, same hue as the
+   opportunity badge's "stable"/watch tier, since this is a flag worth a
+   look rather than a confirmed emergency. */
+.cx-issue-chip {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: oklch(0.3 0.07 80);
+  color: oklch(0.85 0.12 80);
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* Opportunity/Risk rank explainer popover -- added 2026-10-06 per
+   Michael's "a summary bubble ... tells you why it's ranked that way"
+   ask. position:fixed (coordinates computed in app.js's
+   computeOpportunityPopoverPosition(), from the trigger badge's actual
+   screen position) so it always escapes .overview-list's own
+   overflow:auto scrollbar rather than getting clipped by it -- see the
+   long comment above opportunityPopoverHtml() in app.js for why that
+   matters with a list that can hold thousands of rows. */
+.opportunity-popover {
+  position: fixed;
+  z-index: 200;
+  width: 280px;
+  max-width: calc(100vw - 24px);
+  background: oklch(0.16 0.015 255);
+  border: 1px solid oklch(0.36 0.02 255);
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+  font-size: 12px;
+  line-height: 1.5;
+  color: oklch(0.78 0.01 255);
+}
+
+.opp-pop-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: white;
+  margin-bottom: 2px;
+}
+
+.opp-pop-subtitle {
+  font-size: 11.5px;
+  color: oklch(0.65 0.015 255);
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid oklch(0.3 0.02 255);
+}
+.opp-pop-label-opportunity { color: oklch(0.78 0.13 155); }
+.opp-pop-label-stable { color: oklch(0.75 0.01 255); }
+.opp-pop-label-risk { color: oklch(0.78 0.14 27); }
+
+.opp-pop-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "label contrib" "trend contrib";
+  align-items: center;
+  gap: 1px 10px;
+  padding: 5px 0;
+}
+.opp-pop-row + .opp-pop-row { border-top: 1px solid oklch(0.25 0.015 255); }
+
+.opp-pop-label {
+  grid-area: label;
+  font-size: 11px;
+  font-weight: 600;
+  color: oklch(0.85 0.01 255);
+}
+
+.opp-pop-weight {
+  font-weight: 400;
+  color: oklch(0.55 0.015 255);
+}
+
+.opp-pop-trend {
+  grid-area: trend;
+  font-size: 10.5px;
+  color: oklch(0.6 0.015 255);
+}
+
+.opp-pop-contrib {
+  grid-area: contrib;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.opp-pop-contrib.pos { color: #4ade80; }
+.opp-pop-contrib.neg { color: #f87171; }
+.opp-pop-contrib.neutral { color: oklch(0.6 0.015 255); }
+
+.opp-pop-footer {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid oklch(0.3 0.02 255);
+  font-size: 10.5px;
+  color: oklch(0.55 0.015 255);
+  line-height: 1.5;
+}
+
+/* Permanent Opportunity/Risk report on a customer's own profile -- added
+   2026-10-07, per Michael's "show in the customer's profile" follow-up.
+   Reuses .risk-scans-panel/.risk-scans-panel-header wholesale for the
+   outer card and header row (same as Documents/Risk Scans), and the
+   popover's own .opp-pop-row/.opp-pop-label/.opp-pop-trend/.opp-pop-contrib
+   classes for each breakdown line (see opportunityBreakdownRowsHtml() in
+   app.js) -- only the row width changes, since this card is far wider than
+   the 280px hover popover. The badge in the header is the same markup as
+   the Overview list's but isn't a hover/click trigger here (the full
+   breakdown is already shown below it), so its cursor is reset to the
+   panel's ordinary default rather than the badge's usual "help" cursor. */
+.opportunity-report-panel .risk-scans-panel-header { margin-bottom: 14px; }
+.opportunity-report-panel .opportunity-badge { cursor: default; }
+.opportunity-report-rows .opp-pop-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  max-width: 560px;
+  padding: 9px 0;
+}
+.opportunity-report-rows .opp-pop-label { font-size: 12.5px; }
+.opportunity-report-rows .opp-pop-trend { font-size: 11.5px; }
+.opportunity-report-rows .opp-pop-contrib { font-size: 13px; }
+.opportunity-report-rows .opp-pop-footer { max-width: 560px; }
+
+/* Territory group headers (added 2026-10-05) -- spans the full grid width
+   inside .overview-list, which is a flex column, so each header is just
+   its own full-width block between rows rather than a grid cell. */
+.overview-group-header {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: oklch(0.6 0.015 255);
+  padding: 14px 6px 2px;
+}
+.overview-group-header:first-child { padding-top: 2px; }
+
+.overview-group-count {
+  font-weight: 600;
+  opacity: .7;
+  margin-left: 6px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.overview-list-empty {
+  padding: 18px;
+  text-align: center;
+  font-size: 13px;
+  color: oklch(0.55 0.015 255);
+}
+
+
+@media (max-width: 700px) {
+  .overview-list-header { display: none; }
+  .overview-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
+
+/* "via <contact name>" hint on a search result matched through a synced
+   ConnectWise Contact rather than the company name itself (added
+   2026-09-10 -- see customers.php's list action). */
+
+.search-result-via {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: oklch(0.5 0.02 255);
+}
+.search-result-row.peoplefirst .search-result-via,
+.search-result-row.prospect .search-result-via,
+.search-result-row.residential .search-result-via { color: oklch(0.35 0.02 255); }
+
+.customer-header {
+  margin-top: 8px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.customer-header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.customer-name {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 27px;
+  font-weight: 700;
+  color: white;
+}
+
+/* PeopleFirst top-tier indicator (search results + customer header) */
+
+.peoplefirst-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: oklch(0.78 0.15 85);
+  color: oklch(0.22 0.05 85);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.peoplefirst-note {
+  margin-top: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: oklch(0.78 0.15 85);
+  background: oklch(0.78 0.15 85 / 0.12);
+  border: 1px solid oklch(0.78 0.15 85 / 0.35);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+/* Prospect indicator (search results + customer header) -- a real
+   ConnectWise Company with no active agreement yet (see
+   connectwise-prospect-sync-core.php). Deliberately a different hue from
+   PeopleFirst gold and the hosted-elsewhere teal pillar tile, so all three
+   distinct customer states stay visually distinguishable at a glance. */
+
+.prospect-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: oklch(0.72 0.14 300);
+  color: oklch(0.2 0.05 300);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.prospect-note {
+  margin-top: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: oklch(0.72 0.14 300);
+  background: oklch(0.72 0.14 300 / 0.12);
+  border: 1px solid oklch(0.72 0.14 300 / 0.35);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+/* Residential indicator (search results + customer header) -- a
+   ConnectWise Company whose live status is literally "Residential" (see
+   connectwise-prospect-sync-core.php's
+   relationships_cw_classify_company_bucket()). Added 2026-09-26, per
+   Michael's "add another block for Residential customers" request -- a
+   fresh, unused hue so it stays visually distinct from PeopleFirst gold,
+   Prospect violet, and the hosted-elsewhere teal pillar tile. */
+
+.residential-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: oklch(0.75 0.13 40);
+  color: oklch(0.22 0.05 40);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.residential-note {
+  margin-top: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: oklch(0.75 0.13 40);
+  background: oklch(0.75 0.13 40 / 0.12);
+  border: 1px solid oklch(0.75 0.13 40 / 0.35);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+.peoplefirst-fields {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.peoplefirst-field {
+  flex: 1 1 220px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.peoplefirst-field-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  color: oklch(0.5 0.015 255);
+  text-transform: uppercase;
+}
+
+.peoplefirst-field-value {
+  margin-top: 3px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: white;
+}
+
+.peoplefirst-field-by {
+  margin-top: 1px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: oklch(0.6 0.015 255);
+}
+
+.peoplefirst-field-empty { color: oklch(0.5 0.015 255); font-weight: 500; }
+
+.peoplefirst-log-btn {
+  flex: 0 0 auto;
+  background: oklch(0.78 0.15 85 / 0.16);
+  border: 1px solid oklch(0.78 0.15 85 / 0.4);
+  color: oklch(0.78 0.15 85);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.peoplefirst-log-btn:hover { background: oklch(0.78 0.15 85 / 0.26); }
+.peoplefirst-log-btn:disabled { opacity: .6; cursor: default; }
+
+/* Risk scans (upload/download/review) -- added 2026-09-23 per Michael.
+   Shown on every customer's dashboard, right under the activity panel. */
+
+.risk-scans-panel {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 18px;
+  padding: 18px;
+  margin-bottom: 18px;
+}
+
+.risk-scans-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.risk-scan-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.risk-scan-file-label {
+  font-size: 12px;
+  color: oklch(0.7 0.01 255);
+  background: oklch(0.16 0.012 255);
+  border: 1px solid oklch(0.3 0.02 255);
+  border-radius: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.risk-scan-file-label:hover { border-color: #8fc3ff; color: #8fc3ff; }
+
+.risk-scan-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.risk-scan-upload-btn {
+  background: oklch(0.78 0.15 85 / 0.16);
+  border: 1px solid oklch(0.78 0.15 85 / 0.4);
+  color: oklch(0.78 0.15 85);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.risk-scan-upload-btn:hover { background: oklch(0.78 0.15 85 / 0.26); }
+.risk-scan-upload-btn:disabled { opacity: .5; cursor: default; }
+
+.risk-scan-list {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.risk-scan-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 4px;
+  border-top: 1px solid oklch(0.25 0.02 255);
+  flex-wrap: wrap;
+}
+.risk-scan-item:first-child { border-top: none; }
+.risk-scan-item.reviewed { opacity: .65; }
+
+.risk-scan-item-name { font-size: 12.5px; font-weight: 600; color: oklch(0.82 0.006 255); }
+
+.risk-scan-item-meta {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: oklch(0.55 0.015 255);
+}
+
+.risk-scan-item-reviewed-meta {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: oklch(0.55 0.18 145);
+}
+
+.risk-scan-item-assigned-meta {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: oklch(0.78 0.15 85);
+}
+
+.risk-scan-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.risk-scan-download-btn {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8fc3ff;
+  text-decoration: none;
+  border: 1px solid oklch(0.4 0.08 255 / 0.5);
+  border-radius: 7px;
+  padding: 6px 10px;
+}
+.risk-scan-download-btn:hover { background: oklch(0.4 0.08 255 / 0.14); }
+
+.risk-scan-review-btn {
+  background: transparent;
+  border: 1px solid oklch(0.3 0.02 255);
+  color: oklch(0.7 0.01 255);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.risk-scan-review-btn:hover { border-color: #8fc3ff; color: #8fc3ff; }
+.risk-scan-review-btn:disabled { opacity: .5; cursor: default; }
+
+.risk-scan-assign-select {
+  background: oklch(0.98 0.006 255);
+  border: none;
+  border-radius: 7px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: oklch(0.2 0.03 255);
+  max-width: 160px;
+}
+.risk-scan-assign-select:disabled { opacity: .5; cursor: default; }
+
+/* Customer Documents -- added 2026-10-02 per Michael. Reuses the
+   risk-scans-panel/risk-scan-* styles above; only the extras live here. */
+.document-hint {
+  margin-top: 8px;
+  font-size: 10.5px;
+  color: oklch(0.55 0.015 255);
+}
+.document-category-select { max-width: 170px; }
+.document-category-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: #8fc3ff;
+  border: 1px solid oklch(0.4 0.08 255 / 0.5);
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
+/* PeopleFirst summary line atop the Cross-Sell Report */
+
+.peoplefirst-summary {
+  margin-bottom: 18px;
+  background: oklch(0.78 0.15 85 / 0.1);
+  border: 1px solid oklch(0.78 0.15 85 / 0.3);
+  border-radius: 14px;
+  padding: 14px 18px;
+}
+.peoplefirst-summary.loading {
+  font-size: 13px;
+  font-weight: 600;
+  color: oklch(0.6 0.015 255);
+}
+
+.peoplefirst-summary-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: oklch(0.78 0.15 85);
+  margin-bottom: 10px;
+}
+
+.peoplefirst-summary-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.peoplefirst-summary-count {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  background: rgba(47,143,239,0.16);
+  border: none;
+  color: #8fc3ff;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.peoplefirst-summary-count.zero { background: transparent; color: oklch(0.5 0.015 255); cursor: default; }
+
+.peoplefirst-summary-number { font-size: 16px; font-weight: 700; }
+
+.customer-header-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.print-summary-btn {
+  background: #2f8fef;
+  border: none;
+  color: white;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 8px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.print-summary-btn:hover { background: #4a9cf2; }
+
+.change-customer-btn {
+  background: transparent;
+  border: none;
+  color: #6cb3ff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 0;
+}
+
+/* Customer Service Summary print view -- added 2026-09-14, per Michael.
+   .print-summary-panel/-toolbar match the .drilldown card look already
+   used elsewhere on this dashboard; #printableSummary is what actually
+   gets shown when the browser prints (see @media print below), matching
+   the same visibility-toggle technique used by Register's receipt print
+   (SolutionsHub/register/styles.css). */
+.print-summary-panel {
+  margin-top: 26px;
+  background: oklch(0.17 0.016 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 20px;
+  padding: 26px 28px 30px;
+}
+
+.print-summary-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.print-summary-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.print-doc-header {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid oklch(0.3 0.02 255);
+}
+.print-doc-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: white;
+}
+.print-doc-customer { font-size: 16px; font-weight: 600; margin-top: 4px; }
+.print-doc-date { font-size: 12.5px; color: oklch(0.6 0.02 255); margin-top: 4px; }
+
+.print-section { margin-top: 22px; }
+.print-section-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: white;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid oklch(0.28 0.02 255);
+}
+.print-subhead {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: oklch(0.6 0.02 255);
+  margin: 14px 0 8px;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+.print-ticket-count { font-size: 20px; font-weight: 700; color: white; }
+.print-empty { font-size: 13px; color: oklch(0.55 0.015 255); padding: 6px 0; }
+
+.print-pillar-block { margin-top: 14px; }
+.print-pillar-block:first-child { margin-top: 0; }
+.print-pillar-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #8fc3ff;
+  margin-bottom: 4px;
+}
+
+.print-missing-service { margin-top: 12px; }
+.print-missing-service:first-child { margin-top: 0; }
+.print-missing-service-name { font-size: 13.5px; font-weight: 700; color: white; }
+.print-missing-service-blurb { font-size: 12.5px; color: oklch(0.72 0.006 255); margin-top: 3px; line-height: 1.5; }
+
+.print-table { margin-top: 8px; width: 100%; }
+
+/* Only #printableSummary (and its children) survive to the printed page --
+   everything else on the dashboard (topbar, search, pillar grid, the
+   toolbar's own Print/Close buttons) is hidden. Forces black-on-white
+   since the dashboard's dark-navy theme isn't meant for paper. */
+@media print {
+  body * { visibility: hidden; }
+  #printableSummary, #printableSummary * { visibility: visible; }
+  #printableSummary {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background: white;
+    padding: 0;
+  }
+  #printableSummary * { color: black !important; }
+  #printableSummary .print-doc-header,
+  #printableSummary .print-section-title { border-color: #999 !important; }
+  #printableSummary table, #printableSummary th, #printableSummary td { border-color: #ccc !important; }
+  .no-print { display: none !important; }
+}
+
+.dashboard-grid {
+  margin-top: 26px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 26px;
+  align-items: start;
+}
+
+@media (max-width: 860px) {
+  .dashboard-grid { grid-template-columns: 1fr; }
+}
+
+.pillar-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 16px;
+}
+
+.pillar-tile {
+  border-radius: 18px;
+  padding: 20px;
+  cursor: pointer;
+  min-height: 132px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: transform .12s ease;
+  border: 1px solid transparent;
+}
+.pillar-tile:hover { transform: translateY(-2px); }
+
+.pillar-tile.active {
+  background: linear-gradient(155deg, oklch(0.32 0.11 255), oklch(0.24 0.09 255));
+  border-color: #2f8fef;
+  box-shadow: 0 0 0 1px rgba(47,143,239,0.25), 0 10px 28px rgba(47,143,239,0.18);
+}
+
+.pillar-tile.inactive {
+  background: oklch(0.19 0.014 255);
+  border-color: oklch(0.26 0.02 255);
+  opacity: .62;
+}
+.pillar-tile.inactive:hover { opacity: .85; }
+
+/* Voice hosted directly by the manufacturer (e.g. Zultys Hosted) -- an
+   informational, not-actionable state distinct from both "active" (blue)
+   and "not in use" (dim gray), so it reads at a glance as "don't market
+   phones here" rather than as a cross-sell gap. */
+.pillar-tile.hosted-elsewhere {
+  background: oklch(0.24 0.05 200);
+  border-color: oklch(0.55 0.09 200);
+  box-shadow: 0 0 0 1px rgba(45,180,180,0.2);
+}
+.pillar-tile.hosted-elsewhere:hover { transform: none; }
+
+.pillar-tile-name {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 16.5px;
+  font-weight: 700;
+}
+.pillar-tile.active .pillar-tile-name { color: white; }
+.pillar-tile.inactive .pillar-tile-name { color: oklch(0.62 0.015 255); }
+.pillar-tile.hosted-elsewhere .pillar-tile-name { color: white; }
+
+.pillar-tile-status {
+  margin-top: 8px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+}
+.pillar-tile.active .pillar-tile-status { color: #8fc3ff; }
+.pillar-tile.inactive .pillar-tile-status { color: oklch(0.5 0.015 255); }
+.pillar-tile.hosted-elsewhere .pillar-tile-status { color: oklch(0.75 0.1 200); }
+
+.pillar-tile-count {
+  font-size: 12.5px;
+  color: oklch(0.75 0.01 255);
+}
+.pillar-tile.inactive .pillar-tile-count { color: oklch(0.5 0.015 255); }
+.pillar-tile.hosted-elsewhere .pillar-tile-count { color: oklch(0.8 0.04 200); }
+
+.hosted-elsewhere-note {
+  margin: -4px 0 16px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: oklch(0.75 0.1 200);
+  background: oklch(0.55 0.09 200 / 0.12);
+  border: 1px solid oklch(0.55 0.09 200 / 0.35);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+/* Contact card (address + primary contact, tap-to-call/email) -- added
+   2026-09-23, per Michael: "pull in address, primary contact name, email
+   and phone number from ConnectWise on each Customer in Relationships and
+   show that data cleanly above Outgrow Last Touch." Same dark-card
+   language as .outgrow-card just below (this sits directly above it),
+   deliberately quieter -- no label row/header, since this is reference
+   info to glance at rather than something to interact with, apart from
+   the two tap targets. */
+
+.contact-card {
+  margin-top: 18px;
+  background: oklch(0.17 0.016 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 16px;
+  padding: 16px 20px;
+}
+
+.contact-card-address {
+  font-size: 13px;
+  line-height: 1.5;
+  color: oklch(0.68 0.015 255);
+}
+
+.contact-card-person {
+  margin-top: 10px;
+}
+.contact-card-address + .contact-card-person {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid oklch(0.24 0.016 255);
+}
+
+.contact-card-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: white;
+}
+
+.contact-card-empty {
+  font-size: 13px;
+  color: oklch(0.55 0.015 255);
+}
+
+/* Contact dropdown -- added 2026-09-23, per Michael: "show a drop down
+   list where the new contact info is... you should see the contacts name
+   info, email info and phone info in the list." Same light-panel-on-dark
+   popover language as .search-results/.search-result-row in the topbar
+   search box (shadow, radius, hover), rather than a native <select>,
+   which would look like unstyled browser chrome against this dark card. */
+
+.contact-card-dropdown {
+  position: relative;
+}
+
+.contact-card-dropdown-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: oklch(0.22 0.018 255);
+  border: 1px solid oklch(0.3 0.02 255);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: white;
+  cursor: pointer;
+  text-align: left;
+}
+.contact-card-dropdown-toggle:hover { border-color: oklch(0.4 0.02 255); }
+
+.contact-card-dropdown-chevron { flex: none; opacity: .7; transition: transform .15s; }
+.contact-card-dropdown-toggle[aria-expanded="true"] .contact-card-dropdown-chevron { transform: rotate(180deg); }
+
+.contact-card-dropdown-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: oklch(0.98 0.006 255);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.45);
+  max-height: 260px;
+  overflow-y: auto;
+  z-index: 15;
+}
+
+.contact-card-dropdown-row {
+  padding: 9px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.contact-card-dropdown-row:hover { background: oklch(0.93 0.006 255); }
+.contact-card-dropdown-row.selected { background: oklch(0.88 0.05 220); }
+
+.contact-card-dropdown-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: oklch(0.2 0.03 255);
+}
+
+.contact-card-dropdown-meta {
+  margin-top: 1px;
+  font-size: 12px;
+  color: oklch(0.45 0.02 255);
+}
+
+.contact-card-links {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.contact-card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #8fc3ff;
+  text-decoration: none;
+}
+.contact-card-link:hover { color: #b7d8ff; text-decoration: underline; }
+.contact-card-link svg { flex: none; opacity: .85; }
+
+.contact-card-confirm {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid oklch(0.24 0.016 255);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.contact-card-confirm-label {
+  font-size: 12.5px;
+  color: oklch(0.7 0.02 255);
+}
+
+.contact-card-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.contact-card-error {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: #f87171;
+}
+
+/* OutGrow Last Touch -- added 2026-09-15, per Michael */
+
+.outgrow-card {
+  margin-top: 18px;
+  background: oklch(0.17 0.016 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 16px;
+  padding: 16px 20px;
+}
+
+.outgrow-card-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.outgrow-card-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: oklch(0.55 0.015 255);
+}
+
+.outgrow-history-btn {
+  background: transparent;
+  border: none;
+  color: oklch(0.6 0.02 255);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  border-radius: 999px;
+}
+.outgrow-history-btn:hover { color: #8fc3ff; background: oklch(0.24 0.02 255); }
+
+.outgrow-card-value {
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 700;
+  color: white;
+}
+
+.outgrow-card-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: oklch(0.6 0.015 255);
+}
+
+.outgrow-update-btn {
+  margin-top: 10px;
+  background: transparent;
+  border: 1px solid oklch(0.34 0.02 255);
+  color: oklch(0.7 0.02 255);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.outgrow-update-btn:hover { border-color: #2f8fef; color: #8fc3ff; }
+
+.outgrow-edit-row {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.outgrow-date-input {
+  background: oklch(0.98 0.006 255);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: oklch(0.2 0.03 255);
+}
+
+.outgrow-error {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: #f87171;
+}
+
+.outgrow-history {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid oklch(0.27 0.02 255);
+}
+
+.outgrow-history-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: oklch(0.55 0.015 255);
+  margin-bottom: 8px;
+}
+
+.outgrow-history-list { display: flex; flex-direction: column; gap: 10px; }
+
+.outgrow-history-row {
+  font-size: 12.5px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid oklch(0.24 0.016 255);
+}
+.outgrow-history-row:last-child { border-bottom: none; padding-bottom: 0; }
+
+.outgrow-history-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.outgrow-history-date { font-weight: 700; color: white; }
+.outgrow-history-who { color: oklch(0.7 0.015 255); }
+
+.outgrow-history-when {
+  margin-top: 2px;
+  font-size: 11px;
+  color: oklch(0.5 0.015 255);
+}
+
+.outgrow-history-warn {
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #f87171;
+}
+
+/* Live ConnectWise ticket/billing activity */
+
+.activity-panel {
+  margin-top: 20px;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 700px) {
+  .activity-panel { grid-template-columns: 1fr; }
+}
+
+.activity-card {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 16px;
+  padding: 16px 18px;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.activity-card.loading-card,
+.activity-card.billing-card,
+.activity-card.error-card { cursor: default; }
+.activity-card:not(.billing-card):not(.loading-card):not(.error-card):hover { border-color: #2f8fef; }
+
+.activity-card.loading-card,
+.activity-card.error-card {
+  grid-column: 1 / -1;
+  font-size: 12.5px;
+}
+.activity-card.error-card {
+  color: #f87171;
+  border-color: rgba(239,68,68,0.35);
+  background: rgba(239,68,68,0.08);
+}
+
+.activity-card-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: oklch(0.55 0.015 255);
+}
+
+.activity-card-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.activity-card-value {
+  margin-top: 6px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 30px;
+  font-weight: 700;
+  color: white;
+}
+
+.activity-card-sub {
+  margin-top: 6px;
+  font-size: 11px;
+  color: oklch(0.5 0.015 255);
+  line-height: 1.5;
+}
+
+.trend-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.trend-badge.up { background: rgba(52,199,89,0.18); color: #4ade80; }
+.trend-badge.down { background: rgba(239,68,68,0.18); color: #f87171; }
+.trend-badge.flat { background: oklch(0.28 0.015 255); color: oklch(0.6 0.015 255); }
+
+.billing-chart {
+  margin-top: 12px;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  height: 96px;
+}
+
+.billing-bar-col {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+}
+
+.billing-bar-value {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: oklch(0.6 0.015 255);
+  white-space: nowrap;
+}
+
+.billing-bar-track {
+  margin-top: 3px;
+  width: 100%;
+  max-width: 34px;
+  height: 56px;
+  display: flex;
+  align-items: flex-end;
+  background: oklch(0.24 0.016 255);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.billing-bar-fill {
+  width: 100%;
+  background: linear-gradient(180deg, #2f8fef, #1f6fc0);
+  border-radius: 6px 6px 0 0;
+}
+
+.billing-bar-col:hover .billing-bar-fill { background: linear-gradient(180deg, #56a5ff, #2f8fef); }
+
+.billing-bar-label {
+  margin-top: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  color: oklch(0.55 0.015 255);
+}
+
+/* Activity drill-down (tickets / invoices / invoice detail) -- same shell
+   styling as the pillar .drilldown so it reads as part of the same UI
+   pattern. */
+
+.activity-drilldown {
+  margin-top: 20px;
+  background: oklch(0.17 0.016 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 20px;
+  padding: 22px 24px 26px;
+}
+
+.activity-error {
+  margin-top: 16px;
+  font-size: 13px;
+  color: #f87171;
+}
+
+.activity-table-wrap { margin-top: 16px; overflow-x: auto; border-radius: 14px; border: 1px solid oklch(0.26 0.02 255); }
+
+.activity-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+
+.activity-table th {
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  color: oklch(0.55 0.015 255);
+  padding: 12px 14px;
+  background: oklch(0.19 0.014 255);
+  border-bottom: 1px solid oklch(0.28 0.02 255);
+  white-space: nowrap;
+}
+
+.activity-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid oklch(0.24 0.016 255);
+  color: oklch(0.78 0.006 255);
+}
+.activity-table tr:last-child td { border-bottom: none; }
+
+.invoice-groups { margin-top: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+.invoice-group-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: oklch(0.55 0.015 255);
+  padding: 0 4px 8px;
+  border-bottom: 1px solid oklch(0.28 0.02 255);
+}
+
+.invoice-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 14px;
+  margin-top: 6px;
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.invoice-row:hover { border-color: #2f8fef; }
+
+.invoice-row-number { font-size: 13px; font-weight: 700; color: white; }
+.invoice-row-agreement { margin-top: 2px; font-size: 11.5px; color: oklch(0.55 0.015 255); }
+.invoice-row-date { font-size: 12px; color: oklch(0.6 0.015 255); white-space: nowrap; }
+.invoice-row-total { font-size: 13.5px; font-weight: 700; color: #8fc3ff; white-space: nowrap; }
+
+.invoice-detail-meta {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 14px;
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 14px;
+  padding: 16px 18px;
+}
+.invoice-detail-meta > div { display: flex; flex-direction: column; gap: 3px; }
+.invoice-detail-meta .meta-label { font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: oklch(0.5 0.015 255); }
+.invoice-detail-meta > div > span:last-child { font-size: 13.5px; font-weight: 600; color: white; }
+
+.block-time-note {
+  margin-top: 14px;
+  font-size: 13px;
+  color: oklch(0.78 0.15 85);
+  background: oklch(0.78 0.15 85 / 0.12);
+  border: 1px solid oklch(0.78 0.15 85 / 0.35);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+.invoice-line-items { margin-top: 16px; }
+
+.raw-fields-note {
+  margin-top: 12px;
+  font-size: 11px;
+  color: oklch(0.5 0.015 255);
+  line-height: 1.5;
+}
+
+.roster-panel {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 18px;
+  padding: 18px 18px 8px;
+}
+
+.roster-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  color: white;
+}
+
+.roster-sub {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: oklch(0.55 0.015 255);
+  line-height: 1.5;
+}
+
+.roster-list { margin-top: 14px; }
+
+.roster-item {
+  padding: 10px 4px;
+  border-top: 1px solid oklch(0.25 0.02 255);
+  cursor: pointer;
+}
+.roster-item:hover .roster-item-name { color: #8fc3ff; }
+
+.roster-item-pillar {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  color: oklch(0.5 0.015 255);
+  text-transform: uppercase;
+}
+
+.roster-item-name {
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: oklch(0.82 0.006 255);
+}
+
+.roster-empty {
+  padding: 18px 4px 10px;
+  font-size: 12.5px;
+  color: oklch(0.5 0.015 255);
+  line-height: 1.5;
+}
+
+/* Pillar drill-down */
+
+.drilldown {
+  margin-top: 26px;
+  background: oklch(0.17 0.016 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 20px;
+  padding: 26px 28px 30px;
+}
+
+.drilldown-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.drilldown-back {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: oklch(0.24 0.02 255);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border: none;
+  color: white;
+  flex: 0 0 auto;
+}
+
+.drilldown-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  color: white;
+}
+
+.service-block {
+  margin-top: 20px;
+  padding: 16px 18px;
+  border-radius: 14px;
+}
+
+.service-block.active { background: oklch(0.22 0.026 255); }
+.service-block.inactive { background: oklch(0.155 0.012 255); border: 1px dashed oklch(0.3 0.02 255); }
+
+.service-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.service-name {
+  font-size: 14.5px;
+  font-weight: 700;
+}
+.service-block.active .service-name { color: white; }
+.service-block.inactive .service-name { color: oklch(0.55 0.015 255); }
+
+.service-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+.service-badge.active { background: rgba(47,143,239,0.22); color: #8fc3ff; }
+.service-badge.inactive { background: oklch(0.24 0.02 255); color: oklch(0.55 0.015 255); }
+
+.product-list { margin-top: 10px; }
+
+.product-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
+  color: oklch(0.78 0.006 255);
+  border-top: 1px solid oklch(0.27 0.02 255);
+}
+.product-row:first-child { border-top: none; }
+
+.product-qty { color: oklch(0.55 0.015 255); white-space: nowrap; }
+
+.service-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.svc-action-btn {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.svc-action-btn.primary { background: #2f8fef; color: white; border: none; }
+.svc-action-btn.secondary { background: transparent; color: oklch(0.7 0.02 255); border: 1px solid oklch(0.34 0.02 255); }
+.svc-action-btn.danger { background: transparent; color: #f87171; border: 1px solid oklch(0.35 0.1 30); }
+.svc-action-btn.danger:hover { background: oklch(0.24 0.05 30); }
+
+.loading, .error-banner {
+  margin-top: 40px;
+  text-align: center;
+  font-size: 13.5px;
+}
+.loading { color: oklch(0.55 0.02 255); }
+.error-banner {
+  color: oklch(0.62 0.16 30);
+  text-align: left;
+}
+
+/* Cross-sell checklist (inline under a missing service in the drill-down) */
+
+.checklist-toggle-row { margin-top: 12px; }
+
+.checklist-toggle-btn {
+  background: transparent;
+  border: none;
+  color: #8fc3ff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+
+.checklist-panel {
+  margin-top: 12px;
+  padding-top: 4px;
+  border-top: 1px solid oklch(0.3 0.02 255);
+}
+
+.checklist-loading, .checklist-error { font-size: 12.5px; color: oklch(0.55 0.015 255); padding: 8px 0; }
+
+.checklist-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 4px;
+  cursor: pointer;
+}
+
+.checklist-step input[type="checkbox"] {
+  margin-top: 3px;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  accent-color: #2f8fef;
+  cursor: pointer;
+}
+
+.checklist-step-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: oklch(0.78 0.006 255);
+}
+.checklist-step.done .checklist-step-label { color: oklch(0.6 0.015 255); text-decoration: line-through; }
+
+.checklist-step-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #8fc3ff;
+}
+
+/* Cross-sell outreach: contact selection, step notes, Recycle/Kill --
+   added 2026-09-23, per Michael's request to script each cross-sell step
+   with a contact-driven email/call action and rep-entered notes. Reuses
+   .contact-card-dropdown* wholesale (those rules don't depend on
+   .contact-card as a parent) for .checklist-contact-dropdown, so this
+   only adds what's actually new. */
+
+.checklist-killed-note {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: oklch(0.24 0.05 30);
+  border: 1px solid oklch(0.32 0.08 30);
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: oklch(0.85 0.03 30);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.checklist-inline-link {
+  background: transparent;
+  border: none;
+  color: #8fc3ff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+}
+.checklist-inline-link:disabled { opacity: .6; cursor: default; }
+
+.checklist-contact-row { margin-top: 14px; }
+
+.checklist-contact-hint {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: oklch(0.55 0.015 255);
+}
+
+.checklist-notes-toggle-row { margin-top: 12px; }
+
+.checklist-notes-toggle {
+  background: transparent;
+  border: none;
+  color: oklch(0.65 0.02 255);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+.checklist-notes-toggle:hover { color: #8fc3ff; }
+
+.checklist-notes-layout {
+  margin-top: 10px;
+}
+.checklist-notes-layout.notes-open {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 700px) {
+  .checklist-notes-layout.notes-open { grid-template-columns: 1fr; }
+}
+
+.checklist-notes-panel {
+  background: oklch(0.16 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.checklist-notes-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.checklist-notes-empty {
+  font-size: 12px;
+  line-height: 1.5;
+  color: oklch(0.55 0.015 255);
+}
+
+.checklist-note-item {
+  padding-bottom: 10px;
+  border-bottom: 1px solid oklch(0.24 0.016 255);
+}
+.checklist-note-item:last-child { border-bottom: none; padding-bottom: 0; }
+
+.checklist-note-item-step {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  color: #8fc3ff;
+}
+
+.checklist-note-item-text {
+  margin-top: 3px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: oklch(0.85 0.006 255);
+  white-space: pre-wrap;
+}
+
+.checklist-note-item-meta {
+  margin-top: 4px;
+  font-size: 11px;
+  color: oklch(0.55 0.015 255);
+}
+
+.checklist-steps-col { min-width: 0; }
+
+.checklist-step-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+.checklist-step-row .checklist-step { flex: 1; min-width: 0; }
+
+.checklist-note-add-btn {
+  flex: none;
+  margin-top: 7px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid oklch(0.34 0.02 255);
+  color: oklch(0.65 0.02 255);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.checklist-note-add-btn:hover { border-color: #2f8fef; color: #8fc3ff; }
+
+.checklist-step-icon-btn {
+  flex: none;
+  margin-top: 7px;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid oklch(0.34 0.02 255);
+  color: oklch(0.65 0.02 255);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+}
+.checklist-step-icon-btn:hover { border-color: #2f8fef; color: #8fc3ff; }
+/* Waiting on a contact pick -- set when a rep clicks the icon before one
+   is selected, cleared the instant they choose one (or back out). */
+.checklist-step-icon-btn.pending {
+  border-color: #2f8fef;
+  color: #2f8fef;
+  background: oklch(0.26 0.05 255);
+  animation: checklist-step-icon-pulse 1.4s ease-in-out infinite;
+}
+@keyframes checklist-step-icon-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(47,143,239,.45); }
+  50% { box-shadow: 0 0 0 4px rgba(47,143,239,0); }
+}
+
+.checklist-note-form {
+  margin: 0 0 10px 29px;
+}
+
+.checklist-note-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: oklch(0.14 0.012 255);
+  border: 1px solid oklch(0.3 0.02 255);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 12.5px;
+  color: white;
+  resize: vertical;
+}
+.checklist-note-textarea:focus { outline: none; border-color: #2f8fef; }
+
+.checklist-note-form-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.checklist-closeout-row {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid oklch(0.3 0.02 255);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.checklist-closeout-label {
+  font-size: 12.5px;
+  color: oklch(0.7 0.02 255);
+}
+
+.checklist-closeout-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Report / queue views */
+
+.view-header { margin-bottom: 22px; }
+
+.view-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: white;
+}
+
+.view-sub {
+  margin-top: 6px;
+  font-size: 13px;
+  color: oklch(0.58 0.015 255);
+  line-height: 1.5;
+}
+
+.back-link {
+  background: transparent;
+  border: none;
+  color: #8fc3ff;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0 0 10px;
+  display: block;
+}
+
+.report-table-wrap { overflow-x: auto; border-radius: 14px; border: 1px solid oklch(0.26 0.02 255); }
+
+.report-table { width: 100%; border-collapse: collapse; font-size: 12.5px; white-space: nowrap; }
+
+.report-table th {
+  text-align: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  color: oklch(0.55 0.015 255);
+  padding: 12px 10px;
+  background: oklch(0.19 0.014 255);
+  border-bottom: 1px solid oklch(0.28 0.02 255);
+}
+.report-table th.report-service-col { text-align: left; }
+
+.report-table td {
+  text-align: center;
+  padding: 10px;
+  border-bottom: 1px solid oklch(0.24 0.016 255);
+  color: oklch(0.75 0.01 255);
+}
+
+.report-service-col { text-align: left; }
+.report-pillar-name { font-size: 10.5px; font-weight: 700; letter-spacing: .03em; color: oklch(0.5 0.015 255); text-transform: uppercase; }
+.report-service-name { margin-top: 2px; font-size: 13px; font-weight: 600; color: oklch(0.85 0.006 255); }
+
+.report-total { font-weight: 700; color: white; }
+
+.report-count {
+  background: rgba(47,143,239,0.16);
+  border: none;
+  color: #8fc3ff;
+  font-weight: 700;
+  font-size: 12.5px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.report-count.zero { background: transparent; color: oklch(0.4 0.01 255); cursor: default; }
+
+.queue-list { display: flex; flex-direction: column; gap: 2px; }
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.queue-item-name { font-size: 14px; font-weight: 700; color: white; }
+.queue-item-meta { margin-top: 3px; font-size: 11.5px; font-weight: 500; color: oklch(0.6 0.015 255); }
+.queue-item-go { font-size: 12px; font-weight: 700; color: #8fc3ff; }
+
+/* ConnectWise sync */
+
+.sync-panel {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 18px;
+  padding: 24px;
+  max-width: 560px;
+}
+
+.sync-run-btn {
+  background: #2f8fef;
+  border: none;
+  color: white;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 11px 20px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.sync-run-btn:disabled { background: oklch(0.3 0.03 255); color: oklch(0.6 0.015 255); cursor: default; }
+
+.sync-progress-label { font-size: 12.5px; font-weight: 600; color: oklch(0.78 0.006 255); margin-bottom: 10px; }
+
+.sync-progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: oklch(0.26 0.02 255);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.sync-progress-fill { height: 100%; background: #2f8fef; transition: width .2s ease; }
+
+.sync-stage-controls {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sync-stage-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid oklch(0.24 0.016 255);
+}
+.sync-stage-row:last-child { border-bottom: none; }
+
+.sync-stage-name { flex: 1; font-size: 12.5px; color: oklch(0.78 0.006 255); }
+
+.sync-stage-btn {
+  background: oklch(0.26 0.02 255);
+  border: 1px solid oklch(0.32 0.02 255);
+  color: oklch(0.85 0.006 255);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.sync-stage-btn:disabled { color: oklch(0.55 0.012 255); cursor: default; }
+
+.sync-stage-retry-btn {
+  border-color: oklch(0.5 0.16 30);
+  color: oklch(0.75 0.14 30);
+}
+
+.sync-result { margin-top: 14px; font-size: 12.5px; color: oklch(0.7 0.01 255); }
+
+.sync-errors-title { margin-top: 22px; font-size: 11.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: oklch(0.62 0.16 30); }
+
+.sync-errors-list { margin-top: 10px; max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+
+.sync-error-row {
+  font-size: 12px;
+  line-height: 1.5;
+  color: oklch(0.72 0.01 255);
+  padding: 8px 10px;
+  background: oklch(0.16 0.012 255);
+  border-radius: 8px;
+  border-left: 2px solid oklch(0.55 0.18 30);
+}
+
+/* ==========================================================================
+   Customer Meeting Capture -- added 2026-09-15 per Michael:
+   - "Current vendor if not CodeBlue" field, above each pillar tile
+   - Meetings box + Meeting To-Dos box, stacked under Cross-Sell Opportunities
+   - Front-page two-column layout + Global To-Do dashboard (right column)
+   ========================================================================== */
+
+/* Pillar tile now wraps its vendor field + the tile itself, so the grid
+   still lays out one cell per pillar (pillar-grid's grid-template-columns
+   is unaffected -- pillar-tile-wrap is simply what now sits in each cell). */
+.pillar-tile-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pillar-tile-wrap .pillar-tile { flex: 1 1 auto; }
+
+.vendor-field {
+  font-size: 11.5px;
+  padding: 8px 10px;
+  background: oklch(0.16 0.012 255);
+  border: 1px solid oklch(0.24 0.016 255);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.vendor-field-label {
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  font-size: 9.5px;
+  color: oklch(0.5 0.015 255);
+  flex: 1 1 100%;
+}
+
+.vendor-field-value { color: oklch(0.78 0.006 255); font-weight: 600; flex: 1 1 auto; }
+.vendor-field-name { color: oklch(0.82 0.006 255); }
+.vendor-field-empty { color: oklch(0.5 0.015 255); font-weight: 500; }
+.vendor-field-meta { margin-left: 6px; font-size: 10.5px; font-weight: 500; color: oklch(0.55 0.015 255); }
+
+.vendor-field-edit-btn {
+  background: transparent;
+  border: 1px solid oklch(0.34 0.02 255);
+  color: oklch(0.7 0.02 255);
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.vendor-field-edit-btn:hover { border-color: #2f8fef; color: #8fc3ff; }
+
+.vendor-field.editing { flex-direction: column; align-items: stretch; }
+
+.vendor-field-input {
+  background: oklch(0.98 0.006 255);
+  border: none;
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 12.5px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: oklch(0.2 0.03 255);
+  width: 100%;
+}
+
+.vendor-field-actions { display: flex; gap: 8px; margin-top: 2px; }
+
+.vendor-field-btn {
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.vendor-field-btn.primary { background: #2f8fef; color: white; border: none; }
+.vendor-field-btn.secondary { background: transparent; color: oklch(0.7 0.02 255); border: 1px solid oklch(0.34 0.02 255); }
+.vendor-field-btn:disabled { opacity: .6; cursor: default; }
+
+.vendor-field-error { margin-top: 4px; font-size: 11px; color: #f87171; }
+
+/* Right-hand column of the customer dashboard -- stacks Cross-Sell
+   Opportunities, Meetings, and Meeting To-Dos as separate boxes, one under
+   the next, all within dashboard-grid's fixed-width second column. */
+.right-column {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.meetings-panel, .meeting-tasks-panel {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 18px;
+  padding: 18px 18px 10px;
+}
+
+.meetings-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.meetings-add-btn {
+  background: oklch(0.78 0.15 85 / 0.16);
+  border: 1px solid oklch(0.78 0.15 85 / 0.4);
+  color: oklch(0.78 0.15 85);
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.meetings-add-btn:hover { background: oklch(0.78 0.15 85 / 0.26); }
+.meetings-add-btn.small { margin-top: 10px; padding: 5px 10px; font-size: 11px; }
+
+.meetings-error {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #f87171;
+}
+
+.meeting-add-form, .task-add-form {
+  margin-top: 14px;
+  padding: 12px;
+  background: oklch(0.16 0.012 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.meeting-form-input, .meeting-form-textarea, .meeting-form-select {
+  background: oklch(0.98 0.006 255);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: oklch(0.2 0.03 255);
+  width: 100%;
+  box-sizing: border-box;
+}
+.meeting-form-textarea { resize: vertical; font-family: inherit; }
+
+.meeting-form-actions { display: flex; gap: 8px; margin-top: 2px; }
+
+.meeting-list { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+
+.meeting-row {
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.meeting-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+.meeting-row-head:hover { background: oklch(0.21 0.016 255); }
+
+.meeting-row-subject { font-size: 13px; font-weight: 700; color: white; }
+
+.meeting-row-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: oklch(0.55 0.015 255);
+}
+
+.meeting-row-toggle { color: oklch(0.55 0.015 255); font-size: 13px; flex: 0 0 auto; }
+
+.meeting-row-body {
+  padding: 0 14px 14px;
+  border-top: 1px solid oklch(0.26 0.02 255);
+}
+
+.meeting-row-notes {
+  margin-top: 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: oklch(0.75 0.01 255);
+  white-space: pre-line;
+}
+
+.meeting-cw-warn {
+  margin-top: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #f87171;
+}
+
+.meeting-task-cw-warn { color: #f87171; }
+.meeting-task-email-warn { color: #f87171; font-size: 0.85em; }
+
+.meeting-task-list { margin-top: 14px; display: flex; flex-direction: column; gap: 2px; }
+
+.meeting-task-with-context {
+  padding: 9px 4px;
+  border-top: 1px solid oklch(0.25 0.02 255);
+}
+.meeting-task-with-context:first-child { border-top: none; }
+.meeting-task-with-context .checklist-step { padding: 0; }
+
+.meeting-task-context {
+  margin-top: 2px;
+  margin-left: 25px;
+  font-size: 10.5px;
+  color: oklch(0.5 0.015 255);
+}
+
+/* Front page: left (existing Customer Information/overview) + right
+   (new Global To-Do dashboard), per Michael 2026-09-15. */
+.frontpage-grid {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 26px;
+  align-items: start;
+}
+@media (max-width: 980px) {
+  .frontpage-grid { grid-template-columns: 1fr; }
+}
+
+.global-todo-panel {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 18px;
+  padding: 20px 20px 12px;
+}
+.global-todo-panel .view-header { margin-bottom: 14px; }
+.global-todo-panel .view-title { font-size: 17px; }
+.global-todo-panel .view-sub { font-size: 11.5px; }
+
+.global-todo-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.global-todo-summary-item {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  background: oklch(0.16 0.012 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.global-todo-summary-item.zero { opacity: .55; }
+.global-todo-summary-item:hover { border-color: #8fc3ff; }
+.global-todo-summary-item:hover .global-todo-summary-name { color: #8fc3ff; }
+
+.global-todo-summary-count {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  color: #8fc3ff;
+}
+
+.global-todo-summary-name {
+  font-size: 11px;
+  color: oklch(0.7 0.01 255);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.global-todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 560px;
+  overflow-y: auto;
+}
+
+.global-todo-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 6px;
+  border-top: 1px solid oklch(0.25 0.02 255);
+  cursor: pointer;
+}
+.global-todo-item:first-child { border-top: none; }
+.global-todo-item:hover .global-todo-item-desc { color: #8fc3ff; }
+.global-todo-item.done { opacity: .6; }
+
+.global-todo-item-desc { font-size: 12.5px; font-weight: 600; color: oklch(0.82 0.006 255); }
+.global-todo-item.done .global-todo-item-desc { text-decoration: line-through; }
+
+.global-todo-item-meta {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: oklch(0.55 0.015 255);
+}
+
+.global-todo-item-go { font-size: 11px; color: oklch(0.5 0.015 255); flex: 0 0 auto; }
+.global-todo-item-done-meta {
+  font-size: 10.5px;
+  color: oklch(0.55 0.18 145);
+  flex: 0 0 auto;
+  text-align: right;
+}
+
+/* Inline "mark complete" checkbox on a rep's Open To-Dos list -- added
+   2026-09-24 per Michael, so a to-do can be checked off right from the
+   list without opening the customer. Sized/colored like the per-customer
+   checklist checkbox (.checklist-step input[type="checkbox"]) for a
+   consistent look; the row itself is still a click target that opens the
+   customer, so this needs its own visible hit target and cursor. */
+.rep-todo-item-check {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #2f8fef;
+  cursor: pointer;
+}
+.rep-todo-item-check:disabled { cursor: default; opacity: .5; }
+
+/* Risk-scan upload alerts in the Global To-Do Checklist -- added
+   2026-09-23. Same list/item structure as the meeting to-dos above
+   (.global-todo-list / .global-todo-item), styled to stand out as
+   genuinely unclaimed rather than assigned-but-open. */
+
+.global-riskscan-section {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid oklch(0.26 0.02 255);
+}
+
+.global-riskscan-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: oklch(0.78 0.15 85);
+  margin-bottom: 4px;
+}
+
+.global-todo-item.riskscan-alert:hover .global-todo-item-desc { color: oklch(0.78 0.15 85); }
+.global-todo-item.riskscan-alert .global-todo-item-go { color: oklch(0.78 0.15 85); }
+
+/* Optional due-date field on the "+ Add Task" form -- added 2026-09-16. */
+.task-due-date-label {
+  font-size: 10.5px;
+  color: oklch(0.6 0.015 255);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Due-date badge next to a task's description, wherever a task row is
+   rendered (the per-customer Meeting To-Dos list, and the per-coordinator
+   list below) -- added 2026-09-16. */
+.rep-todo-item-due {
+  font-size: 10px;
+  font-weight: 600;
+  color: #8fc3ff;
+  background: oklch(0.24 0.05 255);
+  border-radius: 6px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   Per-coordinator to-do view (state.view === 'rep-todos') -- added
+   2026-09-16 per Michael: click a name in the Global To-Do Checklist to
+   see just that person's to-do list, plus a month calendar of the ones
+   they've scheduled.
+   ========================================================================== */
+
+.rep-todos-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+.rep-todos-calendar-col, .rep-todos-list-col {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 18px;
+  padding: 18px;
+}
+
+.rep-todos-section + .rep-todos-section { margin-top: 20px; }
+
+.rep-todos-cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.rep-todos-cal-nav {
+  background: oklch(0.16 0.012 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  color: #8fc3ff;
+  border-radius: 8px;
+  width: 28px;
+  height: 28px;
+  font-size: 15px;
+  cursor: pointer;
+}
+.rep-todos-cal-nav:hover { border-color: #8fc3ff; }
+
+.rep-todos-cal-month {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: white;
+}
+
+.rep-todos-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+.rep-todos-cal-daylabels { margin-bottom: 4px; }
+.rep-todos-cal-daylabel {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: oklch(0.55 0.015 255);
+  text-align: center;
+  padding-bottom: 2px;
+}
+
+.rep-todos-cal-cell {
+  min-height: 68px;
+  background: oklch(0.16 0.012 255);
+  border: 1px solid oklch(0.25 0.02 255);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.rep-todos-cal-cell.empty { background: transparent; border-color: transparent; }
+
+.rep-todos-cal-cell-date {
+  font-size: 10px;
+  font-weight: 700;
+  color: oklch(0.55 0.015 255);
+}
+
+.rep-todos-cal-task {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: oklch(0.85 0.006 255);
+  background: oklch(0.24 0.05 255);
+  border-radius: 5px;
+  padding: 2px 4px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rep-todos-cal-task:hover { background: oklch(0.3 0.07 255); }
+.rep-todos-cal-task.done {
+  opacity: .55;
+  text-decoration: line-through;
+  background: oklch(0.22 0.02 255);
+}
+
+/* To-Do's + Projects side by side -- added 2026-10-02 per Michael: "take
+   the to-do's box and shrink it in half, and drop in a projects view". */
+
+.rep-todos-bottom-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-top: 20px;
+}
+@media (max-width: 860px) {
+  .rep-todos-bottom-row { grid-template-columns: 1fr; }
+}
+
+.rep-todos-projects-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rep-todos-project-card {
+  background: oklch(0.16 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 12px;
+  padding: 12px 14px;
+  transition: box-shadow .15s ease, border-color .15s ease;
+}
+
+.rep-todos-project-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+}
+.rep-todos-project-card.expanded .rep-todos-project-card-head { margin-bottom: 4px; }
+.rep-todos-project-card-company { font-size: 12.5px; font-weight: 700; color: oklch(0.82 0.006 255); }
+.rep-todos-project-card-name { font-size: 12px; color: oklch(0.78 0.006 255); margin-top: 1px; }
+.rep-todos-project-card-status { font-size: 11px; color: #8fc3ff; margin-top: 2px; }
+
+.rep-todos-project-card-head-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.rep-todos-project-card-progress { font-size: 11px; color: oklch(0.6 0.015 255); }
+.rep-todos-project-card-toggle { color: oklch(0.55 0.015 255); font-size: 13px; }
+
+/* Completion "glow" on a collapsed project card -- added 2026-10-03 per
+   Michael: red (no steps complete), yellow (1-3), green (4, the whole
+   order-fulfillment checklist). Reuses the same hues as the existing
+   .pf-tier-High (155, green) / .pf-days.amber (80, yellow) / .pf-days.red
+   (27, red) tiers elsewhere in this file -- just applied as a border +
+   soft outer glow instead of a filled badge, since here it's describing a
+   whole card, not a small inline chip. Only shown while collapsed; an
+   expanded card shows its real checklist instead. */
+.rep-todos-project-card.collapsed.project-glow-red {
+  border-color: oklch(0.5 0.14 27);
+  box-shadow: 0 0 14px 1px oklch(0.5 0.14 27 / 35%);
+}
+.rep-todos-project-card.collapsed.project-glow-yellow {
+  border-color: oklch(0.65 0.13 80);
+  box-shadow: 0 0 14px 1px oklch(0.65 0.13 80 / 30%);
+}
+.rep-todos-project-card.collapsed.project-glow-green {
+  border-color: oklch(0.6 0.13 155);
+  box-shadow: 0 0 14px 1px oklch(0.6 0.13 155 / 30%);
+}
+
+/* ==========================================================================
+   Territory Admin -- added 2026-09-16 per Michael's rep-based territory
+   filtering request. Restricted-to-admin screen managing which CRC email
+   is limited to which synced ConnectWise territory_name(s).
+   ========================================================================== */
+
+.territory-admin-panel {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 18px;
+  padding: 24px;
+  max-width: 640px;
+}
+
+.territory-admin-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.territory-admin-add input {
+  background: oklch(0.98 0.006 255);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: oklch(0.2 0.03 255);
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.territory-admin-add-btn {
+  background: #2f8fef;
+  border: none;
+  color: white;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 8px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.territory-admin-add-btn:disabled { background: oklch(0.3 0.03 255); color: oklch(0.6 0.015 255); cursor: default; }
+
+.territory-admin-hint {
+  font-size: 11.5px;
+  color: oklch(0.55 0.015 255);
+  margin-bottom: 18px;
+}
+
+.territory-admin-empty {
+  font-size: 12.5px;
+  color: oklch(0.55 0.015 255);
+  padding: 10px 0;
+}
+
+.territory-admin-rep {
+  padding: 12px 0;
+  border-top: 1px solid oklch(0.26 0.02 255);
+}
+.territory-admin-rep:first-of-type { border-top: none; margin-top: 8px; }
+
+.territory-admin-rep-email {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: oklch(0.82 0.006 255);
+  margin-bottom: 8px;
+}
+
+.territory-admin-rep-territories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.territory-admin-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: oklch(0.16 0.012 255);
+  border: 1px solid oklch(0.24 0.016 255);
+  border-radius: 999px;
+  padding: 5px 6px 5px 12px;
+  font-size: 11.5px;
+  color: oklch(0.78 0.006 255);
+}
+
+.territory-admin-remove-btn {
+  background: transparent;
+  border: none;
+  color: oklch(0.6 0.015 255);
+  font-size: 13px;
+  line-height: 1;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.territory-admin-remove-btn:hover { background: oklch(0.3 0.15 30); color: #f87171; }
+.territory-admin-remove-btn:disabled { opacity: .6; cursor: default; }
+
+/* ---- Prospecting view (added 2026-09-23) ------------------------------ */
+.pf-tabs { display: flex; gap: 8px; margin: 16px 0 14px; }
+.pf-tab {
+  padding: 8px 16px; border-radius: 999px; border: 1px solid oklch(0.3 0.02 255);
+  background: transparent; color: oklch(0.75 0.01 255); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.pf-tab.active { background: #2f8fef; border-color: #2f8fef; color: white; }
+.pf-search { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 8px; }
+.pf-field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: oklch(0.6 0.015 255); min-width: 0; }
+.pf-field input, .pf-field select {
+  padding: 9px 11px; border-radius: 10px; border: 1px solid oklch(0.3 0.02 255); background: oklch(0.17 0.014 255);
+  color: white; font: inherit; font-size: 14px; text-transform: none; letter-spacing: 0; font-weight: 400; min-width: 180px;
+}
+.pf-field-sm input, .pf-field-sm select { min-width: 120px; width: 130px; }
+.pf-btn { padding: 10px 18px; border-radius: 999px; border: 0; font: inherit; font-size: 13.5px; font-weight: 700; cursor: pointer; }
+.pf-btn.primary { background: #2f8fef; color: white; }
+.pf-btn.secondary { background: oklch(0.26 0.02 255); color: white; margin-left: 8px; }
+.pf-btn:disabled { opacity: .55; cursor: default; }
+.pf-go { min-width: 130px; }
+.pf-hint, .pf-progress { font-size: 12.5px; color: oklch(0.65 0.015 255); margin: 6px 0 16px; line-height: 1.5; }
+.pf-progress { padding: 12px 14px; border-radius: 12px; background: oklch(0.2 0.03 255); }
+.pf-filters { display: flex; gap: 12px; flex-wrap: wrap; margin: 6px 0 12px; }
+.pf-result-meta { font-size: 12.5px; color: oklch(0.65 0.015 255); margin-bottom: 10px; }
+.pf-layout { display: block; }
+.pf-layout.has-detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 20px; align-items: start; }
+.pf-cards { display: flex; flex-direction: column; gap: 10px; }
+.pf-card {
+  background: oklch(0.19 0.014 255); border: 1px solid oklch(0.26 0.02 255); border-radius: 14px; padding: 14px 16px; cursor: pointer;
+}
+.pf-card:hover, .pf-card.selected { border-color: #2f8fef; }
+.pf-card.claimed { opacity: .75; }
+.pf-card-top { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.pf-card-name { font-weight: 700; font-size: 15px; color: white; }
+.pf-card-meta { font-size: 12.5px; color: oklch(0.65 0.015 255); margin-top: 3px; }
+.pf-card-contact { font-size: 13px; color: oklch(0.85 0.01 255); margin-top: 8px; }
+.pf-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.pf-chip { font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: oklch(0.24 0.02 255); color: oklch(0.8 0.01 255); }
+.pf-chip.ok { color: oklch(0.75 0.13 155); }
+.pf-chip.missing { color: oklch(0.78 0.13 70); background: oklch(0.25 0.04 70); }
+.pf-chip.claimed { color: white; background: #2f8fef; }
+.pf-tier { font-size: 11.5px; font-weight: 700; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+.pf-tier-High { background: oklch(0.3 0.08 155); color: oklch(0.85 0.13 155); }
+.pf-tier-Medium { background: oklch(0.3 0.07 80); color: oklch(0.85 0.12 80); }
+.pf-tier-Low { background: oklch(0.26 0.02 255); color: oklch(0.75 0.01 255); }
+.pf-skipped { margin-top: 14px; font-size: 12px; color: oklch(0.55 0.015 255); }
+.pf-detail { background: oklch(0.18 0.014 255); border: 1px solid oklch(0.26 0.02 255); border-radius: 16px; padding: 18px 20px; }
+.pf-detail-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.pf-detail-name { font-family: 'Space Grotesk', sans-serif; font-size: 20px; font-weight: 700; color: white; }
+.pf-detail-sub { font-size: 12.5px; color: oklch(0.65 0.015 255); margin-top: 3px; }
+.pf-detail a, .pf-sources a { color: #5aa9f5; }
+.pf-close { background: none; border: 0; color: oklch(0.7 0.01 255); font-size: 24px; line-height: 1; cursor: pointer; }
+.pf-section-title { margin: 16px 0 6px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: oklch(0.6 0.015 255); }
+.pf-text { font-size: 13.5px; line-height: 1.55; color: oklch(0.88 0.008 255); margin: 6px 0; }
+.pf-note { font-size: 12.5px; color: oklch(0.7 0.012 255); line-height: 1.5; margin: 8px 0; }
+.pf-muted { color: oklch(0.6 0.015 255); }
+.pf-list { margin: 4px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.5; color: oklch(0.85 0.01 255); }
+.pf-sources { font-size: 12px; color: oklch(0.6 0.015 255); margin-top: 8px; }
+.pf-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pf-grid2 .pf-field input { width: 100%; min-width: 0; }
+.pf-claim { margin-top: 18px; padding-top: 14px; border-top: 1px solid oklch(0.26 0.02 255); }
+.pf-claimed-box { margin-top: 18px; padding: 12px 14px; border-radius: 12px; background: oklch(0.24 0.05 155); color: oklch(0.88 0.1 155); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.pf-claims { display: flex; flex-direction: column; gap: 10px; }
+.pf-claim-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; cursor: pointer;
+  background: oklch(0.19 0.014 255); border: 1px solid oklch(0.26 0.02 255); border-radius: 14px; padding: 14px 18px; color: white; font-weight: 600;
+}
+.pf-claim-row:hover { border-color: #2f8fef; }
+.pf-days { font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: 999px; white-space: nowrap; }
+.pf-days.green { background: oklch(0.3 0.08 155); color: oklch(0.85 0.13 155); }
+.pf-days.amber { background: oklch(0.3 0.07 80); color: oklch(0.85 0.12 80); }
+.pf-days.red, .pf-days.over { background: oklch(0.32 0.1 27); color: oklch(0.85 0.14 27); }
+@media (max-width: 860px) {
+  .pf-layout.has-detail { grid-template-columns: 1fr; }
+  .pf-grid2 { grid-template-columns: 1fr; }
+}
+
+.prospect-claim-note { margin: 8px 0 14px; font-size: 13px; color: oklch(0.8 0.01 255); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* Projects view -- added 2026-10-02 per Michael's "Projects Follow Up"
+   request. Reuses .view-header/.view-title/.view-sub, .svc-action-btn,
+   and the cross-sell checklist's .checklist-* classes (step rows, icon
+   buttons, notes panel) wholesale -- only the list/row layout below is
+   new. */
+
+.projects-empty { font-size: 13px; color: oklch(0.55 0.015 255); padding: 10px 0; }
+
+.projects-toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.projects-toolbar-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: oklch(0.6 0.015 255);
+}
+
+.projects-filter-select, .projects-sort-select {
+  background: oklch(0.14 0.012 255);
+  border: 1px solid oklch(0.3 0.02 255);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: white;
+  min-width: 190px;
+}
+
+.projects-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.project-item {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.project-item.open { border-color: oklch(0.34 0.03 255); }
+
+.project-item-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, .9fr) 90px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  cursor: pointer;
+}
+@media (max-width: 860px) {
+  .project-item-main {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas: "company toggle" "name name" "status date" "assigned assigned";
+    row-gap: 4px;
+  }
+  .project-item-company { grid-area: company; }
+  .project-item-toggle { grid-area: toggle; justify-self: end; }
+  .project-item-name { grid-area: name; }
+  .project-item-status { grid-area: status; }
+  .project-item-date { grid-area: date; }
+  .project-item-assigned { grid-area: assigned; }
+}
+
+.project-item-company { font-size: 12.5px; font-weight: 700; color: oklch(0.82 0.006 255); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-item-name { font-size: 12.5px; color: oklch(0.78 0.006 255); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-item-status { font-size: 11.5px; color: #8fc3ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-item-date { font-size: 11.5px; color: oklch(0.6 0.015 255); white-space: nowrap; }
+.project-item-assigned { font-size: 11.5px; color: oklch(0.78 0.15 85); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-item-toggle { font-size: 18px; color: oklch(0.55 0.015 255); text-align: center; }
+
+.project-item-detail {
+  padding: 4px 18px 18px;
+  border-top: 1px solid oklch(0.26 0.02 255);
+}
+
+.project-assign-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 14px 0 4px;
+}
+
+.project-assigned-label { font-size: 12.5px; font-weight: 600; color: oklch(0.78 0.15 85); }
+
+.project-assign-select {
+  background: oklch(0.98 0.006 255);
+  border: none;
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: oklch(0.2 0.03 255);
+  max-width: 200px;
+}
+.project-assign-select:disabled { opacity: .5; cursor: default; }
+
+.project-checklist { margin-top: 6px; }
+
+.project-kickoff-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 2px 0 10px 29px;
+}
+
+.project-kickoff-label { font-size: 11.5px; color: oklch(0.6 0.015 255); }
+
+.project-kickoff-input {
+  background: oklch(0.14 0.012 255);
+  border: 1px solid oklch(0.3 0.02 255);
+  border-radius: 7px;
+  padding: 6px 9px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 12px;
+  color: white;
+}
+.project-kickoff-input:disabled { opacity: .5; cursor: default; }
+
+.project-notes-toggle-row { margin-top: 14px; }
+
+.project-notes-panel {
+  margin-top: 10px;
+  background: oklch(0.16 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.project-notes-panel .checklist-note-form { margin: 0; }
+
+/* Projects-by-status bar graph + My Projects/All Projects toggle --
+   added 2026-10-02 per Michael: "a visual bar graph... click on the bar
+   and see only those projects... toggle (My Projects/All Projects)". */
+
+.projects-status-graph {
+  background: oklch(0.19 0.014 255);
+  border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 14px;
+  padding: 16px 18px;
+  margin-bottom: 18px;
+}
+
+.projects-status-graph-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.projects-status-graph-title { font-size: 13px; font-weight: 700; color: oklch(0.82 0.006 255); }
+
+.projects-scope-toggle {
+  display: inline-flex;
+  background: oklch(0.14 0.012 255);
+  border: 1px solid oklch(0.3 0.02 255);
+  border-radius: 999px;
+  padding: 2px;
+}
+
+.projects-scope-btn {
+  background: transparent;
+  border: none;
+  color: oklch(0.65 0.02 255);
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.projects-scope-btn.active { background: #2f8fef; color: white; }
+
+.projects-status-graph-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.projects-status-bar-row {
+  display: grid;
+  grid-template-columns: minmax(0, 190px) 1fr 32px;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  padding: 5px 6px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.projects-status-bar-row:hover { background: oklch(0.22 0.018 255); }
+.projects-status-bar-row.active { background: oklch(0.26 0.05 255); }
+
+.projects-status-bar-label {
+  font-size: 11.5px;
+  color: oklch(0.78 0.006 255);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.projects-status-bar-row.active .projects-status-bar-label { color: #8fc3ff; font-weight: 700; }
+
+.projects-status-bar-track {
+  background: oklch(0.14 0.012 255);
+  border-radius: 999px;
+  height: 10px;
+  overflow: hidden;
+}
+
+.projects-status-bar-fill {
+  background: #2f8fef;
+  height: 100%;
+  border-radius: 999px;
+}
+.projects-status-bar-row.active .projects-status-bar-fill { background: #8fc3ff; }
+
+.projects-status-bar-count {
+  font-size: 12px;
+  font-weight: 700;
+  color: oklch(0.7 0.012 255);
+  text-align: right;
+}
+@media (max-width: 640px) {
+  .projects-status-bar-row { grid-template-columns: minmax(0, 120px) 1fr 28px; }
+}
+
+/* Clyde mascot art (added 2026-10-05) -- same ~150px footprint as the Clyde on
+   the Solutions Hub home page; the --small variant sits in the Global To-Do
+   panel header. */
+.clyde-img { width: 150px; max-width: 30vw; height: auto; flex: 0 0 auto; user-select: none; }
+.clyde-img--small { width: 58px; max-width: none; }
+.view-header--clyde { display: flex; align-items: center; gap: 24px; }
+.view-header--clyde .view-header-text, .view-header--clyde-small .view-header-text { min-width: 0; flex: 1 1 auto; }
+.view-header--clyde-small { display: flex; align-items: flex-start; gap: 12px; }
+.hub-hero { display: flex; align-items: center; gap: 24px; margin-bottom: 4px; }
+.hub-hero .search-wrap { flex: 1 1 auto; min-width: 0; }
+@media (max-width: 640px) {
+  .view-header--clyde, .hub-hero { gap: 14px; }
+  .clyde-img { width: 96px; }
+  .clyde-img--small { width: 48px; }
+}
+
+/* Company Counts reconciliation panel (ConnectWise Sync screen, 2026-10-05) */
+.company-counts { margin-top: 22px; padding-top: 18px; border-top: 1px solid oklch(0.26 0.02 255); }
+.company-counts-title { display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 700; color: white; margin-bottom: 12px; }
+.company-counts-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
+.company-counts-grid > div { background: oklch(0.16 0.012 255); border: 1px solid oklch(0.26 0.02 255); border-radius: 10px; padding: 10px; font-size: 11.5px; color: oklch(0.7 0.01 255); }
+.company-counts-grid > div span { display: block; font-family: 'Space Grotesk', sans-serif; font-size: 22px; font-weight: 700; color: white; }
+.company-counts-grid > div.muted span { color: oklch(0.6 0.012 255); }
+.company-counts-note { font-size: 11.5px; line-height: 1.5; color: oklch(0.62 0.012 255); margin: 6px 0; }
+.company-counts-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; color: oklch(0.8 0.006 255); }
+.company-counts-table th { text-align: left; font-weight: 600; color: oklch(0.6 0.012 255); padding: 4px 6px; border-bottom: 1px solid oklch(0.26 0.02 255); }
+.company-counts-table td { padding: 4px 6px; border-bottom: 1px solid oklch(0.22 0.015 255); }
+.company-counts-table td:last-child, .company-counts-table th:last-child { text-align: right; }
+
+/* Saved Solutions card on the customer dashboard -- added 2026-10-07 per Michael. Reuses .risk-scans-panel. */
+.solutions-toggle {
+  display: inline-flex; align-items: center; gap: 10px; background: none; border: none; color: inherit;
+  cursor: pointer; padding: 0; font: inherit;
+}
+.solutions-toggle .view-title { margin: 0; }
+.solutions-chevron { font-size: 14px; color: oklch(0.7 0.01 255); width: 14px; }
+.solutions-count {
+  font-size: 11px; font-weight: 700; color: #8fc3ff; background: oklch(0.4 0.08 255 / 0.2);
+  border-radius: 999px; padding: 2px 9px;
+}
+.solutions-list { margin-top: 14px; display: flex; flex-direction: column; }
+.solution-row {
+  display: grid; grid-template-columns: minmax(150px, 2fr) minmax(120px, 1.4fr) minmax(110px, 1fr) minmax(100px, 1fr) auto;
+  gap: 12px; align-items: center; padding: 11px 4px; border-top: 1px solid oklch(0.25 0.02 255);
+}
+.solution-row.solution-head { border-top: none; padding-top: 0; padding-bottom: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: oklch(0.55 0.015 255); }
+.solution-cell { min-width: 0; text-align: left; font-size: 12.5px; color: oklch(0.82 0.006 255); }
+.solution-name { font-weight: 700; overflow-wrap: anywhere; }
+.solution-pillars { display: flex; flex-wrap: wrap; gap: 5px; }
+.solution-pillar-tag {
+  font-size: 10.5px; font-weight: 700; color: oklch(0.78 0.15 85); background: oklch(0.78 0.15 85 / 0.14);
+  border: 1px solid oklch(0.78 0.15 85 / 0.35); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+}
+.solution-pillar-tag.muted { color: oklch(0.55 0.015 255); background: none; border-color: oklch(0.3 0.02 255); }
+.solution-edited { font-size: 10.5px; color: oklch(0.55 0.015 255); white-space: nowrap; }
+.solution-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.solution-btn {
+  font-size: 11px; font-weight: 700; color: #8fc3ff; text-decoration: none; background: none; cursor: pointer;
+  border: 1px solid oklch(0.4 0.08 255 / 0.5); border-radius: 7px; padding: 5px 10px; font-family: inherit;
+}
+.solution-btn:hover { background: oklch(0.4 0.08 255 / 0.14); }
+.solution-btn.primary { background: oklch(0.78 0.15 85 / 0.16); border-color: oklch(0.78 0.15 85 / 0.4); color: oklch(0.78 0.15 85); }
+.solution-btn.primary:hover { background: oklch(0.78 0.15 85 / 0.26); }
+.solution-btn.danger { color: #ff8b8b; border-color: oklch(0.55 0.18 25 / 0.5); }
+.solution-btn:disabled { opacity: .5; cursor: default; }
+.solution-files { grid-column: 1 / -1; margin: 2px 0 4px; padding: 8px 10px; border-radius: 10px; background: oklch(0.16 0.012 255); display: flex; flex-direction: column; gap: 8px; }
+.solution-file { display: flex; align-items: center; gap: 12px; }
+.solution-file-main { flex: 1; min-width: 0; }
+.solution-thumb { width: 56px; height: 42px; object-fit: cover; border-radius: 6px; border: 1px solid oklch(0.3 0.02 255); display: block; }
+.solution-doc-icon { width: 56px; text-align: center; font-size: 22px; }
+@media (max-width: 760px) {
+  .solution-row { grid-template-columns: 1fr; gap: 4px; }
+  .solution-row.solution-head { display: none; }
+  .solution-actions { justify-content: flex-start; margin-top: 4px; }
+}
+.solution-cwlinks { margin-top: 3px; font-size: 10.5px; font-weight: 600; color: oklch(0.55 0.18 145); }
+
+/* Customer dashboard two-column layout (2026-10-07) */
+.detail-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; margin-top: 20px; }
+.detail-col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.detail-col > * { margin: 0 !important; }
+@media (max-width: 980px) { .detail-cols { grid-template-columns: 1fr; } }
+
+/* Edit view (2026-10-07) */
+.change-customer-btn.layout-edit-on { border-color: #2f8fef; color: #8fc3ff; }
+.layout-edit-banner { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 14px; border: 1px dashed #2f8fef; border-radius: 12px; background: oklch(0.2 0.03 255); color: oklch(0.85 0.02 255); font-size: 13px; }
+.layout-reset-btn { background: transparent; border: 1px solid oklch(0.4 0.02 255); color: inherit; border-radius: 999px; padding: 5px 12px; font: inherit; cursor: pointer; }
+.layout-reset-btn:hover { border-color: #2f8fef; color: #8fc3ff; }
+.layout-edit-error { color: oklch(0.72 0.15 27); flex-basis: 100%; }
+.detail-cols.layout-editing .detail-col { min-height: 120px; padding: 8px; border: 1px dashed oklch(0.35 0.02 255); border-radius: 14px; transition: background .12s, border-color .12s; }
+.detail-cols.layout-editing .detail-col.layout-drop { background: oklch(0.2 0.03 255); border-color: #2f8fef; }
+.layout-card { border-radius: 14px; outline: 1px solid oklch(0.32 0.02 255); background: oklch(0.14 0.01 255); overflow: hidden; }
+.layout-card.layout-dragging { opacity: .45; }
+.layout-card-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: grab; background: oklch(0.22 0.02 255); color: oklch(0.88 0.02 255); font-size: 13px; font-weight: 600; user-select: none; }
+.layout-card-bar:active { cursor: grabbing; }
+.layout-grip { letter-spacing: -2px; opacity: .6; }
+.layout-card-title { flex: 1; }
+.layout-card-btns { display: inline-flex; gap: 4px; }
+.layout-card-btns button { background: transparent; border: 1px solid oklch(0.4 0.02 255); color: inherit; border-radius: 6px; width: 26px; height: 24px; font-size: 10px; cursor: pointer; }
+.layout-card-btns button:hover:not(:disabled) { border-color: #2f8fef; color: #8fc3ff; }
+.layout-card-btns button:disabled { opacity: .3; cursor: default; }
+.layout-card-body { pointer-events: none; max-height: 220px; overflow: hidden; opacity: .75; }
+
+/* Computers (Automate) card, 2026-10-07 */
+.automate-online { margin-left: 8px; font-size: 12px; font-weight: 700; color: oklch(0.78 0.14 150); }
+.automate-summary { padding: 4px 2px 10px; font-size: 13px; color: oklch(0.72 0.015 255); }
+.automate-warn { color: oklch(0.78 0.15 85); font-weight: 700; }
+.automate-row { display: grid; grid-template-columns: 1.1fr 1fr .8fr 1.4fr 1fr; gap: 10px; padding: 8px 2px; border-top: 1px solid oklch(0.26 0.02 255); font-size: 13px; align-items: center; }
+.automate-row > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.automate-row.automate-head { border-top: none; padding-top: 0; padding-bottom: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: oklch(0.55 0.015 255); }
+.automate-name { font-weight: 700; }
+.automate-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: oklch(0.5 0.01 255); }
+.automate-dot.on { background: oklch(0.75 0.17 150); }
+.automate-dot.off { background: oklch(0.6 0.2 25); }
+.automate-more { margin-top: 10px; }
+@media (max-width: 700px) { .automate-row { grid-template-columns: 1fr 1fr; } .automate-row.automate-head { display: none; } }
+
+
+/* Ticket -> OutGrow view (added 2026-10-09) */
+.ticket-outgrow-card { max-width: 860px; }
+.ticket-outgrow-textarea { min-height: 260px; font-family: 'IBM Plex Mono', 'IBM Plex Sans', monospace; }
+.ticket-outgrow-error { margin-top: 12px; }
+.ticket-outgrow-result {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid oklch(0.3 0.02 255);
+  border-radius: 10px;
+  background: oklch(0.17 0.014 255);
+}
+.ticket-outgrow-result-title { font-size: 13px; font-weight: 700; margin-bottom: 10px; color: #8fc3ff; }
+.ticket-outgrow-row { display: flex; gap: 14px; padding: 6px 0; border-top: 1px solid oklch(0.24 0.015 255); font-size: 12.5px; }
+.ticket-outgrow-row:first-of-type { border-top: none; }
+.ticket-outgrow-label { flex: 0 0 230px; color: oklch(0.7 0.02 255); }
+.ticket-outgrow-value { flex: 1; white-space: pre-wrap; word-break: break-word; }
+.ticket-outgrow-warn { margin-top: 10px; font-size: 12px; color: #fbbf24; }
+.ticket-outgrow-actions { margin-top: 12px; }
+
+.ticket-outgrow-touch { margin-bottom: 10px; padding: 8px 10px; border-radius: 8px; font-size: 12.5px; }
+.ticket-outgrow-touch--ok { background: oklch(0.24 0.06 150); color: #86efac; }
+.ticket-outgrow-touch--note { background: oklch(0.26 0.05 85); color: #fbbf24; }
+
+/* ==========================================================================
+   Duplicates screen (api/duplicates-admin.php) -- 2026-10-13
+   ========================================================================== */
+.dup-panel { display: flex; flex-direction: column; gap: 16px; max-width: 1100px; }
+.dup-toolbar { display: flex; align-items: center; gap: 14px; }
+.dup-toolbar input { background: oklch(0.16 0.012 255); border: 1px solid oklch(0.28 0.02 255); border-radius: 10px; color: inherit; padding: 8px 12px; min-width: 260px; }
+.dup-count, .dup-muted { color: oklch(0.65 0.015 255); font-size: 12px; }
+.dup-notice { background: oklch(0.28 0.06 160); border: 1px solid oklch(0.4 0.09 160); border-radius: 10px; padding: 10px 14px; font-size: 13px; }
+.dup-group { background: oklch(0.19 0.014 255); border: 1px solid oklch(0.26 0.02 255); border-radius: 16px; padding: 16px 18px; }
+.dup-group-title { font-weight: 600; margin-bottom: 10px; }
+.dup-table-wrap { overflow-x: auto; }
+.dup-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dup-table th { text-align: left; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: oklch(0.65 0.015 255); padding: 6px 8px; white-space: nowrap; }
+.dup-table td { padding: 8px; border-top: 1px solid oklch(0.26 0.02 255); white-space: nowrap; }
+.dup-table tbody tr { cursor: pointer; }
+.dup-table tbody tr:hover { background: oklch(0.22 0.02 255); }
+.dup-table tr.dup-picked { background: oklch(0.26 0.06 250); }
+.dup-tag { font-size: 10px; background: oklch(0.32 0.08 160); border-radius: 999px; padding: 1px 7px; margin-left: 6px; }
+.dup-actions { display: flex; gap: 10px; margin-top: 12px; }
+.dup-btn { background: oklch(0.24 0.02 255); border: 1px solid oklch(0.32 0.02 255); color: inherit; border-radius: 10px; padding: 8px 14px; cursor: pointer; font-size: 13px; }
+.dup-btn.primary { background: oklch(0.5 0.16 250); border-color: oklch(0.55 0.16 250); }
+.dup-btn:disabled { opacity: .6; cursor: default; }
+.dup-hidden-title { font-weight: 600; margin-top: 8px; }
+.dup-hidden-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; border: 1px solid oklch(0.26 0.02 255); border-radius: 12px; margin-top: 8px; }

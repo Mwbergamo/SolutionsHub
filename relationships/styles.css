@@ -3588,3 +3588,32 @@ a { color: inherit; }
 .dup-btn:disabled { opacity: .6; cursor: default; }
 .dup-hidden-title { font-weight: 600; margin-top: 8px; }
 .dup-hidden-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; border: 1px solid oklch(0.26 0.02 255); border-radius: 12px; margin-top: 8px; }
+
+/* Dashboard right-side menu + left-pane content, added 2026-10-13 per
+   Michael -- replaces the old always-the-same stack of cards with a menu
+   of right-column cards (Risk Scans, Documents, Solutions, Computers,
+   Active Services, Contacts, Active Contacts) whose selected item's full
+   content takes over the left pane. Reuses .dashboard-grid for the
+   left/menu split, so the same 300px-menu / stacked-on-mobile behavior
+   applies. Only renders outside Edit View -- see customerPaneHtml. */
+.pane-left { display: flex; flex-direction: column; gap: 26px; min-width: 0; }
+
+.pane-back-row { display: flex; align-items: center; gap: 16px; margin-bottom: 4px; }
+.pane-back-btn {
+  font-size: 12px; font-weight: 700; color: #8fc3ff; background: oklch(0.4 0.08 255 / 0.14);
+  border: 1px solid oklch(0.4 0.08 255 / 0.5); border-radius: 999px; padding: 7px 14px;
+  cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.pane-back-btn:hover { background: oklch(0.4 0.08 255 / 0.24); }
+
+.pane-menu { display: flex; flex-direction: column; gap: 8px; }
+.pane-menu-item {
+  display: block; width: 100%; text-align: left; font-family: inherit; font-size: 13.5px; font-weight: 600;
+  color: oklch(0.82 0.006 255); background: oklch(0.19 0.014 255); border: 1px solid oklch(0.26 0.02 255);
+  border-radius: 12px; padding: 13px 16px; cursor: pointer; transition: background .12s, border-color .12s, color .12s;
+}
+.pane-menu-item:hover { border-color: oklch(0.4 0.08 255 / 0.5); color: white; }
+.pane-menu-item.active {
+  color: #8fc3ff; border-color: #2f8fef; background: oklch(0.4 0.08 255 / 0.14);
+}
+@media (max-width: 860px) { .pane-menu { flex-direction: row; flex-wrap: wrap; } .pane-menu-item { width: auto; flex: 1 1 auto; } }

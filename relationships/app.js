@@ -329,6 +329,14 @@
     // (accountContactsEditingId), buffered in accountContactsEditDraft
     // until Save -- same fixed-id-input pattern as every other
     // single-draft form in this file (e.g. taskDraftDescription).
+    // Dashboard right-side menu / left-pane content (added 2026-10-13
+    // per Michael) -- null shows the normal dashboard view in the left
+    // pane; set to a right-column layout card id (e.g. 'riskscans') to
+    // show that card's full content there instead, menu stays visible
+    // so another item (or "Dashboard") can be picked. Only applies
+    // outside Edit View -- editing still shows the original two-column
+    // drag layout untouched.
+    customerPaneView: null,
     accountContactsLoading: false,
     accountContacts: null,
     accountContactTypes: [],
@@ -1778,6 +1786,7 @@
     state.loadingDetail = true;
     state.resultsOpen = false;
     state.activePillarId = null;
+    state.customerPaneView = null;
     state.error = null;
     render();
     apiGet('api/customers.php?action=detail&id=' + encodeURIComponent(id)).then(function (r) {
@@ -5215,18 +5224,22 @@
       '<div class="activity-card-sub">Professional Services board — click to view</div>' +
     '</button>';
 
-    html += '<button class="activity-card" type="button" data-action="open-contacts">' +
-      '<div class="activity-card-label">Active Contacts</div>' +
-      '<div class="activity-card-value">' + (detail.customer.active_contact_count || 0) + '</div>' +
-      '<div class="activity-card-sub">Synced nightly — click to view every contact, edit, or add one</div>' +
-    '</button>';
+    html += '</div>';
+    html += activityDrilldownHtml(detail);
+    return html;
+  }
 
-    // Monthly Billing is read from the nightly sync, not live (see
-    // activity.php) -- billing_synced_at is null when this customer hasn't
-    // been covered by a billing sync run yet, which reads as a real,
-    // confirmed $0 if shown as a normal chart. Show a plain "not yet
-    // synced" message instead, deliberately not a chart, so nobody mistakes
-    // "hasn't synced" for "no billing."
+  // ---- Monthly Billing card -- split out of activityPanelHtml 2026-10-13
+  // per Michael, as its own Edit View left-column card ('billing') so it
+  // sits in the new always-visible dashboard view alongside Opportunity/Risk
+  // and Outgrow Last Touch. Logic/markup unchanged from the original.
+  function monthlyBillingPanelHtml(detail) {
+    var summary = state.activitySummary;
+    if (state.activitySummaryLoading && !summary) {
+      return '<div class="activity-card loading-card">Loading billing activity…</div>';
+    }
+    if (!summary || summary.available === false) return '';
+    var html = '';
     if (!summary.billing_synced_at) {
       html += '<div class="activity-card billing-card">' +
         '<div class="activity-card-label">Monthly Billing</div>' +
@@ -5243,13 +5256,6 @@
         ? 'Holding steady'
         : ('Trending ' + trend.direction + (trendPctText ? ' ' + trendPctText : '') + (isAnnual ? '' : ' on average'));
 
-      // Annual-cadence customers (added 2026-09-15, per Michael: "For
-      // accounts that are only being billed annually, I want to see
-      // their last 3 years of billings, just like the last 3 months for
-      // normal monthly customers.") -- see billing.php's/connectwise-
-      // billing-sync-core.php's cadence detection. Same bar-chart markup,
-      // just keyed by `year` instead of `month` and captioned for a
-      // year-over-year comparison instead of the monthly rolling average.
       html += '<div class="activity-card billing-card">' +
         '<div class="activity-card-label-row">' +
           '<div class="activity-card-label">' + (isAnnual ? 'Annual Billing' : 'Monthly Billing') + '</div>' +
@@ -5274,9 +5280,7 @@
           ' Synced ' + escapeHtml(fmtTimestamp(summary.billing_synced_at)) + '.</div>' +
       '</div>';
     }
-
-    html += '</div>';
-    html += activityDrilldownHtml(detail);
+    html += billingDrilldownHtml(detail);
     return html;
   }
 
@@ -5287,31 +5291,39 @@
   }
 
   function activityDrilldownHtml(detail) {
-    if (!state.activityView) return '';
+    if (state.activityView !== 'tickets') return '';
     var html = '<div class="activity-drilldown">';
+    html += '<div class="drilldown-header">' + activityDrilldownBackBtn('activity-close', 'Close') +
+      '<div class="drilldown-title">Service Tickets YTD — ' + escapeHtml(detail.customer.name) + '</div>' +
+    '</div>';
+    if (state.activityTicketsLoading || !state.activityTickets) {
+      html += '<div class="loading">Loading tickets…</div>';
+    } else if (state.activityTickets === 'error') {
+      html += '<div class="activity-error">Could not load tickets from ConnectWise.</div>';
+    } else if (state.activityTickets.length === 0) {
+      html += '<div class="empty-state">No Professional Services tickets so far this year.</div>';
+    } else {
+      html += '<div class="activity-table-wrap"><table class="activity-table"><thead><tr>' +
+        '<th>Date</th><th>Ticket #</th><th>Summary</th><th>Engineer</th><th>Hours</th>' +
+      '</tr></thead><tbody>';
+      state.activityTickets.forEach(function (t) {
+        html += '<tr><td>' + escapeHtml(fmtDate(t.date)) + '</td><td>#' + t.ticket_number + '</td>' +
+          '<td>' + escapeHtml(t.summary) + '</td><td>' + escapeHtml(t.engineer) + '</td>' +
+          '<td>' + (t.hours || 0) + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    html += '</div>';
+    return html;
+  }
 
-    if (state.activityView === 'tickets') {
-      html += '<div class="drilldown-header">' + activityDrilldownBackBtn('activity-close', 'Close') +
-        '<div class="drilldown-title">Service Tickets YTD — ' + escapeHtml(detail.customer.name) + '</div>' +
-      '</div>';
-      if (state.activityTicketsLoading || !state.activityTickets) {
-        html += '<div class="loading">Loading tickets…</div>';
-      } else if (state.activityTickets === 'error') {
-        html += '<div class="activity-error">Could not load tickets from ConnectWise.</div>';
-      } else if (state.activityTickets.length === 0) {
-        html += '<div class="empty-state">No Professional Services tickets so far this year.</div>';
-      } else {
-        html += '<div class="activity-table-wrap"><table class="activity-table"><thead><tr>' +
-          '<th>Date</th><th>Ticket #</th><th>Summary</th><th>Engineer</th><th>Hours</th>' +
-        '</tr></thead><tbody>';
-        state.activityTickets.forEach(function (t) {
-          html += '<tr><td>' + escapeHtml(fmtDate(t.date)) + '</td><td>#' + t.ticket_number + '</td>' +
-            '<td>' + escapeHtml(t.summary) + '</td><td>' + escapeHtml(t.engineer) + '</td>' +
-            '<td>' + (t.hours || 0) + '</td></tr>';
-        });
-        html += '</tbody></table></div>';
-      }
-    } else if (state.activityView === 'invoices') {
+  // ---- Billing's invoices / invoice-detail drilldown -- split out of the
+  // old activityDrilldownHtml 2026-10-13 so it renders under the new
+  // standalone Monthly Billing card instead of under Service Tickets.
+  function billingDrilldownHtml(detail) {
+    if (state.activityView !== 'invoices' && state.activityView !== 'invoice-detail') return '';
+    var html = '<div class="activity-drilldown">';
+    if (state.activityView === 'invoices') {
       var m = state.activityInvoicesPeriod || {};
       html += '<div class="drilldown-header">' + activityDrilldownBackBtn('activity-close', 'Close') +
         '<div class="drilldown-title">Agreement Invoices — ' + escapeHtml(m.label || '') + '</div>' +
@@ -5336,19 +5348,14 @@
       } else {
         html += invoiceDetailHtml(state.activityInvoiceDetail);
       }
-    } else if (state.activityView === 'contacts') {
-      html += accountContactsDrilldownHtml(detail);
     }
-
     html += '</div>';
     return html;
   }
 
   function accountContactsDrilldownHtml(detail) {
     var customerId = detail.customer.id;
-    var html = '<div class="drilldown-header">' + activityDrilldownBackBtn('activity-close', 'Close') +
-      '<div class="drilldown-title">Account Contacts — ' + escapeHtml(detail.customer.name) + '</div>' +
-    '</div>';
+    var html = '';
 
     if (state.accountContactsLoading || state.accountContacts === null) {
       return html + '<div class="loading">Loading contacts…</div>';
@@ -5432,7 +5439,6 @@
   }
 
   function loadAccountContacts(customerId) {
-    state.activityView = 'contacts';
     state.accountContactsLoading = true;
     state.accountContacts = null;
     state.accountContactsError = null;
@@ -5648,8 +5654,8 @@
   // ---- Arrangeable dashboard cards (added 2026-10-07 per Michael) ---------
   // "Edit view" lets a rep drag the cards between two columns; the arrangement is saved per rep
   // (api/layout.php) and applied to every customer they open.
-  var LAYOUT_DEFAULT = { left: ['opportunity', 'contact', 'outgrow'], right: ['riskscans', 'documents', 'solutions', 'computers', 'activeservices'] };
-  var LAYOUT_CARD_NAMES = { opportunity: 'Opportunity/Risk Report', contact: 'Contacts', outgrow: 'Outgrow Last Touch', riskscans: 'Risk Scans', documents: 'Documents', solutions: 'Solutions', computers: 'Computers (Automate)', activeservices: 'Active Services' };
+  var LAYOUT_DEFAULT = { left: ['opportunity', 'outgrow', 'billing'], right: ['riskscans', 'documents', 'solutions', 'computers', 'activeservices', 'contact', 'activecontacts'] };
+  var LAYOUT_CARD_NAMES = { opportunity: 'Opportunity/Risk Report', contact: 'Contacts', outgrow: 'Outgrow Last Touch', riskscans: 'Risk Scans', documents: 'Documents', solutions: 'Solutions', computers: 'Computers (Automate)', activeservices: 'Active Services', billing: 'Monthly Billing', activecontacts: 'Active Contacts' };
 
   function normalizeLayout(l) {
     var out = { left: [], right: [] }, seen = {};
@@ -5709,6 +5715,8 @@
     if (id === 'solutions') return solutionsPanelHtml(detail.customer);
     if (id === 'computers') return automatePanelHtml(detail.customer);
     if (id === 'activeservices') return activeServicesPanelHtml(detail.customer);
+    if (id === 'billing') return monthlyBillingPanelHtml(detail);
+    if (id === 'activecontacts') return accountContactsDrilldownHtml(detail);
     return '';
   }
 
@@ -5783,6 +5791,102 @@
     for (var i = 0; i < els.length; i++) els[i].classList.remove('layout-dragging', 'layout-drop');
   }
 
+  // Meetings + Meeting To-Dos + the pillar grid/Cross-Sell roster -- the
+  // part of the dashboard that always renders the same way regardless of
+  // Edit View, just relocated 2026-10-13 (Meetings used to sit beside the
+  // roster; now it's above the whole pillar section, per Michael).
+  function dashboardLowerHtml(detail) {
+    var roster = missingRoster(detail);
+    var html = '';
+
+    html += meetingsPanelHtml(detail.customer.id);
+    html += meetingTasksPanelHtml();
+
+    html += '<div class="dashboard-grid">';
+
+    html += '<div class="pillar-grid">';
+    detail.pillars.forEach(function (pillar) {
+      var activeCount = pillar.services.filter(function (s) { return s.active; }).length;
+      var totalCount = pillar.services.length;
+      var isHostedVoip = pillar.id === 'voip' && detail.customer.voip_hosted_elsewhere;
+      var tileClass = isHostedVoip ? 'hosted-elsewhere' : (pillar.active ? 'active' : 'inactive');
+      var statusText = isHostedVoip ? 'HOSTED PLATFORM →' : (pillar.active ? 'ACTIVE →' : 'NOT IN USE →');
+      var countText = isHostedVoip
+        ? 'Hosted by manufacturer — not marketed by CodeBlue'
+        : activeCount + ' of ' + totalCount + ' service areas in use';
+      html += '<div class="pillar-tile-wrap">' +
+        vendorFieldHtml(detail.customer.id, pillar) +
+        '<div class="pillar-tile ' + tileClass + '" data-action="open-pillar" data-pillar="' + pillar.id + '"' +
+        (isHostedVoip ? ' title="Voice hosted directly by the manufacturer' + (detail.customer.voip_hosted_agreement_name ? ' (' + escapeHtml(detail.customer.voip_hosted_agreement_name) + ')' : '') + ' — do not market phone/VoIP services to this customer."' : '') + '>' +
+          '<div>' +
+            '<div class="pillar-tile-name">' + escapeHtml(pillar.name) + '</div>' +
+            '<div class="pillar-tile-count">' + countText + '</div>' +
+          '</div>' +
+          '<div class="pillar-tile-status">' + statusText + '</div>' +
+        '</div>' +
+      '</div>';
+    });
+    html += '</div>';
+
+    html += '<div class="right-column">';
+    html += '<div class="roster-panel">' +
+      '<div class="roster-title">Cross-Sell Opportunities</div>' +
+      '<div class="roster-sub">Services this customer isn’t using yet. Click one to open its pillar.</div>' +
+      '<div class="roster-list">';
+    if (roster.length === 0) {
+      html += '<div class="roster-empty">This customer is using every CodeBlue service area — nothing to cross-sell right now.</div>';
+    } else {
+      roster.forEach(function (item) {
+        html += '<div class="roster-item" data-action="open-pillar" data-pillar="' + item.pillarId + '">' +
+          '<div class="roster-item-pillar">' + escapeHtml(item.pillarName) + '</div>' +
+          '<div class="roster-item-name">' + escapeHtml(item.serviceName) + '</div>' +
+        '</div>';
+      });
+    }
+    html += '</div></div>';
+    html += '</div>'; // .right-column
+
+    html += '</div>'; // .dashboard-grid
+    return html;
+  }
+
+  // The new right-side menu + left-pane content, added 2026-10-13 per
+  // Michael (not used while Edit View is open -- see customerDashboardHtml).
+  // state.customerPaneView is null for the normal dashboard view, or one of
+  // the current layout's right-column card ids once a menu item is clicked.
+  // Forces open the 3 cards that default to collapsed (solutions/computers/
+  // activeservices) so clicking a menu item always shows real content on the
+  // first click -- see the 'pane-open' click handler.
+  function customerPaneHtml(detail) {
+    var l = currentLayout();
+    var paneId = state.customerPaneView;
+    var html = '<div class="dashboard-grid">';
+
+    html += '<div class="pane-left">';
+    if (paneId && LAYOUT_CARD_NAMES[paneId]) {
+      html += '<div class="pane-back-row">' +
+        '<button type="button" class="pane-back-btn" data-action="pane-dashboard">← Dashboard</button>' +
+        '<div class="view-title">' + escapeHtml(LAYOUT_CARD_NAMES[paneId]) + '</div>' +
+      '</div>';
+      html += layoutCardInnerHtml(paneId, detail);
+    } else {
+      html += activityPanelHtml(detail);
+      l.left.forEach(function (id) { html += layoutCardInnerHtml(id, detail); });
+      html += dashboardLowerHtml(detail);
+    }
+    html += '</div>'; // .pane-left
+
+    html += '<div class="pane-menu">';
+    l.right.forEach(function (id) {
+      if (!LAYOUT_CARD_NAMES[id]) return;
+      html += '<button type="button" class="pane-menu-item' + (id === paneId ? ' active' : '') + '" data-action="pane-open" data-card="' + id + '">' + escapeHtml(LAYOUT_CARD_NAMES[id]) + '</button>';
+    });
+    html += '</div>'; // .pane-menu
+
+    html += '</div>'; // .dashboard-grid
+    return html;
+  }
+
   function customerDashboardHtml(detail) {
     var roster = missingRoster(detail);
     var html = '';
@@ -5820,64 +5924,22 @@
       html += '<div class="residential-note">Residential — ConnectWise Company status is Residential.</div>';
     }
 
-    html += dashboardCardsHtml(detail);
-
-    html += activityPanelHtml(detail);
-
-    html += '<div class="dashboard-grid">';
-
-    html += '<div class="pillar-grid">';
-    detail.pillars.forEach(function (pillar) {
-      var activeCount = pillar.services.filter(function (s) { return s.active; }).length;
-      var totalCount = pillar.services.length;
-      var isHostedVoip = pillar.id === 'voip' && detail.customer.voip_hosted_elsewhere;
-      var tileClass = isHostedVoip ? 'hosted-elsewhere' : (pillar.active ? 'active' : 'inactive');
-      var statusText = isHostedVoip ? 'HOSTED PLATFORM →' : (pillar.active ? 'ACTIVE →' : 'NOT IN USE →');
-      var countText = isHostedVoip
-        ? 'Hosted by manufacturer — not marketed by CodeBlue'
-        : activeCount + ' of ' + totalCount + ' service areas in use';
-      html += '<div class="pillar-tile-wrap">' +
-        vendorFieldHtml(detail.customer.id, pillar) +
-        '<div class="pillar-tile ' + tileClass + '" data-action="open-pillar" data-pillar="' + pillar.id + '"' +
-        (isHostedVoip ? ' title="Voice hosted directly by the manufacturer' + (detail.customer.voip_hosted_agreement_name ? ' (' + escapeHtml(detail.customer.voip_hosted_agreement_name) + ')' : '') + ' — do not market phone/VoIP services to this customer."' : '') + '>' +
-          '<div>' +
-            '<div class="pillar-tile-name">' + escapeHtml(pillar.name) + '</div>' +
-            '<div class="pillar-tile-count">' + countText + '</div>' +
-          '</div>' +
-          '<div class="pillar-tile-status">' + statusText + '</div>' +
-        '</div>' +
-      '</div>';
-    });
-    html += '</div>';
-
-    html += '<div class="right-column">';
-
-    html += '<div class="roster-panel">' +
-      '<div class="roster-title">Cross-Sell Opportunities</div>' +
-      '<div class="roster-sub">Services this customer isn’t using yet. Click one to open its pillar.</div>' +
-      '<div class="roster-list">';
-    if (roster.length === 0) {
-      html += '<div class="roster-empty">This customer is using every CodeBlue service area — nothing to cross-sell right now.</div>';
+    // 2026-10-13 per Michael: a right-side menu (Risk Scans, Documents,
+    // Solutions, Computers, Active Services, Contacts, Active Contacts)
+    // whose expanded content shows in the left pane; the always-visible
+    // dashboard view (Opportunity/Risk, Outgrow, Monthly Billing, Meetings,
+    // Meeting To-Dos, then the pillar grid) is what the left pane shows by
+    // default. Edit View is untouched -- while editing, the original
+    // two-column drag layout still renders exactly as before, and the
+    // dashboard content below it is unaffected either way, just repositioned
+    // (Meetings now renders above the pillar grid instead of beside it).
+    if (state.layoutEdit) {
+      html += dashboardCardsHtml(detail);
+      html += activityPanelHtml(detail);
+      html += dashboardLowerHtml(detail);
     } else {
-      roster.forEach(function (item) {
-        html += '<div class="roster-item" data-action="open-pillar" data-pillar="' + item.pillarId + '">' +
-          '<div class="roster-item-pillar">' + escapeHtml(item.pillarName) + '</div>' +
-          '<div class="roster-item-name">' + escapeHtml(item.serviceName) + '</div>' +
-        '</div>';
-      });
+      html += customerPaneHtml(detail);
     }
-    html += '</div></div>';
-
-    // Customer Meeting Capture -- added 2026-09-15 per Michael: a
-    // "Meetings" box, and a separate "Meeting To-Dos" box formatted like
-    // the Cross-Sell Checklist, both stacked directly under Cross-Sell
-    // Opportunities in the same right-hand column.
-    html += meetingsPanelHtml(detail.customer.id);
-    html += meetingTasksPanelHtml();
-
-    html += '</div>'; // .right-column
-
-    html += '</div>'; // .dashboard-grid
 
     if (state.activePillarId) {
       var pillar = detail.pillars.filter(function (p) { return p.id === state.activePillarId; })[0];
@@ -8635,6 +8697,17 @@
       render();
     } else if (action === 'automate-showall') {
       state.automateShowAll = !state.automateShowAll;
+      render();
+    } else if (action === 'pane-open') {
+      var paneCardId = el.getAttribute('data-card');
+      state.customerPaneView = paneCardId;
+      if (paneCardId === 'solutions') state.solutionsOpen = true;
+      if (paneCardId === 'computers') state.automateOpen = true;
+      if (paneCardId === 'activeservices') state.activeServicesOpen = true;
+      if (paneCardId === 'activecontacts') loadAccountContacts(state.selectedCustomer.customer.id);
+      render();
+    } else if (action === 'pane-dashboard') {
+      state.customerPaneView = null;
       render();
     } else if (action === 'activeservices-toggle') {
       state.activeServicesOpen = !state.activeServicesOpen;
