@@ -73,3 +73,8 @@ Thumbs.db
 /relationships/data/automate-token.json
 /relationships/data/automate-clients.json
 /relationships/data/automate-detail-*.json
+
+# ConnectWise Sell/CPQ (Quosal) API credentials -- see
+# connectwise-sell-config.php at the repo root. Never commit real
+# credentials to this repository.
+/connectwise-sell-config.php
