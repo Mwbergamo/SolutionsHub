@@ -78,3 +78,8 @@ Thumbs.db
 # connectwise-sell-config.php at the repo root. Never commit real
 # credentials to this repository.
 /connectwise-sell-config.php
+
+# IT Glue API key + cached organization list -- copy
+# relationships/api/itglue-config.sample.php to itglue-config.php on the server.
+/relationships/api/itglue-config.php
+/relationships/data/itglue-*.json
