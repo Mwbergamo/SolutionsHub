@@ -16,6 +16,11 @@
  *   Any signed-in user who can see customer N. Finds the IT Glue organization whose name matches the
  *   customer's name (exact normalised, then "contains") -> { ok, matched_org: {id,name}|null, closest: [...] }.
  *
+ * GET ?action=assignments&customer_id=N   (or &cw_company=...; add &refresh=1 to skip the 5-minute cache)
+ *   Any signed-in user who can see customer N. Matches the customer to its IT Glue organization, then returns
+ *   { contacts[], devices[] (with contact_id), licenses[] (contact_ids), software[] (device_ids), protection[]
+ *   (antivirus/backup, device_ids) } -- the Asset Assignments page joins them. No passwords are returned.
+ *
  * GET ?action=discover[&org=<IT Glue organization id>]
  *   Admin only. Lists the flexible asset types and their fields (to see how software / licenses are
  *   recorded), the configuration types with counts, and -- when org= is given -- counts of that
@@ -209,6 +214,173 @@ function relationships_itglue_resolve(PDO $pdo): array
     return [$match, $cust, $closest];
 }
 
+/** Letters+digits only, lower-case: lets "Device(s)" match the trait key "device-s" and "Licensed Users" match "licensed-users". */
+function relationships_itglue_key(string $s): string
+{
+    return (string) preg_replace('/[^a-z0-9]+/', '', mb_strtolower($s));
+}
+
+/** A flexible asset trait by its field name (e.g. "Licensed Users"), whatever punctuation IT Glue used in the key. */
+function relationships_itglue_trait(array $asset, string $fieldName)
+{
+    $want = relationships_itglue_key($fieldName);
+    foreach ((array) ($asset['attributes']['traits'] ?? []) as $k => $v) {
+        if (relationships_itglue_key((string) $k) === $want) {
+            return $v;
+        }
+    }
+    return null;
+}
+
+/** The ids a Tag trait points at. IT Glue returns either a list of objects with "id" or plain ids. */
+function relationships_itglue_tag_ids($v): array
+{
+    $ids = [];
+    foreach ((array) ($v ?? []) as $item) {
+        if (is_array($item)) {
+            $id = $item['id'] ?? $item['values']['id'] ?? null;
+        } else {
+            $id = $item;
+        }
+        if (is_numeric($id)) {
+            $ids[] = (int) $id;
+        }
+    }
+    return array_values(array_unique($ids));
+}
+
+/** Flexible asset type name -> id, cached for an hour (the list almost never changes). */
+function relationships_itglue_type_ids(): array
+{
+    $cache = __DIR__ . '/../data/itglue-types.json';
+    if (is_file($cache) && (time() - (int) @filemtime($cache)) < 3600) {
+        $c = json_decode((string) @file_get_contents($cache), true);
+        if (is_array($c)) {
+            return $c;
+        }
+    }
+    [$rows] = relationships_itglue_get_all('flexible_asset_types');
+    $map = [];
+    foreach ($rows as $r) {
+        $map[relationships_itglue_key((string) relationships_itglue_attr($r, 'name', ''))] = (int) $r['id'];
+    }
+    @file_put_contents($cache, json_encode($map), LOCK_EX);
+    @chmod($cache, 0600);
+    return $map;
+}
+
+/**
+ * Everything the Asset Assignments page draws for one IT Glue organization: people, devices, licenses,
+ * software, antivirus and backup records, with the links between them as ids. The page does the joining.
+ * No passwords are requested or returned. Cached 5 minutes per organization (?refresh=1 skips the cache).
+ */
+function relationships_itglue_assignments(int $orgId, bool $refresh): array
+{
+    $cache = __DIR__ . '/../data/itglue-assign-' . $orgId . '.json';
+    if (!$refresh && is_file($cache) && (time() - (int) @filemtime($cache)) < 300) {
+        $c = json_decode((string) @file_get_contents($cache), true);
+        if (is_array($c)) {
+            return $c;
+        }
+    }
+    $pick = static fn (array $r, string $k, $d = '') => relationships_itglue_attr($r, $k, $d);
+
+    [$contactRows] = relationships_itglue_get_all('contacts', ['filter' => ['organization_id' => $orgId], 'sort' => 'last_name']);
+    $contacts = [];
+    foreach ($contactRows as $r) {
+        $email = '';
+        foreach ((array) ($r['attributes']['contact-emails'] ?? []) as $e) {
+            if (!empty($e['primary']) || $email === '') { $email = (string) ($e['value'] ?? $email); }
+        }
+        $contacts[] = [
+            'id' => (int) $r['id'],
+            'name' => (string) $pick($r, 'name', trim($pick($r, 'first-name') . ' ' . $pick($r, 'last-name'))),
+            'title' => (string) $pick($r, 'title'),
+            'type' => (string) $pick($r, 'contact-type-name'),
+            'email' => $email,
+            'important' => (bool) $pick($r, 'important', false),
+            'url' => (string) $pick($r, 'resource-url'),
+        ];
+    }
+
+    [$cfgRows] = relationships_itglue_get_all('configurations', ['filter' => ['organization_id' => $orgId, 'archived' => 'false'], 'sort' => 'name']);
+    $devices = [];
+    foreach ($cfgRows as $r) {
+        $devices[] = [
+            'id' => (int) $r['id'],
+            'name' => (string) $pick($r, 'name'),
+            'type' => (string) $pick($r, 'configuration-type-name'),
+            'status' => (string) $pick($r, 'configuration-status-name'),
+            'contact_id' => (int) $pick($r, 'contact-id', 0),
+            'make' => (string) $pick($r, 'manufacturer-name'),
+            'model' => (string) $pick($r, 'model-name'),
+            'os' => (string) $pick($r, 'operating-system-name'),
+            'serial' => (string) $pick($r, 'serial-number'),
+            'ip' => (string) $pick($r, 'primary-ip'),
+            'warranty_expires' => (string) $pick($r, 'warranty-expires-at'),
+            'url' => (string) $pick($r, 'resource-url'),
+        ];
+    }
+
+    $typeIds = relationships_itglue_type_ids();
+    $fa = static function (string $typeName) use ($typeIds, $orgId): array {
+        $tid = $typeIds[relationships_itglue_key($typeName)] ?? 0;
+        if ($tid === 0) {
+            return [];
+        }
+        [$rows] = relationships_itglue_get_all('flexible_assets', ['filter' => ['flexible-asset-type-id' => $tid, 'organization-id' => $orgId]]);
+        return $rows;
+    };
+    $txt = static fn ($v): string => is_scalar($v) ? trim((string) $v) : '';
+
+    $licenses = [];
+    foreach ($fa('Microsoft Licenses') as $a) {
+        $licenses[] = [
+            'id' => (int) $a['id'],
+            'name' => $txt(relationships_itglue_trait($a, 'License Name')) ?: (string) $pick($a, 'name'),
+            'active' => (int) relationships_itglue_trait($a, 'Active'),
+            'consumed' => (int) relationships_itglue_trait($a, 'Consumed'),
+            'unused' => (int) relationships_itglue_trait($a, 'Unused'),
+            'contact_ids' => relationships_itglue_tag_ids(relationships_itglue_trait($a, 'Licensed Users')),
+            'url' => (string) $pick($a, 'resource-url'),
+        ];
+    }
+    $software = [];
+    foreach ($fa('Software') as $a) {
+        $software[] = [
+            'id' => (int) $a['id'],
+            'name' => $txt(relationships_itglue_trait($a, 'Software Name')) ?: (string) $pick($a, 'name'),
+            'vendor' => $txt(relationships_itglue_trait($a, 'Vendor Name')),
+            'device_ids' => relationships_itglue_tag_ids(relationships_itglue_trait($a, 'Device(s)')),
+            'url' => (string) $pick($a, 'resource-url'),
+        ];
+    }
+    $protection = [];
+    foreach ([['Antivirus', 'Antivirus Platform', 'antivirus'], ['Backup', 'Backup Platform', 'backup']] as [$type, $platformField, $kind]) {
+        foreach ($fa($type) as $a) {
+            $protection[] = [
+                'id' => (int) $a['id'],
+                'kind' => $kind,
+                'platform' => $txt(relationships_itglue_trait($a, $platformField)) ?: (string) $pick($a, 'name'),
+                'device_ids' => relationships_itglue_tag_ids(relationships_itglue_trait($a, 'Protected Devices')),
+                'url' => (string) $pick($a, 'resource-url'),
+            ];
+        }
+    }
+
+    $out = [
+        'contacts' => $contacts,
+        'devices' => $devices,
+        'licenses' => $licenses,
+        'software' => $software,
+        'protection' => $protection,
+        'generated_at' => gmdate('c'),
+    ];
+    @file_put_contents($cache, json_encode($out), LOCK_EX);
+    @chmod($cache, 0600);
+    return $out;
+}
+
 // ------------------------------------------------------------------ requests
 if (defined('RELATIONSHIPS_ITGLUE_LIB')) { return; } // included by another script: functions only
 $pdo = relationships_db();
@@ -234,6 +406,22 @@ try {
             'matched_org' => $match === null ? null : ['id' => $match['id'], 'name' => $match['name']],
             'closest' => $closest,
         ]);
+    }
+
+    if ($action === 'assignments') {
+        [$match, $cust, $closest] = relationships_itglue_resolve($pdo);
+        if ($match === null) {
+            relationships_respond(200, [
+                'ok' => true, 'configured' => true, 'matched_org' => null,
+                'customer' => ['id' => (int) $cust['id'], 'name' => (string) $cust['name']],
+                'closest' => $closest,
+            ]);
+        }
+        relationships_respond(200, [
+            'ok' => true, 'configured' => true,
+            'customer' => ['id' => (int) $cust['id'], 'name' => (string) $cust['name']],
+            'matched_org' => ['id' => $match['id'], 'name' => $match['name']],
+        ] + relationships_itglue_assignments((int) $match['id'], !empty($_GET['refresh'])));
     }
 
     if ($action === 'discover') {
