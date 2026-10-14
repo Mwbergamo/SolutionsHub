@@ -6236,6 +6236,8 @@
     state.solutionFiles = {}; // solution id -> { loading, files, error } once its Files list has been opened
     state.solutionFilesOpen = {};
     state.solutionDeletingId = null;
+    state.sellQuoteCreatingId = null;
+    state.sellQuoteError = {};
   }
 
   function loadSolutions(customerId) {
@@ -6340,6 +6342,43 @@
     return '<div class="solution-cwlinks">ConnectWise: ' + links.map(function (l) { return escapeHtml(l.project_name || ('Project #' + l.project_id)); }).join(', ') + '</div>';
   }
 
+  // ---- Sell quote link (added 2026-10-14, Clyde -> Sell quote integration) --------------------
+  // Mirrors solutionCwLinksHtml() above, but for the solution's own Sell/CPQ quote (at most one
+  // per solution today -- see solution_sell_links' docblock in db.php).
+  function solutionSellLinkHtml(s) {
+    var l = s.sell_link;
+    if (!l || l.status !== 'created') return '';
+    var label = 'Sell Quote' + (l.quote_number ? ' #' + escapeHtml(l.quote_number) : '');
+    return '<div class="solution-cwlinks"><a href="' + escapeHtml(l.quote_link) + '" target="_blank" rel="noopener">' + label + ' ↗</a></div>';
+  }
+
+  function createSellQuote(id) {
+    state.sellQuoteCreatingId = id;
+    state.sellQuoteError = {};
+    render();
+    apiPost('api/solutions.php?action=create_sell_quote', { id: id }).then(function (r) {
+      state.sellQuoteCreatingId = null;
+      if (r.data && r.data.ok) {
+        var s = (state.solutions || []).filter(function (x) { return x.id === id; })[0];
+        if (s) s.sell_link = r.data.sell_link;
+      } else {
+        state.sellQuoteError[id] = (r.data && r.data.error) || 'Could not create the Sell quote.';
+      }
+      render();
+    }).catch(function () {
+      state.sellQuoteCreatingId = null;
+      state.sellQuoteError[id] = 'Could not create the Sell quote — check your connection and try again.';
+      render();
+    });
+  }
+
+  function solutionSellQuoteButtonHtml(s) {
+    if (s.sell_link && s.sell_link.status === 'created') return '';
+    var busy = state.sellQuoteCreatingId === s.id;
+    return '<button type="button" class="solution-btn" data-action="solution-create-sell-quote" data-solution="' + s.id + '"' + (busy ? ' disabled' : '') +
+      ' title="Create a ConnectWise Sell quote from this solution">' + (busy ? 'Creating Sell quote…' : 'Create Sell Quote') + '</button>';
+  }
+
   function copySolutionLink(id) {
     var s = (state.solutions || []).filter(function (x) { return x.id === id; })[0];
     if (!s || !s.link) return;
@@ -6366,7 +6405,7 @@
     var edited = s.updated_at && s.updated_at !== s.created_at
       ? ' <span class="solution-edited" title="Last updated by ' + escapeHtml(s.updated_by_name) + ' on ' + escapeHtml(fmtTimestamp(s.updated_at)) + '">(edited ' + escapeHtml(solutionDate(s.updated_at)) + ')</span>' : '';
     var h = '<div class="solution-row" data-solution-row="' + s.id + '">' +
-      '<div class="solution-cell solution-name">' + escapeHtml(s.name) + solutionCwLinksHtml(s) + '</div>' +
+      '<div class="solution-cell solution-name">' + escapeHtml(s.name) + solutionCwLinksHtml(s) + solutionSellLinkHtml(s) + '</div>' +
       '<div class="solution-cell solution-pillars">' + pillars + '</div>' +
       '<div class="solution-cell solution-created">' + escapeHtml(solutionDate(s.created_at)) + edited + '</div>' +
       '<div class="solution-cell solution-rep">' + escapeHtml(s.created_by_name) + '</div>' +
@@ -6374,8 +6413,9 @@
         '<button type="button" class="solution-btn" data-action="solution-files" data-solution="' + s.id + '">' + (open ? 'Hide files' : 'Files') + '</button>' +
         '<button type="button" class="solution-btn" data-action="solution-copy" data-solution="' + s.id + '" title="Copy this solution\'s unique link (to paste into ConnectWise)">' + (state.solutionCopiedId === s.id ? 'Copied \u2713' : 'Copy link') + '</button>' +
         '<a class="solution-btn primary" href="../index.html?solution=' + s.id + '" target="_blank" rel="noopener">Open / Edit</a>' +
+        solutionSellQuoteButtonHtml(s) +
         (s.can_delete ? '<button type="button" class="solution-btn danger" data-action="solution-delete" data-solution="' + s.id + '"' + (state.solutionDeletingId === s.id ? ' disabled' : '') + '>' + (state.solutionDeletingId === s.id ? 'Deleting…' : 'Delete') + '</button>' : '') +
-      '</div>';
+      '</div>' + (state.sellQuoteError[s.id] ? '<div class="error-banner">' + escapeHtml(state.sellQuoteError[s.id]) + '</div>' : '');
     if (open) {
       var slot = state.solutionFiles[s.id];
       h += '<div class="solution-files">';
@@ -8723,6 +8763,8 @@
       copySolutionLink(parseInt(el.getAttribute('data-solution'), 10));
     } else if (action === 'solution-delete') {
       deleteSolution(parseInt(el.getAttribute('data-solution'), 10));
+    } else if (action === 'solution-create-sell-quote') {
+      createSellQuote(parseInt(el.getAttribute('data-solution'), 10));
     } else if (action === 'document-upload') {
       uploadDocuments(parseInt(el.getAttribute('data-customer'), 10));
     } else if (action === 'document-retry-cw') {

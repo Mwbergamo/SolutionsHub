@@ -866,6 +866,33 @@ function relationships_migrate(PDO $pdo): void
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_solution_cw_links_solution ON solution_cw_links(solution_id)');
 
+    // Solution -> ConnectWise Sell quote link (added 2026-10-14, Clyde -> Sell quote integration,
+    // per Michael): same shape as solution_cw_links above, but for a Sell/CPQ quote instead of a
+    // Manage project. One row per Sell quote created from a saved solution -- a solution can only
+    // ever get ONE Sell quote today (the "Create Sell Quote" button disappears once one exists;
+    // see relationships/api/sell.php), but this is a table (not columns on customer_solutions) so
+    // a future "create another quote from this solution" doesn't need a schema change.
+    //   sell_quote_id      the Sell/Quosal GUID (QuoteView.id), e.g. "q639275379732147962lFdRAxQ"
+    //   sell_quote_number  the human quote number (QuoteView.quoteNumber), for display
+    //   sell_quote_link    the full quote.dashboard deep link (built once, stored, never re-derived)
+    //   template_kind      which template this came from ('peoplefirst' | 'proposal' | ...) -- see
+    //                      RELATIONSHIPS_SELL_QUOTE_TEMPLATES in sell.php
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS solution_sell_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            solution_id INTEGER NOT NULL REFERENCES customer_solutions(id) ON DELETE CASCADE,
+            sell_quote_id TEXT NOT NULL,
+            sell_quote_number TEXT,
+            sell_quote_link TEXT NOT NULL,
+            template_kind TEXT NOT NULL,
+            push_status TEXT NOT NULL DEFAULT 'created',
+            push_error TEXT,
+            linked_by_name TEXT NOT NULL,
+            linked_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_solution_sell_links_solution ON solution_sell_links(solution_id)');
+
     // Per-rep customer-dashboard card layout (layout.php) -- 2026-10-07.
     $pdo->exec(<<<'SQL'
         CREATE TABLE IF NOT EXISTS user_dashboard_layouts (

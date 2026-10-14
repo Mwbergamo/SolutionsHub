@@ -28,6 +28,9 @@
  *        files[] + file_kinds[] ('attachment'|'camera_photo') + file_refs[] (camera photo id)
  * POST ?action=delete  { id }
  * POST ?action=retry_cw_file { file_id }   re-attempts the ConnectWise attachment of one marked-up camera photo
+ * POST ?action=create_sell_quote { id }   creates a ConnectWise Sell/CPQ quote from this solution and records the
+ *      link (added 2026-10-14, Clyde -> Sell quote integration -- see relationships/api/sell.php and
+ *      claude/solutions-hub-cpq-quote-integration.md in the project docs). No Manage Opportunity is ever touched.
  *
  * Camera photos: the Hub saves each photo twice -- the original (kind 'camera_photo', so the layout can be re-edited) and a
  * marked-up copy with the numbered cameras drawn on it (kind 'camera_marked', ref '<photoId>:<signature>'). The marked-up
@@ -48,6 +51,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/territory-access.php';
 require_once __DIR__ . '/connectwise.php';
+require_once __DIR__ . '/sell.php';
 
 $pdo = relationships_db();
 $user = relationships_require_login($pdo);
@@ -107,6 +111,26 @@ function relationships_solution_cw_links(PDO $pdo, int $solutionId): array
         'project_id' => (int) $l['cw_project_id'], 'project_name' => $l['project_name'], 'status' => $l['push_status'],
         'error' => $l['push_error'], 'linked_by_name' => $l['linked_by_name'], 'linked_at' => $l['linked_at'],
     ], $stmt->fetchAll(PDO::FETCH_ASSOC));
+}
+
+/**
+ * The saved solution's Sell quote link, if one has been created (added 2026-10-14, Clyde -> Sell
+ * quote integration). A solution gets at most one Sell quote today -- see solution_sell_links'
+ * own docblock in db.php -- so this returns one row or null, not a list.
+ */
+function relationships_solution_sell_link(PDO $pdo, int $solutionId): ?array
+{
+    $stmt = $pdo->prepare('SELECT sell_quote_id, sell_quote_number, sell_quote_link, template_kind, push_status, push_error, linked_by_name, linked_at FROM solution_sell_links WHERE solution_id = :s ORDER BY id DESC LIMIT 1');
+    $stmt->execute([':s' => $solutionId]);
+    $l = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($l === false) {
+        return null;
+    }
+    return [
+        'quote_id' => $l['sell_quote_id'], 'quote_number' => $l['sell_quote_number'], 'quote_link' => $l['sell_quote_link'],
+        'template_kind' => $l['template_kind'], 'status' => $l['push_status'], 'error' => $l['push_error'],
+        'linked_by_name' => $l['linked_by_name'], 'linked_at' => $l['linked_at'],
+    ];
 }
 
 const RELATIONSHIPS_SOLUTION_PRESALES_BOARD = 45; // same Pre-Sales board projects.php lists
@@ -188,6 +212,7 @@ function relationships_solution_row(PDO $pdo, array $r, bool $withFiles, ?array 
     ];
     $out['link'] = relationships_solution_link((int) $r['id']);
     $out['cw_links'] = relationships_solution_cw_links($pdo, (int) $r['id']);
+    $out['sell_link'] = relationships_solution_sell_link($pdo, (int) $r['id']);
     if ($withFiles) {
         $out['files'] = relationships_solution_files($pdo, (int) $r['id']);
     }
@@ -519,6 +544,61 @@ if ($action === 'save') {
         }
     }
     relationships_respond(200, ['ok' => true, 'solution' => relationships_solution_row($pdo, $row, true, $user), 'created' => $existing === null, 'moved' => $moving]);
+}
+
+// ---------------------------------------------------------------- create_sell_quote
+// Added 2026-10-14, per Michael: the "Create Sell Quote" button on a saved solution. Builds a
+// Sell/CPQ quote from this solution's saved state (template choice + line items depend on the
+// solution's content -- see relationships/api/sell.php) and records the link. A solution can only
+// get ONE Sell quote today -- refuses if solution_sell_links already has a non-failed row for it,
+// so a rep can't double-click their way into two quotes for the same solution.
+if ($action === 'create_sell_quote') {
+    $data = relationships_read_json_body();
+    $id = (int) ($data['id'] ?? 0);
+    if ($id <= 0) {
+        relationships_respond(400, ['ok' => false, 'error' => 'Missing/invalid id.']);
+    }
+    $row = relationships_solution_load($pdo, $allowedTerritories, $id);
+    $existingLink = relationships_solution_sell_link($pdo, $id);
+    if ($existingLink !== null && $existingLink['status'] !== 'failed') {
+        relationships_respond(409, ['ok' => false, 'error' => 'This solution already has a Sell quote.', 'sell_link' => $existingLink]);
+    }
+
+    $custStmt = $pdo->prepare('SELECT connectwise_id FROM customers WHERE id = :id');
+    $custStmt->execute([':id' => $row['customer_id']]);
+    $cwCompanyId = trim((string) ($custStmt->fetchColumn() ?: ''));
+
+    $state = json_decode((string) $row['state_json'], true);
+    if (!is_array($state)) {
+        relationships_respond(400, ['ok' => false, 'error' => 'This solution has no usable saved data.']);
+    }
+
+    $linkId = null;
+    try {
+        $result = relationships_sell_create_quote_for_solution(
+            $state,
+            $cwCompanyId,
+            (string) $row['customer_name'],
+            (string) $user['email'],
+            (string) $user['name']
+        );
+        $pdo->prepare(
+            'INSERT INTO solution_sell_links (solution_id, sell_quote_id, sell_quote_number, sell_quote_link, template_kind, push_status, linked_by_name)
+             VALUES (:s, :qid, :qnum, :link, :kind, \'created\', :un)'
+        )->execute([
+            ':s' => $id, ':qid' => $result['quote_id'], ':qnum' => $result['quote_number'],
+            ':link' => $result['quote_link'], ':kind' => $result['template_kind'], ':un' => $user['name'],
+        ]);
+        relationships_respond(200, ['ok' => true, 'sell_link' => relationships_solution_sell_link($pdo, $id)]);
+    } catch (RelationshipsSellError $e) {
+        // Record the failed attempt (so the UI can show what happened and the rep can retry)
+        // rather than losing the error -- same philosophy as solution_cw_links' push_status.
+        $pdo->prepare(
+            'INSERT INTO solution_sell_links (solution_id, sell_quote_id, sell_quote_number, sell_quote_link, template_kind, push_status, push_error, linked_by_name)
+             VALUES (:s, \'\', NULL, \'\', \'unknown\', \'failed\', :e, :un)'
+        )->execute([':s' => $id, ':e' => mb_substr($e->getMessage(), 0, 1000), ':un' => $user['name']]);
+        relationships_respond(502, ['ok' => false, 'error' => 'Could not create the Sell quote: ' . $e->getMessage()]);
+    }
 }
 
 // ---------------------------------------------------------------- link_project

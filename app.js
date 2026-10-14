@@ -2878,6 +2878,13 @@ class Component extends DCLogic {
     var clean = function (v) { return JSON.parse(JSON.stringify(v == null ? null : v)); };
     var managedIT = clean(s.managedIT) || {};
     managedIT.currentInvoice = { fileName: '', status: 'idle', error: null, data: null };
+    // managedITNums (added 2026-10-14, for the Clyde -> Sell quote integration): the SAME
+    // computed pricing object computeManagedIT() derives for the Summary screen (supportMonthly,
+    // perMemberPrice, softwareMonthly, hardwareMonthly, onboardingTotal, ...), captured at save
+    // time so the server-side Sell-quote builder (relationships/api/sell.php) can read real
+    // dollar amounts without re-implementing this pricing logic in PHP -- that would risk the
+    // Sell quote's numbers silently drifting from what the rep/customer actually saw in the Hub.
+    var managedITNums = clean(this.computeManagedIT()) || {};
     var photos = ((s.cameraPlan && s.cameraPlan.photos) || []).map(function (p) {
       return { id: p.id, name: p.name, markers: clean(p.markers) || [] };
     });
@@ -2886,7 +2893,7 @@ class Component extends DCLogic {
       selections: clean(s.selections) || {}, partsSelections: clean(s.partsSelections) || {}, scopeSelections: clean(s.scopeSelections) || {},
       categoryNotes: clean(s.categoryNotes) || {}, partsBillingMode: clean(s.partsBillingMode) || {}, phoneSelections: clean(s.phoneSelections) || {},
       categoryProducts: clean(s.categoryProducts) || {}, categoryDeviceCounts: clean(s.categoryDeviceCounts) || {}, categoryGroupMode: clean(s.categoryGroupMode) || {},
-      managedIT: managedIT, vcio: clean(s.vcio) || { hours: 2 }, scopeHourlyRate: s.scopeHourlyRate, checkout: clean(s.checkout) || {},
+      managedIT: managedIT, managedITNums: managedITNums, vcio: clean(s.vcio) || { hours: 2 }, scopeHourlyRate: s.scopeHourlyRate, checkout: clean(s.checkout) || {},
       projectStars: clean(s.projectStars) || {},
       cameraPlan: { photos: photos }, cameraPlanAutoScope: s.cameraPlanAutoScope || 0
     };
