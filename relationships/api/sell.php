@@ -147,7 +147,7 @@ const RELATIONSHIPS_SELL_QUOTE_TEMPLATES = [
         'name' => 'PeopleFirst Support Plan',
     ],
     'proposal' => [
-        'id' => null, // TODO: fill in once Michael confirms the real "Proposal" template id (GET /api/templates, match by name)
+        'id' => 'q636948201801326595zaAqAMD', // "Proposal", quoteNumber 9 -- confirmed live 2026-10-14
         'name' => 'Proposal',
     ],
 ];
