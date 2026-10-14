@@ -253,6 +253,7 @@ function relationships_sell_build_line_items(string $kind, array $state): array
             'quantity' => $members,
             'price' => round((float) $nums['perMemberPrice'], 2),
             'isOptional' => false,
+            'tab' => 'PeopleFirst Member Pricing',
         ];
     }
     if (!empty($nums['softwareMonthly'])) {
@@ -261,6 +262,7 @@ function relationships_sell_build_line_items(string $kind, array $state): array
             'quantity' => 1,
             'price' => round((float) $nums['softwareMonthly'], 2),
             'isOptional' => false,
+            'tab' => 'Security Software',
         ];
     }
     if (!empty($nums['hardwareMonthly'])) {
@@ -269,6 +271,7 @@ function relationships_sell_build_line_items(string $kind, array $state): array
             'quantity' => 1,
             'price' => round((float) $nums['hardwareMonthly'], 2),
             'isOptional' => false,
+            'tab' => 'Provided Firewall',
         ];
     }
     if (!empty($nums['onboardingTotal'])) {
@@ -277,6 +280,7 @@ function relationships_sell_build_line_items(string $kind, array $state): array
             'quantity' => 1,
             'price' => round((float) $nums['onboardingTotal'], 2),
             'isOptional' => false,
+            'tab' => 'Partner Onboarding',
         ];
     }
     return $items;
@@ -368,18 +372,37 @@ function relationships_sell_create_quote_for_solution(
 
     // 3. Add line items (real for 'peoplefirst' today; an intentional no-op for other kinds).
     //    POST /api/quoteItems needs both idQuote AND idQuoteTabs (community-established, not
-    //    publicly documented) -- a copied quote inherits its template's tab(s), so look up the
-    //    first one. The exact query shape for listing a quote's tabs is UNCONFIRMED (best guess:
-    //    filter /api/quoteTabs by idQuote) -- verify on the first live test, same as the rest of
-    //    this write path.
+    //    publicly documented). CONFIRMED LIVE 2026-10-14 (quoteTabs probe #2, against the real
+    //    test quote created by the earlier failed attempts): GET /api/quoteTabs?idQuote={id} and
+    //    the dotted GET /api/quoteTabs?quote.id={id} guess BOTH silently ignore the filter and
+    //    return an unrelated default list -- the working filter is Manage-style condition syntax:
+    //    conditions=quote/id="{id}". That same probe also showed the PeopleFirst template's real
+    //    tab names (Coverage Selections, vCIO Services, Provided Firewall, Exhibit A, Security
+    //    Software, How-To, PeopleFirst Member Pricing, Mobile Device Management, Included Support
+    //    for Members, Partner Onboarding) -- these are MEANINGFULLY NAMED tabs, not one generic
+    //    "line items" tab, so each line item now targets its matching tab by name (set via the
+    //    'tab' key in relationships_sell_build_line_items()) instead of dumping everything onto
+    //    whichever tab happened to come back first. Falls back to the first tab if a named match
+    //    isn't found, so a future kind/tab-name mismatch still creates a quote rather than failing.
     $lineItems = relationships_sell_build_line_items($kind, $state);
     if ($lineItems !== []) {
-        $tabs = relationships_sell_request('/api/quoteTabs', ['idQuote' => $quoteId]);
-        $tabId = $tabs[0]['id'] ?? null;
-        if ($tabId === null) {
-            throw new RelationshipsSellError('Could not find a quote tab on the new Sell quote to attach line items to.');
+        $tabs = relationships_sell_request('/api/quoteTabs', [
+            'conditions' => 'quote/id="' . $quoteId . '"',
+        ]);
+        if ($tabs === []) {
+            throw new RelationshipsSellError('Could not find any quote tabs on the new Sell quote to attach line items to.');
         }
+        $tabIdByName = [];
+        foreach ($tabs as $tab) {
+            if (isset($tab['name'], $tab['id'])) {
+                $tabIdByName[(string) $tab['name']] = (string) $tab['id'];
+            }
+        }
+        $fallbackTabId = (string) $tabs[0]['id'];
         foreach ($lineItems as $item) {
+            $tabName = $item['tab'] ?? null;
+            unset($item['tab']);
+            $tabId = ($tabName !== null && isset($tabIdByName[$tabName])) ? $tabIdByName[$tabName] : $fallbackTabId;
             relationships_sell_request('/api/quoteItems', [], 'POST', array_merge($item, [
                 'idQuote' => $quoteId,
                 'idQuoteTabs' => $tabId,
