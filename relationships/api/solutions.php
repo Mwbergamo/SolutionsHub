@@ -589,7 +589,7 @@ if ($action === 'create_sell_quote') {
             ':s' => $id, ':qid' => $result['quote_id'], ':qnum' => $result['quote_number'],
             ':link' => $result['quote_link'], ':kind' => $result['template_kind'], ':un' => $user['name'],
         ]);
-        relationships_respond(200, ['ok' => true, 'sell_link' => relationships_solution_sell_link($pdo, $id)]);
+        relationships_respond(200, ['ok' => true, 'sell_link' => relationships_solution_sell_link($pdo, $id), 'unmatched_parts' => $result['unmatched_parts'] ?? []]);
     } catch (RelationshipsSellError $e) {
         // Record the failed attempt (so the UI can show what happened and the rep can retry)
         // rather than losing the error -- same philosophy as solution_cw_links' push_status.
