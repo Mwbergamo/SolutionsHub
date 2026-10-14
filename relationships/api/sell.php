@@ -323,7 +323,19 @@ function relationships_sell_create_quote_for_solution(
         throw new RelationshipsSellError('Sell did not return a new quote id from copyById.');
     }
 
-    // 2. Rename to a unique name + set the rep fields, in one PATCH (RFC 6902 JSON Patch).
+    // 2. Rename to a unique name + set the rep fields + the customer, all in ONE PATCH (RFC 6902
+    //    JSON Patch) against the main quote resource.
+    //
+    //    CONFIRMED LIVE 2026-10-14 (first real write-test, test quote q639275414649164801ExKQXCM):
+    //    PATCH /api/quotes/{id} works (that's how the rename succeeded) -- but the separate
+    //    PUT /api/quotes/{id}/customers call this step originally used does NOT: Sell returned
+    //    HTTP 400 "The requested resource with API version '2.0' does not support HTTP method
+    //    'PUT'." A follow-up read of that same real quote showed QuoteView only exposes customer
+    //    info as two plain top-level fields -- accountName and contactName (contactName even
+    //    came pre-filled from the template) -- no address/phone/email fields live on the quote
+    //    object itself. So "set the customer" folds into this same working PATCH instead of the
+    //    broken /customers sub-resource. Deeper fields (address/email/phone) aren't settable this
+    //    way -- revisit via /customers only once the right HTTP method for it is confirmed.
     $uniqueName = $template['name'] . ' - ' . $customerName . ' - ' . date('m/d/Y');
     $patchOps = [
         ['op' => 'replace', 'path' => '/name', 'value' => $uniqueName],
@@ -334,38 +346,27 @@ function relationships_sell_create_quote_for_solution(
             $patchOps[] = ['op' => 'replace', 'path' => '/' . $field, 'value' => $repId];
         }
     }
-    relationships_sell_request('/api/quotes/' . rawurlencode($quoteId), [], 'PATCH', $patchOps);
-
-    // 3. Set the customer (company + its one main contact, per Michael's scope).
     $resolved = relationships_sell_resolve_primary_contact((int) $cwCompanyId);
+    $accountName = $customerName;
+    $contactFullName = null;
     if ($resolved !== null) {
         $company = $resolved['company'];
         $contact = $resolved['contact'];
-        $customerPayload = [
-            'customerType' => 'Primary',
-            'accountName' => (string) ($company['name'] ?? $customerName),
-            'addressLine1' => (string) ($company['addressLine1'] ?? ''),
-            'addressLine2' => (string) ($company['addressLine2'] ?? ''),
-            'city' => (string) ($company['city'] ?? ''),
-            'state' => (string) ($company['state'] ?? ''),
-            'zip' => (string) ($company['zip'] ?? ''),
-            'phone' => (string) ($company['phoneNumber'] ?? ''),
-        ];
+        $accountName = (string) ($company['name'] ?? $customerName);
         if (is_array($contact)) {
-            $customerPayload['firstName'] = (string) ($contact['firstName'] ?? '');
-            $customerPayload['lastName'] = (string) ($contact['lastName'] ?? '');
-            foreach ((array) ($contact['communicationItems'] ?? []) as $ci) {
-                if (($ci['communicationType'] ?? '') === 'Email' && empty($customerPayload['email'])) {
-                    $customerPayload['email'] = (string) ($ci['value'] ?? '');
-                }
+            $full = trim(((string) ($contact['firstName'] ?? '')) . ' ' . ((string) ($contact['lastName'] ?? '')));
+            if ($full !== '') {
+                $contactFullName = $full;
             }
         }
-        // PUT shape is a best-effort guess from the open-source client's documented fields --
-        // NOT yet confirmed against a real write on this account. Verify on the first live test.
-        relationships_sell_request('/api/quotes/' . rawurlencode($quoteId) . '/customers', [], 'PUT', $customerPayload);
     }
+    $patchOps[] = ['op' => 'replace', 'path' => '/accountName', 'value' => $accountName];
+    if ($contactFullName !== null) {
+        $patchOps[] = ['op' => 'replace', 'path' => '/contactName', 'value' => $contactFullName];
+    }
+    relationships_sell_request('/api/quotes/' . rawurlencode($quoteId), [], 'PATCH', $patchOps);
 
-    // 4. Add line items (real for 'peoplefirst' today; an intentional no-op for other kinds).
+    // 3. Add line items (real for 'peoplefirst' today; an intentional no-op for other kinds).
     //    POST /api/quoteItems needs both idQuote AND idQuoteTabs (community-established, not
     //    publicly documented) -- a copied quote inherits its template's tab(s), so look up the
     //    first one. The exact query shape for listing a quote's tabs is UNCONFIRMED (best guess:
