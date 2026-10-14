@@ -73,3 +73,12 @@ h1, h2, h3 { font-family: 'Space Grotesk', 'IBM Plex Sans', sans-serif; margin: 
   .as-grid { grid-template-columns: 1fr; }
   .as-card, .as-stat { break-inside: avoid; }
 }
+
+.as-assign { display: flex; gap: 8px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+.as-assign select { font: inherit; font-size: 12px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; max-width: 190px; }
+.as-link { font: inherit; font-size: 12px; background: none; border: 0; color: var(--blue); cursor: pointer; text-decoration: underline; padding: 0; }
+.as-hint { color: #8a5600 !important; }
+.as-chip.manual { background: #ece4fa; color: #5b2f9e; }
+.as-chip.auto { background: #dcecfb; color: #1d5a99; }
+.as-flash { background: #fde1e1; color: #a02323; border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-weight: 600; }
+@media print { .as-assign { display: none; } }

@@ -21,6 +21,9 @@
  *   { contacts[], devices[] (with contact_id), licenses[] (contact_ids), software[] (device_ids), protection[]
  *   (antivirus/backup, device_ids) } -- the Asset Assignments page joins them. No passwords are returned.
  *
+ * POST ?action=link_set|link_clear&customer_id=N   (needs header X-Requested-With: fetch)
+ *   Manual device -> person links, stored in asset_links. Anyone who can see the customer may set or clear them.
+ *
  * GET ?action=discover[&org=<IT Glue organization id>]
  *   Admin only. Lists the flexible asset types and their fields (to see how software / licenses are
  *   recorded), the configuration types with counts, and -- when org= is given -- counts of that
@@ -309,6 +312,7 @@ function relationships_itglue_assignments(int $orgId, bool $refresh): array
         $devices[] = [
             'id' => (int) $r['id'],
             'name' => (string) $pick($r, 'name'),
+            'hostname' => (string) $pick($r, 'hostname'),
             'type' => (string) $pick($r, 'configuration-type-name'),
             'status' => (string) $pick($r, 'configuration-status-name'),
             'contact_id' => (int) $pick($r, 'contact-id', 0),
@@ -381,10 +385,24 @@ function relationships_itglue_assignments(int $orgId, bool $refresh): array
     return $out;
 }
 
+/** Manual links for one customer, newest first: [ {device_id, contact_id, contact_name, linked_by, linked_at} ]. */
+function relationships_itglue_links(PDO $pdo, int $customerId): array
+{
+    $stmt = $pdo->prepare('SELECT device_id, contact_id, contact_name, linked_by, linked_at FROM asset_links WHERE customer_id = :c ORDER BY linked_at DESC');
+    $stmt->execute([':c' => $customerId]);
+    return array_map(static fn (array $r): array => [
+        'device_id' => (int) $r['device_id'],
+        'contact_id' => (int) $r['contact_id'],
+        'contact_name' => (string) $r['contact_name'],
+        'linked_by' => (string) $r['linked_by'],
+        'linked_at' => (string) $r['linked_at'],
+    ], $stmt->fetchAll(PDO::FETCH_ASSOC));
+}
+
 // ------------------------------------------------------------------ requests
 if (defined('RELATIONSHIPS_ITGLUE_LIB')) { return; } // included by another script: functions only
 $pdo = relationships_db();
-relationships_require_login($pdo);
+$user = relationships_require_login($pdo);
 $action = $_GET['action'] ?? '';
 
 try {
@@ -421,7 +439,47 @@ try {
             'ok' => true, 'configured' => true,
             'customer' => ['id' => (int) $cust['id'], 'name' => (string) $cust['name']],
             'matched_org' => ['id' => $match['id'], 'name' => $match['name']],
-        ] + relationships_itglue_assignments((int) $match['id'], !empty($_GET['refresh'])));
+        ] + relationships_itglue_assignments((int) $match['id'], !empty($_GET['refresh'])) + ['links' => relationships_itglue_links($pdo, (int) $cust['id'])]);
+    }
+
+    if ($action === 'link_set' || $action === 'link_clear') {
+        // POST ?action=link_set|link_clear&customer_id=N   body: { device_id, contact_id (link_set only) }
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            relationships_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
+        }
+        if (($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') !== 'fetch') { // a cross-site form cannot set this header
+            relationships_respond(403, ['ok' => false, 'error' => 'Bad request.']);
+        }
+        [$match, $cust] = relationships_itglue_resolve($pdo); // also enforces the territory rule
+        if ($match === null) {
+            relationships_respond(404, ['ok' => false, 'error' => 'This customer is not matched to an IT Glue organization.']);
+        }
+        $body = relationships_read_json_body();
+        $deviceId = (int) ($body['device_id'] ?? 0);
+        $assign = relationships_itglue_assignments((int) $match['id'], false);
+        $device = null;
+        foreach ($assign['devices'] as $d) { if ($d['id'] === $deviceId) { $device = $d; break; } }
+        if ($device === null) {
+            relationships_respond(400, ['ok' => false, 'error' => 'That device is not in this customer\'s IT Glue organization.']);
+        }
+        if ($action === 'link_clear') {
+            $stmt = $pdo->prepare('DELETE FROM asset_links WHERE customer_id = :c AND device_id = :d');
+            $stmt->execute([':c' => (int) $cust['id'], ':d' => $deviceId]);
+        } else {
+            $contactId = (int) ($body['contact_id'] ?? 0);
+            $contact = null;
+            foreach ($assign['contacts'] as $c) { if ($c['id'] === $contactId) { $contact = $c; break; } }
+            if ($contact === null) {
+                relationships_respond(400, ['ok' => false, 'error' => 'That person is not a contact in this customer\'s IT Glue organization.']);
+            }
+            $stmt = $pdo->prepare('INSERT OR REPLACE INTO asset_links (customer_id, device_id, device_name, contact_id, contact_name, linked_by, linked_at) VALUES (:c, :d, :dn, :p, :pn, :by, datetime(\'now\'))');
+            $stmt->execute([
+                ':c' => (int) $cust['id'], ':d' => $deviceId, ':dn' => (string) $device['name'],
+                ':p' => $contactId, ':pn' => (string) $contact['name'],
+                ':by' => (string) ($user['name'] ?: $user['email']),
+            ]);
+        }
+        relationships_respond(200, ['ok' => true, 'links' => relationships_itglue_links($pdo, (int) $cust['id'])]);
     }
 
     if ($action === 'discover') {

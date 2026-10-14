@@ -63,6 +63,23 @@ function relationships_migrate(PDO $pdo): void
         )
     SQL);
 
+    // Manual "this device belongs to this person" links made on the Asset Assignments page. They override the
+    // IT Glue contact and the Automate last-user match. device_id / contact_id are IT Glue ids (a configuration and
+    // a contact in that customer's IT Glue organization); the names are kept so a deleted IT Glue record still reads.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS asset_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL,
+            device_id INTEGER NOT NULL,
+            device_name TEXT NOT NULL DEFAULT '',
+            contact_id INTEGER NOT NULL,
+            contact_name TEXT NOT NULL DEFAULT '',
+            linked_by TEXT NOT NULL DEFAULT '',
+            linked_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (customer_id, device_id)
+        )
+    SQL);
+
     $pdo->exec(<<<'SQL'
         CREATE TABLE IF NOT EXISTS customers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

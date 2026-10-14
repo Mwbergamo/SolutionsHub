@@ -16,6 +16,9 @@
   var selectedId = null;
   var hideEmpty = false;
   var search = '';
+  var automate = [];        // Automate computers (name, last_user) used to guess who uses a device
+  var linkMap = {};         // device id -> manual link made in Relationships
+  var flash = '';
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function msg(html) { root.innerHTML = '<div class="as-msg">' + html + '</div>'; }
@@ -38,6 +41,73 @@
     return '<span class="as-chip ' + cls + '">' + label + esc(dateNice(iso)) + '</span>';
   }
 
+  // ---- who uses each device: manual link > IT Glue contact > Automate last user (unique match only)
+  function alnum(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+  function userKey(u) { return alnum(String(u || '').replace(/^.*[\\\/]/, '').replace(/@.*$/, '')); }
+  function contactKeys(c) {
+    var keys = [], parts = String(c.name || '').trim().split(/\s+/);
+    if (parts.length > 1) keys.push(alnum(parts[0].charAt(0) + parts[parts.length - 1]));
+    var em = alnum(String(c.email || '').split('@')[0]);
+    if (em) keys.push(em);
+    return keys;
+  }
+  function setLinks(list) {
+    linkMap = {};
+    (list || []).forEach(function (l) { linkMap[l.device_id] = l; });
+  }
+  function assignDevices() {
+    var byContact = {}, contactById = {}, keyMap = {}, comps = {};
+    data.contacts.forEach(function (c) {
+      contactById[c.id] = c;
+      contactKeys(c).forEach(function (k) {
+        keyMap[k] = keyMap[k] || [];
+        if (keyMap[k].indexOf(c) < 0) keyMap[k].push(c);
+      });
+    });
+    automate.forEach(function (a) { var k = alnum(a.name); if (k) comps[k] = a; });
+    data.devices.forEach(function (d) {
+      d._src = ''; d._contact = null; d._cands = []; d._lastUser = ''; d._link = null;
+      var comp = comps[alnum(d.name)] || comps[alnum(String(d.hostname || '').split('.')[0])];
+      if (comp) d._lastUser = comp.last_user || '';
+      var l = linkMap[d.id], c = null;
+      if (l && contactById[l.contact_id]) { c = contactById[l.contact_id]; d._src = 'manual'; d._link = l; }
+      else if (d.contact_id && contactById[d.contact_id]) { c = contactById[d.contact_id]; d._src = 'itglue'; }
+      else if (d._lastUser) {
+        var m = keyMap[userKey(d._lastUser)] || [];
+        if (m.length === 1) { c = m[0]; d._src = 'username'; }
+        else if (m.length > 1) d._cands = m;
+      }
+      d._contact = c;
+      if (c) (byContact[c.id] = byContact[c.id] || []).push(d);
+    });
+    return byContact;
+  }
+  function assignHtml(d, label) {
+    var opts = '<option value="">' + esc(label) + '</option>' + data.contacts.slice().sort(function (a, b) { return a.name.localeCompare(b.name); }).map(function (c) {
+      return '<option value="' + c.id + '">' + esc(c.name) + '</option>';
+    }).join('');
+    return '<div class="as-assign"><select data-assign="' + d.id + '" aria-label="Assign ' + esc(d.name) + ' to a person">' + opts + '</select>' +
+      (d._link ? '<button type="button" class="as-link" data-act="unlink" data-dev="' + d.id + '">Remove manual link</button>' : '') + '</div>';
+  }
+  function sourceHtml(d) {
+    if (d._src === 'manual') return '<span class="as-chip manual">Manual link' + (d._link && d._link.linked_by ? ' by ' + esc(d._link.linked_by) : '') + '</span>';
+    if (d._src === 'username') return '<span class="as-chip auto">Matched by last user: ' + esc(d._lastUser) + '</span>';
+    return '';
+  }
+  function postLink(action, payload) {
+    fetch('api/itglue.php?action=' + action + '&' + query, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' },
+      body: JSON.stringify(payload)
+    }).then(function (r) { return r.json().catch(function () { return null; }); })
+      .then(function (j) {
+        if (j && j.ok) { flash = ''; setLinks(j.links); build(); }
+        else flash = (j && j.error) || 'Could not save that change.';
+        render();
+      })
+      .catch(function () { flash = 'Could not reach the server. The change was not saved.'; render(); });
+  }
+
   // ---- join the lists into one record per person
   function build() {
     var devById = {}, protByDev = {}, swByDev = {};
@@ -52,8 +122,7 @@
     (data.licenses || []).forEach(function (l) {
       (l.contact_ids || []).forEach(function (id) { (licByContact[id] = licByContact[id] || []).push(l); });
     });
-    var devsByContact = {};
-    data.devices.forEach(function (d) { if (d.contact_id) (devsByContact[d.contact_id] = devsByContact[d.contact_id] || []).push(d); });
+    var devsByContact = assignDevices();
 
     people = data.contacts.map(function (c) {
       var devs = devsByContact[c.id] || [];
@@ -145,7 +214,7 @@
     return '<div class="as-item"><b>' + (d.url ? '<a href="' + esc(d.url) + '" target="_blank" rel="noopener">' + esc(d.name) + '</a>' : esc(d.name)) + '</b>' +
       (line ? '<small>' + esc(line) + '</small>' : '') +
       (d.serial ? '<small>Serial ' + esc(d.serial) + '</small>' : '') +
-      '<div>' + warrantyChip(d.warranty_expires) + chips + '</div></div>';
+      '<div>' + warrantyChip(d.warranty_expires) + chips + sourceHtml(d) + '</div>' + assignHtml(d, 'Reassign to…') + '</div>';
   }
   function itemLink(url, name) { return url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(name) + '</a>' : esc(name); }
   function detailHtml() {
@@ -156,7 +225,7 @@
       '<small>' + esc([p.c.title, p.c.type].filter(Boolean).join(' · ')) + '</small></div></div>' +
       (p.c.email ? '<div class="as-sub">' + esc(p.c.email) + '</div>' : '');
     h += '<h3>Hardware (' + p.devices.length + ')</h3>';
-    h += p.devices.length ? p.devices.map(function (d) { return deviceBlock(p, d); }).join('') : '<div class="as-empty">No devices assigned to this person in IT Glue.</div>';
+    h += p.devices.length ? p.devices.map(function (d) { return deviceBlock(p, d); }).join('') : '<div class="as-empty">No devices assigned to this person.</div>';
     h += '<h3>Software (' + p.software.length + ')</h3>';
     h += p.software.length ? p.software.map(function (s) {
       return '<div class="as-item"><b>' + itemLink(s.url, s.name) + '</b><small>' + esc([s.vendor, 'on ' + s.devices.join(', ')].filter(Boolean).join(' · ')) + '</small></div>';
@@ -170,10 +239,13 @@
   }
   function overviewHtml() {
     var h = '<div class="as-card"><h2>Not tied to one person</h2>';
-    h += '<h3>Devices with no contact (' + data._unassignedDevices.length + ')</h3>';
+    h += '<h3>Devices with no person (' + data._unassignedDevices.length + ')</h3>';
     h += data._unassignedDevices.length ? data._unassignedDevices.slice(0, 40).map(function (d) {
-      return '<div class="as-item"><b>' + itemLink(d.url, d.name) + '</b><small>' + esc([d.type, d.make, d.model].filter(Boolean).join(' · ')) + '</small></div>';
-    }).join('') + (data._unassignedDevices.length > 40 ? '<div class="as-empty">+ ' + (data._unassignedDevices.length - 40) + ' more</div>' : '') : '<div class="as-empty">Every device has a contact.</div>';
+      var hint = d._cands.length ? 'Last user ' + esc(d._lastUser) + ' could be ' + d._cands.map(function (c) { return esc(c.name); }).join(' or ')
+        : d._lastUser ? 'Last user ' + esc(d._lastUser) + ' (no matching contact)' : '';
+      return '<div class="as-item"><b>' + itemLink(d.url, d.name) + '</b><small>' + esc([d.type, d.make, d.model].filter(Boolean).join(' · ')) + '</small>' +
+        (hint ? '<small class="as-hint">' + hint + '</small>' : '') + assignHtml(d, 'Assign to…') + '</div>';
+    }).join('') + (data._unassignedDevices.length > 40 ? '<div class="as-empty">+ ' + (data._unassignedDevices.length - 40) + ' more</div>' : '') : '<div class="as-empty">Every device has a person.</div>';
     h += '<h3>Licenses with no named users (' + data._sharedLicenses.length + ')</h3>';
     h += data._sharedLicenses.length ? data._sharedLicenses.map(function (l) {
       return '<div class="as-item"><b>' + itemLink(l.url, l.name) + '</b><small>' + l.consumed + ' of ' + l.active + ' used</small></div>';
@@ -194,6 +266,7 @@
       '<div class="as-sub">' + esc(d.customer.name) + ' · IT Glue: ' + esc(d.matched_org.name) + ' · refreshed ' + esc(dateNice(d.generated_at)) + '</div></div>' +
       '<div class="as-actions"><button class="as-btn" type="button" data-act="refresh">Refresh from IT Glue</button>' +
       '<button class="as-btn" type="button" data-act="print">Print</button></div></div>';
+    if (flash) h += '<div class="as-flash" role="alert">' + esc(flash) + '</div>';
     h += '<div class="as-stats">' +
       '<div class="as-stat"><b>' + people.length + '</b><span>people</span></div>' +
       '<div class="as-stat"><b>' + assigned + '</b><span>with assets</span></div>' +
@@ -205,7 +278,7 @@
       '<label><input type="checkbox" id="as-hide"' + (hideEmpty ? ' checked' : '') + '> Hide people with nothing assigned</label>' +
       '<span class="as-legend"><span><i class="i-dev"></i>Devices</span><span><i class="i-sw"></i>Software</span><span><i class="i-lic"></i>Licenses</span></span></div>' +
       (list.length ? graphSvg(list) : '<div class="as-empty">No one matches.</div>') +
-      '<div class="as-note">Software appears for a person when it is tagged to one of their devices in IT Glue. Licenses appear when the person is listed under Licensed Users.</div></div>' +
+      '<div class="as-note">Devices are placed by a manual link made here first, then the IT Glue contact, then Automate’s last logged-in user when it matches exactly one contact. Software appears for a person when it is tagged to one of their devices in IT Glue. Licenses appear when the person is listed under Licensed Users.</div></div>' +
       '<div id="as-detail">' + detailHtml() + '</div></div></div>';
     var keep = document.activeElement && document.activeElement.id === 'as-search';
     root.innerHTML = h;
@@ -220,7 +293,8 @@
     var btn = e.target.closest ? e.target.closest('[data-act]') : null;
     if (!btn) return;
     var act = btn.getAttribute('data-act');
-    if (act === 'clear') select(null);
+    if (act === 'unlink') postLink('link_clear', { device_id: +btn.getAttribute('data-dev') });
+    else if (act === 'clear') select(null);
     else if (act === 'print') window.print();
     else if (act === 'refresh') load(true);
   });
@@ -233,8 +307,18 @@
     if (e.target.id === 'as-search') { search = e.target.value; render(); }
   });
   root.addEventListener('change', function (e) {
-    if (e.target.id === 'as-hide') { hideEmpty = e.target.checked; render(); }
+    if (e.target.id === 'as-hide') { hideEmpty = e.target.checked; render(); return; }
+    var dev = e.target.getAttribute && e.target.getAttribute('data-assign');
+    if (dev && e.target.value) postLink('link_set', { device_id: +dev, contact_id: +e.target.value });
   });
+
+  // Automate's "last logged in user" per computer; optional, any failure just means no username matching
+  function loadAutomate() {
+    return fetch('api/automate.php?action=computers&' + query, { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { automate = j && j.ok && j.computers ? j.computers : []; })
+      .catch(function () { automate = []; });
+  }
 
   function load(refresh) {
     if (!query) { msg('Open this page from a customer in Relationships (Computers &rarr; Asset Assignments).'); return; }
@@ -253,7 +337,8 @@
           msg('<b>' + esc(d.customer.name) + '</b> was not found in IT Glue by name.' + (close ? '<br>Closest names: ' + close + '.' : ''));
           return;
         }
-        data = d; build(); render();
+        data = d; setLinks(d.links);
+        loadAutomate().then(function () { build(); render(); });
       })
       .catch(function () { msg('Could not reach the server. Check your connection and try again.'); });
   }
