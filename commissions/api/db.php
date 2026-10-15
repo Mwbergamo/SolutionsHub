@@ -94,6 +94,9 @@ function commissions_migrate(PDO $pdo): void
             ticket_summary TEXT,
             hours REAL,                           -- billable (invoiced) hours
             actual_hours REAL,                    -- hours actually worked; labor cost is based on these
+            is_project INTEGER NOT NULL DEFAULT 0, -- time line charged to a ConnectWise ProjectTicket --
+                                                    -- these bill (and cost) at RAW actual hours, never
+                                                    -- rounded to the Service-ticket billing bracket
             member TEXT,                          -- technician (ConnectWise member) on time lines
             qty REAL,
             price REAL NOT NULL DEFAULT 0,        -- extended price billed
@@ -207,6 +210,10 @@ function commissions_migrate(PDO $pdo): void
     }
     if (!in_array('member', $cols, true)) {
         $pdo->exec('ALTER TABLE invoice_lines ADD COLUMN member TEXT');
+    }
+    // Databases created before is_project existed (2026-10-15 Project-ticket-hours fix).
+    if (!in_array('is_project', $cols, true)) {
+        $pdo->exec('ALTER TABLE invoice_lines ADD COLUMN is_project INTEGER NOT NULL DEFAULT 0');
     }
 
     // Rep email (collections reports are mailed to it; editable in Settings).

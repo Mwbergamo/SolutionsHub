@@ -47,7 +47,7 @@ const COMMISSIONS_PENDING_LOOKBACK_DAYS = 180;
  * lines saved under the old rules can't linger until ConnectWise happens to
  * change the invoice.
  */
-const COMMISSIONS_RULES_VERSION = '2026-10-09-round-hours';
+const COMMISSIONS_RULES_VERSION = '2026-10-15-project-actual-hours';
 
 /** Bump when how payees share a line changes; the next API call re-applies it to unlocked months. */
 const COMMISSIONS_PAYOUT_RULES_VERSION = '2026-10-06-chester-arcus';
@@ -598,17 +598,25 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
         if ($hours <= 0) {
             continue; // an empty time entry carries nothing to bill or cost
         }
-        // Same basis as the existing Service Commission report: price is the
-        // BILLED hours x rate; cost is the hours actually worked x hourly cost.
-        // "Actually worked" is rounded up to CodeBlue's billing bracket first
-        // (see commissions_round_worked_hours) -- a short visit that would
-        // only ever be billed for the minimum isn't a labor-cost loss just
-        // because the raw clock time undershoots it. Confirmed by Michael
-        // 2026-10-09 against the rate sheet's rounding rules.
-        $actualRaw = (isset($t['actualHours']) && (float) $t['actualHours'] > 0) ? (float) $t['actualHours'] : $hours;
-        $actual = commissions_round_worked_hours($actualRaw);
-        $rate = (float) ($t['hourlyRate'] ?? 0);
         $chargeType = (string) ($t['chargeToType'] ?? '');
+        // Project tickets bill (and cost) at RAW actual hours -- ConnectWise never applies
+        // the rate sheet's 30-minute billing bracket to them. Confirmed live 2026-10-15
+        // (Michael, against ticket #931457 / invoice #160752): a ProjectTicket time entry's
+        // actualHours, hoursBilled and invoiceHours are always identical (e.g. 0.58/0.58/0.58
+        // -- no rounding anywhere in ConnectWise). The bracket-rounding rule below is a
+        // Service-ticket-only rule; applying it to a Project line inflated cost past what was
+        // actually billed and manufactured a loss that never happened.
+        $isProjectTicket = stripos($chargeType, 'Project') !== false;
+        // Same basis as the existing Service Commission report: price is the BILLED hours x
+        // rate; cost is the hours actually worked x hourly cost. On a Service ticket,
+        // "actually worked" is rounded up to CodeBlue's billing bracket first (see
+        // commissions_round_worked_hours) -- a short visit that would only ever be billed
+        // for the minimum isn't a labor-cost loss just because the raw clock time undershoots
+        // it (confirmed by Michael 2026-10-09 against the rate sheet's rounding rules). A
+        // Project ticket skips this rounding entirely (see above).
+        $actualRaw = (isset($t['actualHours']) && (float) $t['actualHours'] > 0) ? (float) $t['actualHours'] : $hours;
+        $actual = $isProjectTicket ? $actualRaw : commissions_round_worked_hours($actualRaw);
+        $rate = (float) ($t['hourlyRate'] ?? 0);
         $ticketId = (isset($t['chargeToId']) && stripos($chargeType, 'Ticket') !== false) ? (int) $t['chargeToId'] : (isset($t['ticket']['id']) ? (int) $t['ticket']['id'] : null);
         $member = (string) ($t['member']['name'] ?? '');
         $lines[] = [
@@ -618,13 +626,16 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
             'ticket_summary' => $ticketId !== null ? ($tickets[$ticketId] ?? null) : null,
             'hours' => $hours,
             'actual_hours' => $actual,
+            'is_project' => $isProjectTicket ? 1 : 0,
             'member' => $member !== '' ? $member : null,
             'qty' => null,
             'price' => round($hours * $rate, 2),
             'unit_cost' => null,
             'cost' => round($actual * $laborCost, 2),
-            'cost_note' => 'Assumed labor cost $' . number_format($laborCost, 2) . '/hr x ' . $actual . ' actual hrs'
-                . (abs($actual - $actualRaw) > 0.0001 ? ' (rounded up from ' . $actualRaw . ' raw hrs per billing-bracket rule)' : ''),
+            'cost_note' => $isProjectTicket
+                ? 'Assumed labor cost $' . number_format($laborCost, 2) . '/hr x ' . $actual . ' actual hrs (Project ticket — ConnectWise bills raw actual hours, no billing-bracket rounding)'
+                : 'Assumed labor cost $' . number_format($laborCost, 2) . '/hr x ' . $actual . ' actual hrs'
+                    . (abs($actual - $actualRaw) > 0.0001 ? ' (rounded up from ' . $actualRaw . ' raw hrs per billing-bracket rule)' : ''),
         ];
     }
 
@@ -845,8 +856,8 @@ function commissions_sync_step(PDO $pdo, int $batch = COMMISSIONS_STEP_BATCH): a
         );
         $delLines = $pdo->prepare('DELETE FROM invoice_lines WHERE invoice_id = :id');
         $insLine = $pdo->prepare(
-            'INSERT INTO invoice_lines (invoice_id, kind, item, ticket_id, ticket_summary, hours, actual_hours, member, qty, price, cost, unit_cost, cost_note, gp, over_year, pct, commission, is_loss)
-             VALUES (:iid, :k, :item, :tid, :ts, :h, :ah, :mem, :q, :p, :c, :uc, :cn, :gp, :oy, :pct, :com, :loss)'
+            'INSERT INTO invoice_lines (invoice_id, kind, item, ticket_id, ticket_summary, hours, actual_hours, is_project, member, qty, price, cost, unit_cost, cost_note, gp, over_year, pct, commission, is_loss)
+             VALUES (:iid, :k, :item, :tid, :ts, :h, :ah, :ip, :mem, :q, :p, :c, :uc, :cn, :gp, :oy, :pct, :com, :loss)'
         );
         $markDone = $pdo->prepare("UPDATE sync_queue SET status = :s, error_message = :e WHERE invoice_id = :id");
 
@@ -887,7 +898,7 @@ function commissions_sync_step(PDO $pdo, int $batch = COMMISSIONS_STEP_BATCH): a
                     $m = commissions_line_money((float) $l['price'], (float) $l['cost'], 0.0);
                     $insLine->execute([
                         ':iid' => $id, ':k' => $l['kind'], ':item' => $l['item'], ':tid' => $l['ticket_id'], ':ts' => $l['ticket_summary'],
-                        ':h' => $l['hours'], ':ah' => $l['actual_hours'] ?? null, ':mem' => $l['member'] ?? null, ':q' => $l['qty'], ':p' => $l['price'], ':c' => $l['cost'], ':uc' => $l['unit_cost'], ':cn' => $l['cost_note'],
+                        ':h' => $l['hours'], ':ah' => $l['actual_hours'] ?? null, ':ip' => $l['is_project'] ?? 0, ':mem' => $l['member'] ?? null, ':q' => $l['qty'], ':p' => $l['price'], ':c' => $l['cost'], ':uc' => $l['unit_cost'], ':cn' => $l['cost_note'],
                         ':gp' => $m['gp'], ':oy' => $overYear ? 1 : 0, ':pct' => 0, ':com' => 0, ':loss' => $m['is_loss'],
                     ]);
                     commissions_store_payouts($pdo, (int) $pdo->lastInsertId(), $id, $reps, $payees, $state, $built['is_agreement'], $overYear, (float) $l['price'], (float) $l['cost']);
@@ -1009,10 +1020,14 @@ function commissions_recompute(PDO $pdo, bool $includeLocked = false): int
             $cost = (float) $l['cost'];
             if ($l['kind'] === 'time') {
                 $worked = ($l['actual_hours'] !== null && (float) $l['actual_hours'] > 0) ? (float) $l['actual_hours'] : (float) $l['hours'];
-                // Safety net: a stored actual_hours from before the 2026-10-09
-                // rounding fix may still be raw; re-rounding here is a no-op
-                // once it's already bracket-aligned.
-                $worked = commissions_round_worked_hours($worked);
+                // Safety net: a stored actual_hours from before the 2026-10-09 rounding fix
+                // may still be raw; re-rounding here is a no-op once it's already
+                // bracket-aligned. Project-ticket lines (2026-10-15 fix) never get the
+                // bracket rounding -- ConnectWise bills them at raw actual hours, so
+                // re-rounding here would reintroduce the same manufactured-loss bug.
+                if ((int) ($l['is_project'] ?? 0) === 0) {
+                    $worked = commissions_round_worked_hours($worked);
+                }
                 $cost = round($worked * $laborCost, 2);
             }
             $m = commissions_line_money((float) $l['price'], $cost, 0.0);
