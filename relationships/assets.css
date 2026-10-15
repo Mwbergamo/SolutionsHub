@@ -107,6 +107,19 @@ h1, h2, h3 { font-family: 'Space Grotesk', 'IBM Plex Sans', sans-serif; margin: 
 .as-col-flash { background: #fff6da !important; transition: background 1.4s ease; }
 .as-node.inactive circle.p { opacity: .5; }
 .as-node.inactive text.nm { opacity: .6; }
+
+/* Managed Services column (added 2026-10-15 per Michael): real agreement + RMM data, replacing
+   the old Software column and the four manual columns (Firewall/VPN/DUO/Guardz). */
+.as-svc-device { margin-bottom: 6px; }
+.as-svc-device:last-child { margin-bottom: 0; }
+.as-svc-device > small { display: block; color: var(--muted); margin-bottom: 2px; }
+.as-svc-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.as-svc-manual { display: flex; flex-direction: column; gap: 3px; }
+.as-svc-toggle { display: flex; align-items: baseline; gap: 5px; font-size: 12.5px; cursor: pointer; }
+.as-svc-toggle input { margin: 0; }
+.as-svc-toggle small { color: var(--muted); }
+.as-svc-banner { background: #fff6da; border-color: #e8d48a; }
+
 @media print {
   .as-matrix-head button, .as-col-remove, .as-cell button.as-link { display: none; }
   .as-matrix select, .as-matrix input[type=text] { border: none; background: none; padding: 0; }

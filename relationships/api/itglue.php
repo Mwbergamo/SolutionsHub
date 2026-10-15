@@ -502,6 +502,28 @@ function relationships_itglue_contact_status(PDO $pdo, int $customerId): array
     ], $stmt->fetchAll(PDO::FETCH_ASSOC));
 }
 
+/**
+ * This customer's real managed-service line items from their ConnectWise Agreement
+ * (customer_services -- synced by connectwise-sync-core.php from the Agreement's Additions; see
+ * customers.php's 'detail' action for the other consumer of this table). Passed through raw --
+ * label + quantity only -- so the Managed Services column's device-type/coverage classification
+ * (which services a specific person's computer actually gets) happens client-side in assets.js
+ * (see SERVICE_FAMILIES there). This app never guesses at CW's product catalog server-side.
+ */
+function relationships_itglue_customer_services(PDO $pdo, int $customerId): array
+{
+    $stmt = $pdo->prepare('SELECT product_label, qty, unit FROM customer_services WHERE customer_id = :id ORDER BY product_label');
+    $stmt->execute([':id' => $customerId]);
+    return array_map(static function (array $r): array {
+        $qty = (float) $r['qty'];
+        return [
+            'label' => (string) $r['product_label'],
+            'qty' => $qty == (int) $qty ? (int) $qty : $qty,
+            'unit' => (string) ($r['unit'] ?? ''),
+        ];
+    }, $stmt->fetchAll(PDO::FETCH_ASSOC));
+}
+
 /** The shared manual-column definitions (same across every customer), ordered for display. */
 function relationships_itglue_grid_columns(PDO $pdo): array
 {
@@ -557,6 +579,7 @@ try {
             'overrides' => relationships_itglue_overrides($pdo, (int) $cust['id']),
             'contact_status' => relationships_itglue_contact_status($pdo, (int) $cust['id']),
             'columns' => relationships_itglue_grid_columns($pdo),
+            'customer_services' => relationships_itglue_customer_services($pdo, (int) $cust['id']),
         ]);
     }
 
