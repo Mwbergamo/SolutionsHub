@@ -132,7 +132,17 @@
     var o = overrides[overrideKey(contactId, columnKey)];
     return o ? o.value : '';
   }
-  function licenseOptionNames() { return (data.licenses || []).map(function (l) { return l.name; }); }
+  // Microsoft License options, enriched with IT Glue's synced seat counts (Active/Consumed/
+  // Unused) so a rep has real context when picking a tier by hand. These counts are ORG-WIDE
+  // totals -- IT Glue's "Licensed Users" tag (which would say WHICH person holds a seat) isn't
+  // populated for any license, at any customer, as of 2026-10-15 (confirmed live against several
+  // real orgs) -- so there is no per-person baseline to show here, only an informed manual pick.
+  function licenseOptionsWithCounts() {
+    return (data.licenses || []).map(function (l) {
+      var big = l.active >= 1000; // treat as "effectively unlimited" (free/trial SKUs often report active:10000)
+      return { name: l.name, label: l.name + ' \u2014 ' + l.consumed + ' used' + (big ? '' : ', ' + l.unused + ' free') };
+    });
+  }
   function softwareOptionNames() { return (data.software || []).map(function (s) { return s.name; }); }
 
   function postOverride(contactId, columnKey, columnLabel, value, previousValue) {
@@ -206,9 +216,19 @@
     return h + '</div>';
   }
   function licenseCell(p) {
-    var baseline = p.licenses.map(function (l) { return l.name; }).join(', ');
-    var val = overrideValue(p.c.id, 'microsoft_license') || baseline;
-    return selectCell(p.c.id, 'microsoft_license', 'Microsoft License', licenseOptionNames(), val, (baseline && baseline !== val) ? 'IT Glue shows: ' + baseline : '');
+    var val = overrideValue(p.c.id, 'microsoft_license');
+    var opts = licenseOptionsWithCounts();
+    var optsHtml = ['<option value="">\u2014 not set \u2014</option>'].concat(opts.map(function (o) {
+      return '<option value="' + esc(o.name) + '"' + (o.name === val ? ' selected' : '') + '>' + esc(o.label) + '</option>';
+    }));
+    if (val && !opts.some(function (o) { return o.name === val; })) {
+      optsHtml.push('<option value="' + esc(val) + '" selected>' + esc(val) + '</option>');
+    }
+    var hint = opts.length
+      ? 'Seat counts are IT Glue\u2019s synced totals, not tied to this person yet \u2014 pick the tier that applies.'
+      : 'IT Glue has no Microsoft License records synced for this organization yet.';
+    return '<div class="as-cell"><select data-override-contact="' + p.c.id + '" data-override-col="microsoft_license" data-override-label="Microsoft License" data-override-prev="' + esc(val) + '" aria-label="Microsoft License for ' + esc(p.c.name) + '">' +
+      optsHtml.join('') + '</select><small class="as-hint">' + esc(hint) + '</small></div>';
   }
   function softwareCell(p) {
     var baseline = p.software.map(function (s) { return s.name; }).join(', ');
