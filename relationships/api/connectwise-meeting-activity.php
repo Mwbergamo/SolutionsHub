@@ -132,3 +132,48 @@ function relationships_cw_create_task_activity(PDO $pdo, array $ctx): array
 
     return relationships_cw_create_activity($pdo, $activityCtx);
 }
+
+/**
+ * Same as relationships_cw_create_task_activity() above, for a GENERAL (non-meeting) to-do --
+ * added 2026-10-15 per Michael's customer-portal-page To-Do card. Identical shape/behavior
+ * (assignee is the to-do's assignee, not whoever created it; 'status' => 'open', closed later by
+ * relationships_cw_close_activity() the same way; date/Tentative logic unchanged) -- the only
+ * difference is the Notes text has no "From meeting: ..." line, since there is no parent meeting.
+ *
+ * $ctx keys: customer_id (int), cw_company_id (string), description (string), assigned_to_name
+ * (string), assigned_to_email (?string), created_by_name (string), created_at_display (string),
+ * due_date (?string, "YYYY-MM-DD").
+ *
+ * Returns ['id' => string, 'variant' => 'full'|'core'] on success. Throws
+ * RelationshipsConnectWiseError if neither attempt succeeds.
+ */
+function relationships_cw_create_general_todo_activity(PDO $pdo, array $ctx): array
+{
+    $notes = (string) $ctx['description'] . "\n\n" .
+        'Assigned to: ' . $ctx['assigned_to_name'] . "\n" .
+        'Added by ' . $ctx['created_by_name'] . ' - ' . $ctx['created_at_display'];
+
+    $activityCtx = [
+        'customer_id' => $ctx['customer_id'],
+        'cw_company_id' => $ctx['cw_company_id'],
+        'summary' => (string) $ctx['description'],
+        'notes' => $notes,
+        'assign_to_email' => $ctx['assigned_to_email'],
+        'status' => 'open',
+    ];
+
+    $dueDate = $ctx['due_date'] ?? null;
+    if ($dueDate !== null && $dueDate !== '') {
+        $eastern = new DateTimeZone('America/New_York');
+        $activityDate = DateTimeImmutable::createFromFormat('!Y-m-d', $dueDate, $eastern);
+        if ($activityDate !== false) {
+            $activityCtx['date'] = $activityDate;
+            $today = new DateTimeImmutable('today', $eastern);
+            if ($activityDate > $today) {
+                $activityCtx['schedule_status'] = 'Tentative';
+            }
+        }
+    }
+
+    return relationships_cw_create_activity($pdo, $activityCtx);
+}

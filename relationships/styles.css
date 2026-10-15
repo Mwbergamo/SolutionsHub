@@ -1122,6 +1122,23 @@ a { color: inherit; }
   padding: 6px 0;
 }
 
+/* "Add to Favorites" star button (favorites.js, added 2026-10-15) -- mounts
+   into [data-favorite-mount] spans; same pill shape as the other header
+   buttons it sits next to. */
+.favorite-star-btn {
+  background: transparent;
+  border: 1px solid oklch(0.34 0.02 255);
+  color: oklch(0.7 0.02 255);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.favorite-star-btn:hover { border-color: #e3b04b; color: #e3b04b; }
+.favorite-star-btn.active { background: rgba(227, 176, 75, 0.14); border-color: #e3b04b; color: #e3b04b; }
+.favorite-star-btn:disabled { opacity: .6; cursor: default; }
+
 /* Customer Service Summary print view -- added 2026-09-14, per Michael.
    .print-summary-panel/-toolbar match the .drilldown card look already
    used elsewhere on this dashboard; #printableSummary is what actually
@@ -1670,6 +1687,43 @@ a { color: inherit; }
   font-size: 11px;
   color: oklch(0.5 0.015 255);
   line-height: 1.5;
+}
+
+/* To-Do count card (added 2026-10-15) -- shares .activity-card's base look
+   with Service Tickets YTD, plus a color state driven by todoCardHtml():
+   white = no open to-dos, green = open to-dos exist but none overdue,
+   red = at least one overdue. */
+.activity-card.todo-card { max-width: 260px; }
+.activity-card.todo-green {
+  border-color: rgba(74, 222, 128, 0.35);
+  background: rgba(74, 222, 128, 0.07);
+}
+.activity-card.todo-green .activity-card-value { color: #4ade80; }
+.activity-card.todo-red {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
+}
+.activity-card.todo-red .activity-card-value { color: #f87171; }
+
+/* Per-row Reassign/Remove controls in the merged To-Do drill-down
+   (generalTodoItemHtml()) -- general-sourced rows only. */
+.todo-row-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 2px 0 8px 32px;
+}
+.todo-row-actions .meeting-form-select.small { width: auto; flex: 0 1 160px; }
+
+.todo-meeting-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(47, 143, 239, 0.14);
+  color: #8fc3ff;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .trend-badge {
@@ -2537,6 +2591,7 @@ a { color: inherit; }
 .vendor-field-btn.primary { background: #2f8fef; color: white; border: none; }
 .vendor-field-btn.secondary { background: transparent; color: oklch(0.7 0.02 255); border: 1px solid oklch(0.34 0.02 255); }
 .vendor-field-btn:disabled { opacity: .6; cursor: default; }
+.vendor-field-btn.small { padding: 4px 10px; font-size: 10.5px; }
 
 .vendor-field-error { margin-top: 4px; font-size: 11px; color: #f87171; }
 
@@ -2605,6 +2660,7 @@ a { color: inherit; }
   box-sizing: border-box;
 }
 .meeting-form-textarea { resize: vertical; font-family: inherit; }
+.meeting-form-select.small { padding: 5px 8px; font-size: 11.5px; }
 
 .meeting-form-actions { display: flex; gap: 8px; margin-top: 2px; }
 

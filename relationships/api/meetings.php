@@ -187,6 +187,22 @@ function relationships_meeting_task_row(array $r): array
     ];
 }
 
+function relationships_general_todo_row(array $r): array
+{
+    return [
+        'id' => (int) $r['id'],
+        'description' => $r['description'],
+        'assigned_to_name' => $r['assigned_to_name'],
+        'created_by_name' => $r['created_by_name'],
+        'created_at' => $r['created_at'],
+        'due_date' => $r['due_date'] ?? null,
+        'completed_at' => $r['completed_at'],
+        'completed_by_name' => $r['completed_by_name'],
+        'cw_push' => ['status' => $r['cw_push_status'], 'error' => $r['cw_push_error']],
+        'cw_close' => ['status' => $r['cw_close_status'] ?? null, 'error' => $r['cw_close_error'] ?? null],
+    ];
+}
+
 function relationships_meeting_row(array $m, array $tasks): array
 {
     return [
@@ -323,6 +339,105 @@ if ($action === 'list') {
     );
 
     relationships_respond(200, ['ok' => true, 'roster' => relationships_todo_roster(), 'meetings' => $meetings]);
+}
+
+// ---------------------------------------------------------------- todo_summary / todo_list
+// General (customer-level, not meeting-tied) to-dos -- added 2026-10-15 per Michael's To-Do
+// count card on each customer portal page (next to Service Tickets YTD). Separate table
+// (general_todos, db.php) from meeting_tasks, merged only for DISPLAY here -- a customer's
+// to-do drill-down shows both, tagged by source, but each keeps its own lifecycle (meeting
+// to-dos: create + complete only; general to-dos: create, reassign, remove, complete).
+if ($action === 'todo_summary') {
+    // The card's badge color, computed server-side so app.js doesn't duplicate this logic:
+    // white (0,0) = no open to-dos at all; green = open to-dos exist, none overdue (an UNDATED
+    // to-do counts as not-yet-due -- AskUserQuestion 2026-10-15); red = at least one open,
+    // dated to-do whose due_date has already passed.
+    $customerId = (int) ($_GET['customer_id'] ?? 0);
+    if ($customerId <= 0) {
+        relationships_respond(400, ['ok' => false, 'error' => 'Missing customer_id.']);
+    }
+    relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
+
+    $openGeneralStmt = $pdo->prepare(
+        'SELECT COUNT(*) FROM general_todos WHERE customer_id = :id AND removed_at IS NULL AND completed_at IS NULL'
+    );
+    $openGeneralStmt->execute([':id' => $customerId]);
+    $openGeneral = (int) $openGeneralStmt->fetchColumn();
+
+    $openMeetingStmt = $pdo->prepare(
+        'SELECT COUNT(*) FROM meeting_tasks WHERE customer_id = :id AND completed_at IS NULL'
+    );
+    $openMeetingStmt->execute([':id' => $customerId]);
+    $openMeeting = (int) $openMeetingStmt->fetchColumn();
+
+    $today = (new DateTimeImmutable('today', new DateTimeZone('America/New_York')))->format('Y-m-d');
+    $overdueGeneralStmt = $pdo->prepare(
+        "SELECT COUNT(*) FROM general_todos WHERE customer_id = :id AND removed_at IS NULL AND completed_at IS NULL AND due_date IS NOT NULL AND due_date < :today"
+    );
+    $overdueGeneralStmt->execute([':id' => $customerId, ':today' => $today]);
+    $overdueMeetingStmt = $pdo->prepare(
+        "SELECT COUNT(*) FROM meeting_tasks WHERE customer_id = :id AND completed_at IS NULL AND due_date IS NOT NULL AND due_date < :today"
+    );
+    $overdueMeetingStmt->execute([':id' => $customerId, ':today' => $today]);
+
+    relationships_respond(200, [
+        'ok' => true,
+        'open_count' => $openGeneral + $openMeeting,
+        'overdue_count' => (int) $overdueGeneralStmt->fetchColumn() + (int) $overdueMeetingStmt->fetchColumn(),
+    ]);
+}
+
+if ($action === 'todo_list') {
+    // The drill-down's data source: every open to-do (both sources) plus the 10 most recently
+    // completed (same "don't accumulate forever" cap rep_todos already uses below), merged and
+    // sorted due-date-first (undated last), oldest-created first within the same date.
+    $customerId = (int) ($_GET['customer_id'] ?? 0);
+    if ($customerId <= 0) {
+        relationships_respond(400, ['ok' => false, 'error' => 'Missing customer_id.']);
+    }
+    relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
+
+    $generalStmt = $pdo->prepare(
+        'SELECT id, description, assigned_to_name, created_by_name, created_at, due_date, completed_at, completed_by_name,
+                cw_push_status, cw_push_error, cw_close_status, cw_close_error
+         FROM general_todos WHERE customer_id = :id AND removed_at IS NULL
+         ORDER BY (completed_at IS NOT NULL) ASC, (due_date IS NULL) ASC, due_date ASC, created_at ASC'
+    );
+    $generalStmt->execute([':id' => $customerId]);
+    $general = array_map(static function (array $r): array {
+        $row = relationships_general_todo_row($r);
+        $row['source'] = 'general';
+        $row['meeting_subject'] = null;
+        return $row;
+    }, $generalStmt->fetchAll(PDO::FETCH_ASSOC));
+
+    $meetingStmt = $pdo->prepare(
+        'SELECT t.id, t.description, t.assigned_to_name, t.created_by_name, t.created_at, t.due_date,
+                t.completed_at, t.completed_by_name, t.cw_push_status, t.cw_push_error, t.cw_close_status, t.cw_close_error,
+                m.subject AS meeting_subject
+         FROM meeting_tasks t JOIN customer_meetings m ON m.id = t.meeting_id
+         WHERE t.customer_id = :id
+         ORDER BY (t.completed_at IS NOT NULL) ASC, (t.due_date IS NULL) ASC, t.due_date ASC, t.created_at ASC'
+    );
+    $meetingStmt->execute([':id' => $customerId]);
+    $meeting = array_map(static function (array $r): array {
+        $row = relationships_meeting_task_row($r);
+        $row['source'] = 'meeting';
+        $row['meeting_subject'] = $r['meeting_subject'];
+        return $row;
+    }, $meetingStmt->fetchAll(PDO::FETCH_ASSOC));
+
+    $open = array_values(array_filter(array_merge($general, $meeting), static fn (array $r): bool => $r['completed_at'] === null));
+    $done = array_values(array_filter(array_merge($general, $meeting), static fn (array $r): bool => $r['completed_at'] !== null));
+    usort($open, static fn (array $a, array $b): int =>
+        ($a['due_date'] === null ? 1 : 0) <=> ($b['due_date'] === null ? 1 : 0)
+            ?: strcmp((string) $a['due_date'], (string) $b['due_date'])
+            ?: strcmp((string) $a['created_at'], (string) $b['created_at'])
+    );
+    usort($done, static fn (array $a, array $b): int => strcmp((string) $b['completed_at'], (string) $a['completed_at']));
+    $done = array_slice($done, 0, 10);
+
+    relationships_respond(200, ['ok' => true, 'roster' => relationships_todo_roster(), 'open_todos' => $open, 'recent_completed_todos' => $done]);
 }
 
 if ($action === 'global') {
@@ -817,6 +932,230 @@ if ($action === 'set_task_done') {
         'task' => relationships_meeting_task_row($taskStmt->fetch(PDO::FETCH_ASSOC)),
         'formstack_url' => $formstackUrl,
     ]);
+}
+
+// ---------------------------------------------------------------- add_general_todo
+// Added 2026-10-15, per Michael's customer-portal To-Do card. Same create workflow as
+// meeting_tasks' add_task (local save first, unconditionally; then try the SAME ConnectWise
+// Activity create relationships_cw_create_task_activity() uses, just without a parent meeting --
+// relationships_cw_create_general_todo_activity() in connectwise-meeting-activity.php) -- no
+// notification email (meeting to-dos' "We have a next step!" email was a meeting-specific ask,
+// not requested here).
+if ($action === 'add_general_todo') {
+    $data = relationships_read_json_body();
+    $customerId = (int) ($data['customer_id'] ?? 0);
+    $description = trim((string) ($data['description'] ?? ''));
+    $assignedToName = trim((string) ($data['assigned_to_name'] ?? ''));
+    $dueDateRaw = trim((string) ($data['due_date'] ?? ''));
+    $dueDate = null;
+    if ($dueDateRaw !== '') {
+        $parsedDueDate = DateTimeImmutable::createFromFormat('Y-m-d', $dueDateRaw);
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dueDateRaw) || $parsedDueDate === false || $parsedDueDate->format('Y-m-d') !== $dueDateRaw) {
+            relationships_respond(400, ['ok' => false, 'error' => 'Invalid due date -- expected YYYY-MM-DD.']);
+        }
+        $dueDate = $dueDateRaw;
+    }
+
+    $roster = relationships_todo_roster();
+    if ($customerId <= 0 || $description === '' || !in_array($assignedToName, $roster, true)) {
+        relationships_respond(400, ['ok' => false, 'error' => 'Missing/invalid customer_id, description, or assigned_to_name (must be one of the roster names).']);
+    }
+    if (mb_strlen($description) > 500) {
+        relationships_respond(400, ['ok' => false, 'error' => 'To-do description is too long (500 characters max).']);
+    }
+
+    $custStmt = $pdo->prepare('SELECT id, name, territory_name FROM customers WHERE id = :id');
+    $custStmt->execute([':id' => $customerId]);
+    $customer = $custStmt->fetch(PDO::FETCH_ASSOC);
+    if ($customer === false) {
+        relationships_respond(404, ['ok' => false, 'error' => 'Customer not found.']);
+    }
+    relationships_require_territory_scope($allowedTerritories, $customer['territory_name']);
+
+    $assignee = relationships_meetings_user_by_name($pdo, $assignedToName);
+
+    $insert = $pdo->prepare(
+        'INSERT INTO general_todos (customer_id, description, assigned_to_user_id, assigned_to_name, created_by_user_id, created_by_name, due_date)
+         VALUES (:cid, :desc, :auid, :aname, :cuid, :cname, :due)'
+    );
+    $insert->execute([
+        ':cid' => $customerId, ':desc' => $description,
+        ':auid' => $assignee['id'] ?? null, ':aname' => $assignedToName,
+        ':cuid' => $user['id'], ':cname' => $user['name'], ':due' => $dueDate,
+    ]);
+    $todoId = (int) $pdo->lastInsertId();
+
+    $cwCompanyId = relationships_meetings_cw_id($pdo, $customerId);
+    if ($cwCompanyId !== null) {
+        try {
+            $nowEastern = new DateTimeImmutable('now', new DateTimeZone('America/New_York'));
+            $result = relationships_cw_create_general_todo_activity($pdo, [
+                'customer_id' => $customerId,
+                'cw_company_id' => $cwCompanyId,
+                'description' => $description,
+                'assigned_to_name' => $assignedToName,
+                'assigned_to_email' => relationships_todo_roster_cw_email($assignedToName),
+                'created_by_name' => $user['name'],
+                'created_at_display' => $nowEastern->format('M j, Y g:i A T'),
+                'due_date' => $dueDate,
+            ]);
+            $pdo->prepare('UPDATE general_todos SET cw_activity_id = :aid, cw_push_status = :status, cw_push_error = NULL WHERE id = :id')
+                ->execute([':aid' => $result['id'], ':status' => 'pushed', ':id' => $todoId]);
+        } catch (Throwable $e) {
+            $pdo->prepare('UPDATE general_todos SET cw_push_status = :status, cw_push_error = :err WHERE id = :id')
+                ->execute([':status' => 'error', ':err' => substr($e->getMessage(), 0, 4000), ':id' => $todoId]);
+        }
+    } else {
+        $pdo->prepare('UPDATE general_todos SET cw_push_status = :status WHERE id = :id')
+            ->execute([':status' => 'skipped', ':id' => $todoId]);
+    }
+
+    $todoStmt = $pdo->prepare(
+        'SELECT id, description, assigned_to_name, created_by_name, created_at, due_date, completed_at, completed_by_name, cw_push_status, cw_push_error
+         FROM general_todos WHERE id = :id'
+    );
+    $todoStmt->execute([':id' => $todoId]);
+    $row = relationships_general_todo_row($todoStmt->fetch(PDO::FETCH_ASSOC));
+    $row['source'] = 'general';
+    $row['meeting_subject'] = null;
+    relationships_respond(200, ['ok' => true, 'todo' => $row]);
+}
+
+// ---------------------------------------------------------------- reassign_general_todo
+// Local-only -- per Michael's own scoping ("the same workflow as meeting to-do's where the
+// create and close activities in CWM"), reassignment never touches the ConnectWise Activity
+// already created (if any); it stays assigned to whoever it was first pushed to. Meeting to-dos
+// are NOT reassignable (never were) -- this only ever targets general_todos.
+if ($action === 'reassign_general_todo') {
+    $data = relationships_read_json_body();
+    $todoId = (int) ($data['todo_id'] ?? 0);
+    $assignedToName = trim((string) ($data['assigned_to_name'] ?? ''));
+    $roster = relationships_todo_roster();
+    if ($todoId <= 0 || !in_array($assignedToName, $roster, true)) {
+        relationships_respond(400, ['ok' => false, 'error' => 'Missing/invalid todo_id or assigned_to_name.']);
+    }
+
+    $todoStmt = $pdo->prepare(
+        'SELECT g.id, c.territory_name FROM general_todos g JOIN customers c ON c.id = g.customer_id
+         WHERE g.id = :id AND g.removed_at IS NULL'
+    );
+    $todoStmt->execute([':id' => $todoId]);
+    $todoRow = $todoStmt->fetch(PDO::FETCH_ASSOC);
+    if ($todoRow === false) {
+        relationships_respond(404, ['ok' => false, 'error' => 'To-do not found.']);
+    }
+    relationships_require_territory_scope($allowedTerritories, $todoRow['territory_name']);
+
+    $assignee = relationships_meetings_user_by_name($pdo, $assignedToName);
+    $pdo->prepare('UPDATE general_todos SET assigned_to_name = :aname, assigned_to_user_id = :auid WHERE id = :id')
+        ->execute([':aname' => $assignedToName, ':auid' => $assignee['id'] ?? null, ':id' => $todoId]);
+
+    $outStmt = $pdo->prepare(
+        'SELECT id, description, assigned_to_name, created_by_name, created_at, due_date, completed_at, completed_by_name, cw_push_status, cw_push_error, cw_close_status, cw_close_error
+         FROM general_todos WHERE id = :id'
+    );
+    $outStmt->execute([':id' => $todoId]);
+    $row = relationships_general_todo_row($outStmt->fetch(PDO::FETCH_ASSOC));
+    $row['source'] = 'general';
+    relationships_respond(200, ['ok' => true, 'todo' => $row]);
+}
+
+// ---------------------------------------------------------------- remove_general_todo
+// Soft-delete (AskUserQuestion, 2026-10-15) -- the row stays for history, just excluded from
+// every list/summary query above. If it already created a live ConnectWise Activity
+// (cw_push_status === 'pushed') and isn't already completed/closed, that Activity is closed too
+// (same relationships_cw_close_activity() call set_general_todo_done/set_task_done use) so
+// nothing is left sitting open in ConnectWise just because it was removed here. Meeting to-dos
+// have no remove action -- this only ever targets general_todos.
+if ($action === 'remove_general_todo') {
+    $data = relationships_read_json_body();
+    $todoId = (int) ($data['todo_id'] ?? 0);
+    if ($todoId <= 0) {
+        relationships_respond(400, ['ok' => false, 'error' => 'Missing todo_id.']);
+    }
+
+    $todoStmt = $pdo->prepare(
+        'SELECT g.id, g.cw_activity_id, g.cw_push_status, g.completed_at, c.territory_name
+         FROM general_todos g JOIN customers c ON c.id = g.customer_id
+         WHERE g.id = :id AND g.removed_at IS NULL'
+    );
+    $todoStmt->execute([':id' => $todoId]);
+    $todoRow = $todoStmt->fetch(PDO::FETCH_ASSOC);
+    if ($todoRow === false) {
+        relationships_respond(404, ['ok' => false, 'error' => 'To-do not found (or already removed).']);
+    }
+    relationships_require_territory_scope($allowedTerritories, $todoRow['territory_name']);
+
+    $pdo->prepare("UPDATE general_todos SET removed_at = datetime('now'), removed_by_user_id = :uid, removed_by_name = :uname WHERE id = :id")
+        ->execute([':uid' => $user['id'], ':uname' => $user['name'], ':id' => $todoId]);
+
+    $cwActivityId = $todoRow['cw_activity_id'];
+    if ($todoRow['completed_at'] === null && $cwActivityId !== null && $cwActivityId !== '' && $todoRow['cw_push_status'] === 'pushed') {
+        try {
+            relationships_cw_close_activity($pdo, (string) $cwActivityId);
+            $pdo->prepare('UPDATE general_todos SET cw_close_status = :status, cw_close_error = NULL WHERE id = :id')
+                ->execute([':status' => 'closed', ':id' => $todoId]);
+        } catch (Throwable $e) {
+            $pdo->prepare('UPDATE general_todos SET cw_close_status = :status, cw_close_error = :err WHERE id = :id')
+                ->execute([':status' => 'error', ':err' => substr($e->getMessage(), 0, 4000), ':id' => $todoId]);
+        }
+    }
+
+    relationships_respond(200, ['ok' => true]);
+}
+
+// ---------------------------------------------------------------- set_general_todo_done
+// Same completion workflow as meeting_tasks' set_task_done (local save unconditionally, then
+// close the SAME ConnectWise Activity created at add_general_todo time, never reverted on a
+// ConnectWise failure). This only ever targets general_todos -- a meeting-sourced row in the
+// merged drill-down calls the EXISTING set_task_done action instead (same table the meeting menu
+// reads), which is exactly why checking it off there closes it in the meeting menu too: there is
+// only one row.
+if ($action === 'set_general_todo_done') {
+    $data = relationships_read_json_body();
+    $todoId = (int) ($data['todo_id'] ?? 0);
+    $completed = !empty($data['completed']);
+
+    $todoStmt = $pdo->prepare(
+        'SELECT g.id, g.cw_activity_id, g.cw_push_status, c.territory_name
+         FROM general_todos g JOIN customers c ON c.id = g.customer_id
+         WHERE g.id = :id AND g.removed_at IS NULL'
+    );
+    $todoStmt->execute([':id' => $todoId]);
+    $todoRow = $todoStmt->fetch(PDO::FETCH_ASSOC);
+    if ($todoRow === false) {
+        relationships_respond(404, ['ok' => false, 'error' => 'To-do not found.']);
+    }
+    relationships_require_territory_scope($allowedTerritories, $todoRow['territory_name']);
+
+    if ($completed) {
+        $pdo->prepare("UPDATE general_todos SET completed_at = datetime('now'), completed_by_user_id = :uid, completed_by_name = :uname WHERE id = :id")
+            ->execute([':uid' => $user['id'], ':uname' => $user['name'], ':id' => $todoId]);
+
+        $cwActivityId = $todoRow['cw_activity_id'];
+        if ($cwActivityId !== null && $cwActivityId !== '' && $todoRow['cw_push_status'] === 'pushed') {
+            try {
+                relationships_cw_close_activity($pdo, (string) $cwActivityId);
+                $pdo->prepare('UPDATE general_todos SET cw_close_status = :status, cw_close_error = NULL WHERE id = :id')
+                    ->execute([':status' => 'closed', ':id' => $todoId]);
+            } catch (Throwable $e) {
+                $pdo->prepare('UPDATE general_todos SET cw_close_status = :status, cw_close_error = :err WHERE id = :id')
+                    ->execute([':status' => 'error', ':err' => substr($e->getMessage(), 0, 4000), ':id' => $todoId]);
+            }
+        }
+    } else {
+        $pdo->prepare('UPDATE general_todos SET completed_at = NULL, completed_by_user_id = NULL, completed_by_name = NULL WHERE id = :id')
+            ->execute([':id' => $todoId]);
+    }
+
+    $outStmt = $pdo->prepare(
+        'SELECT id, description, assigned_to_name, created_by_name, created_at, due_date, completed_at, completed_by_name, cw_push_status, cw_push_error, cw_close_status, cw_close_error
+         FROM general_todos WHERE id = :id'
+    );
+    $outStmt->execute([':id' => $todoId]);
+    $row = relationships_general_todo_row($outStmt->fetch(PDO::FETCH_ASSOC));
+    $row['source'] = 'general';
+    relationships_respond(200, ['ok' => true, 'todo' => $row]);
 }
 
 relationships_respond(400, ['ok' => false, 'error' => 'Unknown action.']);

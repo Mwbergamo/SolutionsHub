@@ -413,6 +413,28 @@
     // same pattern state.pendingFocus already uses for the checklist.
     pendingTaskFocus: null, // { meetingId, taskId } | null
 
+    // General (customer-level) To-Do list -- added 2026-10-15 per Michael's
+    // To-Do count card on the customer dashboard (api/meetings.php:
+    // todo_summary/todo_list/add_general_todo/reassign_general_todo/
+    // remove_general_todo/set_general_todo_done). Merged with meeting_tasks
+    // for DISPLAY only -- see todoDrilldownHtml()/generalTodoItemHtml()
+    // below -- each keeps its own lifecycle server-side.
+    todoSummary: null, // { open_count, overdue_count } | { ..., error } | null while loading/not yet loaded
+    todoSummaryLoading: false,
+    todoView: null, // null | 'list' -- whether the drill-down is open
+    todoList: null, // { open_todos, recent_completed_todos, roster } | null
+    todoListLoading: false,
+    todoListError: null,
+    todoAddOpen: false,
+    todoDraftDescription: '',
+    todoDraftAssignee: '',
+    todoDraftDueDate: '', // "YYYY-MM-DD" | ''
+    todoSaving: false,
+    todoTogglingId: null, // general_todos id currently mid-toggle
+    todoReassigningId: null, // general_todos id currently mid-reassign request
+    todoRemovingId: null, // general_todos id currently mid-remove
+    todoReassignDraft: {}, // general_todos id (number) -> roster name picked, not yet submitted -- same pattern as riskScanAssignDraft above
+
     // Risk-scan file uploads (api/risk-scans.php) -- added 2026-09-23 per
     // Michael: a service team member uploads a customer's risk-scan zip
     // from that customer's dashboard; a rep downloads and reviews it, then
@@ -1170,6 +1192,24 @@
     // target before loadMeetings() ever gets to consume it.
   }
 
+  function resetTodoState() {
+    state.todoSummary = null;
+    state.todoSummaryLoading = false;
+    state.todoView = null;
+    state.todoList = null;
+    state.todoListLoading = false;
+    state.todoListError = null;
+    state.todoAddOpen = false;
+    state.todoDraftDescription = '';
+    state.todoDraftAssignee = '';
+    state.todoDraftDueDate = '';
+    state.todoSaving = false;
+    state.todoTogglingId = null;
+    state.todoReassigningId = null;
+    state.todoRemovingId = null;
+    state.todoReassignDraft = {};
+  }
+
   function loadMeetings(customerId) {
     state.meetingsLoading = true;
     var requestFor = Number(customerId);
@@ -1592,6 +1632,15 @@
         if (state.view === 'rep-todos' && state.repTodosName) {
           loadRepTodos(state.repTodosName);
         }
+        // Also refresh the merged To-Do drilldown if that's open (added
+        // 2026-10-15) -- it shows meeting-sourced to-dos too, so a toggle
+        // from there needs its own open_todos/recent_completed_todos
+        // arrays (and the card's badge) back in sync, same "reload after
+        // mutate" idiom as the rep-todos refresh just above.
+        if (state.todoView === 'list' && state.selectedCustomer) {
+          loadTodoSummary(state.selectedCustomer.customer.id);
+          loadTodoList(state.selectedCustomer.customer.id);
+        }
       } else if (formstackTab) {
         formstackTab.close();
       }
@@ -1601,6 +1650,172 @@
       if (formstackTab) formstackTab.close();
       render();
     });
+  }
+
+  // ---- General (customer-level) To-Do list -- api/meetings.php's
+  // todo_summary/todo_list/add_general_todo/reassign_general_todo/
+  // remove_general_todo/set_general_todo_done. Same stale-response guard
+  // (Number(customerId) !== requestFor) as loadActivitySummary/loadMeetings
+  // above. toggleGeneralTodoDone() below only ever targets a
+  // 'general'-source row -- a 'meeting'-source row in the merged drilldown
+  // dispatches to the EXISTING task-toggle-done/toggleTaskDone() instead
+  // (see generalTodoItemHtml()), which is exactly why checking it off here
+  // also closes it in the meeting menu: there's only one meeting_tasks row,
+  // read and written by both views.
+
+  function loadTodoSummary(customerId) {
+    state.todoSummaryLoading = true;
+    var requestFor = Number(customerId);
+    apiGet('api/meetings.php?action=todo_summary&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.todoSummaryLoading = false;
+      if (r.data && r.data.ok) {
+        state.todoSummary = { open_count: r.data.open_count, overdue_count: r.data.overdue_count };
+      } else {
+        state.todoSummary = { open_count: 0, overdue_count: 0, error: (r.data && r.data.error) || 'Could not load to-dos.' };
+      }
+      render();
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.todoSummaryLoading = false;
+      state.todoSummary = { open_count: 0, overdue_count: 0, error: 'Could not load to-dos — check your connection.' };
+      render();
+    });
+  }
+
+  function loadTodoList(customerId) {
+    state.todoView = 'list';
+    state.todoListLoading = true;
+    state.todoListError = null;
+    var requestFor = Number(customerId);
+    render();
+    apiGet('api/meetings.php?action=todo_list&customer_id=' + encodeURIComponent(customerId)).then(function (r) {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.todoListLoading = false;
+      if (r.data && r.data.ok) {
+        state.todoList = r.data;
+      } else {
+        state.todoListError = (r.data && r.data.error) || 'Could not load the to-do list.';
+      }
+      render();
+    }).catch(function () {
+      if (!state.selectedCustomer || Number(state.selectedCustomer.customer.id) !== requestFor) return;
+      state.todoListLoading = false;
+      state.todoListError = 'Could not load the to-do list — check your connection and try again.';
+      render();
+    });
+  }
+
+  // After any mutation, the badge (todoSummary) and the open drill-down
+  // list (todoList) need to agree again -- reload both together rather
+  // than hand-patch counts client-side, same "reload after mutate" idiom
+  // toggleTaskDone() already uses for state.repTodosData.
+  function refreshTodoViews(customerId) {
+    loadTodoSummary(customerId);
+    loadTodoList(customerId);
+  }
+
+  function saveGeneralTodo(customerId) {
+    var description = (state.todoDraftDescription || '').trim();
+    var assignee = state.todoDraftAssignee;
+    if (!description || !assignee) {
+      state.todoListError = 'Enter a to-do description and pick who it’s assigned to.';
+      render();
+      return;
+    }
+    state.todoSaving = true;
+    state.todoListError = null;
+    render();
+    apiPost('api/meetings.php?action=add_general_todo', {
+      customer_id: customerId, description: description, assigned_to_name: assignee,
+      due_date: state.todoDraftDueDate || null
+    }).then(function (r) {
+      state.todoSaving = false;
+      if (r.data && r.data.ok) {
+        state.todoAddOpen = false;
+        state.todoDraftDescription = '';
+        state.todoDraftAssignee = '';
+        state.todoDraftDueDate = '';
+        if (r.data.todo.cw_push && r.data.todo.cw_push.status === 'error') {
+          state.todoListError = 'To-do saved here, but didn’t reach ConnectWise: ' + r.data.todo.cw_push.error;
+        }
+        refreshTodoViews(customerId);
+      } else {
+        state.todoListError = (r.data && r.data.error) || 'Could not save the to-do.';
+        render();
+      }
+    }).catch(function () {
+      state.todoSaving = false;
+      state.todoListError = 'Could not save the to-do — check your connection and try again.';
+      render();
+    });
+  }
+
+  function toggleGeneralTodoDone(todoId, completed, customerId) {
+    state.todoTogglingId = todoId;
+    render();
+    apiPost('api/meetings.php?action=set_general_todo_done', { todo_id: todoId, completed: completed }).then(function (r) {
+      state.todoTogglingId = null;
+      if (!r.data || !r.data.ok) {
+        state.todoListError = (r.data && r.data.error) || 'Could not update the to-do.';
+      }
+      refreshTodoViews(customerId);
+    }).catch(function () {
+      state.todoTogglingId = null;
+      state.todoListError = 'Could not update the to-do — check your connection and try again.';
+      refreshTodoViews(customerId);
+    });
+  }
+
+  function reassignGeneralTodo(todoId, assignedToName, customerId) {
+    state.todoReassigningId = todoId;
+    render();
+    apiPost('api/meetings.php?action=reassign_general_todo', { todo_id: todoId, assigned_to_name: assignedToName }).then(function (r) {
+      state.todoReassigningId = null;
+      if (r.data && r.data.ok) {
+        delete state.todoReassignDraft[todoId];
+      } else {
+        state.todoListError = (r.data && r.data.error) || 'Could not reassign the to-do.';
+      }
+      refreshTodoViews(customerId);
+    }).catch(function () {
+      state.todoReassigningId = null;
+      state.todoListError = 'Could not reassign the to-do — check your connection and try again.';
+      refreshTodoViews(customerId);
+    });
+  }
+
+  function removeGeneralTodo(todoId, customerId) {
+    var all = ((state.todoList && state.todoList.open_todos) || []).concat((state.todoList && state.todoList.recent_completed_todos) || []);
+    var t = all.filter(function (x) { return x.id === todoId; })[0];
+    if (!window.confirm('Remove the to-do “' + (t ? t.description : 'this to-do') + '”? This can’t be undone.')) return;
+    state.todoRemovingId = todoId;
+    render();
+    apiPost('api/meetings.php?action=remove_general_todo', { todo_id: todoId }).then(function (r) {
+      state.todoRemovingId = null;
+      if (!r.data || !r.data.ok) {
+        state.todoListError = (r.data && r.data.error) || 'Could not remove the to-do.';
+      }
+      refreshTodoViews(customerId);
+    }).catch(function () {
+      state.todoRemovingId = null;
+      state.todoListError = 'Could not remove the to-do — check your connection and try again.';
+      refreshTodoViews(customerId);
+    });
+  }
+
+  // Delegated 'change' handler for the per-row reassign dropdowns in
+  // generalTodoItemHtml() below -- several open general to-dos can be on
+  // screen at once, so this is bound once on root (see the 'Bound once'
+  // block near the end of this file), same pattern as
+  // onRiskScanAssignSelectChange() above. Only tracks the pick so it
+  // survives a re-render -- doesn't submit anything itself (see the
+  // 'todo-reassign' dispatcher action, which reads this draft).
+  function onTodoReassignSelectChange(ev) {
+    var el = ev.target;
+    var todoId = el.getAttribute && el.getAttribute('data-todo-reassign-select');
+    if (!todoId) return;
+    state.todoReassignDraft[todoId] = el.value;
   }
 
   // ---- Global master to-do dashboard (Relationships front page) ---------
@@ -1804,6 +2019,8 @@
         loadVendorNotes(id);
         resetMeetingsState();
         loadMeetings(id);
+        resetTodoState();
+        loadTodoSummary(id);
         resetRiskScansState();
         loadRiskScans(id);
         resetDocumentsState();
@@ -3240,6 +3457,12 @@
     var overviewScroll = captureOverviewListScroll();
     root.innerHTML = topbarHtml() + '<div class="main">' + mainHtml() + '</div>';
     bindEvents();
+    // Re-render the "Add to Favorites" star button(s) (favorites.js, added
+    // 2026-10-15) -- root.innerHTML just wiped out whatever it rendered
+    // into any [data-favorite-mount] spans, same as it wipes everything
+    // else. Guarded in case favorites.js hasn't finished its own
+    // DOMContentLoaded setup yet (harmless no-op on that first render).
+    if (window.CBTFavorites) window.CBTFavorites.refreshButtons();
     restoreSearchFocus(searchFocus);
     adjustOverviewListScroll();
     restoreOverviewListScroll(overviewScroll);
@@ -5199,33 +5422,183 @@
   // was the bug reported 2026-09-10: any real error was getting treated
   // exactly like "mock customer, nothing to show" and the whole panel
   // just disappeared with no explanation).
+  // The To-Do count card (added 2026-10-15, see state.todoSummary above)
+  // renders in the same .activity-panel grid as Service Tickets YTD --
+  // "right next to" it, per Michael -- but independently of whether a
+  // ConnectWise ticket summary is available, so a mock/prospect customer
+  // with no ConnectWise id still gets a working To-Do list.
   function activityPanelHtml(detail) {
     var summary = state.activitySummary;
+    var ticketsHtml = '';
     if (state.activitySummaryLoading && !summary) {
-      return '<div class="activity-panel"><div class="activity-card loading-card">Loading ticket & billing activity…</div></div>';
-    }
-    if (!summary) {
-      return '';
-    }
-    if (summary.available === false) {
-      if (summary.error) {
-        return '<div class="activity-panel"><div class="activity-card error-card">' +
-          'Couldn’t load ticket/billing activity from ConnectWise: ' + escapeHtml(summary.error) +
-        '</div></div>';
+      ticketsHtml = '<div class="activity-card loading-card">Loading ticket & billing activity…</div>';
+    } else if (summary) {
+      if (summary.available === false) {
+        if (summary.error) {
+          ticketsHtml = '<div class="activity-card error-card">' +
+            'Couldn’t load ticket/billing activity from ConnectWise: ' + escapeHtml(summary.error) +
+          '</div>';
+        }
+        // else: mock customer -- no ConnectWise id, nothing to show, not an error
+      } else {
+        ticketsHtml = '<button class="activity-card" type="button" data-action="open-tickets">' +
+          '<div class="activity-card-label">Service Tickets YTD</div>' +
+          '<div class="activity-card-value">' + summary.ticket_count_ytd + '</div>' +
+          '<div class="activity-card-sub">Professional Services board — click to view</div>' +
+        '</button>';
       }
-      return ''; // mock customer -- no ConnectWise id, nothing to show, not an error
     }
 
-    var html = '<div class="activity-panel">';
+    var todoHtml = todoCardHtml(detail);
+    if (!ticketsHtml && !todoHtml) return '';
 
-    html += '<button class="activity-card" type="button" data-action="open-tickets">' +
-      '<div class="activity-card-label">Service Tickets YTD</div>' +
-      '<div class="activity-card-value">' + summary.ticket_count_ytd + '</div>' +
-      '<div class="activity-card-sub">Professional Services board — click to view</div>' +
+    var html = '<div class="activity-panel">' + ticketsHtml + todoHtml + '</div>';
+    html += activityDrilldownHtml(detail);
+    html += todoDrilldownHtml(detail);
+    return html;
+  }
+
+  // The To-Do count card itself -- white (0 open to-dos), green (open
+  // to-dos exist, none overdue -- an undated to-do counts as not-yet-due,
+  // per Michael/AskUserQuestion 2026-10-15), or red (at least one open,
+  // dated to-do whose due date has passed). Counts and color inputs come
+  // straight from todo_summary (api/meetings.php) so this file doesn't
+  // duplicate that logic.
+  function todoCardHtml(detail) {
+    var summary = state.todoSummary;
+    if (state.todoSummaryLoading && !summary) {
+      return '<div class="activity-card loading-card">Loading to-dos…</div>';
+    }
+    if (!summary) return '';
+    if (summary.error) {
+      return '<div class="activity-card error-card">Couldn’t load to-dos: ' + escapeHtml(summary.error) + '</div>';
+    }
+    var colorClass = 'todo-white';
+    if (summary.overdue_count > 0) colorClass = 'todo-red';
+    else if (summary.open_count > 0) colorClass = 'todo-green';
+    return '<button class="activity-card todo-card ' + colorClass + '" type="button" data-action="open-todos">' +
+      '<div class="activity-card-label">To-Do List</div>' +
+      '<div class="activity-card-value">' + summary.open_count + '</div>' +
+      '<div class="activity-card-sub">' + (summary.overdue_count > 0
+        ? summary.overdue_count + ' overdue — click to view'
+        : 'Click to view') + '</div>' +
     '</button>';
+  }
+
+  // The To-Do list drill-down -- merged general_todos + meeting_tasks for
+  // this customer (api/meetings.php's todo_list), each row tagged by
+  // source. Same drilldown-header/back-button pattern as
+  // activityDrilldownHtml() above.
+  function todoDrilldownHtml(detail) {
+    if (state.todoView !== 'list') return '';
+    var html = '<div class="activity-drilldown">';
+    html += '<div class="drilldown-header">' + activityDrilldownBackBtn('todos-close', 'Close') +
+      '<div class="drilldown-title">To-Do List — ' + escapeHtml(detail.customer.name) + '</div>' +
+    '</div>';
+
+    if (state.todoListLoading && !state.todoList) {
+      html += '<div class="loading">Loading to-dos…</div>';
+    } else {
+      if (state.todoListError) {
+        html += '<div class="activity-error">' + escapeHtml(state.todoListError) + '</div>';
+      }
+      var list = state.todoList || { open_todos: [], recent_completed_todos: [], roster: [] };
+
+      if (state.todoAddOpen) {
+        html += todoAddFormHtml(detail, list.roster || []);
+      } else {
+        html += '<button type="button" class="meetings-add-btn small" data-action="todo-add-open">+ Add To-Do</button>';
+      }
+
+      if ((list.open_todos || []).length === 0) {
+        html += '<div class="empty-state">No open to-dos.</div>';
+      } else {
+        html += '<div class="meeting-task-list">';
+        list.open_todos.forEach(function (t) { html += generalTodoItemHtml(t, detail.customer.id); });
+        html += '</div>';
+      }
+
+      if ((list.recent_completed_todos || []).length > 0) {
+        html += '<div class="roster-title">Recently completed</div><div class="meeting-task-list">';
+        list.recent_completed_todos.forEach(function (t) { html += generalTodoItemHtml(t, detail.customer.id); });
+        html += '</div>';
+      }
+    }
 
     html += '</div>';
-    html += activityDrilldownHtml(detail);
+    return html;
+  }
+
+  // Same add-form markup/pattern as the meeting Add Task form
+  // (meetingsPanelHtml's taskAssigneeSelect/taskDueDateInput) -- blank-
+  // first assignee dropdown, per Michael's "a rep has to choose" rule.
+  function todoAddFormHtml(detail, roster) {
+    return '<div class="task-add-form">' +
+      '<input type="text" id="todoDescriptionInput" class="meeting-form-input" placeholder="To-do description" value="' + escapeHtml(state.todoDraftDescription) + '" maxlength="500">' +
+      '<select id="todoAssigneeSelect" class="meeting-form-select">' +
+        '<option value=""' + (state.todoDraftAssignee === '' ? ' selected' : '') + '>Select a rep…</option>' +
+        roster.map(function (name) {
+          return '<option value="' + escapeHtml(name) + '"' + (state.todoDraftAssignee === name ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
+        }).join('') +
+      '</select>' +
+      '<label class="task-due-date-label">Due date (optional)' +
+        '<input type="date" id="todoDueDateInput" class="meeting-form-input" value="' + escapeHtml(state.todoDraftDueDate) + '">' +
+      '</label>' +
+      '<div class="meeting-form-actions">' +
+        '<button type="button" class="vendor-field-btn primary" data-action="todo-save" data-customer="' + detail.customer.id + '" ' + (state.todoSaving ? 'disabled' : '') + '>' + (state.todoSaving ? 'Saving…' : 'Add To-Do') + '</button>' +
+        '<button type="button" class="vendor-field-btn secondary" data-action="todo-add-cancel" ' + (state.todoSaving ? 'disabled' : '') + '>Cancel</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // One merged to-do row -- same visual pattern as meetingTaskItemHtml()
+  // below (the "same formatting as the Check-list items" rule), plus a
+  // "From meeting" tag for meeting-sourced rows and reassign/remove
+  // controls for general-sourced rows only (meeting to-dos were never
+  // reassignable/removable here either -- see meetings.php). Checking the
+  // box dispatches to the 'general' or 'meeting' toggle action depending
+  // on t.source -- see the dispatcher below.
+  function generalTodoItemHtml(t, customerId) {
+    var isDone = !!t.completed_at;
+    var isGeneral = t.source === 'general';
+    var toggling = isGeneral ? (state.todoTogglingId === t.id) : (state.taskTogglingId === t.id);
+    var removing = state.todoRemovingId === t.id;
+    var reassigning = state.todoReassigningId === t.id;
+    var metaLine = isDone
+      ? '✓ ' + escapeHtml(t.completed_by_name) + ' — ' + escapeHtml(fmtTimestamp(t.completed_at))
+      : 'Assigned to ' + escapeHtml(t.assigned_to_name) + (t.due_date ? ' · Due ' + escapeHtml(fmtOutgrowDate(t.due_date)) : '');
+    var cwWarn = t.cw_push && t.cw_push.status === 'error'
+      ? ' <span class="meeting-task-cw-warn" title="' + escapeHtml(t.cw_push.error || '') + '">⚠</span>'
+      : '';
+    var cwCloseWarn = t.cw_close && t.cw_close.status === 'error'
+      ? ' <span class="meeting-task-cw-warn" title="' + escapeHtml('Didn’t close in ConnectWise: ' + (t.cw_close.error || '')) + '">⚠</span>'
+      : '';
+    var meetingTag = t.source === 'meeting'
+      ? ' <span class="todo-meeting-tag" title="Logged from a customer meeting">From meeting: ' + escapeHtml(t.meeting_subject || '') + '</span>'
+      : '';
+
+    var html = '<label class="checklist-step ' + (isDone ? 'done' : '') + '" data-task-row="' + t.id + '">' +
+      '<input type="checkbox" ' + (isDone ? 'checked' : '') + (toggling ? ' disabled' : '') +
+        ' data-action="' + (isGeneral ? 'todo-toggle-done' : 'task-toggle-done') + '" data-task="' + t.id + '" data-customer="' + customerId + '" data-completed="' + (isDone ? '1' : '0') + '">' +
+      '<div class="checklist-step-text">' +
+        '<div class="checklist-step-label">' + escapeHtml(t.description) + meetingTag + cwWarn + cwCloseWarn + '</div>' +
+        '<div class="checklist-step-meta">' + metaLine + '</div>' +
+      '</div>' +
+    '</label>';
+
+    if (isGeneral && !isDone) {
+      html += '<div class="todo-row-actions">' +
+        '<select class="meeting-form-select small" data-todo-reassign-select="' + t.id + '" ' + (reassigning ? 'disabled' : '') + '>' +
+          '<option value="">Reassign to…</option>' +
+          ((state.todoList && state.todoList.roster) || []).map(function (name) {
+            return '<option value="' + escapeHtml(name) + '"' + (state.todoReassignDraft[t.id] === name ? ' selected' : '') + '>' + escapeHtml(name) + '</option>';
+          }).join('') +
+        '</select>' +
+        '<button type="button" class="vendor-field-btn secondary small" data-action="todo-reassign" data-todo="' + t.id + '" data-customer="' + customerId + '" ' + (reassigning ? 'disabled' : '') + '>' + (reassigning ? '…' : 'Reassign') + '</button>' +
+        '<button type="button" class="vendor-field-btn secondary small" data-action="todo-remove" data-todo="' + t.id + '" data-customer="' + customerId + '" ' + (removing ? 'disabled' : '') + '>' + (removing ? '…' : 'Remove') + '</button>' +
+      '</div>';
+    }
+
     return html;
   }
 
@@ -5898,6 +6271,7 @@
         (detail.customer.is_peoplefirst ? peopleFirstBadgeHtml() : (detail.customer.is_prospect_only ? prospectBadgeHtml() : (detail.customer.is_residential ? residentialBadgeHtml() : ''))) +
       '</div>' +
       '<div class="customer-header-right">' +
+        (detail.customer.connectwise_id ? '<span data-favorite-mount data-favorite-app="relationships" data-favorite-label="' + escapeHtml(detail.customer.name) + '" data-favorite-url="relationships/?cw_company=' + encodeURIComponent(detail.customer.connectwise_id) + '"></span>' : '') +
         '<button class="print-summary-btn" type="button" data-action="open-print-summary">Print Service Summary</button>' +
         (detail.customer.connectwise_id ? '<a class="print-summary-btn" style="text-decoration:none;display:inline-block;" href="../collections/index.html?cw_company=' + encodeURIComponent(detail.customer.connectwise_id) + '" target="_blank" rel="noopener">Open Balance Report</a>' : '') +
         '<button class="change-customer-btn' + (state.layoutEdit ? ' layout-edit-on' : '') + '" type="button" data-action="layout-edit-toggle">' + (state.layoutEdit ? 'Done editing' : 'Edit view') + '</button>' +
@@ -8121,6 +8495,25 @@
       });
     }
 
+    var todoDescriptionInput = document.getElementById('todoDescriptionInput');
+    if (todoDescriptionInput) {
+      todoDescriptionInput.addEventListener('input', function (e) {
+        state.todoDraftDescription = e.target.value;
+      });
+    }
+    var todoAssigneeSelect = document.getElementById('todoAssigneeSelect');
+    if (todoAssigneeSelect) {
+      todoAssigneeSelect.addEventListener('change', function (e) {
+        state.todoDraftAssignee = e.target.value;
+      });
+    }
+    var todoDueDateInput = document.getElementById('todoDueDateInput');
+    if (todoDueDateInput) {
+      todoDueDateInput.addEventListener('input', function (e) {
+        state.todoDraftDueDate = e.target.value;
+      });
+    }
+
     var dupFilterInput = document.getElementById('dupFilterInput');
     if (dupFilterInput) {
       dupFilterInput.addEventListener('input', function (e) {
@@ -8707,6 +9100,38 @@
       // to-do, filed at completion).
       var formstackTab = completing ? window.open('', '_blank') : null;
       toggleTaskDone(parseInt(el.getAttribute('data-task'), 10), completing, formstackTab);
+    } else if (action === 'open-todos') {
+      loadTodoList(state.selectedCustomer.customer.id);
+    } else if (action === 'todos-close') {
+      state.todoView = null;
+      render();
+    } else if (action === 'todo-add-open') {
+      state.todoAddOpen = true;
+      state.todoDraftDescription = '';
+      state.todoDraftAssignee = ''; // blank-first, per the same "a rep has to choose" rule as task-add-open
+      state.todoDraftDueDate = '';
+      state.todoListError = null;
+      render();
+    } else if (action === 'todo-add-cancel') {
+      state.todoAddOpen = false;
+      state.todoListError = null;
+      render();
+    } else if (action === 'todo-save') {
+      saveGeneralTodo(parseInt(el.getAttribute('data-customer'), 10));
+    } else if (action === 'todo-toggle-done') {
+      var todoWasDone = el.getAttribute('data-completed') === '1';
+      toggleGeneralTodoDone(parseInt(el.getAttribute('data-task'), 10), !todoWasDone, parseInt(el.getAttribute('data-customer'), 10));
+    } else if (action === 'todo-reassign') {
+      var reassignTodoId = parseInt(el.getAttribute('data-todo'), 10);
+      var reassignName = state.todoReassignDraft[reassignTodoId];
+      if (!reassignName) {
+        state.todoListError = 'Pick who to reassign this to-do to first.';
+        render();
+      } else {
+        reassignGeneralTodo(reassignTodoId, reassignName, parseInt(el.getAttribute('data-customer'), 10));
+      }
+    } else if (action === 'todo-remove') {
+      removeGeneralTodo(parseInt(el.getAttribute('data-todo'), 10), parseInt(el.getAttribute('data-customer'), 10));
     } else if (action === 'open-customer-task') {
       openCustomerAtTask(
         parseInt(el.getAttribute('data-customer'), 10),
@@ -8869,6 +9294,7 @@
   root.addEventListener('change', onProspectInput);
   root.addEventListener('change', onProspectFilterCommit);
   root.addEventListener('change', onRiskScanAssignSelectChange);
+  root.addEventListener('change', onTodoReassignSelectChange);
   root.addEventListener('change', onProjectAssignSelectChange);
   root.addEventListener('change', onProjectStatusFilterChange);
   root.addEventListener('change', onProjectSortSelectChange);

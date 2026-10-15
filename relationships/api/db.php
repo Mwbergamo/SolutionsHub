@@ -595,6 +595,75 @@ function relationships_migrate(PDO $pdo): void
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_meeting_tasks_customer ON meeting_tasks(customer_id, id DESC)');
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_meeting_tasks_assignee ON meeting_tasks(assigned_to_name, completed_at)');
 
+    // General (customer-level, not meeting-tied) to-dos -- added 2026-10-15 per Michael: a
+    // to-do count card on each customer portal page next to Service Tickets YTD, merged in the
+    // drill-down with meeting_tasks (tagged "from meeting"). Deliberately a SEPARATE table from
+    // meeting_tasks rather than making meeting_id nullable there -- keeps meeting_tasks' existing
+    // queries/indexes untouched and keeps a general to-do's lifecycle (removable, reassignable)
+    // from leaking onto meeting to-dos, which still only support create/complete. Same create/close
+    // ConnectWise Activity workflow as meeting_tasks (relationships_cw_create_task_activity() /
+    // relationships_cw_close_activity(), both in connectwise-meeting-activity.php /
+    // connectwise-activity-create.php) -- reassign and remove are LOCAL ONLY, no ConnectWise call,
+    // per Michael: "the same workflow as meeting to-do's where the create and close activities in
+    // CWM" (only those two touch ConnectWise). removed_at/by is a soft-delete (AskUserQuestion
+    // 2026-10-15: removing a to-do with a live Activity also closes that Activity, same
+    // relationships_cw_close_activity() call set_task_done already uses, so nothing is left open
+    // in ConnectWise just because it got removed here) -- the row stays for history, just filtered
+    // out of every list query. assigned_to_name is the same fixed 7-name roster as meeting to-dos
+    // (relationships_todo_roster()) -- AskUserQuestion 2026-10-15 confirmed no broader assignee set
+    // is needed yet.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS general_todos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            description TEXT NOT NULL,
+            assigned_to_user_id INTEGER REFERENCES crc_users(id),
+            assigned_to_name TEXT NOT NULL,
+            created_by_user_id INTEGER REFERENCES crc_users(id),
+            created_by_name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            due_date TEXT,
+            completed_at TEXT,
+            completed_by_user_id INTEGER REFERENCES crc_users(id),
+            completed_by_name TEXT,
+            removed_at TEXT,
+            removed_by_user_id INTEGER REFERENCES crc_users(id),
+            removed_by_name TEXT,
+            cw_activity_id TEXT,
+            cw_push_status TEXT,
+            cw_push_error TEXT,
+            cw_close_status TEXT,
+            cw_close_error TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_general_todos_customer ON general_todos(customer_id, id DESC)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_general_todos_assignee ON general_todos(assigned_to_name, completed_at)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_general_todos_open ON general_todos(customer_id, removed_at, completed_at, due_date)');
+
+    // Cross-app "Add to Favorites" (added 2026-10-15 per Michael) -- a rep on ANY SolutionsHub
+    // app (root Solutions Creator, this Relationships dashboard, Register, Rate Sheet, ...) can
+    // star the page they're on; it shows as a quick link in a new left-hand sidebar on the root
+    // Overview screen. Lives here (not a new per-app table) because every app already shares this
+    // one login session (crc_users -- see _util.php's relationships_current_user()) and the root
+    // app already calls into relationships/api/* for Saved Solutions (solution-save.js), so this
+    // is the established shared backend, not a new piece of infrastructure. url is whatever that
+    // app's own deep-link looks like (e.g. "relationships/?cw_company=123",
+    // "relationships/?view=report&section=sales") -- just a bookmark, no snapshot of in-progress
+    // state (AskUserQuestion 2026-10-15). UNIQUE(user_id, url) so starring the same page twice is
+    // a no-op, not a duplicate row.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS favorites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES crc_users(id),
+            app TEXT NOT NULL,
+            label TEXT NOT NULL,
+            url TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(user_id, url)
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id, created_at)');
+
     // Rep-based territory filtering -- added 2026-09-16 per Michael. Every
     // ConnectWise Company carries a `territory{id,name}` field (see
     // register/api/customers.php's research notes -- backed by a
