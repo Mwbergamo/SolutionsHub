@@ -47,7 +47,7 @@ const COMMISSIONS_PENDING_LOOKBACK_DAYS = 180;
  * lines saved under the old rules can't linger until ConnectWise happens to
  * change the invoice.
  */
-const COMMISSIONS_RULES_VERSION = '2026-10-15-project-actual-hours';
+const COMMISSIONS_RULES_VERSION = '2026-10-15-correspondence-meeting-excluded';
 
 /** Bump when how payees share a line changes; the next API call re-applies it to unlocked months. */
 const COMMISSIONS_PAYOUT_RULES_VERSION = '2026-10-06-chester-arcus';
@@ -586,6 +586,18 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
         // billableOption set at all) still counts.
         $billable = strtolower((string) ($t['billableOption'] ?? ''));
         if ($billable === 'donotbill' || $billable === 'nocharge') {
+            continue;
+        }
+        // Correspondence/Meeting time never counts against a rep, billable or not --
+        // Michael, 2026-10-15 (invoice #161029, Dale Kain / ticket #952760): this work
+        // type gets "billed" against the customer's IT Services Agreement just to clear
+        // it out of ConnectWise -- Billable shows 'B' and Status shows 'Billed', but the
+        // invoice amount is always $0 because the agreement absorbs it; the customer is
+        // never actually charged. Unlike the Do Not Bill / No Charge check above (which
+        // looks at billableOption), this one has to check the work type itself, because
+        // ConnectWise marks these entries Billable even though nothing is ever invoiced.
+        $workTypeName = strtolower((string) ($t['workType']['name'] ?? ''));
+        if (str_contains($workTypeName, 'correspondence') && str_contains($workTypeName, 'meeting')) {
             continue;
         }
         $hours = 0.0;
