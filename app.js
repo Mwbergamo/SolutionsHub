@@ -1395,8 +1395,42 @@ class Component extends DCLogic {
       // Generic image lightbox/modal state — reusable by any future feature.
       // Set { isOpen: true, url, caption } to open it; not scoped to any
       // one category or product.
-      imagePreview: { isOpen: false, url: '', caption: '' }
+      imagePreview: { isOpen: false, url: '', caption: '' },
+      // Cross-app "Add to Favorites" (added 2026-10-15 per Michael) -- see
+      // db.php's favorites table (relationships/api/) for the full design.
+      // null = not loaded yet (sidebar stays hidden, same "don't show a
+      // half-built empty state" convention as activitySummary elsewhere in
+      // this codebase); [] once loaded with nothing starred.
+      favorites: null
     };
+    this.loadFavorites();
+  }
+
+  // Fetches this rep's favorited pages from the shared backend
+  // (relationships/api/favorites.php -- same login session this app
+  // already shares, and the same backend Saved Solutions already talks to
+  // via solution-save.js) and shows them in the Overview sidebar.
+  loadFavorites() {
+    var self = this;
+    fetch('relationships/api/favorites.php?action=list', { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data && data.ok) self.setState({ favorites: data.favorites });
+      })
+      .catch(function () { /* silent -- sidebar just stays empty/hidden, same as a failed activitySummary load elsewhere */ });
+  }
+
+  // Optimistic local removal (sidebar updates immediately) -- a failed
+  // request just gets silently corrected on the next loadFavorites().
+  removeFavorite(id) {
+    var self = this;
+    var prev = this.state.favorites || [];
+    this.setState({ favorites: prev.filter(function (f) { return f.id !== id; }) });
+    fetch('relationships/api/favorites.php?action=remove', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id })
+    }).catch(function () {});
   }
 
   openImagePreview(url, caption) {
@@ -3436,6 +3470,20 @@ class Component extends DCLogic {
     // across all 5 pillars, mirrors each pillar tile's own count).
     var scCount = itCount + dcCount + voipCount + cablingCount + securityCount;
 
+    // Cross-app "Add to Favorites" sidebar (added 2026-10-15 per Michael) --
+    // shown on the Overview screen, to the left of the hub-tiles grid. Each
+    // row is a real <a href> (the favorited page is very often a different
+    // app entirely -- relationships/, register/, ... -- so this is a real
+    // navigation, not an in-SPA route) with a small remove (x) button that
+    // stays in-page (removeFavorite() above).
+    var favoritesList = (this.state.favorites || []).map(function (f) {
+      return {
+        id: f.id, label: f.label, url: f.url,
+        onRemove: function (e) { if (e && e.preventDefault) e.preventDefault(); self.removeFavorite(f.id); }
+      };
+    });
+    var hasFavorites = favoritesList.length > 0;
+
     var searchQuery = this.state.searchQuery || '';
     var searchHasQuery = searchQuery.trim().length > 0;
     var searchResults = [];
@@ -4680,6 +4728,8 @@ class Component extends DCLogic {
         : 'display:flex;align-items:center;gap:8px;background:transparent;color:var(--cbt-text-on-dark-tertiary);border:2px solid var(--cbt-border-control);font-size:13px;font-weight:700;padding:9px 18px;border-radius:999px;cursor:pointer;',
       isOverview: view === 'overview',
       isSolutionsCreator: view === 'solutions-creator',
+      favoritesList: favoritesList,
+      hasFavorites: hasFavorites,
       isPillar: view === 'pillar',
       isService: view === 'service',
       isSummary: view === 'summary',

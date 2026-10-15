@@ -100,6 +100,18 @@
           </div>
         </div>
 
+        <div style="display:flex;align-items:flex-start;gap:28px;flex-wrap:wrap;">
+        <sc-if value="{{hasFavorites}}" hint-placeholder-val="{{false}}">
+        <div class="favorites-sidebar">
+          <div class="favorites-sidebar-title">Favorites</div>
+          <sc-for list="{{favoritesList}}" as="fav" hint-placeholder-count="2">
+            <div class="favorites-sidebar-item">
+              <a href="{{fav.url}}" class="favorites-sidebar-link">{{fav.label}}</a>
+              <button type="button" class="favorites-sidebar-remove" data-on-click="{{fav.onRemove}}" title="Remove from Favorites">&times;</button>
+            </div>
+          </sc-for>
+        </div>
+        </sc-if>
         <div class="hub-tiles">
           <button type="button" data-on-click="{{goToSolutionsCreator}}" class="hub-tile" style="--c:#4d7bd6">
             <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg></div><sc-if value="{{scHasSelections}}" hint-placeholder-val="{{false}}"><span class="hub-tile-badge">{{scSelectedCount}} selected</span></sc-if><sc-if value="{{scNoSelections}}" hint-placeholder-val="{{true}}"><span class="hub-tile-led" title="Ready"></span></sc-if></div>
@@ -146,6 +158,7 @@
           </div>
 
 
+        </div>
         </div>
       </div>
     </sc-if>
