@@ -92,6 +92,15 @@ table.data .r { text-align: right; font-variant-numeric: tabular-nums; }
 .cf-section-card .cf-section-status { margin-top: auto; font-size: 11.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: oklch(0.58 0.02 255); padding-top: 6px; border-top: 1px dashed oklch(0.3 0.03 255); }
 .cf-section-card.cf-opportunity .cf-section-title svg { color: oklch(0.82 0.13 80); }
 
+/* ---- clickable section cards (once a section has synced data) ---- */
+.cf-section-card.clickable { cursor: pointer; text-align: left; font: inherit; color: inherit; width: 100%; }
+.cf-section-card.clickable:hover { border-color: #2f8fef; }
+.cf-section-card.clickable .cf-section-status { color: oklch(0.7 0.1 230); }
+
+/* ---- section detail view (Standard/Product Sales/Agreements/Credits/Opportunities) ---- */
+.cf-invoice-row { cursor: pointer; }
+.cf-invoice-row:hover { background: oklch(0.23 0.03 255); }
+
 /* ---- hand-rolled bar chart (shared look with Relationships' Monthly
    Billing panel -- same classes, reused once a section starts rendering
    real synced data) ---- */

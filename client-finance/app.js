@@ -4,13 +4,12 @@
    the same four people as Commissions -- enforced by every
    client-finance/api/*.php endpoint, not just by hiding the card.
 
-   This first pass only wires up sign-in, the customer search (typing a
-   name, just like Relationships' picker), and a dashboard shell showing
-   all five planned sections as "coming soon" placeholders. The real
-   section data (Standard Invoices, Product Sales, Agreement Invoicing,
-   Credits, Opportunities) lands once client-finance/api/sync-core.php is
-   written against confirmed ConnectWise field names -- see
-   client-finance/api/probe.php and client-finance/api/db.php's headers. */
+   Customer search + dashboard shell (2026-10-16), then the real sync
+   engine (sync-core.php/sync.php, 2026-10-16), then the five section
+   views below (2026-10-16) reading from api/sections.php once a
+   customer's data is synced -- see client-finance/api/probe.php and
+   client-finance/api/client-finance-probe-findings.md (project docs) for
+   the ConnectWise research behind every field used here. */
 (function () {
   'use strict';
 
@@ -49,12 +48,16 @@
       cls: 'cf-opportunity'
     }
   ];
+  var SECTION_SYNC_KEY = {
+    standard: 'standard_synced_at', product_sales: 'product_sales_synced_at',
+    agreements: 'agreements_synced_at', credits: 'credits_synced_at', opportunities: 'opportunities_synced_at'
+  };
 
   var state = {
     user: null,
     denied: false,
     error: null,
-    view: 'search',           // search | dashboard
+    view: 'search',           // search | dashboard | section
     query: '',
     results: null,            // null = not searched yet
     searching: false,
@@ -63,7 +66,13 @@
     dashLoading: false,
     sync: null,                // per-section sync state from api/dashboard.php + api/sync.php
     syncing: false,
-    syncSeq: 0
+    syncSeq: 0,
+    sectionView: null,         // one of SECTIONS[].key while view === 'section'
+    sectionData: null,
+    sectionLoading: false,
+    sectionSeq: 0,
+    expandedLineId: null,      // invoice id whose product-line detail is expanded (product_sales/credits)
+    pushingOppId: null
   };
 
   // ---- helpers --------------------------------------------------------
@@ -72,6 +81,24 @@
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
+  }
+
+  function fmtCurrency(n) {
+    return '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  }
+
+  function fmtDate(raw) {
+    if (!raw) return '';
+    var d = new Date(raw);
+    if (isNaN(d.getTime())) return String(raw).slice(0, 10);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function fmtMonthLabel(m) {
+    if (!m) return '';
+    var d = new Date(m + '-02');
+    if (isNaN(d.getTime())) return m;
+    return d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
   }
 
   function api(url, body) {
@@ -105,6 +132,19 @@
       if (r.status === 403) { state.denied = true; render(); return; }
       if (!r.data || !r.data.ok) { state.error = (r.data && r.data.error) || 'Could not load.'; render(); return; }
       state.user = r.data.user;
+      // Deep link from a Relationships to-do ("linking back to the detail") --
+      // ?cw_company_id=N jumps straight to that customer's dashboard,
+      // skipping search. dashboard.php?action=summary resolves the real
+      // name/badges once loadDashboard() runs.
+      var params = new URLSearchParams(window.location.search);
+      var linkedId = parseInt(params.get('cw_company_id'), 10);
+      if (linkedId > 0) {
+        state.customer = { cw_company_id: linkedId, name: '' };
+        state.view = 'dashboard';
+        render();
+        loadDashboard();
+        return;
+      }
       render();
     }).catch(function () { state.error = 'Could not reach the server.'; render(); });
   }
@@ -213,6 +253,10 @@
       if (r.data.done) {
         state.syncing = false;
         loadDashboardStatusOnly();
+        // If the section view that's open just finished syncing, pull its
+        // real data in automatically rather than leaving the rep looking
+        // at a stale "Not yet synced" detail view.
+        if (state.view === 'section' && state.sectionView) loadSectionData(state.sectionView);
         return;
       }
       loadDashboardStatusOnly();
@@ -226,14 +270,81 @@
   }
 
   // Refreshes just the per-section sync state (no full page reload) --
-  // called after every step so the "coming soon" cards update live as
-  // each section finishes, without re-running startSync().
+  // called after every step so the dashboard cards update live as each
+  // section finishes, without re-running startSync().
   function loadDashboardStatusOnly() {
     if (!state.customer) return;
     api('api/sync.php?action=status&cw_company_id=' + state.customer.cw_company_id).then(function (r) {
       if (r.data && r.data.ok) state.sync = r.data.sync;
       render();
     }).catch(function () { /* next step's render will retry anyway */ });
+  }
+
+  // ---- section detail -----------------------------------------------------
+
+  function openSection(key) {
+    state.view = 'section';
+    state.sectionView = key;
+    state.sectionData = null;
+    state.sectionError = null;
+    state.expandedLineId = null;
+    render();
+    loadSectionData(key);
+  }
+
+  function backToDashboard() {
+    state.view = 'dashboard';
+    state.sectionView = null;
+    render();
+  }
+
+  function loadSectionData(key) {
+    var seq = ++state.sectionSeq;
+    state.sectionLoading = true;
+    render();
+    api('api/sections.php?action=' + key + '&cw_company_id=' + state.customer.cw_company_id).then(function (r) {
+      if (seq !== state.sectionSeq) return;
+      state.sectionLoading = false;
+      if (r.data && r.data.ok) {
+        state.sectionData = r.data;
+        state.error = null;
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not load this section.';
+      }
+      render();
+    }).catch(function () {
+      if (seq !== state.sectionSeq) return;
+      state.sectionLoading = false;
+      state.error = 'Could not reach the server.';
+      render();
+    });
+  }
+
+  function toggleLineDetail(invoiceId) {
+    state.expandedLineId = state.expandedLineId === invoiceId ? null : invoiceId;
+    render();
+  }
+
+  function pushOpportunity(oppId) {
+    if (state.pushingOppId) return;
+    state.pushingOppId = oppId;
+    state.error = null;
+    render();
+    api('api/opportunity-todo.php?action=create', { opportunity_id: oppId }).then(function (r) {
+      state.pushingOppId = null;
+      if (r.data && r.data.ok) {
+        // Re-pull this section's data so the row flips to "actioned" with
+        // the real relationships_todo_id rather than hand-patching state.
+        loadSectionData('opportunities');
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not push this to Relationships.';
+        render();
+      }
+    }).catch(function () {
+      state.pushingOppId = null;
+      state.error = 'Could not reach the server.';
+      render();
+    });
   }
 
   // ---- render -------------------------------------------------------------
@@ -276,15 +387,10 @@
   }
 
   function sectionCardHtml(section) {
-    var key = section.key === 'standard' ? 'standard_synced_at'
-      : section.key === 'product_sales' ? 'product_sales_synced_at'
-      : section.key === 'agreements' ? 'agreements_synced_at'
-      : section.key === 'credits' ? 'credits_synced_at'
-      : 'opportunities_synced_at';
-    var syncedAt = state.sync ? state.sync[key] : null;
+    var syncedAt = state.sync ? state.sync[SECTION_SYNC_KEY[section.key]] : null;
     var statusText;
     if (syncedAt) {
-      statusText = 'Synced — section view coming soon';
+      statusText = 'Synced ' + fmtDate(syncedAt) + ' — click to view';
     } else if (state.syncing) {
       statusText = 'Syncing…';
     } else if (state.sync && state.sync.last_error) {
@@ -292,11 +398,14 @@
     } else {
       statusText = 'Not yet synced';
     }
-    return '<div class="cf-section-card' + (section.cls ? ' ' + section.cls : '') + '">' +
+    var clickable = !!syncedAt;
+    var tag = clickable ? 'button' : 'div';
+    var attrs = clickable ? ' type="button" data-action="open-section" data-key="' + section.key + '"' : '';
+    return '<' + tag + ' class="cf-section-card' + (section.cls ? ' ' + section.cls : '') + (clickable ? ' clickable' : '') + '"' + attrs + '>' +
       '<div class="cf-section-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + section.icon + '</svg>' + esc(section.title) + '</div>' +
       '<div class="cf-section-desc">' + esc(section.desc) + '</div>' +
       '<div class="cf-section-status">' + statusText + '</div>' +
-    '</div>';
+    '</' + tag + '>';
   }
 
   function dashboardViewHtml() {
@@ -321,6 +430,196 @@
     return html;
   }
 
+  // Reused bar chart -- same markup/classes as relationships/app.js's
+  // Monthly Billing panel, just driven by whatever series+keys a section
+  // passes in instead of being hardwired to month/total.
+  function barChartHtml(series, labelKey, valueKey) {
+    if (!series || series.length === 0) return '<div class="hint">No data in this window yet.</div>';
+    var maxTotal = Math.max.apply(null, series.map(function (m) { return Number(m[valueKey]) || 0; }).concat([1]));
+    return '<div class="billing-chart">' +
+      series.map(function (m) {
+        var val = Number(m[valueKey]) || 0;
+        var pct = maxTotal > 0 ? Math.max(4, Math.round((val / maxTotal) * 100)) : 4;
+        return '<div class="billing-bar-col" title="' + esc(m[labelKey]) + ': ' + fmtCurrency(val) + '">' +
+          '<div class="billing-bar-value">' + fmtCurrency(val) + '</div>' +
+          '<div class="billing-bar-track"><div class="billing-bar-fill" style="height:' + pct + '%"></div></div>' +
+          '<div class="billing-bar-label">' + esc(m[labelKey]) + '</div>' +
+        '</div>';
+      }).join('') +
+    '</div>';
+  }
+
+  function lineDetailRowsHtml(lines) {
+    if (!lines || lines.length === 0) {
+      return '<tr><td colspan="6" class="hint">No catalog line items on this invoice.</td></tr>';
+    }
+    return lines.map(function (l) {
+      var margin = Number(l.price || 0) - Number(l.cost || 0);
+      var tie = l.sales_order_identifier ? ('SO ' + esc(l.sales_order_identifier)) : '';
+      if (l.opportunity_name) tie += (tie ? ' · ' : '') + esc(l.opportunity_name);
+      return '<tr>' +
+        '<td>' + esc(l.product_identifier) + '<div class="hint">' + esc(l.description) + '</div></td>' +
+        '<td class="r">' + Number(l.qty || 0) + '</td>' +
+        '<td class="r">' + fmtCurrency(l.price) + '</td>' +
+        '<td class="r">' + fmtCurrency(l.cost) + '</td>' +
+        '<td class="r ' + (margin < 0 ? 'neg' : 'pos') + '">' + fmtCurrency(margin) + '</td>' +
+        '<td>' + (tie || '<span class="hint">—</span>') + '</td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  // Shared table for Product Sales + Credits -- both are a list of
+  // invoices, each expandable to its own product-line detail.
+  function invoiceDrilldownTableHtml(invoices) {
+    if (!invoices || invoices.length === 0) {
+      return '<div class="hint">No invoices in this window yet.</div>';
+    }
+    var rows = invoices.map(function (inv) {
+      var expanded = state.expandedLineId === inv.id;
+      var out = '<tr class="cf-invoice-row" data-action="toggle-line-detail" data-id="' + inv.id + '">' +
+        '<td>' + esc(inv.invoice_number) + '</td>' +
+        '<td>' + fmtDate(inv.invoice_date) + '</td>' +
+        '<td class="r">' + fmtCurrency(inv.total) + '</td>' +
+        '<td class="r hint">' + (inv.lines && inv.lines.length ? (expanded ? '▲ hide lines' : '▼ ' + inv.lines.length + ' line(s)') : '—') + '</td>' +
+      '</tr>';
+      if (expanded) {
+        out += '<tr><td colspan="4" style="padding:0">' +
+          '<table class="data" style="margin:4px 0 10px">' +
+            '<thead><tr><th>Product</th><th class="r">Qty</th><th class="r">Price</th><th class="r">Cost</th><th class="r">Margin</th><th>Sold via</th></tr></thead>' +
+            '<tbody>' + lineDetailRowsHtml(inv.lines) + '</tbody>' +
+          '</table>' +
+        '</td></tr>';
+      }
+      return out;
+    }).join('');
+    return '<table class="data"><thead><tr><th>Invoice #</th><th>Date</th><th class="r">Total</th><th class="r">Lines</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  function standardSectionHtml(d) {
+    var months = d.months.map(function (m) { return { label: fmtMonthLabel(m.month), total: m.total }; });
+    var html = '<div class="card"><h3>6-Month Trend</h3>' + barChartHtml(months, 'label', 'total') + '</div>';
+    html += '<div class="card"><h3>Invoices</h3>';
+    if (d.invoices.length === 0) {
+      html += '<div class="hint">No Standard/T&amp;M invoices in this window yet.</div>';
+    } else {
+      html += '<table class="data"><thead><tr><th>Invoice #</th><th>Date</th><th class="r">Total</th></tr></thead><tbody>' +
+        d.invoices.map(function (inv) {
+          return '<tr><td>' + esc(inv.invoice_number) + '</td><td>' + fmtDate(inv.invoice_date) + '</td><td class="r">' + fmtCurrency(inv.total) + '</td></tr>';
+        }).join('') + '</tbody></table>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function productSalesSectionHtml(d) {
+    var years = d.years.map(function (y) { return { label: y.year, total: y.total }; });
+    var html = '<div class="card"><h3>Year-over-Year</h3>' + barChartHtml(years, 'label', 'total') + '</div>';
+    html += '<div class="card"><h3>Sales Orders — click a row for line detail</h3>' + invoiceDrilldownTableHtml(d.invoices) + '</div>';
+    return html;
+  }
+
+  function agreementCardHtml(ag) {
+    var months = ag.months.map(function (m) { return { label: fmtMonthLabel(m.month), total: m.total }; });
+    var statusChipCls = ag.status === 'Cancelled' ? 'neg' : 'pos';
+    var additions = ag.additions || [];
+    var html = '<div class="card">';
+    html += '<h3>' + esc(ag.name) + ' <span class="chip ' + statusChipCls + '" style="background:transparent;border:1px solid currentColor">' + esc(ag.status || '') + '</span></h3>';
+    html += '<div class="hint">' + esc(ag.type_name || '') + ' · Started ' + (ag.start_date ? fmtDate(ag.start_date) : '—') +
+      (ag.cancelled_date ? (' · Cancelled ' + fmtDate(ag.cancelled_date)) : '') + '</div>';
+    html += barChartHtml(months, 'label', 'total');
+    if (additions.length === 0) {
+      html += '<div class="hint" style="margin-top:10px">No addition-level detail synced for this agreement.</div>';
+    } else {
+      html += '<table class="data" style="margin-top:10px"><thead><tr><th>Product</th><th class="r">Qty</th><th class="r">Unit Price</th><th class="r">Unit Cost</th><th>Start</th><th>Cancelled</th></tr></thead><tbody>' +
+        additions.map(function (a) {
+          return '<tr' + (a.cancelled_date ? ' style="opacity:.55"' : '') + '>' +
+            '<td>' + esc(a.product_identifier) + '<div class="hint">' + esc(a.description) + '</div></td>' +
+            '<td class="r">' + Number(a.qty || 0) + '</td>' +
+            '<td class="r">' + fmtCurrency(a.unit_price) + '</td>' +
+            '<td class="r">' + fmtCurrency(a.unit_cost) + '</td>' +
+            '<td>' + (a.start_date ? fmtDate(a.start_date) : '—') + '</td>' +
+            '<td>' + (a.cancelled_date ? fmtDate(a.cancelled_date) : '—') + '</td>' +
+          '</tr>';
+        }).join('') + '</tbody></table>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function agreementsSectionHtml(d) {
+    if (!d.agreements || d.agreements.length === 0) {
+      return '<div class="card"><div class="hint">No agreements found for this customer.</div></div>';
+    }
+    return d.agreements.map(agreementCardHtml).join('');
+  }
+
+  function creditsSectionHtml(d) {
+    var months = d.months.map(function (m) { return { label: fmtMonthLabel(m.month), total: m.total }; });
+    var html = '<div class="card"><h3>6-Month Trend</h3>' + barChartHtml(months, 'label', 'total') + '</div>';
+    html += '<div class="card"><h3>Credit Memos — click a row for line detail</h3>' + invoiceDrilldownTableHtml(d.invoices) + '</div>';
+    return html;
+  }
+
+  function opportunityRowHtml(o) {
+    var confBadge = o.match_confidence === 'keyword'
+      ? '<span class="cf-badge" title="Flagged by description keyword, not the clean catalog subcategory -- worth a quick sanity check.">keyword match</span>'
+      : '';
+    var actionCell;
+    if (o.status === 'actioned') {
+      actionCell = '<span class="hint">Sent to Relationships' + (o.relationships_todo_id ? (' (#' + o.relationships_todo_id + ')') : '') + '</span>';
+    } else if (o.status === 'dismissed') {
+      actionCell = '<span class="hint">Dismissed</span>';
+    } else {
+      var busy = state.pushingOppId === o.id;
+      actionCell = '<button type="button" class="btn small" data-action="push-opportunity" data-id="' + o.id + '"' + (busy ? ' disabled' : '') + '>' +
+        (busy ? 'Sending…' : 'Push to Relationships') + '</button>';
+    }
+    return '<tr>' +
+      '<td>' + esc(o.category === 'computer' ? 'Computer' : 'Networking') + '<div class="hint">' + esc(o.subcategory) + '</div></td>' +
+      '<td>' + esc(o.product_identifier) + '<div class="hint">' + esc(o.description) + '</div></td>' +
+      '<td>' + esc(o.invoice_number) + '</td>' +
+      '<td>' + fmtDate(o.sold_date) + '</td>' +
+      '<td class="r">' + Number(o.years_ago).toFixed(1) + ' yrs</td>' +
+      '<td>' + confBadge + '</td>' +
+      '<td>' + actionCell + '</td>' +
+    '</tr>';
+  }
+
+  function opportunitiesSectionHtml(d) {
+    var html = '<div class="card">';
+    html += '<h3>Potential Opportunities: ' + d.open_count + '</h3>';
+    html += '<div class="hint">Computer or networking hardware sold 3+ years ago -- a natural opening to discuss an upgrade.</div>';
+    if (!d.opportunities || d.opportunities.length === 0) {
+      html += '<div class="hint" style="margin-top:10px">No qualifying hardware sales found.</div>';
+    } else {
+      html += '<table class="data" style="margin-top:10px"><thead><tr><th>Type</th><th>Item</th><th>Invoice #</th><th>Sold</th><th class="r">Age</th><th></th><th></th></tr></thead><tbody>' +
+        d.opportunities.map(opportunityRowHtml).join('') + '</tbody></table>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  var SECTION_RENDERERS = {
+    standard: standardSectionHtml,
+    product_sales: productSalesSectionHtml,
+    agreements: agreementsSectionHtml,
+    credits: creditsSectionHtml,
+    opportunities: opportunitiesSectionHtml
+  };
+
+  function sectionViewHtml() {
+    var meta = SECTIONS.filter(function (s) { return s.key === state.sectionView; })[0];
+    var html = '<a href="#" class="cf-back" data-action="back-to-dashboard">&larr; Back to ' + esc(state.customer.name) + '</a>';
+    html += '<h2 class="view-title">' + esc(meta ? meta.title : '') + '</h2>';
+    if (state.sectionLoading && !state.sectionData) {
+      html += '<div class="loading">Loading…</div>';
+    } else if (state.sectionData) {
+      var renderer = SECTION_RENDERERS[state.sectionView];
+      html += renderer ? renderer(state.sectionData) : '<div class="hint">Nothing to show.</div>';
+    }
+    return html;
+  }
+
   function render() {
     var html = '';
     if (state.denied) {
@@ -341,7 +640,13 @@
 
     html += '<main>';
     if (state.error) html += '<div class="banner error">' + esc(state.error) + '</div>';
-    html += state.view === 'dashboard' && state.customer ? dashboardViewHtml() : searchViewHtml();
+    if (state.view === 'section' && state.customer) {
+      html += sectionViewHtml();
+    } else if (state.view === 'dashboard' && state.customer) {
+      html += dashboardViewHtml();
+    } else {
+      html += searchViewHtml();
+    }
     html += '</main>';
 
     root.innerHTML = html;
@@ -375,6 +680,17 @@
     } else if (action === 'sync-now') {
       e.preventDefault();
       if (!state.syncing) startSync();
+    } else if (action === 'open-section') {
+      e.preventDefault();
+      openSection(el.getAttribute('data-key'));
+    } else if (action === 'back-to-dashboard') {
+      e.preventDefault();
+      backToDashboard();
+    } else if (action === 'toggle-line-detail') {
+      toggleLineDetail(Number(el.getAttribute('data-id')));
+    } else if (action === 'push-opportunity') {
+      e.preventDefault();
+      pushOpportunity(Number(el.getAttribute('data-id')));
     }
   });
 
