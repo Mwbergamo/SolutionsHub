@@ -1,0 +1,5 @@
+# Block all direct HTTP access -- holds the Client Finance SQLite database
+# (synced invoice/agreement/sales-order financial detail per customer).
+# Only client-finance/api/*.php reads/writes it, server-side, via PDO.
+Order allow,deny
+Deny from all
