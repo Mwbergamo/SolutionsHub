@@ -47,7 +47,7 @@ const COMMISSIONS_PENDING_LOOKBACK_DAYS = 180;
  * lines saved under the old rules can't linger until ConnectWise happens to
  * change the invoice.
  */
-const COMMISSIONS_RULES_VERSION = '2026-10-15-nc-nb-worktypes-excluded';
+const COMMISSIONS_RULES_VERSION = '2026-10-15-peoplefirst-covered-time';
 
 /** Bump when how payees share a line changes; the next API call re-applies it to unlocked months. */
 const COMMISSIONS_PAYOUT_RULES_VERSION = '2026-10-06-chester-arcus';
@@ -81,6 +81,46 @@ const COMMISSIONS_NC_NB_WORK_TYPES = [
     'Warranty - Labor',
     'Warranty - Parts',
 ];
+
+/**
+ * PeopleFirst IT Services agreements consume most billable work types: the
+ * customer pays one monthly agreement invoice that covers that time, so the
+ * time is consumed, never invoiced, and must not count for or against a rep
+ * (Michael, 2026-10-15, invoice #161144). Only these work types are NOT
+ * covered by a PeopleFirst agreement -- time on them is invoiced normally.
+ * From Michael's screenshots of the agreement's "Not covered" work types.
+ */
+const COMMISSIONS_PF_NOT_COVERED_WORK_TYPES = [
+    'Hardware/Software Install (Onsite)',
+    'Hardware/Software Install (Remote)',
+    'Phone System Changes',
+    'Phone System Maintenance',
+    'Project- Out Of Scope',
+    'Project-On-Site',
+    'Project-Travel',
+    'Security Hardware Support',
+    'Staff Augmentation',
+    'Structured Cabling',
+    'Travel',
+    'Travel To CBT',
+];
+
+/** True when a time entry was applied to a PeopleFirst agreement and its work type is covered (consumed, not invoiced). */
+function commissions_time_is_peoplefirst_covered(array $t): bool
+{
+    $agreement = (string) ($t['agreement']['name'] ?? '');
+    if (!preg_match('/people\s*first/i', $agreement)) {
+        return false;
+    }
+    $norm = static fn (string $x): string => strtolower(preg_replace('/\s+/', '', $x) ?? $x);
+    $wt = $norm((string) ($t['workType']['name'] ?? ''));
+    foreach (COMMISSIONS_PF_NOT_COVERED_WORK_TYPES as $nc) {
+        if ($norm($nc) === $wt) {
+            return false;
+        }
+    }
+    return true;
+}
 
 /** Case/whitespace-insensitive match against COMMISSIONS_NC_NB_WORK_TYPES. */
 function commissions_work_type_is_excluded(string $workTypeName): bool
@@ -620,7 +660,15 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
         ];
     }
 
+    $pfCovered = 0;
     foreach ($times as $t) {
+        // PeopleFirst-covered time is consumed by the agreement, not invoiced:
+        // it neither earns nor costs a rep. Checked first so it also keeps
+        // the line total honest against the invoice subtotal.
+        if (commissions_time_is_peoplefirst_covered($t)) {
+            $pfCovered++;
+            continue;
+        }
         // Do Not Bill and No Charge time is ignored by commissions entirely --
         // like Do Not Bill products -- confirmed by Michael 2026-10-09 against
         // ConnectWise's own active Work Types list: every non-billable work
@@ -775,6 +823,12 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
         ];
     }
 
+    // Every line was PeopleFirst-covered time and nothing was invoiced: the
+    // whole invoice is ignored (not stored, not reported).
+    if ($lines === [] && $pfCovered > 0 && abs($subtotal) <= 0.004) {
+        return ['lines' => [], 'detail_state' => 'ok', 'detail_note' => null, 'lines_total' => 0.0, 'is_agreement' => $isAgreement, 'skip' => true];
+    }
+
     $linesTotal = 0.0;
     foreach ($lines as $l) {
         $linesTotal += $l['price'];
@@ -822,7 +876,7 @@ function commissions_build_invoice_lines(array $inv, array $products, array $tim
         $linesTotal = $subtotal;
     }
 
-    return ['lines' => $lines, 'detail_state' => $state, 'detail_note' => $note, 'lines_total' => $linesTotal, 'is_agreement' => $isAgreement];
+    return ['lines' => $lines, 'detail_state' => $state, 'detail_note' => $note, 'lines_total' => $linesTotal, 'is_agreement' => $isAgreement, 'skip' => false];
 }
 
 /**
@@ -933,6 +987,16 @@ function commissions_sync_step(PDO $pdo, int $batch = COMMISSIONS_STEP_BATCH): a
                     isset($inv['apply_to_id']) && isset($agreements[(int) $inv['apply_to_id']]) ? $agreements[(int) $inv['apply_to_id']] : null,
                     $laborCost
                 );
+                if (!empty($built['skip']) && !isset($fetchErrors[$id])) {
+                    // PeopleFirst-covered time only: drop any copy stored earlier.
+                    $pdo->beginTransaction();
+                    $pdo->prepare('DELETE FROM line_commissions WHERE invoice_id = :id')->execute([':id' => $id]);
+                    $pdo->prepare('DELETE FROM invoice_lines WHERE invoice_id = :id')->execute([':id' => $id]);
+                    $pdo->prepare('DELETE FROM invoices WHERE id = :id')->execute([':id' => $id]);
+                    $pdo->commit();
+                    $markDone->execute([':s' => 'done', ':e' => null, ':id' => $id]);
+                    continue;
+                }
                 $state = $built['detail_state'];
                 $note = $built['detail_note'];
                 if (isset($fetchErrors[$id])) {
