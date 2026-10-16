@@ -213,6 +213,18 @@
     outgrowSortDir: 'asc',
     outgrowBackfillStarted: false,
 
+    // Front-page "To-Do List" gauge (added 2026-10-16, per Michael) -- a
+    // separate drill-down from overviewListMode above (its own bucket, not
+    // a customer group): null (hidden) | 'overdue' | 'due_today' |
+    // 'future'. Clicking one of the gauge's three numbers
+    // (toggle-todo-overview) sets this and lazy-loads the merged list;
+    // clicking the same one again hides it. See gaugesHtml()/
+    // todoOverviewPanelHtml().
+    todoOverviewBucket: null,
+    todoOverviewLoading: false,
+    todoOverviewData: null, // { bucket, items } | null
+    todoOverviewError: null,
+
     // Prospecting view (api/prospecting.php, added 2026-09-23) -- see
     // prospectingHtml() below.
     prospecting: {
@@ -412,6 +424,13 @@
     // a specific customer's task) -- consumed once inside selectCustomer(),
     // same pattern state.pendingFocus already uses for the checklist.
     pendingTaskFocus: null, // { meetingId, taskId } | null
+    // Global To-Do gauge (front page) -> a specific customer's general
+    // to-do -- same deep-link idea as pendingTaskFocus above, but a
+    // general to-do has no meeting to open, so this just tells
+    // selectCustomer() to open that customer's merged To-Do drilldown
+    // (loadTodoList()) once their detail has loaded. Consumed once, same
+    // "set then clear" pattern as every other pending*Focus flag here.
+    pendingTodoListFocus: false,
 
     // General (customer-level) To-Do list -- added 2026-10-15 per Michael's
     // To-Do count card on the customer dashboard (api/meetings.php:
@@ -2021,6 +2040,10 @@
         loadMeetings(id);
         resetTodoState();
         loadTodoSummary(id);
+        if (state.pendingTodoListFocus) {
+          state.pendingTodoListFocus = false;
+          loadTodoList(id);
+        }
         resetRiskScansState();
         loadRiskScans(id);
         resetDocumentsState();
@@ -3255,6 +3278,102 @@
     state.view = 'dashboard';
     state.pendingTaskFocus = { meetingId: meetingId, taskId: taskId };
     selectCustomer(customerId);
+  }
+
+  // Global To-Do gauge -> a specific customer's general to-do, same
+  // deep-link pattern as openCustomerAtTask() above -- the merged
+  // drilldown (loadTodoList(), consumed via pendingTodoListFocus inside
+  // selectCustomer()) shows both to-do sources already, so there's
+  // nothing further to focus once it's open.
+  function openCustomerAtGeneralTodo(customerId) {
+    state.view = 'dashboard';
+    state.pendingTodoListFocus = true;
+    selectCustomer(customerId);
+  }
+
+  // ---- Front-page "To-Do List" gauge drilldown (api/meetings.php's
+  // todo_overview) -- added 2026-10-16, per Michael's three-number global
+  // to-do card (Overdue / Due Today / Future). Same lazy-load-on-click,
+  // click-again-to-close idiom as toggle-overview-list.
+  function toggleTodoOverview(bucket) {
+    if (state.todoOverviewBucket === bucket) {
+      state.todoOverviewBucket = null;
+      render();
+      return;
+    }
+    state.todoOverviewBucket = bucket;
+    state.todoOverviewData = null;
+    state.todoOverviewError = null;
+    render();
+    loadTodoOverview(bucket);
+  }
+
+  function loadTodoOverview(bucket) {
+    state.todoOverviewLoading = true;
+    state.todoOverviewError = null;
+    render();
+    apiGet('api/meetings.php?action=todo_overview&bucket=' + encodeURIComponent(bucket)).then(function (r) {
+      if (state.todoOverviewBucket !== bucket) return; // closed/switched while in flight
+      state.todoOverviewLoading = false;
+      if (r.data && r.data.ok) {
+        state.todoOverviewData = r.data;
+      } else {
+        state.todoOverviewError = (r.data && r.data.error) || 'Could not load that to-do list.';
+      }
+      render();
+    }).catch(function () {
+      if (state.todoOverviewBucket !== bucket) return;
+      state.todoOverviewLoading = false;
+      state.todoOverviewError = 'Could not load that to-do list \u2014 check your connection.';
+      render();
+    });
+  }
+
+  var TODO_OVERVIEW_BUCKET_LABEL = { overdue: 'Overdue', due_today: 'Due Today', future: 'Future' };
+
+  // Rendered inside overviewBodyHtml(), below the gauges -- same slot
+  // outgrowStaleListHtml()/customerOverviewListHtml() use for
+  // overviewListMode, but this is its own independent toggle
+  // (todoOverviewBucket) so opening a to-do bucket doesn't fight with an
+  // open customer-group list, or vice versa.
+  function todoOverviewPanelHtml() {
+    var bucket = state.todoOverviewBucket;
+    if (!bucket) return '';
+    var label = TODO_OVERVIEW_BUCKET_LABEL[bucket] || bucket;
+    var html = '<div class="todo-overview-panel">';
+    html += '<div class="todo-overview-panel-title">' + escapeHtml(label) + ' To-Dos</div>';
+    if (state.todoOverviewError) {
+      html += '<div class="error-banner">' + escapeHtml(state.todoOverviewError) + '</div>';
+    }
+    if (state.todoOverviewLoading && !state.todoOverviewData) {
+      return html + '<div class="loading">Loading\u2026</div></div>';
+    }
+    if (!state.todoOverviewData) return html + '</div>';
+    var items = state.todoOverviewData.items || [];
+    if (items.length === 0) {
+      html += '<div class="roster-empty">Nothing here.</div></div>';
+      return html;
+    }
+    html += '<div class="global-todo-list">';
+    items.forEach(function (t) {
+      var dueText = t.due_date ? fmtDate(t.due_date) : 'No due date';
+      var metaBits = [escapeHtml(t.customer_name)];
+      if (t.meeting_subject) metaBits.push('\u201c' + escapeHtml(t.meeting_subject) + '\u201d');
+      metaBits.push(escapeHtml(t.assigned_to_name));
+      metaBits.push(escapeHtml(dueText));
+      var action = t.source === 'meeting' ? 'open-customer-task' : 'open-customer-todo';
+      var attrs = 'data-action="' + action + '" data-customer="' + t.customer_id + '"';
+      if (t.source === 'meeting') attrs += ' data-meeting="' + t.meeting_id + '" data-task="' + t.id + '"';
+      html += '<div class="global-todo-item" ' + attrs + '>' +
+        '<div class="global-todo-item-main">' +
+          '<div class="global-todo-item-desc">' + escapeHtml(t.description) + '</div>' +
+          '<div class="global-todo-item-meta">' + metaBits.join(' \u00b7 ') + '</div>' +
+        '</div>' +
+        '<div class="global-todo-item-go">Open \u2192</div>' +
+      '</div>';
+    });
+    html += '</div></div>';
+    return html;
   }
 
   function signOut() {
@@ -4699,6 +4818,7 @@
     }
     if (state.overview) {
       return gaugesHtml(state.overview.gauges || []) + leaderboardsHtml(state.overview.leaderboards || []) +
+        todoOverviewPanelHtml() +
         (state.overviewListMode === 'outgrow'
           ? outgrowStaleListHtml(state.overview.customers || [])
           : (state.overviewListMode ? customerOverviewListHtml(state.overview.customers || []) : ''));
@@ -4975,6 +5095,18 @@
   // array from the server (see dashboard.php's header for why), so this
   // renders whatever comes back rather than a fixed set of named fields;
   // more gauges can be added later without an app.js change.
+  // One number in the To-Do gauge's three-way split (gaugesHtml() below).
+  // bucket matches a meetings.php todo_overview bucket name 1:1 -- kept as
+  // the data-bucket attribute so toggleTodoOverview() needs no translation.
+  function todo3StatHtml(bucket, label, value) {
+    var active = state.todoOverviewBucket === bucket;
+    return '<button type="button" class="todo3-stat todo3-stat-' + bucket.replace('_', '-') + (active ? ' active' : '') + '" ' +
+      'data-action="toggle-todo-overview" data-bucket="' + bucket + '" title="' + (active ? 'Hide the list' : 'Show the list') + '">' +
+      '<span class="todo3-stat-value">' + (value == null ? '\u2014' : value) + '</span>' +
+      '<span class="todo3-stat-label">' + escapeHtml(label) + '</span>' +
+    '</button>';
+  }
+
   function gaugesHtml(gauges) {
     if (!gauges.length) return '';
     var html = '<div class="gauges-grid">';
@@ -4983,6 +5115,15 @@
         html += '<div class="gauge-tile">' +
           '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
           '<div class="gauge-value-row">' + trendBadgeHtml(g.trend, 'lg') + '</div>' +
+        '</div>';
+      } else if (g.format === 'todo3') {
+        html += '<div class="gauge-tile gauge-tile-todo3">' +
+          '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
+          '<div class="todo3-row">' +
+            todo3StatHtml('overdue', 'Overdue', g.overdue) +
+            todo3StatHtml('due_today', 'Due Today', g.due_today) +
+            todo3StatHtml('future', 'Future', g.future) +
+          '</div>' +
         '</div>';
       } else if (g.key === 'total_customers' || g.key === 'total_prospects' || g.key === 'total_residential' || g.key === 'outgrow_stale') {
         // Clickable: shows/hides that group's list (hidden by default).
@@ -9143,6 +9284,10 @@
         parseInt(el.getAttribute('data-customer'), 10),
         parseInt(el.getAttribute('data-scan'), 10)
       );
+    } else if (action === 'open-customer-todo') {
+      openCustomerAtGeneralTodo(parseInt(el.getAttribute('data-customer'), 10));
+    } else if (action === 'toggle-todo-overview') {
+      toggleTodoOverview(el.getAttribute('data-bucket'));
     } else if (action === 'riskscan-upload') {
       uploadRiskScan(parseInt(el.getAttribute('data-customer'), 10));
     } else if (action === 'riskscan-retry-cw') {
