@@ -13,6 +13,14 @@ html, body {
   color: oklch(0.9 0.006 255);
 }
 
+/* Never let the page itself scroll sideways, regardless of what a stray
+   fixed-width/no-wrap element inside a view does -- same rule, same
+   rationale, as the SolutionsHub root styles.css. Added 2026-10-16 per
+   Michael: on a phone the topbar's nav row (fixed below) was forcing the
+   whole page ~370px wider than the viewport, which read as "the screen
+   doesn't scroll left/right" rather than the cards just stacking. */
+body { overflow-x: hidden; }
+
 a { color: inherit; }
 
 .topbar {
@@ -88,6 +96,23 @@ a { color: inherit; }
   padding: 36px 40px 60px;
   max-width: 1180px;
   margin: 0 auto;
+}
+
+@media (max-width: 640px) {
+  .topbar { padding: 14px 16px; }
+  .topbar-left { flex-wrap: wrap; row-gap: 10px; width: 100%; }
+  .topbar-nav {
+    display: flex;
+    width: 100%;
+    max-width: 100%;
+    flex: 1 1 auto;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .topbar-nav::-webkit-scrollbar { display: none; }
+  .back-to-hub { flex: 0 0 auto; }
+  .main { padding: 20px 16px 40px; }
 }
 
 .search-wrap { position: relative; max-width: 560px; }
@@ -2889,7 +2914,8 @@ a { color: inherit; }
 .global-todo-item-done-meta {
   font-size: 10.5px;
   color: oklch(0.55 0.18 145);
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   text-align: right;
 }
 
