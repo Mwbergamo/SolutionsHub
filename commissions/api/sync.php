@@ -12,7 +12,7 @@
  * GET  ?action=status     progress + last finished time
  * POST ?action=recompute  re-applies current rates/labor cost/territory map
  *                         to every UNLOCKED month (no ConnectWise calls)
- * GET  ?action=probe&invoice_id=N[&path=/finance/...]
+ * GET  ?action=probe&invoice_id=N | invoice_number=N [&path=/finance/...]
  *        Diagnostic: what ConnectWise really returns for one invoice
  *        (raw invoice, products, time entries, agreement additions). Use it
  *        if an invoice shows "no lines" / "mismatch" to find the wrong
@@ -36,8 +36,18 @@ try {
 
     if ($action === 'probe') {
         $id = (int) ($_GET['invoice_id'] ?? 0);
+        // The number printed on the invoice (what the report shows) is NOT
+        // ConnectWise's internal id; accept either.
+        $num = preg_replace('/[^A-Za-z0-9\-]/', '', (string) ($_GET['invoice_number'] ?? ''));
+        if ($num !== '') {
+            $found = commissions_cw_list_all('/finance/invoices', "invoiceNumber='" . $num . "'", ['id', 'invoiceNumber']);
+            if ($found === []) {
+                commissions_respond(404, ['ok' => false, 'error' => "No ConnectWise invoice with number $num."]);
+            }
+            $id = (int) $found[0]['id'];
+        }
         if ($id <= 0) {
-            commissions_respond(400, ['ok' => false, 'error' => 'invoice_id required.']);
+            commissions_respond(400, ['ok' => false, 'error' => 'invoice_id or invoice_number required.']);
         }
         $out = ['ok' => true, 'invoice_id' => $id];
         $trim = static function ($v) { return json_decode((string) json_encode($v), true); };
