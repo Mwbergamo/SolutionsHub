@@ -22,11 +22,13 @@ declare(strict_types=1);
 require_once __DIR__ . '/session.php';
 require_once __DIR__ . '/commissions-access.php';
 require_once __DIR__ . '/collections-access.php';
+require_once __DIR__ . '/client-finance-access.php';
 
 header('Content-Type: application/json; charset=utf-8');
 $user = auth_current_user();
 if ($user !== null) {
     $user['can_view_commissions'] = commissions_email_allowed($user['email'] ?? '');
     $user['can_view_collections'] = collections_access_for($user['email'] ?? '') !== null;
+    $user['can_view_client_finance'] = client_finance_email_allowed($user['email'] ?? '');
 }
 echo json_encode(['ok' => true, 'user' => $user]);

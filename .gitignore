@@ -83,3 +83,8 @@ Thumbs.db
 # relationships/api/itglue-config.sample.php to itglue-config.php on the server.
 /relationships/api/itglue-config.php
 /relationships/data/itglue-*.json
+
+# Client Finance (added 2026-10-16)
+/client-finance/data/*.sqlite
+/client-finance/data/*.sqlite-wal
+/client-finance/data/*.sqlite-shm
