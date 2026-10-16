@@ -70,11 +70,19 @@ body { overflow-x: hidden; }
    group wrap onto two lines instead of squeezing or overflowing. */
 @media (max-width: 480px) {
   .app-header {
+    flex: 0 0 auto !important;
     flex-wrap: wrap;
     height: auto;
     min-height: 64px;
     padding: 10px 16px !important;
     gap: 8px;
+    row-gap: 8px;
+  }
+  /* The header's right-hand button cluster (theme toggle / Clyde Support /
+     Help Center / Solution) -- an unclassed inner <div>, hooked by
+     position since it has no class of its own. */
+  .app-header > div:nth-child(2) {
+    flex-wrap: wrap;
     row-gap: 8px;
   }
 }
@@ -632,7 +640,7 @@ body { overflow-x: hidden; }
 }
 
 /* ---- Home screen tiles (switchboard style, 2026-10-07): dark panels, lit edge, status light, heartbeat on hover ---- */
-.hub-tiles { margin-top: 36px; display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 22px; max-width: 1380px; }
+.hub-tiles { margin-top: 36px; display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 22px; max-width: 1380px; min-width: 0; flex: 1 1 0%; }
 .hub-tile { --c: #4d7bd6; position: relative; display: flex; flex-direction: column; min-height: 252px; padding: 26px; border-radius: 22px; overflow: hidden; text-decoration: none; color: #eef0f5; cursor: pointer;
   background: linear-gradient(160deg, #1d2a4d, #0f1830); border: 1px solid rgba(255,255,255,.08); box-shadow: 0 1px 2px rgba(15,24,48,.15), 0 14px 30px -16px rgba(15,24,48,.55); transition: transform .25s, border-color .25s; }
 .hub-tile::before { content: ''; position: absolute; inset: 0; background-image: radial-gradient(rgba(255,255,255,.07) 1px, transparent 1px); background-size: 16px 16px; -webkit-mask-image: linear-gradient(180deg, transparent 20%, #000); mask-image: linear-gradient(180deg, transparent 20%, #000); pointer-events: none; }
