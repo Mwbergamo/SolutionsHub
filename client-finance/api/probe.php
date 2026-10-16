@@ -73,6 +73,18 @@
  *      scope already confirmed working in register/) with category/
  *      subcategory + identifier, to eyeball Computer/Networking
  *      classification options.
+ * GET ?action=probe-product-lines&invoice_id=N and/or &sales_order_id=N
+ *     (both optional -- omit to auto-find one real SalesOrder-applied
+ *     invoice)
+ *   -> full-field /procurement/products?conditions=invoice/id=N and
+ *      /procurement/products?conditions=salesOrder/id=N. Added 2026-10-16
+ *      after probe-sales-orders showed /sales/orders/{id}/lineitems only
+ *      returns {id, salesOrder, billStatus, quantity, quantityCancelled} --
+ *      no identifier/cost/price/date/ticket -- while those same line ids
+ *      matched the order's own productIds array. This confirms whether the
+ *      real per-line detail (identifier, cost, price, date, and any
+ *      ticket/project tie-back) lives in /procurement/products instead, the
+ *      same resource invoices already expose via their products_href.
  */
 
 declare(strict_types=1);
@@ -231,6 +243,39 @@ if ($action === 'probe-catalog-category-sample') {
         );
     });
     relationships_respond(200, ['ok' => true, 'probe' => $out]);
+}
+
+if ($action === 'probe-product-lines') {
+    $invoiceId = (int) ($_GET['invoice_id'] ?? 0);
+    $salesOrderId = (int) ($_GET['sales_order_id'] ?? 0);
+    $results = [];
+
+    if ($invoiceId <= 0 && $salesOrderId <= 0) {
+        $lookup = cf_probe_try('find one invoice with applyToType=SalesOrder', function () {
+            return relationships_cw_list('/finance/invoices', "applyToType='SalesOrder'", ['id', 'invoiceNumber', 'applyToType', 'applyToId', 'total'], 1);
+        });
+        $results[] = $lookup;
+        if ($lookup['ok'] && count($lookup['result']) > 0) {
+            $invoiceId = (int) $lookup['result'][0]['id'];
+            $salesOrderId = (int) ($lookup['result'][0]['applyToId'] ?? 0);
+        }
+    }
+
+    if ($invoiceId > 0) {
+        $results[] = cf_probe_try("GET /procurement/products?conditions=invoice/id=$invoiceId, full fields", function () use ($invoiceId) {
+            return relationships_cw_request('/procurement/products', ['conditions' => "invoice/id=$invoiceId", 'pageSize' => 50]);
+        });
+    }
+    if ($salesOrderId > 0) {
+        $results[] = cf_probe_try("GET /procurement/products?conditions=salesOrder/id=$salesOrderId, full fields", function () use ($salesOrderId) {
+            return relationships_cw_request('/procurement/products', ['conditions' => "salesOrder/id=$salesOrderId", 'pageSize' => 50]);
+        });
+    }
+    if ($invoiceId <= 0 && $salesOrderId <= 0) {
+        $results[] = ['label' => 'product line fetch', 'ok' => false, 'error' => 'No invoice/sales order id found -- pass &invoice_id=N or &sales_order_id=N explicitly.'];
+    }
+
+    relationships_respond(200, ['ok' => true, 'probe' => $results]);
 }
 
 relationships_respond(400, ['ok' => false, 'error' => 'Unknown or missing action. See the docblock at the top of this file for the list.']);
