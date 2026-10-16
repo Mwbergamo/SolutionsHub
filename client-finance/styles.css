@@ -1,0 +1,114 @@
+/* client-finance/styles.css — Client Finance sub-app (added 2026-10-16).
+   Same dark-navy / Space Grotesk + IBM Plex Sans look as Relationships and
+   Commissions, so this reads as part of the same product rather than a
+   bolt-on. Printing isn't a requirement here (this is screen-only, read
+   live during a client meeting), unlike Commissions' reports. */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: oklch(0.15 0.028 255);
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: oklch(0.9 0.006 255);
+}
+a { color: inherit; }
+.loading, .empty { padding: 60px 40px; color: oklch(0.6 0.02 255); text-align: center; }
+
+/* ---- top bar ---- */
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 40px; border-bottom: 1px solid oklch(0.26 0.03 255); flex-wrap: wrap; }
+.topbar-left { display: flex; align-items: center; gap: 14px; }
+.brand { font-family: 'Space Grotesk', sans-serif; font-size: 20px; font-weight: 700; color: white; }
+.brand-sub { font-size: 12.5px; color: oklch(0.6 0.02 255); }
+.topbar-right { display: flex; align-items: center; gap: 10px; }
+.back-to-hub { font-size: 12.5px; font-weight: 600; color: oklch(0.7 0.02 255); text-decoration: none; padding: 8px 14px; border-radius: 999px; border: 1px solid oklch(0.32 0.03 255); }
+.back-to-hub:hover { border-color: #2f8fef; color: white; }
+
+main { padding: 28px 40px 60px; max-width: 1200px; margin: 0 auto; }
+h2.view-title { font-family: 'Space Grotesk', sans-serif; font-size: 24px; margin: 0 0 4px; color: white; }
+.view-sub { font-size: 13px; color: oklch(0.62 0.02 255); margin-bottom: 20px; line-height: 1.5; max-width: 900px; }
+
+.btn { background: #2f8fef; color: white; border: none; border-radius: 10px; padding: 9px 16px; font-weight: 700; font-size: 13px; cursor: pointer; font-family: inherit; }
+.btn:hover { filter: brightness(1.1); }
+.btn[disabled] { opacity: .5; cursor: default; }
+.btn.secondary { background: transparent; border: 1px solid oklch(0.38 0.03 255); color: oklch(0.85 0.01 255); }
+.btn.small { padding: 6px 12px; font-size: 12px; }
+
+.banner { border-radius: 12px; padding: 12px 16px; font-size: 13px; margin-bottom: 12px; line-height: 1.5; }
+.banner.info { background: oklch(0.22 0.04 250); border: 1px solid oklch(0.38 0.08 250); }
+.banner.warn { background: oklch(0.24 0.05 80); border: 1px solid oklch(0.5 0.11 80); color: oklch(0.9 0.06 85); }
+.banner.error { background: oklch(0.22 0.06 27); border: 1px solid oklch(0.5 0.16 27); color: oklch(0.88 0.06 27); }
+
+.card { background: oklch(0.19 0.02 255); border: 1px solid oklch(0.27 0.03 255); border-radius: 16px; padding: 18px 20px; margin-bottom: 16px; }
+.card h3 { margin: 0 0 12px; font-family: 'Space Grotesk', sans-serif; font-size: 16px; color: white; }
+.cards-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.stat { background: oklch(0.19 0.02 255); border: 1px solid oklch(0.27 0.03 255); border-radius: 14px; padding: 14px 16px; }
+.stat .lbl { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: oklch(0.62 0.02 255); }
+.stat .val { font-family: 'Space Grotesk', sans-serif; font-size: 24px; font-weight: 700; color: white; margin-top: 4px; }
+.stat .delta { font-size: 12px; margin-top: 3px; }
+
+select, input[type=text], input[type=number], input[type=email] { background: oklch(0.2 0.02 255); border: 1px solid oklch(0.34 0.03 255); color: white; border-radius: 8px; padding: 8px 10px; font-family: inherit; font-size: 13px; }
+.chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+
+table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.data th { text-align: left; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: oklch(0.62 0.02 255); padding: 8px 10px; border-bottom: 1px solid oklch(0.3 0.03 255); }
+table.data td { padding: 8px 10px; border-bottom: 1px solid oklch(0.24 0.03 255); vertical-align: top; }
+table.data .r { text-align: right; font-variant-numeric: tabular-nums; }
+.neg { color: oklch(0.75 0.17 27); }
+.pos { color: oklch(0.78 0.15 150); }
+.hint { font-size: 12px; color: oklch(0.62 0.02 255); }
+
+/* ---- customer search (landing page) ---- */
+.cf-search-wrap { max-width: 640px; margin: 60px auto 0; text-align: center; }
+.cf-search-wrap h2 { font-family: 'Space Grotesk', sans-serif; font-size: 26px; color: white; margin: 0 0 6px; }
+.cf-search-wrap .view-sub { margin: 0 auto 24px; }
+.cf-search-box { position: relative; }
+.cf-search-input { width: 100%; font-size: 16px; padding: 14px 16px; border-radius: 12px; }
+.cf-search-results { margin-top: 10px; text-align: left; background: oklch(0.19 0.02 255); border: 1px solid oklch(0.27 0.03 255); border-radius: 14px; overflow: hidden; }
+.cf-search-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 12px 16px; background: transparent; border: none; border-bottom: 1px solid oklch(0.24 0.03 255); cursor: pointer; color: inherit; font: inherit; text-align: left; }
+.cf-search-row:last-child { border-bottom: none; }
+.cf-search-row:hover { background: oklch(0.23 0.03 255); }
+.cf-search-row .name { font-weight: 600; color: white; }
+.cf-search-row .via { font-size: 11.5px; color: oklch(0.62 0.02 255); margin-top: 2px; }
+.cf-search-row .badges { display: flex; gap: 6px; flex-shrink: 0; }
+.cf-badge { font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; background: oklch(0.26 0.03 255); color: oklch(0.72 0.02 255); }
+.cf-badge.peoplefirst { background: oklch(0.26 0.05 150); color: oklch(0.82 0.13 150); }
+.cf-badge.prospect { background: oklch(0.28 0.05 80); color: oklch(0.85 0.12 85); }
+.cf-search-empty { padding: 16px; color: oklch(0.6 0.02 255); font-size: 13px; text-align: center; }
+
+/* ---- customer dashboard header ---- */
+.cf-cust-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+.cf-cust-head h2 { margin: 0 0 4px; }
+.cf-back { font-size: 12.5px; font-weight: 600; color: oklch(0.72 0.12 255); text-decoration: none; display: inline-block; margin-bottom: 10px; }
+.cf-back:hover { text-decoration: underline; }
+
+/* ---- the five section panels ---- */
+.cf-sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.cf-section-card { background: oklch(0.19 0.02 255); border: 1px solid oklch(0.27 0.03 255); border-radius: 16px; padding: 18px 20px; display: flex; flex-direction: column; gap: 8px; }
+.cf-section-card .cf-section-title { font-family: 'Space Grotesk', sans-serif; font-size: 15px; color: white; display: flex; align-items: center; gap: 8px; }
+.cf-section-card .cf-section-title svg { color: oklch(0.6 0.12 230); flex-shrink: 0; }
+.cf-section-card .cf-section-desc { font-size: 12.5px; color: oklch(0.62 0.02 255); line-height: 1.5; }
+.cf-section-card .cf-section-status { margin-top: auto; font-size: 11.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: oklch(0.58 0.02 255); padding-top: 6px; border-top: 1px dashed oklch(0.3 0.03 255); }
+.cf-section-card.cf-opportunity .cf-section-title svg { color: oklch(0.82 0.13 80); }
+
+/* ---- hand-rolled bar chart (shared look with Relationships' Monthly
+   Billing panel -- same classes, reused once a section starts rendering
+   real synced data) ---- */
+.cf-trend-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.cf-trend-badge.up { background: rgba(52,199,89,0.18); color: #4ade80; }
+.cf-trend-badge.down { background: rgba(239,68,68,0.18); color: #f87171; }
+.cf-trend-badge.flat { background: oklch(0.28 0.015 255); color: oklch(0.6 0.015 255); }
+.billing-chart { margin-top: 12px; display: flex; align-items: flex-end; gap: 10px; height: 96px; }
+.billing-bar-col { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; background: transparent; border: none; cursor: pointer; padding: 0; color: inherit; font: inherit; }
+.billing-bar-value { font-size: 9.5px; font-weight: 700; color: oklch(0.6 0.015 255); white-space: nowrap; }
+.billing-bar-track { margin-top: 3px; width: 100%; max-width: 34px; height: 56px; display: flex; align-items: flex-end; background: oklch(0.24 0.016 255); border-radius: 6px; overflow: hidden; }
+.billing-bar-fill { width: 100%; background: linear-gradient(180deg, #2f8fef, #1f6fc0); border-radius: 6px 6px 0 0; }
+.billing-bar-col:hover .billing-bar-fill { background: linear-gradient(180deg, #56a5ff, #2f8fef); }
+.billing-bar-label { margin-top: 5px; font-size: 10px; font-weight: 600; color: oklch(0.55 0.015 255); }
+
+@media (max-width: 760px) {
+  .topbar { padding: 14px 16px; }
+  main { padding: 18px 12px 40px; }
+  .cf-search-wrap { margin-top: 24px; }
+}
