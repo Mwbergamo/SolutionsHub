@@ -125,6 +125,9 @@ function client_finance_migrate(PDO $pdo): void
             kind TEXT NOT NULL,                  -- product | time | credit
             description TEXT NOT NULL DEFAULT '',
             product_identifier TEXT,
+            catalog_id INTEGER,                   -- ConnectWise procurement/catalog id (product lines only)
+            catalog_category TEXT,                -- Procurement Catalog `category.name` (product lines only)
+            catalog_subcategory TEXT,              -- Procurement Catalog `subcategory.name` (product lines only)
             qty REAL,
             unit_cost REAL,
             unit_price REAL,
@@ -134,7 +137,11 @@ function client_finance_migrate(PDO $pdo): void
             ticket_id INTEGER,
             ticket_summary TEXT,
             project_id INTEGER,
-            project_name TEXT
+            project_name TEXT,
+            sales_order_id INTEGER,                -- product lines: confirmed real tie-back is Sales Order + Opportunity, not a ticket (probe-product-lines)
+            sales_order_identifier TEXT,
+            opportunity_id INTEGER,
+            opportunity_name TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_cf_lines_invoice ON invoice_lines(invoice_id);
 
@@ -181,7 +188,8 @@ function client_finance_migrate(PDO $pdo): void
             cw_company_id INTEGER NOT NULL,
             invoice_line_id INTEGER NOT NULL REFERENCES invoice_lines(id) ON DELETE CASCADE,
             category TEXT NOT NULL,              -- computer | networking
-            subcategory TEXT,                    -- Desktop | Laptop | Server | Firewall | Switch | Wireless
+            subcategory TEXT,                    -- Desktop | Laptop | Server | Network Device | ...
+            match_confidence TEXT NOT NULL DEFAULT 'clean', -- clean (subcategory alone) | keyword (catch-all subcategory + description keyword, see client-finance-probe-findings.md #6)
             sold_date TEXT NOT NULL,
             years_ago REAL NOT NULL,
             status TEXT NOT NULL DEFAULT 'open',  -- open | actioned | dismissed

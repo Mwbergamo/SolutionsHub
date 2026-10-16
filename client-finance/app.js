@@ -61,7 +61,9 @@
     searchSeq: 0,
     customer: null,           // { cw_company_id, name, is_peoplefirst, is_prospect_only, is_residential }
     dashLoading: false,
-    sync: null                // per-section sync state from api/dashboard.php
+    sync: null,                // per-section sync state from api/dashboard.php + api/sync.php
+    syncing: false,
+    syncSeq: 0
   };
 
   // ---- helpers --------------------------------------------------------
@@ -163,11 +165,75 @@
         state.customer = r.data.company;
         state.sync = r.data.sync;
         state.error = null;
+        var neverSynced = !r.data.sync.standard_synced_at && !r.data.sync.product_sales_synced_at &&
+          !r.data.sync.agreements_synced_at && !r.data.sync.credits_synced_at && !r.data.sync.opportunities_synced_at;
+        if (neverSynced) startSync();
       } else {
         state.error = (r.data && r.data.error) || 'Could not load this customer.';
       }
       render();
     }).catch(function () { state.dashLoading = false; state.error = 'Could not reach the server.'; render(); });
+  }
+
+  // ---- sync -------------------------------------------------------------
+
+  function startSync() {
+    var seq = ++state.syncSeq;
+    state.syncing = true;
+    state.error = null;
+    render();
+    api('api/sync.php?action=start', { cw_company_id: state.customer.cw_company_id, company_name: state.customer.name }).then(function (r) {
+      if (seq !== state.syncSeq) return;
+      if (!r.data || !r.data.ok) {
+        state.syncing = false;
+        state.error = (r.data && r.data.error) || 'Could not start sync.';
+        render();
+        return;
+      }
+      state.sync = r.data.sync;
+      render();
+      stepSync(seq);
+    }).catch(function () {
+      if (seq !== state.syncSeq) return;
+      state.syncing = false;
+      state.error = 'Could not reach the server.';
+      render();
+    });
+  }
+
+  function stepSync(seq) {
+    api('api/sync.php?action=step', {}).then(function (r) {
+      if (seq !== state.syncSeq) return;
+      if (!r.data || !r.data.ok) {
+        state.syncing = false;
+        state.error = (r.data && r.data.error) || 'Sync failed.';
+        render();
+        return;
+      }
+      if (r.data.done) {
+        state.syncing = false;
+        loadDashboardStatusOnly();
+        return;
+      }
+      loadDashboardStatusOnly();
+      stepSync(seq);
+    }).catch(function () {
+      if (seq !== state.syncSeq) return;
+      state.syncing = false;
+      state.error = 'Could not reach the server.';
+      render();
+    });
+  }
+
+  // Refreshes just the per-section sync state (no full page reload) --
+  // called after every step so the "coming soon" cards update live as
+  // each section finishes, without re-running startSync().
+  function loadDashboardStatusOnly() {
+    if (!state.customer) return;
+    api('api/sync.php?action=status&cw_company_id=' + state.customer.cw_company_id).then(function (r) {
+      if (r.data && r.data.ok) state.sync = r.data.sync;
+      render();
+    }).catch(function () { /* next step's render will retry anyway */ });
   }
 
   // ---- render -------------------------------------------------------------
@@ -210,14 +276,21 @@
   }
 
   function sectionCardHtml(section) {
-    var statusText = 'Coming soon';
-    if (state.sync) {
-      var key = section.key === 'standard' ? 'standard_synced_at'
-        : section.key === 'product_sales' ? 'product_sales_synced_at'
-        : section.key === 'agreements' ? 'agreements_synced_at'
-        : section.key === 'credits' ? 'credits_synced_at'
-        : 'opportunities_synced_at';
-      if (!state.sync[key]) statusText = 'Coming soon — not built yet';
+    var key = section.key === 'standard' ? 'standard_synced_at'
+      : section.key === 'product_sales' ? 'product_sales_synced_at'
+      : section.key === 'agreements' ? 'agreements_synced_at'
+      : section.key === 'credits' ? 'credits_synced_at'
+      : 'opportunities_synced_at';
+    var syncedAt = state.sync ? state.sync[key] : null;
+    var statusText;
+    if (syncedAt) {
+      statusText = 'Synced — section view coming soon';
+    } else if (state.syncing) {
+      statusText = 'Syncing…';
+    } else if (state.sync && state.sync.last_error) {
+      statusText = 'Sync error — see banner above';
+    } else {
+      statusText = 'Not yet synced';
     }
     return '<div class="cf-section-card' + (section.cls ? ' ' + section.cls : '') + '">' +
       '<div class="cf-section-title"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + section.icon + '</svg>' + esc(section.title) + '</div>' +
@@ -232,7 +305,12 @@
     html += '<a href="#" class="cf-back" data-action="back-to-search">&larr; Back to search</a>';
     html += '<div class="cf-cust-head"><div><h2 class="view-title">' + esc(c.name) + '</h2>';
     if (c.cw_company_id) html += '<div class="badges">' + badgesHtml(c) + '</div>';
-    html += '</div></div>';
+    html += '</div>';
+    if (!state.dashLoading) {
+      html += '<button type="button" class="btn secondary small" data-action="sync-now"' + (state.syncing ? ' disabled' : '') + '>' +
+        (state.syncing ? 'Syncing…' : 'Sync now') + '</button>';
+    }
+    html += '</div>';
 
     if (state.dashLoading && !state.sync) {
       html += '<div class="loading">Loading…</div>';
@@ -294,6 +372,9 @@
     } else if (action === 'back-to-search') {
       e.preventDefault();
       backToSearch();
+    } else if (action === 'sync-now') {
+      e.preventDefault();
+      if (!state.syncing) startSync();
     }
   });
 

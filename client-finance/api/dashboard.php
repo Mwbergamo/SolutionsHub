@@ -5,11 +5,10 @@
  * The per-customer dashboard shell: resolves which customer was picked
  * and reports what's synced so far for each of the five sections (Standard
  * Invoices, Product Sales, Agreement Invoicing, Credits, Opportunities).
- * As of this commit nothing is actually synced yet -- client-finance/api/
- * sync-core.php hasn't been written (it's waiting on Michael running
- * client-finance/api/probe.php against live ConnectWise data, see that
- * file's header) -- so every *_synced_at here is null and the frontend
- * shows each section as "not built yet" rather than a misleading $0.
+ * The actual sync (ConnectWise -> client-finance.sqlite) lives in
+ * sync-core.php, triggered from the frontend via sync.php, not here --
+ * this endpoint only ever reads company_sync_state, never writes to it
+ * except to seed the row with today's company name on first open.
  *
  * GET ?action=summary&cw_company_id=N
  *   -> { ok: true, company: { cw_company_id, name, is_peoplefirst,
