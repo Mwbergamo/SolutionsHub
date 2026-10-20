@@ -248,9 +248,11 @@ function relationships_sell_resolve_primary_contact(int $cwCompanyId): ?array
  * the part -- the matching loop below now patches all of them, not just one):
  * - CBT-MS-TM-MDM: "Mobile Device Management" tab AND "Managed Care Maintenance - Mobile Phones"
  *   row on Coverage Selections. Both get the mdm device count.
- * - CBT-MS-TM-WORKSTATION: appears twice on Coverage Selections -- once with its real
- *   description, once more on a stray row labeled "New Section" (looks like template clutter, not
- *   intentional -- Michael may want to clean this up in Sell directly). Both get the workstation
+ * - CBT-MS-TM-WORKSTATION: appears twice on Coverage Selections -- once as the real billable
+ *   item, once more on a "New Section" row whose lineType is "SubHeader" (a section divider that
+ *   happens to carry the real part number -- template clutter, confirmed live 2026-10-20 when
+ *   Sell rejected PATCHing it: HTTP 400 "Item type 'SubHeader' can not be updated"). The matching
+ *   loop below now skips SubHeader rows entirely, so only the real item gets the workstation
  *   device count.
  * - CBT-PF-MEMBER: the real "PeopleFirst Member Pricing" monthly line AND a $0 row on "Included
  *   Support for Members". Both get the PeopleFirst member count.
@@ -511,8 +513,20 @@ function relationships_sell_create_quote_for_solution(
         // 2026-10-20: CBT-MS-TM-MDM, CBT-MS-TM-WORKSTATION, CBT-PF-MEMBER) -- collect every
         // matching item id per part, and patch all of them to the same quantity, rather than
         // letting a single map entry silently pick whichever one the API happened to list last.
+        //
+        // CONFIRMED LIVE 2026-10-20 (first real "Create Sell Quote" attempt against the new
+        // template): Sell rejects PATCHing quantity on an item whose lineType is "SubHeader" --
+        // HTTP 400 "Item type 'SubHeader' can not be updated". One of the two
+        // CBT-MS-TM-WORKSTATION duplicate rows turned out to be exactly this: a section-divider
+        // row (labeled "New Section") that still carries the real part number, not a genuine
+        // second billable line. So SubHeader rows are skipped entirely here, never added to the
+        // per-part id list -- the other (real) occurrence of that part still gets matched and
+        // patched normally.
         $itemIdsByPart = [];
         foreach ($existingItems as $existing) {
+            if (($existing['lineType'] ?? null) === 'SubHeader') {
+                continue;
+            }
             $part = $existing['manufacturerPartNumber'] ?? null;
             $itemId = $existing['id'] ?? null;
             if (is_string($part) && $part !== '' && is_string($itemId) && $itemId !== '') {
