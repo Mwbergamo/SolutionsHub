@@ -6865,7 +6865,17 @@
     var l = s.sell_link;
     if (!l || l.status !== 'created') return '';
     var label = 'Sell Quote' + (l.quote_number ? ' #' + escapeHtml(l.quote_number) : '');
-    return '<div class="solution-cwlinks"><a href="' + escapeHtml(l.quote_link) + '" target="_blank" rel="noopener">' + label + ' ↗</a></div>';
+    var html = '<div class="solution-cwlinks"><a href="' + escapeHtml(l.quote_link) + '" target="_blank" rel="noopener">' + label + ' ↗</a></div>';
+    // Added 2026-10-20: surface relationships_sell_build_line_items() parts that didn't match any
+    // real item on the quote, so a rep can see at a glance (without pinging support) whether
+    // something needs attention on the Sell template side -- this was computed server-side from
+    // the start but never actually shown anywhere until now.
+    var unmatched = s.sell_unmatched_parts || [];
+    if (unmatched.length) {
+      html += '<div class="solution-sell-unmatched" title="These parts were in the solution but weren\'t found as existing line items on the Sell quote -- they were skipped rather than guessed at.">' +
+        unmatched.length + ' part' + (unmatched.length === 1 ? '' : 's') + ' not found on the Sell quote: ' + escapeHtml(unmatched.join(', ')) + '</div>';
+    }
+    return html;
   }
 
   function createSellQuote(id) {
@@ -6876,7 +6886,10 @@
       state.sellQuoteCreatingId = null;
       if (r.data && r.data.ok) {
         var s = (state.solutions || []).filter(function (x) { return x.id === id; })[0];
-        if (s) s.sell_link = r.data.sell_link;
+        if (s) {
+          s.sell_link = r.data.sell_link;
+          s.sell_unmatched_parts = r.data.unmatched_parts || [];
+        }
       } else {
         state.sellQuoteError[id] = (r.data && r.data.error) || 'Could not create the Sell quote.';
       }

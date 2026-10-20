@@ -319,7 +319,24 @@ function relationships_sell_build_line_items(string $kind, array $state): array
         // 1." This part appears twice on the new template (PeopleFirst Member Pricing tab's real
         // monthly $0.01 line, and a $0 line on Included Support for Members) -- the matching loop
         // below now patches every item sharing a part number, so both get this quantity.
-        $items[] = ['part' => 'CBT-PF-MEMBER', 'quantity' => $members];
+        // Michael, 2026-10-20: "The PeopleFirst Member Pricing should be updated with the per
+        // member... price monthly which comes from the final calculation at the end" -- the
+        // quote item's 'recurringAmount' field, confirmed. Michael also confirmed (2026-10-20)
+        // NOT to touch 'recurringCost' here -- Clyde doesn't compute an internal per-member cost
+        // figure anywhere, so this intentionally only sets price, never cost.
+        $perMemberPrice = round((float) ($state['managedITNums']['perMemberPrice'] ?? 0), 2);
+        $items[] = [
+            'part' => 'CBT-PF-MEMBER',
+            'quantity' => $members,
+            'fields' => $perMemberPrice > 0 ? ['recurringAmount' => $perMemberPrice] : [],
+        ];
+        // "365 Support" -- Michael, 2026-10-20: "we want to include 1 for each member... CBT-MS-MAINT
+        // for monthly support but also 1 for CBT-365OB for onboarding the member." CBT-MS-MAINT =
+        // "Microsoft 365 End User Support and Maintenance (Per User)" (Coverage Selections);
+        // CBT-365OB = "Microsoft 365 Tenant Onboarding" (Partner Onboarding). Both driven by member
+        // count directly, not the alaCarteSoftware/addons fields.
+        $items[] = ['part' => 'CBT-MS-MAINT', 'quantity' => $members];
+        $items[] = ['part' => 'CBT-365OB', 'quantity' => $members];
     }
 
     // EDR/Anti-Virus -- Clyde counts this per workstation+server (peoplefirst path only; the
@@ -539,10 +556,12 @@ function relationships_sell_create_quote_for_solution(
                 $unmatchedParts[] = $item['part'];
                 continue;
             }
+            $patchOps = [['op' => 'replace', 'path' => '/quantity', 'value' => $item['quantity']]];
+            foreach (($item['fields'] ?? []) as $field => $value) {
+                $patchOps[] = ['op' => 'replace', 'path' => '/' . $field, 'value' => $value];
+            }
             foreach ($itemIds as $itemId) {
-                relationships_sell_request('/api/quoteItems/' . rawurlencode($itemId), [], 'PATCH', [
-                    ['op' => 'replace', 'path' => '/quantity', 'value' => $item['quantity']],
-                ]);
+                relationships_sell_request('/api/quoteItems/' . rawurlencode($itemId), [], 'PATCH', $patchOps);
                 $matchedCount++;
             }
         }
