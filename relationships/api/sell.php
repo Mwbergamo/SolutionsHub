@@ -514,18 +514,37 @@ function relationships_sell_create_quote_for_solution(
     //    manufacturerPartNumber -- see relationships_sell_build_line_items()'s docblock for the
     //    full confirmation trail), never creating a new ad-hoc item.
     //
-    //    UNCONFIRMED: PATCH /api/quoteItems/{itemId} itself has never been tried live -- modeled
-    //    on the same RFC 6902 shape already confirmed working for PATCH /api/quotes/{id}. This is
-    //    the next live write-test. $unmatchedParts surfaces anything that couldn't be matched
-    //    (e.g. a part number that doesn't exist on this particular quote) so a rep/Michael can see
-    //    it rather than it silently vanishing.
+    //    CONFIRMED LIVE 2026-10-20: PATCH /api/quoteItems/{itemId} works (several real live tests
+    //    have now patched real quantities onto real quote items -- devices, member counts, Duo/
+    //    Veeam addons, the firewall SKU, and the Included Support mirror items have all landed
+    //    correctly). $unmatchedParts surfaces anything that couldn't be matched so a rep/Michael
+    //    can see it rather than it silently vanishing -- see the retry loop below for why an
+    //    "unmatched" part usually ISN'T a real catalog gap.
     $lineItems = relationships_sell_build_line_items($kind, $state);
     $unmatchedParts = [];
     $matchedCount = 0;
     if ($lineItems !== []) {
-        $existingItems = relationships_sell_request('/api/quoteItems', [
-            'conditions' => 'quote/id="' . $quoteId . '"',
-        ]);
+        // Fetch existing items -- RETRY a few times, short backoff, keeping whichever response had
+        // the most items. Confirmed live 2026-10-20: a freshly copied quote's item set is not
+        // always complete the instant copyById returns -- two separate live test copies each came
+        // back missing a DIFFERENT, otherwise-random subset of real parts (confirmed present and
+        // completely normal -- no SubHeader, no structural difference -- on the template itself
+        // every time it was probed directly). That pattern (same template, consistent on direct
+        // probes, inconsistent and different each time right after a fresh copy) points at
+        // copyById's line items still materializing server-side when the very next GET runs, not
+        // at a real catalog gap. So this polls instead of trusting the first response.
+        $existingItems = [];
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $attemptItems = relationships_sell_request('/api/quoteItems', [
+                'conditions' => 'quote/id="' . $quoteId . '"',
+            ]);
+            if (count($attemptItems) > count($existingItems)) {
+                $existingItems = $attemptItems;
+            }
+            if ($attempt < 4) {
+                usleep(750000);
+            }
+        }
         // Several real parts appear on MORE THAN ONE line item on this template (confirmed
         // 2026-10-20: CBT-MS-TM-MDM, CBT-MS-TM-WORKSTATION, CBT-PF-MEMBER) -- collect every
         // matching item id per part, and patch all of them to the same quantity, rather than
