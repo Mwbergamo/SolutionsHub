@@ -143,8 +143,8 @@ function relationships_sell_quote_kind_for_state(array $state): string
 
 const RELATIONSHIPS_SELL_QUOTE_TEMPLATES = [
     'peoplefirst' => [
-        'id' => 'q638470587029567633CoVvNoC', // "PeopleFirst Support Plan", quoteNumber 6841 -- confirmed live 2026-10-14
-        'name' => 'PeopleFirst Support Plan',
+        'id' => 'q639280511007146813PzFMSTW', // "PeopleFirst Support Solution", quoteNumber 10769 -- confirmed live 2026-10-20, replaces the retired "PeopleFirst Support Plan" (quoteNumber 6841)
+        'name' => 'PeopleFirst Support Solution',
     ],
     'proposal' => [
         'id' => 'q636948201801326595zaAqAMD', // "Proposal", quoteNumber 9 -- confirmed live 2026-10-14
@@ -229,39 +229,46 @@ function relationships_sell_resolve_primary_contact(int $cwCompanyId): ?array
 /**
  * Line items for a 'peoplefirst' quote -- QUANTITIES to apply to EXISTING catalog items already
  * on the copied quote, keyed by their real ConnectWise part number (manufacturerPartNumber),
- * NOT new ad-hoc items. Confirmed live 2026-10-14 (second live write-test + two follow-up probes):
- * a copied PeopleFirst quote is not a blank slate -- it's pre-loaded with 50 real catalog line
- * items, organized by device type/service, each already carrying the SAME ConnectWise part number
- * used on the Manage side ("IT Services Agreement - PeopleFirst" monthly additions + their
- * one-time onboarding fees) -- Michael confirmed this 1:1 with two reference screenshots of the
- * Manage agreement part numbers, which line up with the live Sell template's own
- * manufacturerPartNumber field exactly (10/10 device onboarding parts + Member Setup matched).
- * So the write path (relationships_sell_create_quote_for_solution()) fetches the quote's own
- * items, matches each entry below by 'part', and PATCHes ITS quantity -- it never creates a new
- * item. Each $state source field is read directly off state.managedIT (devices/addons/members),
- * not the aggregated dollar totals in managedITNums, since the whole point of this catalog is to
- * let Sell's own catalog pricing do the math per real part, not a hand-computed lump sum.
+ * NOT new ad-hoc items. Confirmed live 2026-10-14 (second live write-test + two follow-up probes)
+ * against the original "PeopleFirst Support Plan" template, then re-confirmed 2026-10-20 against
+ * its replacement, "PeopleFirst Support Solution" (quoteNumber 10769, id
+ * q639280511007146813PzFMSTW -- Michael retired the old template and built this one specifically
+ * clean for this automation): a copied quote is not a blank slate -- it's pre-loaded with 50 real
+ * catalog line items, organized by device type/service, each already carrying the SAME
+ * ConnectWise part number used on the Manage side. So the write path
+ * (relationships_sell_create_quote_for_solution()) fetches the quote's own items, matches each
+ * entry below by 'part' against EVERY item sharing that part number (some parts appear on more
+ * than one line -- see "Known duplicate parts" below), and PATCHes each matched item's quantity --
+ * it never creates a new item. Each $state source field is read directly off state.managedIT
+ * (devices/addons/members/firewallSku), not the aggregated dollar totals in managedITNums, since
+ * the whole point of this catalog is to let Sell's own catalog pricing do the math per real part,
+ * not a hand-computed lump sum.
  *
- * Known gaps, flagged rather than guessed (2026-10-14):
- * - No confirmed monthly "CBT-PF-MEMBER" catalog line exists on the live template yet (Michael's
- *   Manage reference shows it as a real monthly agreement addition) -- only the one-time Member
- *   Setup (CBT-EOB) onboarding fee is wired up below.
+ * Known duplicate parts (confirmed 2026-10-20, Michael: apply the quantity to every line sharing
+ * the part -- the matching loop below now patches all of them, not just one):
+ * - CBT-MS-TM-MDM: "Mobile Device Management" tab AND "Managed Care Maintenance - Mobile Phones"
+ *   row on Coverage Selections. Both get the mdm device count.
+ * - CBT-MS-TM-WORKSTATION: appears twice on Coverage Selections -- once with its real
+ *   description, once more on a stray row labeled "New Section" (looks like template clutter, not
+ *   intentional -- Michael may want to clean this up in Sell directly). Both get the workstation
+ *   device count.
+ * - CBT-PF-MEMBER: the real "PeopleFirst Member Pricing" monthly line AND a $0 row on "Included
+ *   Support for Members". Both get the PeopleFirst member count.
+ *
+ * Known gaps, flagged rather than guessed:
  * - "Managed Care Maintenance - Server" on the live template carries part "CBT-MS-SERVER", not
- *   "CBT-MS-TM-SERVER" like every other device type and like Michael's own reference screenshot
- *   shows for Servers -- likely a typo in the Sell template itself. Matched on the real
- *   (CBT-MS-SERVER) value below so quantities still land; flag to Michael to fix in Sell.
- * - "Remote Agent Software" and "Patch Management" (would cover AUTO_SOFTWARE's remoteWs/
- *   remoteSrv/patch items) have NO manufacturerPartNumber set on the live template at all --
- *   left out rather than matched by fragile description text.
+ *   "CBT-MS-TM-SERVER" like every other device type -- likely a typo in the Sell template itself,
+ *   unchanged on the new template. Matched on the real (CBT-MS-SERVER) value below so quantities
+ *   still land; flag to Michael to fix in Sell if he wants it consistent.
  * - "Risk and Vulnerability Scanning" has a section header on the template but no actual catalog
  *   product under it -- left out; Clyde's riskScan add-on has nowhere confirmed to land yet.
- * - "Mobile Device Management" (its own tab) and "Managed Care Maintenance - Mobile Phones"
- *   (Coverage Selections tab) share the SAME part (CBT-MS-TM-MDM) on the live template -- both
- *   will be set to the same mdm device count below, which is at worst harmless duplication.
- * - Veeam backup LICENSE (recurring monthly) and off-site storage-by-the-TB are real catalog
- *   products Michael pointed out are NOT on this template at all (only their one-time onboarding
- *   fees are) -- adding those needs a different write operation (attaching a new catalog product
- *   to the quote, not patching an existing item's quantity) and is deliberately deferred.
+ * - "Remote Agent Software" (AUTOMATE-AGENT-WORKSTATION/AUTOMATE-AGENT-SERVER) and "Patch
+ *   Management" (AUTOMATE-PATCH), and Veeam backup license (VEEAM-AGENT-WORKSTATION/
+ *   VEEAM-AGENT-SERVER) + off-site storage (VEEAM-COLO-STORAGE-TB), all now have real catalog
+ *   parts on the new template (resolved 2026-10-20 -- they had none on the old one) but are NOT
+ *   yet wired into this function; Clyde doesn't currently have the addon fields for them
+ *   (AUTO_SOFTWARE's remoteWs/remoteSrv/patch exist on the ala-carte path only, not peoplefirst).
+ *   Deliberately deferred -- revisit if Michael wants these billed automatically too.
  *
  * For every kind other than 'peoplefirst', this intentionally returns an empty list -- per
  * Michael (2026-10-14): "We will get into Headings and sources and pricing for those later." The
@@ -306,6 +313,11 @@ function relationships_sell_build_line_items(string $kind, array $state): array
     // PeopleFirst Members on the quote tool, you would add 5 Member Setup fees").
     if ($members > 0) {
         $items[] = ['part' => 'CBT-EOB', 'quantity' => $members];
+        // Michael, 2026-10-20: "Full-Time Staff Members (coverage) = CBT-PF-MEMBER... added 1 for
+        // 1." This part appears twice on the new template (PeopleFirst Member Pricing tab's real
+        // monthly $0.01 line, and a $0 line on Included Support for Members) -- the matching loop
+        // below now patches every item sharing a part number, so both get this quantity.
+        $items[] = ['part' => 'CBT-PF-MEMBER', 'quantity' => $members];
     }
 
     // EDR/Anti-Virus -- Clyde counts this per workstation+server (peoplefirst path only; the
@@ -344,6 +356,40 @@ function relationships_sell_build_line_items(string $kind, array $state): array
     }
     if (!empty($addons['veeamWsBackup'])) {
         $items[] = ['part' => 'CBT-DTBK', 'quantity' => (int) $addons['veeamWsBackup']];
+    }
+
+    // Provided Firewall hardware -- one unit, matched by Clyde's own FIREWALL_MODELS[].sku, which
+    // IS the Sell manufacturerPartNumber directly (PE-T125/PE-T145/PE-M290/PE-T185/PE-M295/
+    // PE-M390 -- see app.js FIREWALL_MODELS). Michael, 2026-10-20: "Provided firewalls should
+    // match the Hardware — Provided Firewall 1 for 1 in the Sell quote... where CBT125 is the
+    // CBT125 in Sell as well." mi.firewallSku is a single toggle (one model per solution, qty
+    // always 1 when set), not a per-device count. NOTE: the live "PeopleFirst Support Solution"
+    // template is only pre-loaded with 4 of the 6 models (PE-T125, PE-M290, PE-T185, PE-M295) as
+    // of 2026-10-20 -- PE-T145 (CBT145) and PE-M390 (CBM390) aren't on it yet, so selecting either
+    // of those will surface in unmatched_parts rather than silently failing.
+    $firewallSku = trim((string) ($mi['firewallSku'] ?? ''));
+    if ($firewallSku !== '') {
+        $items[] = ['part' => $firewallSku, 'quantity' => 1];
+    }
+
+    // "Included Support for Members" tab -- a $0 PeopleFirst-membership mirror of the paid
+    // Partner Onboarding items above, added 1:1 alongside them (Michael, 2026-10-20): "When a rep
+    // adds 1 firewall in the network sizing, you would add 1 CBT-OBFW to the sell quote[, ...]
+    // Printers = CBT-OBPRINT, and Full-Time Staff Members (coverage) = CBT-PF-MEMBER all added 1
+    // for 1." Only these 5 device types have a part on this tab (confirmed via the 2026-10-20
+    // probe) -- the other device types (server/mdm/switch/wap/camera) don't get one.
+    $includedSupportParts = [
+        'firewall'    => 'CBT-OBFW',
+        'network'     => 'CBT-OBNET',
+        'workstation' => 'CBT-OBWKS',
+        'phone'       => 'CBT-OBPHONE',
+        'printer'     => 'CBT-OBPRINT',
+    ];
+    foreach ($includedSupportParts as $deviceId => $part) {
+        $qty = (int) ($d[$deviceId] ?? 0);
+        if ($qty > 0) {
+            $items[] = ['part' => $part, 'quantity' => $qty];
+        }
     }
 
     // vCIO -- sold in whole hours, minimum 2 hours/120 minutes per month (Michael, 2026-10-14).
@@ -461,24 +507,30 @@ function relationships_sell_create_quote_for_solution(
         $existingItems = relationships_sell_request('/api/quoteItems', [
             'conditions' => 'quote/id="' . $quoteId . '"',
         ]);
-        $itemIdByPart = [];
+        // Several real parts appear on MORE THAN ONE line item on this template (confirmed
+        // 2026-10-20: CBT-MS-TM-MDM, CBT-MS-TM-WORKSTATION, CBT-PF-MEMBER) -- collect every
+        // matching item id per part, and patch all of them to the same quantity, rather than
+        // letting a single map entry silently pick whichever one the API happened to list last.
+        $itemIdsByPart = [];
         foreach ($existingItems as $existing) {
             $part = $existing['manufacturerPartNumber'] ?? null;
             $itemId = $existing['id'] ?? null;
             if (is_string($part) && $part !== '' && is_string($itemId) && $itemId !== '') {
-                $itemIdByPart[$part] = $itemId;
+                $itemIdsByPart[$part][] = $itemId;
             }
         }
         foreach ($lineItems as $item) {
-            $itemId = $itemIdByPart[$item['part']] ?? null;
-            if ($itemId === null) {
+            $itemIds = $itemIdsByPart[$item['part']] ?? [];
+            if ($itemIds === []) {
                 $unmatchedParts[] = $item['part'];
                 continue;
             }
-            relationships_sell_request('/api/quoteItems/' . rawurlencode($itemId), [], 'PATCH', [
-                ['op' => 'replace', 'path' => '/quantity', 'value' => $item['quantity']],
-            ]);
-            $matchedCount++;
+            foreach ($itemIds as $itemId) {
+                relationships_sell_request('/api/quoteItems/' . rawurlencode($itemId), [], 'PATCH', [
+                    ['op' => 'replace', 'path' => '/quantity', 'value' => $item['quantity']],
+                ]);
+                $matchedCount++;
+            }
         }
     }
 
