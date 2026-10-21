@@ -1205,6 +1205,13 @@
     state.taskDraftDueDate = '';
     state.taskSaving = false;
     state.taskTogglingId = null;
+    // Meeting editing -- added 2026-10-21. Same shape as the add-meeting
+    // draft fields above, just for an in-place edit of an existing one.
+    state.meetingEditingId = null;
+    state.meetingEditDraftSubject = '';
+    state.meetingEditDraftDate = '';
+    state.meetingEditDraftNotes = '';
+    state.meetingEditSaving = false;
     // pendingTaskFocus is deliberately NOT cleared here -- openCustomerAtTask()
     // sets it BEFORE calling selectCustomer(), which calls resetMeetingsState()
     // on its way to loadMeetings(); clearing it here would lose the deep-link
@@ -1571,6 +1578,51 @@
     }).catch(function () {
       state.meetingSaving = false;
       state.meetingsError = 'Could not save the meeting \u2014 check your connection and try again.';
+      render();
+    });
+  }
+
+  // Added 2026-10-21 per Michael: "the ability to edit an existing
+  // meeting after it's been saved." Same request/response shape as
+  // saveMeeting() above, pointed at update_meeting instead of
+  // create_meeting, and merged back into the existing state.meetings
+  // array (by id) instead of prepended as a new row.
+  function saveMeetingEdit(meetingId, customerId) {
+    var subject = (state.meetingEditDraftSubject || '').trim();
+    var date = state.meetingEditDraftDate;
+    if (!subject || !date) {
+      state.meetingsError = 'Enter a subject and a date.';
+      render();
+      return;
+    }
+    state.meetingEditSaving = true;
+    state.meetingsError = null;
+    render();
+    apiPost('api/meetings.php?action=update_meeting', {
+      meeting_id: meetingId, customer_id: customerId, subject: subject, meeting_date: date, notes: state.meetingEditDraftNotes || ''
+    }).then(function (r) {
+      state.meetingEditSaving = false;
+      if (r.data && r.data.ok) {
+        var updated = r.data.meeting;
+        state.meetings = (state.meetings || []).map(function (m) {
+          if (m.id !== meetingId) return m;
+          // update_meeting doesn't touch tasks and deliberately doesn't
+          // re-query them -- carry the existing task list over rather
+          // than losing it to the response's empty tasks: [].
+          updated.tasks = m.tasks;
+          return updated;
+        });
+        state.meetingEditingId = null;
+        if (updated.cw_update && updated.cw_update.status === 'error') {
+          state.meetingsError = 'Saved here, but the edit didn\u2019t reach ConnectWise: ' + updated.cw_update.error;
+        }
+      } else {
+        state.meetingsError = (r.data && r.data.error) || 'Could not save the changes.';
+      }
+      render();
+    }).catch(function () {
+      state.meetingEditSaving = false;
+      state.meetingsError = 'Could not save the changes \u2014 check your connection and try again.';
       render();
     });
   }
@@ -7151,9 +7203,20 @@
 
   function meetingRowHtml(m) {
     var isOpen = state.openMeetingId === m.id;
+    var isEditingMeeting = state.meetingEditingId === m.id;
     var openTaskCount = m.tasks.filter(function (t) { return !t.completed_at; }).length;
     var cwWarn = m.cw_push && m.cw_push.status === 'error'
       ? '<div class="meeting-cw-warn" title="' + escapeHtml(m.cw_push.error || '') + '">Didn’t sync to ConnectWise</div>'
+      : '';
+    // Added 2026-10-21 for the meeting-edit feature -- a failed edit
+    // PATCH gets its own warning, separate from the create-time one
+    // above (cw_push stays whatever it was at creation; cw_update is the
+    // edit attempt's own outcome).
+    var cwUpdateWarn = m.cw_update && m.cw_update.status === 'error'
+      ? '<div class="meeting-cw-warn" title="' + escapeHtml(m.cw_update.error || '') + '">Edit didn’t sync to ConnectWise</div>'
+      : '';
+    var editedMeta = m.edited_at
+      ? ' · edited ' + escapeHtml(fmtTimestamp(m.edited_at)) + (m.edited_by_name ? ' by ' + escapeHtml(m.edited_by_name) : '')
       : '';
 
     var html = '<div class="meeting-row">' +
@@ -7162,6 +7225,7 @@
           '<div class="meeting-row-subject">' + escapeHtml(m.subject) + '</div>' +
           '<div class="meeting-row-meta">' + escapeHtml(fmtOutgrowDate(m.meeting_date)) + ' · logged by ' + escapeHtml(m.logged_by_name) +
             (openTaskCount ? ' · ' + openTaskCount + ' open task' + (openTaskCount === 1 ? '' : 's') : '') +
+            editedMeta +
           '</div>' +
         '</div>' +
         '<div class="meeting-row-toggle">' + (isOpen ? '▴' : '▾') + '</div>' +
@@ -7169,12 +7233,35 @@
 
     if (isOpen) {
       html += '<div class="meeting-row-body">';
-      if (m.notes) {
-        html += '<div class="meeting-row-notes">' + escapeHtml(m.notes).replace(/\n/g, '<br>') + '</div>';
-      }
-      html += cwWarn;
 
-      if (state.taskAddOpenForMeeting === m.id) {
+      if (isEditingMeeting) {
+        // Same field set/markup as the "+ Log a Meeting" add-form above
+        // (meetingsPanelHtml()) -- an edit is the same three fields,
+        // just pre-filled and pointed at meeting-edit-save instead of
+        // meeting-save.
+        html += '<div class="meeting-add-form">' +
+          '<input type="text" id="meetingEditSubjectInput" class="meeting-form-input" placeholder="Subject" value="' + escapeHtml(state.meetingEditDraftSubject) + '" maxlength="200">' +
+          '<input type="date" id="meetingEditDateInput" class="meeting-form-input" value="' + escapeHtml(state.meetingEditDraftDate) + '">' +
+          '<textarea id="meetingEditNotesInput" class="meeting-form-textarea" placeholder="Notes from the meeting…" rows="3">' + escapeHtml(state.meetingEditDraftNotes) + '</textarea>' +
+          '<div class="meeting-form-actions">' +
+            '<button type="button" class="vendor-field-btn primary" data-action="meeting-edit-save" data-meeting="' + m.id + '" ' + (state.meetingEditSaving ? 'disabled' : '') + '>' + (state.meetingEditSaving ? 'Saving…' : 'Save Changes') + '</button>' +
+            '<button type="button" class="vendor-field-btn secondary" data-action="meeting-edit-cancel" ' + (state.meetingEditSaving ? 'disabled' : '') + '>Cancel</button>' +
+          '</div>' +
+        '</div>';
+      } else {
+        if (m.notes) {
+          html += '<div class="meeting-row-notes">' + escapeHtml(m.notes).replace(/\n/g, '<br>') + '</div>';
+        }
+        html += '<button type="button" class="meetings-add-btn small" data-action="meeting-edit-open" data-meeting="' + m.id + '">Edit Meeting</button>';
+      }
+
+      html += cwWarn;
+      html += cwUpdateWarn;
+
+      if (isEditingMeeting) {
+        // No task-add form/button while editing the meeting itself --
+        // keep one thing open at a time.
+      } else if (state.taskAddOpenForMeeting === m.id) {
         html += '<div class="task-add-form">' +
           '<input type="text" id="taskDescriptionInput" class="meeting-form-input" placeholder="Task description" value="' + escapeHtml(state.taskDraftDescription) + '" maxlength="500">' +
           '<select id="taskAssigneeSelect" class="meeting-form-select">' +
@@ -9223,7 +9310,26 @@
       var mId = parseInt(el.getAttribute('data-meeting'), 10);
       state.openMeetingId = state.openMeetingId === mId ? null : mId;
       state.taskAddOpenForMeeting = null;
+      state.meetingEditingId = null;
       render();
+    } else if (action === 'meeting-edit-open') {
+      var editMeetingId = parseInt(el.getAttribute('data-meeting'), 10);
+      var meetingToEdit = (state.meetings || []).filter(function (mm) { return mm.id === editMeetingId; })[0];
+      if (meetingToEdit) {
+        state.meetingEditingId = editMeetingId;
+        state.meetingEditDraftSubject = meetingToEdit.subject;
+        state.meetingEditDraftDate = meetingToEdit.meeting_date;
+        state.meetingEditDraftNotes = meetingToEdit.notes || '';
+        state.taskAddOpenForMeeting = null;
+        state.meetingsError = null;
+      }
+      render();
+    } else if (action === 'meeting-edit-cancel') {
+      state.meetingEditingId = null;
+      state.meetingsError = null;
+      render();
+    } else if (action === 'meeting-edit-save') {
+      saveMeetingEdit(parseInt(el.getAttribute('data-meeting'), 10), state.selectedCustomer.customer.id);
     } else if (action === 'task-add-open') {
       state.taskAddOpenForMeeting = parseInt(el.getAttribute('data-meeting'), 10);
       state.taskDraftDescription = '';

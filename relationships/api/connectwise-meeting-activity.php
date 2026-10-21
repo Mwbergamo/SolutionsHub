@@ -177,3 +177,29 @@ function relationships_cw_create_general_todo_activity(PDO $pdo, array $ctx): ar
 
     return relationships_cw_create_activity($pdo, $activityCtx);
 }
+
+/**
+ * Builds and PATCHes the ConnectWise Activity for an EDITED meeting --
+ * added 2026-10-21, the update-side counterpart to
+ * relationships_cw_create_meeting_activity() above. Only ever called when
+ * the meeting already has a cw_activity_id from a successful create (see
+ * meetings.php's update_meeting) -- there is nothing to update otherwise,
+ * same "skip, don't guess" posture as every other optional ConnectWise
+ * touch in this integration.
+ *
+ * $ctx keys: subject (string), notes (string, the EDITED meeting notes,
+ * carried verbatim into the Activity's Notes field exactly like create
+ * does), edited_by_name (string), edited_at_display (string,
+ * human-readable Eastern timestamp).
+ *
+ * Throws RelationshipsConnectWiseError on failure (same as the create
+ * path) -- meetings.php's try/catch turns that into the row update.
+ */
+function relationships_cw_update_meeting_activity(string $activityId, array $ctx): void
+{
+    $notes = trim((string) $ctx['notes']);
+    $notes = ($notes !== '' ? $notes . "\n\n" : '') .
+        'Edited by ' . $ctx['edited_by_name'] . ' - ' . $ctx['edited_at_display'];
+
+    relationships_cw_update_activity_text($activityId, (string) $ctx['subject'], $notes);
+}

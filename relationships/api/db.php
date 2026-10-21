@@ -764,6 +764,21 @@ function relationships_migrate(PDO $pdo): void
     relationships_add_column_if_missing($pdo, 'meeting_tasks', 'cw_close_status', 'TEXT');
     relationships_add_column_if_missing($pdo, 'meeting_tasks', 'cw_close_error', 'TEXT');
 
+    // Meeting editing -- added 2026-10-21 per Michael: "the ability to
+    // edit an existing meeting after it's been saved." edited_at/
+    // edited_by_name record the LAST edit only (value + who/when, same
+    // shape as the pillar vendor notes feature -- not a full revision
+    // history). Per Michael's explicit choice (AskUserQuestion), editing
+    // a meeting also tries to PATCH the linked ConnectWise Activity (if
+    // one exists from creation) to match -- cw_update_status/
+    // cw_update_error record THAT attempt's outcome, kept separate from
+    // cw_push_status/cw_push_error (which stay exactly as they were at
+    // creation time, untouched by an edit).
+    relationships_add_column_if_missing($pdo, 'customer_meetings', 'edited_at', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'customer_meetings', 'edited_by_name', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'customer_meetings', 'cw_update_status', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'customer_meetings', 'cw_update_error', 'TEXT');
+
     // Cross-sell step notes -- added 2026-09-23 per Michael: "add the
     // ability to click a small + icon next to each step for a rep to put
     // in their notes on any feedback from the customer as it relates to

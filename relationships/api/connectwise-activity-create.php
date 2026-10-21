@@ -393,6 +393,32 @@ function relationships_cw_close_activity(PDO $pdo, string $activityId): void
 }
 
 /**
+ * PATCHes an existing ConnectWise Activity's name/notes to match an
+ * edited local record. Added 2026-10-21 for Customer Meeting Capture's
+ * "edit an existing meeting" feature (meetings.php's update_meeting) --
+ * per Michael's explicit choice (AskUserQuestion) to also keep the
+ * linked Activity in sync on edit, not just the local row. Same
+ * JSON-Patch shape as relationships_cw_close_activity() just above --
+ * that function is this integration's only prior PATCH, and it's STILL
+ * flagged there as unverified against a real ConnectWise Activity, so
+ * treat this one the same way: best-guess shape, needs a real edit
+ * checked against ConnectWise Manage's UI before it's fully trusted.
+ * Same 100-char summary truncation as the create path
+ * (relationships_cw_create_activity()) -- ConnectWise's Activity `name`
+ * field has the same length ceiling whether created or updated.
+ */
+function relationships_cw_update_activity_text(string $activityId, string $summary, string $notes): void
+{
+    if (strlen($summary) > 100) {
+        $summary = substr($summary, 0, 97) . '...';
+    }
+    relationships_cw_request('/sales/activities/' . rawurlencode($activityId), [], 'PATCH', [
+        ['op' => 'replace', 'path' => '/name', 'value' => $summary],
+        ['op' => 'replace', 'path' => '/notes', 'value' => $notes],
+    ]);
+}
+
+/**
  * Checklist-specific wrapper over relationships_cw_create_activity() --
  * builds the checklist step's summary/notes/assignee and delegates.
  * Unchanged behavior from before the 2026-09-15 extraction above; kept as

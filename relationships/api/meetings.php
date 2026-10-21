@@ -212,7 +212,12 @@ function relationships_meeting_row(array $m, array $tasks): array
         'notes' => $m['notes'],
         'logged_by_name' => $m['logged_by_name'],
         'created_at' => $m['created_at'],
+        // Added 2026-10-21 for the meeting-edit feature -- null/null on
+        // every meeting until it's actually been edited once.
+        'edited_at' => $m['edited_at'] ?? null,
+        'edited_by_name' => $m['edited_by_name'] ?? null,
         'cw_push' => ['status' => $m['cw_push_status'], 'error' => $m['cw_push_error']],
+        'cw_update' => ['status' => $m['cw_update_status'] ?? null, 'error' => $m['cw_update_error'] ?? null],
         'tasks' => $tasks,
     ];
 }
@@ -315,7 +320,8 @@ if ($action === 'list') {
     relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
 
     $meetingStmt = $pdo->prepare(
-        'SELECT id, subject, meeting_date, notes, logged_by_name, created_at, cw_push_status, cw_push_error
+        'SELECT id, subject, meeting_date, notes, logged_by_name, created_at, cw_push_status, cw_push_error,
+                edited_at, edited_by_name, cw_update_status, cw_update_error
          FROM customer_meetings WHERE customer_id = :id ORDER BY id DESC'
     );
     $meetingStmt->execute([':id' => $customerId]);
@@ -803,7 +809,98 @@ if ($action === 'create_meeting') {
     }
 
     $meetingStmt = $pdo->prepare(
-        'SELECT id, subject, meeting_date, notes, logged_by_name, created_at, cw_push_status, cw_push_error
+        'SELECT id, subject, meeting_date, notes, logged_by_name, created_at, cw_push_status, cw_push_error,
+                edited_at, edited_by_name, cw_update_status, cw_update_error
+         FROM customer_meetings WHERE id = :id'
+    );
+    $meetingStmt->execute([':id' => $meetingId]);
+    $meeting = relationships_meeting_row($meetingStmt->fetch(PDO::FETCH_ASSOC), []);
+    relationships_respond(200, ['ok' => true, 'meeting' => $meeting]);
+}
+
+// Added 2026-10-21 per Michael: "the ability to edit an existing meeting
+// after it's been saved." Same shape as create_meeting (validation,
+// territory scope, "save locally first") plus, per Michael's explicit
+// choice via AskUserQuestion, a best-effort PATCH of the linked
+// ConnectWise Activity's name/notes when one exists -- see
+// relationships_cw_update_meeting_activity() in
+// connectwise-meeting-activity.php. Only subject/meeting_date/notes are
+// editable -- logged_by_name/created_at stay exactly as they were at
+// creation (who logged it and when is a historical fact, not something
+// an edit should rewrite); edited_at/edited_by_name record the most
+// recent edit, not a full revision history (same "value + who/when" shape
+// the pillar vendor notes feature already uses).
+if ($action === 'update_meeting') {
+    $data = relationships_read_json_body();
+    $meetingId = (int) ($data['meeting_id'] ?? 0);
+    $customerId = (int) ($data['customer_id'] ?? 0);
+    $subject = trim((string) ($data['subject'] ?? ''));
+    $meetingDate = (string) ($data['meeting_date'] ?? '');
+    $notes = trim((string) ($data['notes'] ?? ''));
+
+    if ($meetingId <= 0 || $customerId <= 0 || $subject === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $meetingDate)) {
+        relationships_respond(400, ['ok' => false, 'error' => 'Missing/invalid meeting_id, customer_id, subject, or meeting_date (expected YYYY-MM-DD).']);
+    }
+    if (mb_strlen($subject) > 200) {
+        relationships_respond(400, ['ok' => false, 'error' => 'Subject is too long (200 characters max).']);
+    }
+
+    $custStmt = $pdo->prepare('SELECT id, connectwise_id, name, territory_name FROM customers WHERE id = :id');
+    $custStmt->execute([':id' => $customerId]);
+    $customer = $custStmt->fetch(PDO::FETCH_ASSOC);
+    if ($customer === false) {
+        relationships_respond(404, ['ok' => false, 'error' => 'Customer not found.']);
+    }
+    relationships_require_territory_scope($allowedTerritories, $customer['territory_name']);
+
+    // Scoped to customer_id too, not just id -- a meeting_id alone being
+    // valid isn't enough; it has to actually belong to the customer this
+    // request's territory check just cleared.
+    $existingStmt = $pdo->prepare('SELECT id, cw_activity_id, cw_push_status FROM customer_meetings WHERE id = :id AND customer_id = :cid');
+    $existingStmt->execute([':id' => $meetingId, ':cid' => $customerId]);
+    $existing = $existingStmt->fetch(PDO::FETCH_ASSOC);
+    if ($existing === false) {
+        relationships_respond(404, ['ok' => false, 'error' => 'Meeting not found.']);
+    }
+
+    // Local save first, unconditionally -- same "save locally, log the
+    // ConnectWise failure" instruction as every other write here.
+    $pdo->prepare(
+        'UPDATE customer_meetings SET subject = :subj, meeting_date = :mdate, notes = :notes,
+            edited_at = :eat, edited_by_name = :ename WHERE id = :id'
+    )->execute([
+        ':subj' => $subject, ':mdate' => $meetingDate, ':notes' => $notes,
+        ':eat' => gmdate('c'), ':ename' => $user['name'], ':id' => $meetingId,
+    ]);
+
+    $cwUpdate = ['status' => 'skipped', 'error' => null];
+    $activityId = $existing['cw_activity_id'];
+    // Only attempt a ConnectWise update when a real Activity exists from
+    // creation (cw_push_status === 'pushed') -- 'skipped'/'error' at
+    // creation means there's nothing in ConnectWise to PATCH.
+    if ($existing['cw_push_status'] === 'pushed' && is_string($activityId) && $activityId !== '') {
+        try {
+            $nowEastern = new DateTimeImmutable('now', new DateTimeZone('America/New_York'));
+            relationships_cw_update_meeting_activity($activityId, [
+                'subject' => $subject,
+                'notes' => $notes,
+                'edited_by_name' => $user['name'],
+                'edited_at_display' => $nowEastern->format('M j, Y g:i A T'),
+            ]);
+            $cwUpdate = ['status' => 'pushed', 'error' => null];
+        } catch (Throwable $e) {
+            $cwUpdate = ['status' => 'error', 'error' => substr($e->getMessage(), 0, 4000)];
+        }
+        $pdo->prepare('UPDATE customer_meetings SET cw_update_status = :status, cw_update_error = :err WHERE id = :id')
+            ->execute([':status' => $cwUpdate['status'], ':err' => $cwUpdate['error'], ':id' => $meetingId]);
+    } else {
+        $pdo->prepare('UPDATE customer_meetings SET cw_update_status = :status, cw_update_error = NULL WHERE id = :id')
+            ->execute([':status' => 'skipped', ':id' => $meetingId]);
+    }
+
+    $meetingStmt = $pdo->prepare(
+        'SELECT id, subject, meeting_date, notes, logged_by_name, created_at, cw_push_status, cw_push_error,
+                edited_at, edited_by_name, cw_update_status, cw_update_error
          FROM customer_meetings WHERE id = :id'
     );
     $meetingStmt->execute([':id' => $meetingId]);
