@@ -116,6 +116,15 @@ table.data .r { text-align: right; font-variant-numeric: tabular-nums; }
 .billing-bar-col:hover .billing-bar-fill { background: linear-gradient(180deg, #56a5ff, #2f8fef); }
 .billing-bar-label { margin-top: 5px; font-size: 10px; font-weight: 600; color: oklch(0.55 0.015 255); }
 
+/* ---- portfolio gauges (front page, under customer search; added 2026-10-21) ---- */
+.cf-gauges-wrap { max-width: 900px; margin: 28px auto 0; }
+.cf-gauges-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.cf-gauge-card { background: oklch(0.19 0.02 255); border: 1px solid oklch(0.27 0.03 255); border-radius: 16px; padding: 18px 20px; text-align: left; }
+.cf-gauge-card .lbl { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: oklch(0.62 0.02 255); }
+.cf-gauge-card .val { font-family: 'Space Grotesk', sans-serif; font-size: 30px; font-weight: 700; color: white; margin-top: 6px; }
+.cf-gauge-sub { font-size: 12px; color: oklch(0.62 0.02 255); margin-top: 2px; }
+.cf-gauge-foot { font-size: 10.5px; color: oklch(0.52 0.02 255); margin-top: 10px; padding-top: 8px; border-top: 1px dashed oklch(0.3 0.03 255); }
+
 @media (max-width: 760px) {
   .topbar { padding: 14px 16px; }
   main { padding: 18px 12px 40px; }

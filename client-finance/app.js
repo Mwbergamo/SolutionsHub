@@ -72,7 +72,13 @@
     sectionLoading: false,
     sectionSeq: 0,
     expandedLineId: null,      // invoice id whose product-line detail is expanded (product_sales/credits)
-    pushingOppId: null
+    pushingOppId: null,
+    // Portfolio-wide gauges, front page only (added 2026-10-21) -- see
+    // api/gauges.php's header for the sync-model reversal behind these
+    // and claude/client-finance-gauges.md for the full decision trail.
+    gaugeMrr: null,
+    gaugeMrrLoading: false,
+    gaugeMrrError: null
   };
 
   // ---- helpers --------------------------------------------------------
@@ -132,6 +138,10 @@
       if (r.status === 403) { state.denied = true; render(); return; }
       if (!r.data || !r.data.ok) { state.error = (r.data && r.data.error) || 'Could not load.'; render(); return; }
       state.user = r.data.user;
+      // Portfolio gauges load once per app boot, independent of which
+      // view is showing -- nightly-cadence data doesn't need refetching
+      // every time someone returns to the search view.
+      loadGaugeMrr();
       // Deep link from a Relationships to-do ("linking back to the detail") --
       // ?cw_company_id=N jumps straight to that customer's dashboard,
       // skipping search. dashboard.php?action=summary resolves the real
@@ -147,6 +157,69 @@
       }
       render();
     }).catch(function () { state.error = 'Could not reach the server.'; render(); });
+  }
+
+  // ---- portfolio gauges (front page, under customer search) --------------
+  // Added 2026-10-21. One function per gauge, same shape, so the next
+  // gauge (Michael's explicit "one at a time" build process) is a copy
+  // of this block pointed at a new api/gauges.php action, not a rewrite.
+
+  function loadGaugeMrr() {
+    state.gaugeMrrLoading = true;
+    render();
+    api('api/gauges.php?action=mrr').then(function (r) {
+      state.gaugeMrrLoading = false;
+      if (r.data && r.data.ok) {
+        state.gaugeMrr = r.data.mrr;
+        state.gaugeMrrError = null;
+      } else {
+        state.gaugeMrrError = (r.data && r.data.error) || 'Could not load this gauge.';
+      }
+      render();
+    }).catch(function () {
+      state.gaugeMrrLoading = false;
+      state.gaugeMrrError = 'Could not reach the server.';
+      render();
+    });
+  }
+
+  function gaugeCoverageText(g) {
+    if (!g) return '';
+    var cov = g.coverage ? (g.coverage.synced + ' of ' + g.coverage.eligible + ' customers synced') : '';
+    var bulk = g.bulk_sync || {};
+    var asOf;
+    if (bulk.finished_at) {
+      asOf = 'as of ' + fmtDate(bulk.finished_at);
+    } else if (bulk.started_at) {
+      asOf = 'first sync in progress';
+    } else {
+      asOf = 'nightly sync not yet run';
+    }
+    return cov ? (cov + ' \u00b7 ' + asOf) : asOf;
+  }
+
+  function gaugeMrrCardHtml() {
+    var g = state.gaugeMrr;
+    var body;
+    if (state.gaugeMrrLoading && !g) {
+      body = '<div class="hint">Loading\u2026</div>';
+    } else if (state.gaugeMrrError) {
+      body = '<div class="hint">' + esc(state.gaugeMrrError) + '</div>';
+    } else if (!g || !g.month) {
+      body = '<div class="hint">No synced agreement revenue yet.</div>';
+    } else {
+      body = '<div class="val">' + fmtCurrency(g.total) + '</div>' +
+        '<div class="cf-gauge-sub">' + esc(fmtMonthLabel(g.month)) + ' \u00b7 ' + g.customers_with_revenue + ' customers billed</div>';
+    }
+    return '<div class="cf-gauge-card">' +
+      '<div class="lbl">Recurring Revenue (MRR)</div>' +
+      body +
+      '<div class="cf-gauge-foot">' + esc(gaugeCoverageText(g)) + '</div>' +
+    '</div>';
+  }
+
+  function gaugesHtml() {
+    return '<div class="cf-gauges-wrap"><div class="cf-gauges-row">' + gaugeMrrCardHtml() + '</div></div>';
   }
 
   // ---- search -------------------------------------------------------------
@@ -383,6 +456,7 @@
       }
     }
     html += '</div>';
+    html += gaugesHtml();
     return html;
   }
 

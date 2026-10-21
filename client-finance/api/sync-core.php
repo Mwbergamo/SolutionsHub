@@ -303,7 +303,12 @@ function client_finance_sync_start(PDO $pdo, int $cwCompanyId, string $companyNa
     return ['queued' => count(CLIENT_FINANCE_SECTIONS)];
 }
 
-/** Processes the oldest pending section (any company). One call = one section. */
+/** Processes the oldest pending section (any company). One call = one section.
+ * Returns `cw_company_id` alongside `section` (added 2026-10-21 for
+ * client-finance-cron.php's error logging across a bulk run spanning
+ * many companies) -- sync.php's frontend caller already just forwards
+ * this whole array through unread fields, so this is additive, not a
+ * behavior change for the on-demand "Sync now" path. */
 function client_finance_sync_step(PDO $pdo): array
 {
     $row = $pdo->query("SELECT id, cw_company_id, section FROM sync_queue WHERE status = 'pending' ORDER BY id LIMIT 1")->fetch(PDO::FETCH_ASSOC);
@@ -342,11 +347,11 @@ function client_finance_sync_step(PDO $pdo): array
         $pdo->prepare("UPDATE sync_queue SET status = 'error', error_message = :e WHERE id = :id")->execute([':e' => $msg, ':id' => $queueId]);
         $pdo->prepare('UPDATE company_sync_state SET last_error = :e WHERE cw_company_id = :c')->execute([':e' => "$section: $msg", ':c' => $cwCompanyId]);
         $remaining = (int) $pdo->query("SELECT COUNT(*) FROM sync_queue WHERE status = 'pending'")->fetchColumn();
-        return ['done' => $remaining === 0, 'remaining' => $remaining, 'section' => $section, 'error' => $msg];
+        return ['done' => $remaining === 0, 'remaining' => $remaining, 'section' => $section, 'cw_company_id' => $cwCompanyId, 'error' => $msg];
     }
 
     $remaining = (int) $pdo->query("SELECT COUNT(*) FROM sync_queue WHERE status = 'pending'")->fetchColumn();
-    return ['done' => $remaining === 0, 'remaining' => $remaining, 'section' => $section];
+    return ['done' => $remaining === 0, 'remaining' => $remaining, 'section' => $section, 'cw_company_id' => $cwCompanyId];
 }
 
 // ---------------------------------------------------------------------
