@@ -3765,3 +3765,116 @@ a { color: inherit; }
   color: #8fc3ff; border-color: #2f8fef; background: oklch(0.4 0.08 255 / 0.14);
 }
 @media (max-width: 860px) { .pane-menu { flex-direction: row; flex-wrap: wrap; } .pane-menu-item { width: auto; flex: 1 1 auto; } }
+/* Top 50 Clients modal -- added 2026-10-22 per Michael's "Top 50" clients
+   request. Relationships had no full-page popover/modal pattern before
+   this -- ported from commissions/styles.css's .modal-backdrop/.modal/
+   .modal-head (same dark-navy/Space Grotesk look as everywhere else in
+   this app), rather than inventing a second one. See app.js's
+   topClientsModalHtml() and claude/relationships-top-50-clients.md. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 9, 18, 0.72);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 28px 16px;
+  overflow-y: auto;
+  z-index: 50;
+}
+.modal {
+  background: oklch(0.17 0.025 255);
+  border: 1px solid oklch(0.32 0.03 255);
+  border-radius: 18px;
+  width: 100%;
+  max-width: 1180px;
+  padding: 22px 24px 26px;
+}
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.modal-head h3 {
+  margin: 0;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 20px;
+  color: white;
+}
+.modal-head .actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.modal-subtitle {
+  font-size: 12.5px;
+  color: oklch(0.7 0.02 255);
+  margin: 0 0 14px;
+  line-height: 1.5;
+}
+.modal-btn {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: white;
+  background: oklch(0.45 0.1 255);
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 16px;
+  cursor: pointer;
+}
+.modal-btn:disabled { opacity: .6; cursor: default; }
+.modal-btn-ghost {
+  background: transparent;
+  border: 1px solid oklch(0.38 0.03 255);
+  color: oklch(0.82 0.01 255);
+}
+.modal-close-btn {
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  color: oklch(0.7 0.02 255);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+.modal-close-btn:hover { color: white; }
+.modal-table-wrap { overflow-x: auto; }
+table.top-clients-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.top-clients-table th {
+  text-align: left;
+  font-size: 10.5px;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  color: oklch(0.62 0.02 255);
+  padding: 7px 8px;
+  border-bottom: 1.5px solid oklch(0.4 0.03 255);
+  white-space: nowrap;
+}
+table.top-clients-table th button {
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+table.top-clients-table th button:hover { color: white; }
+table.top-clients-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid oklch(0.26 0.03 255);
+  vertical-align: top;
+}
+table.top-clients-table td.r { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 700; }
+table.top-clients-table tr:first-child td { font-weight: 600; }
+.modal-footnote { font-size: 11.5px; color: oklch(0.58 0.015 255); margin-top: 12px; line-height: 1.5; }

@@ -133,6 +133,7 @@ require_once __DIR__ . '/connectwise-ticket-history-sync-core.php';
 require_once __DIR__ . '/connectwise-contacts-sync-core.php';
 require_once __DIR__ . '/connectwise-territory-sync-core.php';
 require_once __DIR__ . '/connectwise-opportunity-sync-core.php';
+require_once __DIR__ . '/connectwise-ytd-billing-sync-core.php';
 
 $pdo = relationships_db();
 relationships_require_login($pdo);
@@ -428,6 +429,20 @@ if ($action === 'opportunity-step') {
 if ($action === 'opportunity-retry-failed') {
     $requeued = relationships_cw_sync_requeue_errors($pdo, 'cw_opportunity_sync_queue');
     relationships_respond(200, ['ok' => true, 'requeued' => $requeued]);
+}
+
+// "Dollars Billed YTD" (Top 50 gauge) -- added 2026-10-22. No start/step
+// pair like the syncs above -- see connectwise-ytd-billing-sync-core.php's
+// file header for why a single call covers every customer. Lets Michael
+// (or any CRC) refresh it on demand from the Sync view instead of waiting
+// for the nightly cron.
+if ($action === 'ytd-billing-sync') {
+    try {
+        $result = relationships_cw_ytd_billing_sync($pdo);
+        relationships_respond(200, array_merge(['ok' => true], $result));
+    } catch (RelationshipsConnectWiseError $e) {
+        relationships_respond(502, ['ok' => false, 'error' => $e->getMessage()]);
+    }
 }
 
 relationships_respond(400, ['ok' => false, 'error' => 'Unknown action.']);

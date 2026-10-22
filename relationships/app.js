@@ -225,6 +225,15 @@
     todoOverviewData: null, // { bucket, items } | null
     todoOverviewError: null,
 
+    // "Top 50" clients modal (added 2026-10-22, per Michael) -- see
+    // topClientsModalHtml()/loadTopClients() below. data is the rows
+    // array (plus year/generated_at/lookup_error) returned by
+    // api/top-clients.php?action=list, cached once per page load (not
+    // reloaded every time the modal is reopened, same spirit as overview).
+    // sortDir: 'desc' (highest dollars first, the default/useful order for
+    // a "biggest clients" list) or 'asc'.
+    topClients: { open: false, loading: false, error: null, data: null, sortDir: 'desc' },
+
     // Prospecting view (api/prospecting.php, added 2026-09-23) -- see
     // prospectingHtml() below.
     prospecting: {
@@ -729,6 +738,33 @@
     }).catch(function () {
       state.overviewLoading = false;
       state.overviewError = 'Could not load the dashboard overview — check your connection.';
+      render();
+    });
+  }
+
+  // "Top 50" clients modal data (api/top-clients.php) -- added
+  // 2026-10-22. Only the <=50 winning companies' address/contact come from
+  // a live ConnectWise call (server-side); this is otherwise a cheap read
+  // of the nightly-synced customer_ytd_billing table. Loaded once when the
+  // modal is first opened (open-top-clients below), not on every page
+  // load, since it's a once-in-a-while report rather than a dashboard
+  // number reps watch constantly.
+  function loadTopClients() {
+    if (state.topClients.loading) return;
+    state.topClients.loading = true;
+    state.topClients.error = null;
+    render();
+    apiGet('api/top-clients.php?action=list').then(function (r) {
+      state.topClients.loading = false;
+      if (r.data && r.data.ok) {
+        state.topClients.data = r.data;
+      } else {
+        state.topClients.error = (r.data && r.data.error) || 'Could not load the Top 50 list.';
+      }
+      render();
+    }).catch(function () {
+      state.topClients.loading = false;
+      state.topClients.error = 'Could not load the Top 50 list — check your connection.';
       render();
     });
   }
@@ -4873,7 +4909,8 @@
         todoOverviewPanelHtml() +
         (state.overviewListMode === 'outgrow'
           ? outgrowStaleListHtml(state.overview.customers || [])
-          : (state.overviewListMode ? customerOverviewListHtml(state.overview.customers || []) : ''));
+          : (state.overviewListMode ? customerOverviewListHtml(state.overview.customers || []) : '')) +
+        topClientsModalHtml();
     }
     // Never loaded (still pending) or failed to load -- either way, fall
     // back to the original guidance rather than showing nothing. A load
@@ -5177,6 +5214,17 @@
             todo3StatHtml('future', 'Future', g.future) +
           '</div>' +
         '</div>';
+      } else if (g.key === 'top_clients') {
+        // Opens the Top 50 modal (topClientsModalHtml()) rather than
+        // toggling an inline list like the gauges below -- this one's
+        // "list" is a sortable, exportable table, not a simple customer
+        // list, so it gets relationships' first real popover/modal
+        // instead. See claude/relationships-top-50-clients.md.
+        html += '<button type="button" class="gauge-tile gauge-tile-clickable' + (state.topClients.open ? ' active' : '') + '" data-action="open-top-clients" title="View the Top 50 list">' +
+          '<div class="gauge-label">' + escapeHtml(g.label) + '</div>' +
+          '<div class="gauge-value">' + (g.value == null ? '—' : g.value) + '</div>' +
+          '<div class="gauge-hint">Open list ⤢</div>' +
+        '</button>';
       } else if (g.key === 'total_customers' || g.key === 'total_prospects' || g.key === 'total_residential' || g.key === 'outgrow_stale') {
         // Clickable: shows/hides that group's list (hidden by default).
         var listMode = g.key === 'total_customers' ? 'customers' : (g.key === 'total_prospects' ? 'prospects' : (g.key === 'total_residential' ? 'residential' : 'outgrow'));
@@ -5196,6 +5244,119 @@
     });
     html += '</div>';
     return html;
+  }
+
+  // ---- Top 50 clients modal (added 2026-10-22) -------------------------
+  // See claude/relationships-top-50-clients.md for the full feature
+  // writeup. Relationships' first real backdrop/modal popover -- ported
+  // from commissions/app.js's report modal (.modal-backdrop/.modal/
+  // .modal-head CSS, and the same data-action="close-*-bg" + "only close
+  // if the click landed on the backdrop itself" click-away idiom) rather
+  // than inventing a second pattern for it.
+
+  function escapeCsvField(v) {
+    var s = v == null ? '' : String(v);
+    if (/[",\n\r]/.test(s)) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+
+  function topClientsSortedRows() {
+    var rows = (state.topClients.data && state.topClients.data.rows) || [];
+    var dir = state.topClients.sortDir === 'asc' ? 1 : -1;
+    // .slice() -- never sorts the cached array in place, so re-opening
+    // the modal (or toggling sort back) never depends on array order
+    // surviving a prior render.
+    return rows.slice().sort(function (a, b) {
+      return (a.dollars_ytd - b.dollars_ytd) * dir;
+    });
+  }
+
+  function exportTopClientsCsv() {
+    var rows = topClientsSortedRows();
+    var header = ['Business Name', 'Contact First Name', 'Contact Last Name', 'Address 1', 'Address 2', 'City', 'State', 'Zip', 'Dollars Billed YTD'];
+    var lines = [header.map(escapeCsvField).join(',')];
+    rows.forEach(function (r) {
+      lines.push([
+        r.business_name, r.contact_first_name, r.contact_last_name,
+        r.address1, r.address2, r.city, r.state, r.zip,
+        (r.dollars_ytd || 0).toFixed(2)
+      ].map(escapeCsvField).join(','));
+    });
+    var csv = lines.join('\r\n') + '\r\n';
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var year = (state.topClients.data && state.topClients.data.year) || new Date().getFullYear();
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'top-50-clients-' + year + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  function topClientsSortArrow(active, dir) {
+    if (!active) return '';
+    return dir === 'asc' ? ' ▲' : ' ▼';
+  }
+
+  function topClientsModalHtml() {
+    if (!state.topClients.open) return '';
+    var t = state.topClients;
+    var body = '';
+    if (t.loading && !t.data) {
+      body = '<div class="loading">Loading the Top 50 list…</div>';
+    } else if (t.error) {
+      body = '<div class="error-banner">' + escapeHtml(t.error) + '</div>';
+    } else if (t.data) {
+      var rows = topClientsSortedRows();
+      var dirLabel = t.sortDir === 'asc' ? 'low to high' : 'high to low';
+      if (!rows.length) {
+        body = '<div class="empty-state">No Dollars Billed YTD data yet — the nightly ConnectWise sync populates this list (see Sync Now).</div>';
+      } else {
+        body = '<div class="modal-table-wrap"><table class="top-clients-table"><thead><tr>' +
+          '<th>Business Name</th><th>Primary Contact</th><th>Address</th>' +
+          '<th><button type="button" data-action="sort-top-clients-dollars">Dollars Billed YTD' + topClientsSortArrow(true, t.sortDir) + '</button></th>' +
+        '</tr></thead><tbody>';
+        rows.forEach(function (r) {
+          var contactName = ((r.contact_first_name || '') + ' ' + (r.contact_last_name || '')).trim();
+          var addressParts = [r.address1, r.address2].filter(function (p) { return p; }).join(', ');
+          var cityStateZip = [[r.city, r.state].filter(function (p) { return p; }).join(', '), r.zip].filter(function (p) { return p; }).join(' ');
+          var addressHtml = [addressParts, cityStateZip].filter(function (p) { return p; }).map(escapeHtml).join('<br>') || '<span class="hint">—</span>';
+          body += '<tr>' +
+            '<td>' + escapeHtml(r.business_name) + '</td>' +
+            '<td>' + (contactName ? escapeHtml(contactName) : '<span class="hint">—</span>') + '</td>' +
+            '<td>' + addressHtml + '</td>' +
+            '<td class="r">' + fmtCurrency(r.dollars_ytd) + '</td>' +
+          '</tr>';
+        });
+        body += '</tbody></table></div>';
+        if (t.data.lookup_error) {
+          body += '<div class="modal-footnote">Address/contact lookup against ConnectWise failed (' + escapeHtml(t.data.lookup_error) + ') — business names and dollar totals above are still accurate, those two columns just came back blank this time. Try again, or let Michael know if it keeps happening.</div>';
+        }
+      }
+    }
+
+    var subtitle = '';
+    if (t.data) {
+      subtitle = '<div class="modal-subtitle">Ranked by every closed, non-void invoice (any type) billed in ' + escapeHtml(String(t.data.year)) +
+        (t.data.generated_at ? ', as of the last nightly sync (' + escapeHtml(t.data.generated_at) + ' server time)' : ', not yet synced') +
+        '. "Primary Contact" is ConnectWise’s Default Contact for the company — not a dedicated billing-contact field (ConnectWise doesn’t have one) — so double-check it before printing envelopes/labels.</div>';
+    }
+
+    return '<div class="modal-backdrop" data-action="close-top-clients-bg"><div class="modal" role="dialog" aria-label="Top 50 Clients">' +
+      '<div class="modal-head">' +
+        '<h3>Top 50 Clients — Dollars Billed YTD</h3>' +
+        '<div class="actions">' +
+          '<button type="button" class="modal-btn" data-action="export-top-clients-csv"' + (t.data && t.data.rows && t.data.rows.length ? '' : ' disabled') + '>Export to Excel (.csv)</button>' +
+          '<button type="button" class="modal-close-btn" data-action="close-top-clients" title="Close">✕</button>' +
+        '</div>' +
+      '</div>' +
+      subtitle +
+      body +
+    '</div></div>';
   }
 
   // Weekly rep leaderboards -- added 2026-09-23, per Michael: "Top 3 reps
@@ -9203,6 +9364,27 @@
       state.overviewStatusFilter = {};
       state.outgrowTerritory = null;
       render();
+    } else if (action === 'open-top-clients') {
+      state.topClients.open = true;
+      render();
+      if (!state.topClients.data) loadTopClients();
+    } else if (action === 'close-top-clients') {
+      state.topClients.open = false;
+      render();
+    } else if (action === 'close-top-clients-bg') {
+      // Click-away dismissal -- only when the click landed on the
+      // backdrop itself, not something inside the modal that happens to
+      // bubble up through it (same idiom commissions/app.js uses for its
+      // report modal).
+      if (e.target === el) {
+        state.topClients.open = false;
+        render();
+      }
+    } else if (action === 'sort-top-clients-dollars') {
+      state.topClients.sortDir = state.topClients.sortDir === 'desc' ? 'asc' : 'desc';
+      render();
+    } else if (action === 'export-top-clients-csv') {
+      exportTopClientsCsv();
     } else if (action === 'set-outgrow-territory') {
       state.outgrowTerritory = el.getAttribute('data-all') ? null : el.getAttribute('data-territory');
       render();

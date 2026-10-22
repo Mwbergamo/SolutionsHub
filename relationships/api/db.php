@@ -270,6 +270,31 @@ function relationships_migrate(PDO $pdo): void
         )
     SQL);
 
+    // "Dollars Billed YTD" per customer -- added 2026-10-22 per Michael's
+    // "Top 50" clients request (see claude/relationships-top-50-clients.md
+    // and connectwise-ytd-billing-sync-core.php). Deliberately NOT the
+    // same data as customer_monthly_billing/customer_yearly_billing above:
+    // those two are Agreement-invoices only (applyToType contains
+    // "Agreement"), which is the right scope for a recurring-revenue
+    // trend chart but would silently exclude one-off product/service
+    // invoices from a "who are our biggest clients by total dollars
+    // billed" ranking. This table instead sums EVERY non-void, Closed
+    // invoice (any applyToType) for the current calendar year, one row
+    // per customer -- see relationships_cw_ytd_billing_sync(). Only ever
+    // holds the CURRENT year's row per customer (the sync deletes and
+    // reinserts year = date('Y') every run); `year` is kept as a column
+    // rather than assumed so a future year's data never silently collides
+    // with a stale prior year's row still sitting in the table.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS customer_ytd_billing (
+            customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            year TEXT NOT NULL,
+            total REAL NOT NULL DEFAULT 0,
+            synced_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (customer_id, year)
+        )
+    SQL);
+
     // Queue of customers to (re)pull billing for -- same start()/step()
     // shape and reasoning as cw_sync_queue, but keyed by customer (one
     // /finance/invoices call covers a customer's whole 6-month series)

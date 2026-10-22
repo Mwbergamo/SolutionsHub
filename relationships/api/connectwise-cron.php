@@ -28,6 +28,7 @@ require_once __DIR__ . '/connectwise-prospect-sync-core.php';
 require_once __DIR__ . '/connectwise-ticket-history-sync-core.php';
 require_once __DIR__ . '/connectwise-contacts-sync-core.php';
 require_once __DIR__ . '/connectwise-opportunity-sync-core.php';
+require_once __DIR__ . '/connectwise-ytd-billing-sync-core.php';
 
 set_time_limit(0);
 
@@ -228,6 +229,27 @@ if ($totalOpportunityErrors !== []) {
     }
 }
 
+// "Dollars Billed YTD" (customer_ytd_billing) -- added 2026-10-22 for
+// Michael's "Top 50" clients feature. Not a queue/start()/step() pair
+// like every sync above -- a single /finance/invoices call covers every
+// customer at once (see connectwise-ytd-billing-sync-core.php's file
+// header), so there's nothing to loop. Runs last for the same reason
+// Contacts/Opportunity do: it only needs connectwise_id, so it doesn't
+// care whether it runs before or after the other syncs, and a failure
+// here shouldn't block anything that already succeeded.
+echo "\n[" . date('c') . "] Starting ConnectWise Dollars Billed YTD sync...\n";
+
+$ytdBillingError = null;
+try {
+    $ytdBillingResult = relationships_cw_ytd_billing_sync($pdo);
+    echo "Done. {$ytdBillingResult['invoices_counted']} invoice(s) counted toward {$ytdBillingResult['companies_billed']} compan" .
+        ($ytdBillingResult['companies_billed'] === 1 ? 'y' : 'ies') .
+        ", {$ytdBillingResult['customers_matched']} matched to tracked customers (year {$ytdBillingResult['year']}, {$ytdBillingResult['invoices_seen']} invoice(s) seen total).\n";
+} catch (Throwable $e) {
+    $ytdBillingError = $e->getMessage();
+    fwrite(STDERR, "Dollars Billed YTD sync failed: {$ytdBillingError}\n");
+}
+
 exit((
     $agreementSyncErrorCount > 0
     || $billingResult['totals']['error'] > 0
@@ -235,4 +257,5 @@ exit((
     || $ticketHistoryResult['totals']['error'] > 0
     || $contactsResult['totals']['error'] > 0
     || $opportunityResult['totals']['error'] > 0
+    || $ytdBillingError !== null
 ) ? 1 : 0);

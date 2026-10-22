@@ -375,6 +375,22 @@ if ($action === 'overview') {
         $todoFuture += (int) ($todoCountRow['future'] ?? 0);
     }
 
+    // "Top 50" clients by Dollars Billed YTD -- added 2026-10-22 per
+    // Michael's request, same company-wide (no territory filter) scope as
+    // portfolio_billing_trend above, since the point is one list of
+    // CodeBlue's biggest clients overall for a mailing campaign, not a
+    // per-rep slice. Reads customer_ytd_billing (see
+    // connectwise-ytd-billing-sync-core.php) -- a cheap local COUNT/MAX,
+    // not a live ConnectWise call; the gauge click opens a popover that
+    // calls top-clients.php for the actual ranked rows (that's the one
+    // place this feature makes live ConnectWise calls, and only for the
+    // <=50 winning companies).
+    $topClientsYear = date('Y');
+    $topClientsRow = $pdo->prepare('SELECT COUNT(*) AS n, MAX(synced_at) AS last_synced FROM customer_ytd_billing WHERE year = :year');
+    $topClientsRow->execute([':year' => $topClientsYear]);
+    $topClientsMeta = $topClientsRow->fetch(PDO::FETCH_ASSOC) ?: ['n' => 0, 'last_synced' => null];
+    $topClientsCount = min(50, (int) ($topClientsMeta['n'] ?? 0));
+
     $gauges = [
         ['key' => 'total_customers', 'label' => 'Active Clients', 'value' => $totalCustomers, 'format' => 'count'],
         ['key' => 'total_prospects', 'label' => 'Total Prospects', 'value' => $totalProspects, 'format' => 'count'],
@@ -382,6 +398,7 @@ if ($action === 'overview') {
         ['key' => 'portfolio_billing_trend', 'label' => 'Portfolio Billing Trend', 'value' => null, 'format' => 'trend', 'trend' => $portfolioBillingTrend],
         ['key' => 'outgrow_stale', 'label' => '60+ Days Since Last OutGrow Touch', 'value' => $outgrowStaleCount, 'format' => 'count'],
         ['key' => 'todo_overview', 'label' => 'To-Do List', 'format' => 'todo3', 'overdue' => $todoOverdue, 'due_today' => $todoDueToday, 'future' => $todoFuture],
+        ['key' => 'top_clients', 'label' => 'Top 50 Clients YTD', 'value' => $topClientsCount, 'format' => 'launch', 'generated_at' => $topClientsMeta['last_synced']],
     ];
 
     // Whether the bulk ConnectWise backfill of existing OutGrow dates (see
