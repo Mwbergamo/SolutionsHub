@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Record Your Phone System Greetings — CodeBlue Technology</title>
+<link rel="icon" type="image/png" href="../assets/favicon.png">
+<link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+<meta name="description" content="CodeBlue Technology call in experience recording.">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: #F4F5F7; font-family: 'IBM Plex Sans', sans-serif; color: #1B2030; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 32px 20px 80px; }
+  .letterhead { border-bottom: 3px solid #182857; padding-bottom: 16px; margin-bottom: 24px; }
+  .letterhead .name { font-family: 'Space Grotesk', sans-serif; font-size: 22px; font-weight: 700; color: #182857; }
+  .letterhead .sub { font-size: 13px; color: #5A6472; margin-top: 4px; }
+  .card { background: white; border-radius: 12px; border: 1px solid #E2E5EA; padding: 20px 22px; margin-bottom: 16px; }
+  .intro-text { font-size: 13px; color: #5A6472; line-height: 1.6; }
+
+  .error-banner { margin: 0 0 16px; padding: 12px 16px; background: #FBE6E4; border: 1px solid #E5534B; color: #8a2a24; border-radius: 10px; font-size: 13px; }
+  .success-card { text-align: center; padding: 40px 24px; }
+  .success-card .big { font-size: 40px; }
+  .success-card h2 { font-family: 'Space Grotesk', sans-serif; color: #182857; margin: 8px 0; }
+
+  .field-label { display: block; font-size: 11.5px; font-weight: 700; color: #5A6472; margin-bottom: 6px; text-transform: uppercase; letter-spacing: .03em; }
+  .text-input, .date-input {
+    width: 100%; padding: 9px 11px; border-radius: 7px; border: 1px solid #D6DAE2;
+    background: #FAFBFC; font-size: 14px; font-family: inherit; color: #1B2030;
+  }
+
+  /* ---- Track card ---- */
+  .track-title { font-family: 'Space Grotesk', sans-serif; font-size: 16px; font-weight: 700; color: #182857; margin-bottom: 10px; }
+  .date-row { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 14px; }
+  .date-row .date-field { flex: 1; min-width: 0; }
+  .date-row .date-sep { padding-bottom: 9px; color: #8A93A3; font-size: 12.5px; white-space: nowrap; }
+
+  .track-status { font-size: 12.5px; color: #5A6472; margin-bottom: 12px; min-height: 17px; }
+  .track-status.has-file { color: #1E8A4C; font-weight: 600; }
+  .track-status.is-busy { color: #8A93A3; font-style: italic; }
+  .track-error { font-size: 12px; color: #A6362B; margin-top: 8px; }
+
+  .track-controls { display: flex; align-items: center; gap: 14px; }
+  .ctrl-btn {
+    position: relative; width: 42px; height: 42px; border-radius: 999px; border: 1.5px solid #D6DAE2;
+    background: white; display: flex; align-items: center; justify-content: center; cursor: pointer;
+    padding: 0; color: #182857; flex: 0 0 auto;
+  }
+  .ctrl-btn:hover { border-color: #182857; }
+  .ctrl-btn:disabled { opacity: .45; cursor: default; }
+  .ctrl-btn.ctrl-record { color: #D9433C; border-color: #F0C7C4; }
+  .ctrl-btn.ctrl-record.is-recording { background: #D9433C; border-color: #D9433C; color: white; animation: pulse-rec 1.4s ease-in-out infinite; }
+  .ctrl-btn.ctrl-play { color: #1E8A4C; border-color: #BFE3CC; }
+  .ctrl-btn.ctrl-play.is-playing { background: #1E8A4C; border-color: #1E8A4C; color: white; }
+  .ctrl-btn.ctrl-clear { font-size: 16px; font-weight: 700; color: #8A93A3; }
+  .ctrl-btn.ctrl-upload { color: #2f8fef; border-color: #BFDBF7; }
+  .ctrl-btn input[type="file"] { display: none; }
+
+  @keyframes pulse-rec { 0%, 100% { box-shadow: 0 0 0 0 rgba(217,67,60,.5); } 50% { box-shadow: 0 0 0 8px rgba(217,67,60,0); } }
+
+  .ctrl-btn[data-tip]:hover::after, .ctrl-btn[data-tip]:focus-visible::after {
+    content: attr(data-tip); position: absolute; bottom: calc(100% + 9px); left: 50%; transform: translateX(-50%);
+    background: #182857; color: #fff; font-size: 11px; font-weight: 600; padding: 6px 10px; border-radius: 6px;
+    white-space: nowrap; z-index: 20; pointer-events: none;
+  }
+  .ctrl-btn[data-tip]:hover::before, .ctrl-btn[data-tip]:focus-visible::before {
+    content: ''; position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%);
+    border: 5px solid transparent; border-top-color: #182857; z-index: 20;
+  }
+
+  .submit-btn {
+    width: 100%; background: #182857; border: none; color: white; font-size: 14.5px; font-weight: 700;
+    padding: 14px 18px; border-radius: 999px; cursor: pointer; margin-top: 4px;
+  }
+  .submit-btn:disabled { opacity: .6; cursor: default; }
+  .submit-btn:hover:not(:disabled) { background: #0f1b45; }
+
+  .footer-contact { text-align: center; font-size: 11.5px; color: #8A93A3; margin-top: 20px; }
+</style>
+</head>
+<body>
+<div id="app-root">
+  <div class="wrap"><div class="card" style="text-align:center;color:#5A6472;">Loading…</div></div>
+</div>
+<!--
+  One shared, persistent <audio> element for every track's Play button --
+  deliberately OUTSIDE #app-root so a render() (which rebuilds #app-root's
+  innerHTML from scratch, same pattern as ratesheet/signup.js) never
+  destroys it mid-playback. See record.js's playTrack()/stopPlayback().
+-->
+<audio id="global-player" style="display:none"></audio>
+<script src="record.js?v=1"></script>
+</body>
+</html>

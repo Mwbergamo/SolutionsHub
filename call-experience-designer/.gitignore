@@ -1,0 +1,9 @@
+# The ROOT .gitignore at the repo root cannot be edited from this tool
+# chain (writes to it are refused) -- see ratesheet/.gitignore for the
+# same note. Each self-contained sub-app therefore carries its own
+# .gitignore for its own runtime data, which git honors identically to
+# a root-level entry.
+data/*.sqlite
+data/*.sqlite-wal
+data/*.sqlite-shm
+data/tracks/

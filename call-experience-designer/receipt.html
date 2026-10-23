@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call In Experience Submission — CodeBlue Technology</title>
+<link rel="icon" type="image/png" href="../assets/favicon.png">
+<link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #E9EBEF; font-family: 'IBM Plex Sans', sans-serif; color: #1B2030; }
+  .toolbar { position: sticky; top: 0; background: #182857; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; z-index: 10; }
+  .toolbar .title { color: white; font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 15px; }
+  .toolbar a.back-link { color: #BFD4F2; font-size: 12.5px; text-decoration: none; font-weight: 600; }
+  .toolbar a.back-link:hover { color: white; }
+
+  .sheet { width: 720px; max-width: 94vw; margin: 24px auto 60px; background: white; border-radius: 12px; padding: 28px 32px; box-shadow: 0 2px 12px rgba(0,0,0,.1); }
+  .letterhead { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 3px solid #182857; padding-bottom: 10px; margin-bottom: 18px; }
+  .letterhead .name { font-family: 'Space Grotesk', sans-serif; font-size: 19px; font-weight: 700; color: #182857; }
+  .letterhead .doc-title { font-size: 12px; color: #5A6472; text-align: right; }
+
+  .status-badge { display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; padding: 3px 9px; border-radius: 999px; }
+  .status-submitted { background: #E4F7EC; color: #1E8A4C; }
+  .status-pending { background: #FBE6E4; color: #A6362B; }
+
+  .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #5A6472; margin: 20px 0 8px; }
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; font-size: 12.5px; }
+  .info-grid div span.k { color: #5A6472; }
+  .info-grid div span.v { color: #1B2030; font-weight: 600; }
+
+  .track-card { border: 1px solid #E2E5EA; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
+  .track-card .track-name { font-size: 14px; font-weight: 700; color: #182857; }
+  .track-card .track-dates { font-size: 11.5px; color: #5A6472; margin-top: 2px; }
+  .track-card .track-body { display: flex; align-items: center; gap: 14px; margin-top: 10px; flex-wrap: wrap; }
+  .track-card audio { height: 32px; }
+  .track-card .no-file { font-size: 12.5px; color: #8A93A3; font-style: italic; }
+  .download-link { font-size: 12px; font-weight: 700; color: #2f8fef; text-decoration: none; }
+  .download-link:hover { text-decoration: underline; }
+
+  .error-banner { margin: 24px auto; max-width: 640px; padding: 14px 18px; background: #FBE6E4; border: 1px solid #E5534B; color: #8a2a24; border-radius: 10px; font-size: 13.5px; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <div class="title">Call In Experience Submission</div>
+  <a class="back-link" href="index.html">← All Requests</a>
+</div>
+<div id="app-root">
+  <div class="error-banner">Loading…</div>
+</div>
+<script src="receipt.js?v=1"></script>
+</body>
+</html>
