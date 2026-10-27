@@ -122,7 +122,9 @@ function call_experience_migrate(PDO $pdo): void
             track_key TEXT NOT NULL,   -- 'main_greeting' | 'phone_tree' | 'general_holiday' | 'emergency'
 
             date_start TEXT,          -- 'YYYY-MM-DD' or NULL
+            time_start TEXT,          -- 'HH:MM' (24-hour, from <input type="time">) or NULL -- added 2026-10-27 per Michael: the start/stop window needs an hour/minute (AM/PM-displayed) component, not just a date
             date_stop TEXT,           -- 'YYYY-MM-DD' or NULL
+            time_stop TEXT,           -- 'HH:MM' (24-hour) or NULL -- same as time_start above
 
             stored_filename TEXT,     -- e.g. 'main_greeting.wav', relative to call_experience_track_dir($requestId) -- NULL when no file yet (cleared, or never recorded)
             original_filename TEXT,   -- customer's own filename, for an uploaded (not recorded) track
@@ -136,6 +138,13 @@ function call_experience_migrate(PDO $pdo): void
         )
     SQL);
     $pdo->exec('CREATE INDEX IF NOT EXISTS idx_call_experience_tracks_request ON call_experience_tracks(request_id)');
+
+    // Live-upgrade path for a database file that already exists from
+    // before 2026-10-27 (time_start/time_stop didn't exist yet) -- the
+    // CREATE TABLE IF NOT EXISTS above only applies to a brand-new
+    // database, so an already-deployed one needs these added here.
+    call_experience_add_column_if_missing($pdo, 'call_experience_tracks', 'time_start', 'TEXT');
+    call_experience_add_column_if_missing($pdo, 'call_experience_tracks', 'time_stop', 'TEXT');
 }
 
 /** Same ALTER-TABLE-if-needed helper as register/relationships/ratesheet use for live schema changes. */

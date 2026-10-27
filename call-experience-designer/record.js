@@ -9,7 +9,7 @@
  *
  * Four fixed tracks (TRACKS below, kept in sync with api/db.php's
  * call_experience_track_defs()): for each, the customer can set an
- * optional date-start/date-stop window, and either record live from
+ * optional date-and-time start/stop window, and either record live from
  * their microphone or upload a .wav file -- Record/Play/Clear/Upload,
  * exactly as Michael specified (mockup + verbatim message, 2026-10-23).
  *
@@ -109,7 +109,9 @@
   function applyTracksFromServer(tracks) {
     tracks.forEach(function (t) {
       state.tracks[t.track_key] = {
-        date_start: t.date_start, date_stop: t.date_stop, has_file: t.has_file,
+        date_start: t.date_start, time_start: t.time_start,
+        date_stop: t.date_stop, time_stop: t.time_stop,
+        has_file: t.has_file,
         source: t.source, original_filename: t.original_filename, size_bytes: t.size_bytes,
         version: Date.now()
       };
@@ -331,19 +333,25 @@
     });
   }
 
-  function saveDate(trackKey, field, value) {
+  // Added 2026-10-27 per Michael: each boundary (Starts / Until) now
+  // carries an optional hour/minute component alongside its date, so a
+  // change to any one of the 4 window fields saves ALL 4 together --
+  // same "post the full current state" pattern the original date-only
+  // version used for date_start/date_stop.
+  function saveWindowField(trackKey, field, value) {
     state.tracks[trackKey][field] = value || null;
     render();
     apiPostUrlEncoded('api/public.php?action=save_dates', {
       t: token, track: trackKey,
-      date_start: state.tracks[trackKey].date_start, date_stop: state.tracks[trackKey].date_stop
+      date_start: state.tracks[trackKey].date_start, time_start: state.tracks[trackKey].time_start,
+      date_stop: state.tracks[trackKey].date_stop, time_stop: state.tracks[trackKey].time_stop
     }).then(function (r) {
       if (!r.data || !r.data.ok) {
-        setTrackError(trackKey, (r.data && r.data.error) || 'Could not save that date.');
+        setTrackError(trackKey, (r.data && r.data.error) || 'Could not save that date/time.');
         render();
       }
     }).catch(function () {
-      setTrackError(trackKey, 'Could not reach the server to save that date — it may not have been saved.');
+      setTrackError(trackKey, 'Could not reach the server to save that date/time — it may not have been saved.');
       render();
     });
   }
@@ -408,12 +416,19 @@
     return '' +
       '<div class="card">' +
       '  <div class="track-title">' + e(track.label) + '</div>' +
-      '  <div class="date-row">' +
-      '    <div class="date-field"><label class="field-label">Use Starting</label>' +
-      '      <input class="date-input" type="date" value="' + e(t.date_start || '') + '" ' + (locked ? 'disabled' : '') + ' data-action="date-start" data-track="' + track.key + '" /></div>' +
-      '    <div class="date-sep">to</div>' +
-      '    <div class="date-field"><label class="field-label">Use Until</label>' +
-      '      <input class="date-input" type="date" value="' + e(t.date_stop || '') + '" ' + (locked ? 'disabled' : '') + ' data-action="date-stop" data-track="' + track.key + '" /></div>' +
+      '  <div class="window-row">' +
+      '    <div class="window-field"><label class="field-label">Starts</label>' +
+      '      <div class="window-inputs">' +
+      '        <input class="date-input" type="date" value="' + e(t.date_start || '') + '" ' + (locked ? 'disabled' : '') + ' data-action="date-start" data-track="' + track.key + '" />' +
+      '        <input class="time-input" type="time" value="' + e(t.time_start || '') + '" ' + (locked ? 'disabled' : '') + ' data-action="time-start" data-track="' + track.key + '" />' +
+      '      </div>' +
+      '    </div>' +
+      '    <div class="window-field"><label class="field-label">Until</label>' +
+      '      <div class="window-inputs">' +
+      '        <input class="date-input" type="date" value="' + e(t.date_stop || '') + '" ' + (locked ? 'disabled' : '') + ' data-action="date-stop" data-track="' + track.key + '" />' +
+      '        <input class="time-input" type="time" value="' + e(t.time_stop || '') + '" ' + (locked ? 'disabled' : '') + ' data-action="time-stop" data-track="' + track.key + '" />' +
+      '      </div>' +
+      '    </div>' +
       '  </div>' +
       trackStatusHtml(track.key, t, busy) +
       '  <div class="track-controls">' +
@@ -439,7 +454,7 @@
 
   function renderForm() {
     var html = '<div class="wrap">' + letterheadHtml();
-    html += '<div class="card"><p class="intro-text">To finish setting up your phone system, please record or upload each message below. For any message, you can also set an optional start and stop date for when it should be in use — both are optional.</p></div>';
+    html += '<div class="card"><p class="intro-text">To finish setting up your phone system, please record or upload each message below. For any message, you can also set an optional start and stop date and time for when it should be in use — all of these are optional.</p></div>';
     html += TRACKS.map(trackRowHtml).join('');
     html += '' +
       '<div class="card">' +
@@ -505,9 +520,13 @@
     if (el.getAttribute('data-action') === 'upload-file') {
       handleFileUpload(el.getAttribute('data-track'), el.files && el.files[0]);
     } else if (el.getAttribute('data-action') === 'date-start') {
-      saveDate(el.getAttribute('data-track'), 'date_start', el.value);
+      saveWindowField(el.getAttribute('data-track'), 'date_start', el.value);
+    } else if (el.getAttribute('data-action') === 'time-start') {
+      saveWindowField(el.getAttribute('data-track'), 'time_start', el.value);
     } else if (el.getAttribute('data-action') === 'date-stop') {
-      saveDate(el.getAttribute('data-track'), 'date_stop', el.value);
+      saveWindowField(el.getAttribute('data-track'), 'date_stop', el.value);
+    } else if (el.getAttribute('data-action') === 'time-stop') {
+      saveWindowField(el.getAttribute('data-track'), 'time_stop', el.value);
     }
   });
 

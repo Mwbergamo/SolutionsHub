@@ -12,7 +12,7 @@
  *
  * GET  ?action=context&t=<token>
  *   -> { ok: true, request: { company_name, status, tracks: [ {
- *        track_key, label, date_start, date_stop, has_file, source,
+ *        track_key, label, date_start, time_start, date_stop, time_stop, has_file, source,
  *        original_filename, size_bytes }, ... (4, fixed order) ] } }
  *   record.html calls this on load (and after submit) to render/restore
  *   state -- recording/uploading/dating is saved server-side as the
@@ -43,12 +43,15 @@
  *   removes the last track recorded and allows the user to record or
  *   upload again," nothing about the dates.
  *
- * POST ?action=save_dates   { t, track, date_start, date_stop }
- *   Saves (or clears, if blank) the optional MM/DD/YYYY-equivalent
- *   start/stop window for one track, independent of whether a file
- *   exists yet for it -- "both fields are not required but available"
- *   (Michael). date_start/date_stop are 'YYYY-MM-DD' strings from the
- *   page's native <input type="date">, or null.
+ * POST ?action=save_dates   { t, track, date_start, time_start, date_stop, time_stop }
+ *   Saves (or clears, if blank) the optional date/time start/stop
+ *   window for one track, independent of whether a file exists yet for
+ *   it -- "both fields are not required but available" (Michael).
+ *   date_start/date_stop are 'YYYY-MM-DD' strings from the page's
+ *   native <input type="date">; time_start/time_stop are 'HH:MM'
+ *   (24-hour) strings from <input type="time"> -- added 2026-10-27 per
+ *   Michael, so each boundary can carry an hour/minute (AM/PM-displayed)
+ *   component, not just a date. Any of the 4 may be null.
  *
  * POST ?action=submit   { t, company_name }
  *   Finalizes the request: stores company_name, flips status to
@@ -116,7 +119,9 @@ function call_experience_public_track_summary(PDO $pdo, int $requestId): array
             'track_key' => $key,
             'label' => $label,
             'date_start' => $row['date_start'] ?? null,
+            'time_start' => $row['time_start'] ?? null,
             'date_stop' => $row['date_stop'] ?? null,
+            'time_stop' => $row['time_stop'] ?? null,
             'has_file' => $row !== null && $row['stored_filename'] !== null,
             'source' => $row['source'] ?? null,
             'original_filename' => $row['original_filename'] ?? null,
@@ -289,15 +294,17 @@ if ($action === 'save_dates') {
     }
 
     $dateStart = call_experience_normalize_date($_POST['date_start'] ?? null);
+    $timeStart = call_experience_normalize_date($_POST['time_start'] ?? null);
     $dateStop = call_experience_normalize_date($_POST['date_stop'] ?? null);
+    $timeStop = call_experience_normalize_date($_POST['time_stop'] ?? null);
     $requestId = (int) $r['id'];
 
     call_experience_ensure_track_row($pdo, $requestId, $trackKey);
     $pdo->prepare(
         "UPDATE call_experience_tracks
-         SET date_start = :ds, date_stop = :de, updated_at = datetime('now')
+         SET date_start = :ds, time_start = :ts, date_stop = :de, time_stop = :te, updated_at = datetime('now')
          WHERE request_id = :rid AND track_key = :tk"
-    )->execute([':ds' => $dateStart, ':de' => $dateStop, ':rid' => $requestId, ':tk' => $trackKey]);
+    )->execute([':ds' => $dateStart, ':ts' => $timeStart, ':de' => $dateStop, ':te' => $timeStop, ':rid' => $requestId, ':tk' => $trackKey]);
 
     call_experience_respond(200, ['ok' => true, 'tracks' => call_experience_public_track_summary($pdo, $requestId)]);
 }
@@ -322,7 +329,8 @@ if ($action === 'submit') {
 
     $notifyStatus = 'sent';
     try {
-        call_experience_send_submit_notification($requestId, $companyName, (string) $r['rep_name'], (string) $r['rep_email'], (string) $r['customer_email']);
+        $tracks = call_experience_public_track_summary($pdo, $requestId);
+        call_experience_send_submit_notification($requestId, $companyName, (string) $r['rep_name'], (string) $r['rep_email'], (string) $r['customer_email'], $tracks);
     } catch (Throwable $e) {
         $notifyStatus = 'failed';
         error_log('[call-experience-designer/public] submit notification failed for request ' . $requestId . ': ' . $e->getMessage());
@@ -335,7 +343,13 @@ if ($action === 'submit') {
 
 call_experience_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
 
-/** '' and missing both normalize to NULL; otherwise pass the 'YYYY-MM-DD' value straight through (the native date input already constrains the format). */
+/**
+ * '' and missing both normalize to NULL; otherwise pass the value
+ * straight through -- used for both the 'YYYY-MM-DD' date fields and the
+ * 'HH:MM' (24-hour) time fields added 2026-10-27, since the native
+ * <input type="date">/<input type="time"> elements already constrain
+ * each one's format.
+ */
 function call_experience_normalize_date(mixed $value): ?string
 {
     $s = trim((string) ($value ?? ''));
@@ -348,7 +362,7 @@ function call_experience_normalize_date(mixed $value): ?string
  * -- see this file's header docblock for why that's a login-gated link
  * rather than a second public token.
  */
-function call_experience_send_submit_notification(int $requestId, string $companyName, string $repName, string $repEmail, string $customerEmail): void
+function call_experience_send_submit_notification(int $requestId, string $companyName, string $repName, string $repEmail, string $customerEmail, array $tracks): void
 {
     $configPath = __DIR__ . '/../../mail/mail-config.php';
     if (!is_file($configPath)) {
@@ -375,6 +389,19 @@ function call_experience_send_submit_notification(int $requestId, string $compan
         '<strong>Sent by:</strong> ' . $e($repName) . ' (' . $e($repEmail) . ')<br><br>' .
         'All four messages (whichever were recorded or uploaded) are ready to review, play, and download.' .
         '</td></tr>' .
+        '<tr><td style="padding:0 24px 20px 24px;">' .
+        '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#8A93A3;margin-bottom:6px;">Messages &amp; Date/Time Windows</div>' .
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:12.5px;color:#33394A;">' .
+        implode('', array_map(static function (array $t) use ($e) {
+            $fileLabel = $t['has_file'] ? ($t['source'] === 'recorded' ? 'Recorded' : 'Uploaded') : 'Not recorded yet';
+            $window = call_experience_format_track_window($t['date_start'], $t['time_start'], $t['date_stop'], $t['time_stop']);
+            return '<tr><td style="padding:6px 0;border-top:1px solid #EEF0F3;">' .
+                '<strong>' . $e($t['label']) . '</strong> — ' . $e($fileLabel) . '<br>' .
+                '<span style="color:#5A6472;">' . $e($window) . '</span>' .
+                '</td></tr>';
+        }, $tracks)) .
+        '</table>' .
+        '</td></tr>' .
         '<tr><td style="padding:4px 24px 24px 24px;text-align:center;">' .
         '<a href="' . $e($receiptUrl) . '" style="display:inline-block;background:#182857;color:#FFFFFF;text-decoration:none;font-size:14px;font-weight:700;padding:12px 24px;border-radius:6px;">Review This Submission</a>' .
         '<div style="margin-top:8px;font-size:11px;color:#8A93A3;">Sign in with your CodeBlue Microsoft 365 account to open it.</div>' .
@@ -388,4 +415,34 @@ function call_experience_send_submit_notification(int $requestId, string $compan
         senderUserId: CALL_EXPERIENCE_SENDER,
     );
     $mailer->send(CALL_EXPERIENCE_NOTIFY_TO, 'New Call In Experience Submission — ' . $companyName, $body, null, CALL_EXPERIENCE_FROM_NAME, true);
+}
+
+/**
+ * Formats one track's optional start/stop window for the submit
+ * notification email, e.g. "Oct 23, 2026 at 2:30 PM → Oct 24, 2026 at 8:00 AM"
+ * -- added 2026-10-27 per Michael, so the hour/minute (AM/PM) component
+ * set on record.html actually carries over to what service@ sees, not
+ * just the date. A boundary with a date but no time shows the date
+ * alone; a boundary with neither shows nothing for that side.
+ */
+function call_experience_format_track_window(?string $dateStart, ?string $timeStart, ?string $dateStop, ?string $timeStop): string
+{
+    $fmt = static function (?string $date, ?string $time): ?string {
+        if ($date === null || $date === '') {
+            return null;
+        }
+        $dt = DateTime::createFromFormat('Y-m-d' . ($time ? ' H:i' : ''), $date . ($time ? ' ' . $time : ''));
+        if ($dt === false) {
+            return $date . ($time ? ' ' . $time : '');
+        }
+        return $dt->format($time ? 'M j, Y \a\t g:i A' : 'M j, Y');
+    };
+
+    $start = $fmt($dateStart, $timeStart);
+    $stop = $fmt($dateStop, $timeStop);
+
+    if ($start === null && $stop === null) {
+        return 'No date/time window set — always in use';
+    }
+    return ($start ?? 'Any time') . ' → ' . ($stop ?? 'Until further notice');
 }

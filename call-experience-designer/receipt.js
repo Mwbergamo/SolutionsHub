@@ -53,6 +53,29 @@
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
+  // Added 2026-10-27 per Michael: each boundary can now carry an
+  // 'HH:MM' (24-hour, from <input type="time">) time alongside its
+  // date -- combines both into one local-time Date (same local, not
+  // UTC, parsing as fmtDateOnly above) and renders the time portion in
+  // the rep's own locale, which for en-US shows hour:minute with AM/PM.
+  // A date with no time shows the date alone.
+  function fmtDateAndTime(ymd, hm) {
+    if (!ymd) return null;
+    var dParts = ymd.split('-');
+    var hh = 0, mm = 0;
+    if (hm) {
+      var tParts = hm.split(':');
+      hh = parseInt(tParts[0], 10) || 0;
+      mm = parseInt(tParts[1], 10) || 0;
+    }
+    var d = new Date(parseInt(dParts[0], 10), parseInt(dParts[1], 10) - 1, parseInt(dParts[2], 10), hh, mm);
+    if (isNaN(d.getTime())) return ymd;
+    return hm
+      ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) +
+        ' at ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+      : fmtDateOnly(ymd);
+  }
+
   function formatBytes(n) {
     if (n == null) return '';
     if (n < 1024) return n + ' B';
@@ -60,14 +83,18 @@
     return (n / (1024 * 1024)).toFixed(1) + ' MB';
   }
 
-  function renderError(message) {
-    root.innerHTML = '<div class="error-banner">' + e(message) + '</div>';
+  function renderError(message, showDashboardLink) {
+    root.innerHTML = '<div class="error-banner">' + e(message) +
+      (showDashboardLink ? ' <a href="index.html" style="color:#8a2a24;font-weight:700;text-decoration:underline;">Open the dashboard instead →</a>' : '') +
+      '</div>';
   }
 
   function trackCardHtml(id, t) {
-    var dateRange = (t.date_start || t.date_stop)
-      ? 'In use ' + fmtDateOnly(t.date_start) + ' → ' + fmtDateOnly(t.date_stop)
-      : 'No date window set — always in use';
+    var startLabel = fmtDateAndTime(t.date_start, t.time_start);
+    var stopLabel = fmtDateAndTime(t.date_stop, t.time_stop);
+    var dateRange = (startLabel || stopLabel)
+      ? 'In use ' + (startLabel || 'any time') + ' → ' + (stopLabel || 'until further notice')
+      : 'No date/time window set — always in use';
 
     var body;
     if (!t.has_file) {
@@ -117,7 +144,12 @@
   }
 
   if (!id) {
-    renderError('No request specified.');
+    // A missing ?id= here most often means a link scanner/security
+    // gateway stripped the query string from the notification email
+    // (this app's own templates always include it -- see
+    // api/public.php's call_experience_send_submit_notification()) --
+    // the dashboard link below is always a safe fallback.
+    renderError('No request specified.', true);
     return;
   }
 

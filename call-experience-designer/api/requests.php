@@ -17,7 +17,7 @@
  *
  * GET  /call-experience-designer/api/requests.php?action=detail&id=1
  *   -> { ok: true, request: { ...same fields..., tracks: [ { track_key,
- *        label, date_start, date_stop, has_file, source,
+ *        label, date_start, time_start, date_stop, time_stop, has_file, source,
  *        original_filename, size_bytes, uploaded_at }, ... (4, fixed
  *        order -- see call_experience_track_defs()) ] } }
  *   Used by receipt.html -- the authenticated page a rep opens (from the
@@ -71,7 +71,7 @@ const CALL_EXPERIENCE_SITE_BASE = 'https://portal.codebluetechnology.com';
  * as all-null/false). Shared by ?action=list (counts only) and
  * ?action=detail (full array) below.
  *
- * @return list<array{track_key:string,label:string,date_start:?string,date_stop:?string,has_file:bool,source:?string,original_filename:?string,size_bytes:?int,uploaded_at:?string}>
+ * @return list<array{track_key:string,label:string,date_start:?string,time_start:?string,date_stop:?string,time_stop:?string,has_file:bool,source:?string,original_filename:?string,size_bytes:?int,uploaded_at:?string}>
  */
 function call_experience_track_summary(PDO $pdo, int $requestId): array
 {
@@ -89,7 +89,9 @@ function call_experience_track_summary(PDO $pdo, int $requestId): array
             'track_key' => $key,
             'label' => $label,
             'date_start' => $row['date_start'] ?? null,
+            'time_start' => $row['time_start'] ?? null,
             'date_stop' => $row['date_stop'] ?? null,
+            'time_stop' => $row['time_stop'] ?? null,
             'has_file' => $row !== null && $row['stored_filename'] !== null,
             'source' => $row['source'] ?? null,
             'original_filename' => $row['original_filename'] ?? null,

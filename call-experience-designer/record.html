@@ -24,16 +24,21 @@
   .success-card h2 { font-family: 'Space Grotesk', sans-serif; color: #182857; margin: 8px 0; }
 
   .field-label { display: block; font-size: 11.5px; font-weight: 700; color: #5A6472; margin-bottom: 6px; text-transform: uppercase; letter-spacing: .03em; }
-  .text-input, .date-input {
+  .text-input, .date-input, .time-input {
     width: 100%; padding: 9px 11px; border-radius: 7px; border: 1px solid #D6DAE2;
     background: #FAFBFC; font-size: 14px; font-family: inherit; color: #1B2030;
   }
 
   /* ---- Track card ---- */
   .track-title { font-family: 'Space Grotesk', sans-serif; font-size: 16px; font-weight: 700; color: #182857; margin-bottom: 10px; }
-  .date-row { display: flex; align-items: flex-end; gap: 10px; margin-bottom: 14px; }
-  .date-row .date-field { flex: 1; min-width: 0; }
-  .date-row .date-sep { padding-bottom: 9px; color: #8A93A3; font-size: 12.5px; white-space: nowrap; }
+  /* Each boundary (Starts / Until) is a date + time pair -- added
+     2026-10-27 per Michael: the window needs an hour/minute (AM/PM)
+     component, not just a date. */
+  .window-row { display: flex; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
+  .window-row .window-field { flex: 1; min-width: 190px; }
+  .window-row .window-inputs { display: flex; gap: 6px; }
+  .window-row .window-inputs .date-input { flex: 1.3; min-width: 0; }
+  .window-row .window-inputs .time-input { flex: 1; min-width: 0; }
 
   .track-status { font-size: 12.5px; color: #5A6472; margin-bottom: 12px; min-height: 17px; }
   .track-status.has-file { color: #1E8A4C; font-weight: 600; }
