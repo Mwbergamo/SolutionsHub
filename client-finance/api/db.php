@@ -241,10 +241,33 @@ function client_finance_migrate(PDO $pdo): void
         );
     SQL);
 
+    // SQLite's CREATE TABLE IF NOT EXISTS does nothing to a table that
+    // already exists -- it does NOT retroactively add a column a later
+    // schema change introduced. company_sync_state shipped 2026-10-16,
+    // long before sales_orders_synced_at existed, so on any already-
+    // deployed database this column is missing unless added explicitly
+    // here -- same live-upgrade pattern call_experience_designer/api/
+    // db.php's call_experience_add_column_if_missing() already uses.
+    // Caused a real HTTP 500 on the Sales Order Revenue gauge (Michael,
+    // 2026-11-06) before this fix: gauges.php queried
+    // company_sync_state.sales_orders_synced_at, which simply didn't
+    // exist yet on the live database.
+    client_finance_add_column_if_missing($pdo, 'company_sync_state', 'sales_orders_synced_at', 'TEXT');
+
     $defaults = ['opportunity_years_threshold' => '3'];
     $ins = $pdo->prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (:k, :v)');
     foreach ($defaults as $k => $v) {
         $ins->execute([':k' => $k, ':v' => $v]);
+    }
+}
+
+/** Adds $column to $table if it isn't already there -- see client_finance_migrate()'s call site above for why this is needed. */
+function client_finance_add_column_if_missing(PDO $pdo, string $table, string $column, string $definition): void
+{
+    $stmt = $pdo->query("PRAGMA table_info($table)");
+    $existing = array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'name');
+    if (!in_array($column, $existing, true)) {
+        $pdo->exec("ALTER TABLE $table ADD COLUMN $column $definition");
     }
 }
 
