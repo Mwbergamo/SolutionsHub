@@ -105,16 +105,24 @@ function client_finance_eligible_customer_count(): int
     return count(client_finance_eligible_customers());
 }
 
-/** Company id -> name, for a batch of ConnectWise company ids (cross-db lookup into relationships.sqlite). */
+/**
+ * Company id -> name, for a batch of ConnectWise company ids (cross-db
+ * lookup into relationships.sqlite). `customers.connectwise_id` is a
+ * TEXT column there (dashboard.php's own lookup binds it as a string,
+ * not an int, for the same reason) -- quoted string literals here,
+ * not bare integers, so this matches exactly rather than relying on
+ * SQLite's affinity coercion to paper over the difference.
+ */
 function client_finance_company_names(array $cwCompanyIds): array
 {
     $ids = array_values(array_unique(array_filter(array_map('intval', $cwCompanyIds))));
     if ($ids === []) {
         return [];
     }
+    $quoted = implode(',', array_map(static fn($id) => "'" . $id . "'", $ids));
     $rpdo = relationships_db();
     $stmt = $rpdo->query(
-        'SELECT connectwise_id, name FROM customers WHERE connectwise_id IN (' . implode(',', $ids) . ')'
+        'SELECT connectwise_id, name FROM customers WHERE connectwise_id IN (' . $quoted . ')'
     );
     $out = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
@@ -134,6 +142,15 @@ function client_finance_bulk_sync_state(PDO $pdo): array
     };
     return ['started_at' => $get('bulk_sync_started_at'), 'finished_at' => $get('bulk_sync_finished_at')];
 }
+
+// Wraps every action below (added 2026-11-06, after a live uncaught-
+// exception 500 on a brand-new action came back as an unparseable HTML
+// error page instead of JSON -- see claude/client-finance-gauges.md).
+// This doesn't fix the underlying cause of any one bug; it guarantees
+// that whatever DOES go wrong here is reported as a real JSON error
+// message the frontend can show, instead of a blank "Unexpected
+// response (HTTP 500)" that gives no clue what actually failed.
+try {
 
 if ($action === 'recurring_revenue') {
     // Strictly before the current month, so a month that's only
@@ -303,3 +320,7 @@ if ($action === 'sales_order_revenue_detail') {
 }
 
 client_finance_respond(400, ['ok' => false, 'error' => 'Unknown action.']);
+
+} catch (Throwable $e) {
+    client_finance_respond(500, ['ok' => false, 'error' => $e->getMessage()]);
+}

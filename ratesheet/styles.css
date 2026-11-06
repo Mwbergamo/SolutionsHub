@@ -114,3 +114,19 @@ a { color: inherit; }
 .data-table tr.row-clickable { cursor: pointer; }
 .data-table tr.row-clickable:hover td { background: oklch(0.95 0.01 255); }
 .table-hint { margin-top: 10px; font-size: 12px; color: oklch(0.5 0.02 255); }
+
+/* Search + pagination on the All Rate Sheets dashboard -- added
+   2026-11-06 per Michael: "pageinate every 10 entries ... Next Page
+   button and a Last Page button ... search bar ... email, first or
+   last name". Client-side only (see app.js's filteredDashboardRequests()
+   / dashboardHtml()) since the full dataset is already loaded in one
+   shot and there's no server-side LIMIT/OFFSET or search to build on. */
+.dashboard-search-row { margin-bottom: 16px; }
+.dashboard-search-input { max-width: 360px; }
+
+.pagination-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 14px; flex-wrap: wrap; }
+.pagination-count { font-size: 12.5px; color: oklch(0.5 0.02 255); }
+.pagination-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.page-btn { background: transparent; border: 1px solid oklch(0.82 0.006 255); color: oklch(0.35 0.02 255); font-size: 12px; font-weight: 700; padding: 7px 13px; border-radius: 999px; cursor: pointer; }
+.page-btn:disabled { opacity: .4; cursor: default; }
+.page-btn:hover:not(:disabled) { border-color: #2f8fef; color: #2f8fef; }

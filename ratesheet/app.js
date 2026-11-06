@@ -37,6 +37,7 @@
   ];
 
   var root = document.getElementById('app-root');
+  var DASHBOARD_PAGE_SIZE = 10;
 
   var state = {
     user: null,
@@ -53,6 +54,14 @@
     requestsLoading: false,
     requestsError: null,
 
+    // Added 2026-11-06 per Michael: client-side search (matches
+    // prospect/customer email or first/last name, case-insensitively)
+    // and pagination (10 rows/page) over the already-fully-loaded
+    // requests array -- api/requests.php's ?action=list has no
+    // LIMIT/OFFSET or search params, so there's nothing server-side to
+    // build on, and the whole dataset is already in hand once loaded.
+    dashboardSearch: '',
+    dashboardPage: 1,
 
     // Added 2026-09-25 per Michael: "can we make a feature for
     // resubmission in the All Rate Sheets screen? it would just try to
@@ -298,6 +307,22 @@
       '</div>';
   }
 
+  // Matches on prospect_email (the address the rate sheet was sent to)
+  // and customer_email/first_name/last_name (filled in once the
+  // prospect actually submits the form) -- per Michael's "search bar...
+  // that will look for email, first or last name of all rate sheets."
+  function filteredDashboardRequests() {
+    var rows = state.requests || [];
+    var q = (state.dashboardSearch || '').trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(function (r) {
+      return (r.prospect_email && r.prospect_email.toLowerCase().indexOf(q) !== -1) ||
+        (r.customer_email && r.customer_email.toLowerCase().indexOf(q) !== -1) ||
+        (r.first_name && r.first_name.toLowerCase().indexOf(q) !== -1) ||
+        (r.last_name && r.last_name.toLowerCase().indexOf(q) !== -1);
+    });
+  }
+
   function dashboardHtml() {
     if (state.requestsLoading && state.requests === null) {
       return '<div class="loading">Loading rate sheets…</div>';
@@ -305,11 +330,30 @@
     if (state.requestsError) {
       return '<div class="error-banner">' + e(state.requestsError) + '</div>';
     }
-    var rows = state.requests || [];
-    if (rows.length === 0) {
+    var allRows = state.requests || [];
+    if (allRows.length === 0) {
       return '<div class="empty-state">No rate sheets sent yet.</div>';
     }
-    var body = rows.map(function (r) {
+
+    var searchBarHtml = '' +
+      '<div class="dashboard-search-row">' +
+      '  <input type="text" class="text-input dashboard-search-input" id="dashboard-search-input" placeholder="Search by email or name…" value="' + e(state.dashboardSearch) + '" autocomplete="off" />' +
+      '</div>';
+
+    var filtered = filteredDashboardRequests();
+    var pageCount = Math.max(1, Math.ceil(filtered.length / DASHBOARD_PAGE_SIZE));
+    if (state.dashboardPage > pageCount) state.dashboardPage = pageCount;
+    if (state.dashboardPage < 1) state.dashboardPage = 1;
+
+    if (filtered.length === 0) {
+      return '<div class="card">' + searchBarHtml +
+        '<div class="empty-state">No rate sheets match "' + e(state.dashboardSearch) + '".</div></div>';
+    }
+
+    var start = (state.dashboardPage - 1) * DASHBOARD_PAGE_SIZE;
+    var pageRows = filtered.slice(start, start + DASHBOARD_PAGE_SIZE);
+
+    var body = pageRows.map(function (r) {
       // Only a submitted or failed row has anything to show on the
       // printable "accepted terms" record -- a still-pending row has no
       // signature/timestamp/IP yet, so it's not clickable.
@@ -327,12 +371,30 @@
         '</tr>';
     }).join('');
 
+    // Next/Last are the two Michael asked for; First/Previous are the
+    // natural counterparts so a search or a later page is never a
+    // one-way trip.
+    var paginationHtml = '' +
+      '<div class="pagination-row">' +
+      '  <div class="pagination-count">' + filtered.length + (filtered.length === 1 ? ' result' : ' results') +
+      (filtered.length !== allRows.length ? ' (of ' + allRows.length + ')' : '') +
+      ' · Page ' + state.dashboardPage + ' of ' + pageCount + '</div>' +
+      '  <div class="pagination-buttons">' +
+      '    <button class="page-btn" data-action="page-first" ' + (state.dashboardPage <= 1 ? 'disabled' : '') + '>First Page</button>' +
+      '    <button class="page-btn" data-action="page-prev" ' + (state.dashboardPage <= 1 ? 'disabled' : '') + '>Previous Page</button>' +
+      '    <button class="page-btn" data-action="page-next" ' + (state.dashboardPage >= pageCount ? 'disabled' : '') + '>Next Page</button>' +
+      '    <button class="page-btn" data-action="page-last" ' + (state.dashboardPage >= pageCount ? 'disabled' : '') + '>Last Page</button>' +
+      '  </div>' +
+      '</div>';
+
     return '' +
       '<div class="card">' +
+      searchBarHtml +
       '  <table class="data-table">' +
       '    <thead><tr><th></th><th>Prospect Email</th><th>Sent By</th><th>Time Sent</th><th>Type</th><th>Location</th><th>Payment Method</th><th>Invoices Emailed</th><th>Actions</th></tr></thead>' +
       '    <tbody>' + body + '</tbody>' +
       '  </table>' +
+      paginationHtml +
       '  <div class="table-hint">Click a submitted or failed row to view the signed terms record.</div>' +
       '</div>';
   }
@@ -346,6 +408,12 @@
       '<div class="main">' +
       (state.view === 'send' ? sendFormHtml() : dashboardHtml()) +
       '</div>';
+
+    var searchInput = document.getElementById('dashboard-search-input');
+    if (searchInput) {
+      searchInput.focus();
+      searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
+    }
   }
 
   // ---- Events ----------------------------------------------------------
@@ -369,13 +437,33 @@
       window.open('receipt.html?id=' + encodeURIComponent(el.getAttribute('data-id')), '_blank');
     } else if (action === 'retry-request') {
       retryRequest(parseInt(el.getAttribute('data-id'), 10));
+    } else if (action === 'page-first') {
+      state.dashboardPage = 1;
+      render();
+    } else if (action === 'page-prev') {
+      state.dashboardPage = Math.max(1, state.dashboardPage - 1);
+      render();
+    } else if (action === 'page-next') {
+      state.dashboardPage = state.dashboardPage + 1;
+      render();
+    } else if (action === 'page-last') {
+      state.dashboardPage = Infinity;
+      render();
     }
   });
 
   root.addEventListener('input', function (ev) {
-    var el = ev.target.closest('[data-action="field-input"]');
-    if (!el) return;
-    state.sendForm[el.getAttribute('data-field')] = el.value;
+    var fieldEl = ev.target.closest('[data-action="field-input"]');
+    if (fieldEl) {
+      state.sendForm[fieldEl.getAttribute('data-field')] = fieldEl.value;
+      return;
+    }
+    var searchEl = ev.target.closest('#dashboard-search-input');
+    if (searchEl) {
+      state.dashboardSearch = searchEl.value;
+      state.dashboardPage = 1;
+      render();
+    }
   });
   root.addEventListener('change', function (ev) {
     var el = ev.target.closest('[data-action="field-radio"]');
