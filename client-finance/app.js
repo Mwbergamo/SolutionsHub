@@ -73,12 +73,18 @@
     sectionSeq: 0,
     expandedLineId: null,      // invoice id whose product-line detail is expanded (product_sales/credits)
     pushingOppId: null,
-    // Portfolio-wide gauges, front page only (added 2026-10-21) -- see
-    // api/gauges.php's header for the sync-model reversal behind these
-    // and claude/client-finance-gauges.md for the full decision trail.
-    gaugeMrr: null,
-    gaugeMrrLoading: false,
-    gaugeMrrError: null
+    // Portfolio-wide gauges, front page only (added 2026-10-21, rebuilt
+    // 2026-11-06 into 3 gauges + a sortable drill-down popover per
+    // Michael's gauges overhaul) -- see api/gauges.php's header for the
+    // sync-model reversal behind these and claude/client-finance-
+    // gauges.md for the full decision trail.
+    gauges: {
+      recurring: { data: null, loading: false, error: null },
+      annual: { data: null, loading: false, error: null },
+      sales_order: { data: null, loading: false, error: null }
+    },
+    gaugeDetail: null,  // { kind, loading, error, rows, expandedId } while a gauge's popover is open
+    bulkSync: { status: null, running: false, error: null, remaining: null }
   };
 
   // ---- helpers --------------------------------------------------------
@@ -141,7 +147,8 @@
       // Portfolio gauges load once per app boot, independent of which
       // view is showing -- nightly-cadence data doesn't need refetching
       // every time someone returns to the search view.
-      loadGaugeMrr();
+      GAUGES.forEach(function (def) { loadGauge(def.key); });
+      loadBulkSyncStatus();
       // Deep link from a Relationships to-do ("linking back to the detail") --
       // ?cw_company_id=N jumps straight to that customer's dashboard,
       // skipping search. dashboard.php?action=summary resolves the real
@@ -160,25 +167,57 @@
   }
 
   // ---- portfolio gauges (front page, under customer search) --------------
-  // Added 2026-10-21. One function per gauge, same shape, so the next
-  // gauge (Michael's explicit "one at a time" build process) is a copy
-  // of this block pointed at a new api/gauges.php action, not a rewrite.
+  // Added 2026-10-21 as a single MRR gauge; rebuilt 2026-11-06 into 3
+  // gauges (Recurring/Annual/Sales Order Revenue) + a shared sortable
+  // drill-down popover, per Michael's gauges overhaul -- see
+  // api/gauges.php's header and claude/client-finance-gauges.md for the
+  // full decision trail (sync-model reversal, YTD window choices, the
+  // new real Sales Order entity).
 
-  function loadGaugeMrr() {
-    state.gaugeMrrLoading = true;
+  var GAUGES = [
+    {
+      key: 'recurring', action: 'recurring_revenue',
+      label: 'Recurring Revenue',
+      sub: function (g) { return fmtMonthLabel(g.month) + ' \u00b7 ' + g.customers_with_revenue + ' customers billed'; }
+    },
+    {
+      key: 'annual', action: 'annual_revenue',
+      label: 'Annual Revenue (YTD)',
+      sub: function (g) { return g.year + ' \u00b7 ' + g.invoice_count + ' invoices, net of credits'; }
+    },
+    {
+      key: 'sales_order', action: 'sales_order_revenue',
+      label: 'Sales Order Revenue (YTD)',
+      sub: function (g) { return g.year + ' \u00b7 ' + g.order_count + ' sales orders'; }
+    }
+  ];
+
+  // Normalizes each gauge's own detail-list shape (invoices vs. sales
+  // orders, different id/number/date field names) into the one popover
+  // renderer below.
+  var GAUGE_DETAIL_META = {
+    recurring: { action: 'recurring_revenue_detail', rowsKey: 'invoices', dateField: 'invoice_date', numberLabel: 'Invoice #', numberField: 'invoice_number', extraLabel: 'Agreement', extraField: 'agreement_name' },
+    annual: { action: 'annual_revenue_detail', rowsKey: 'invoices', dateField: 'invoice_date', numberLabel: 'Invoice #', numberField: 'invoice_number', extraLabel: 'Type', extraField: 'category' },
+    sales_order: { action: 'sales_order_revenue_detail', rowsKey: 'orders', dateField: 'order_date', numberLabel: 'PO #', numberField: 'po_number', extraLabel: 'Status', extraField: 'status' }
+  };
+
+  function loadGauge(key) {
+    var def = GAUGES.filter(function (g) { return g.key === key; })[0];
+    if (!def) return;
+    state.gauges[key].loading = true;
     render();
-    api('api/gauges.php?action=mrr').then(function (r) {
-      state.gaugeMrrLoading = false;
+    api('api/gauges.php?action=' + def.action).then(function (r) {
+      state.gauges[key].loading = false;
       if (r.data && r.data.ok) {
-        state.gaugeMrr = r.data.mrr;
-        state.gaugeMrrError = null;
+        state.gauges[key].data = r.data[def.action];
+        state.gauges[key].error = null;
       } else {
-        state.gaugeMrrError = (r.data && r.data.error) || 'Could not load this gauge.';
+        state.gauges[key].error = (r.data && r.data.error) || 'Could not load this gauge.';
       }
       render();
     }).catch(function () {
-      state.gaugeMrrLoading = false;
-      state.gaugeMrrError = 'Could not reach the server.';
+      state.gauges[key].loading = false;
+      state.gauges[key].error = 'Could not reach the server.';
       render();
     });
   }
@@ -198,28 +237,201 @@
     return cov ? (cov + ' \u00b7 ' + asOf) : asOf;
   }
 
-  function gaugeMrrCardHtml() {
-    var g = state.gaugeMrr;
+  function gaugeCardHtml(def) {
+    var s = state.gauges[def.key];
+    var g = s.data;
     var body;
-    if (state.gaugeMrrLoading && !g) {
+    if (s.loading && !g) {
       body = '<div class="hint">Loading\u2026</div>';
-    } else if (state.gaugeMrrError) {
-      body = '<div class="hint">' + esc(state.gaugeMrrError) + '</div>';
-    } else if (!g || !g.month) {
-      body = '<div class="hint">No synced agreement revenue yet.</div>';
+    } else if (s.error) {
+      body = '<div class="hint">' + esc(s.error) + '</div>';
+    } else if (!g) {
+      body = '<div class="hint">No data yet.</div>';
     } else {
       body = '<div class="val">' + fmtCurrency(g.total) + '</div>' +
-        '<div class="cf-gauge-sub">' + esc(fmtMonthLabel(g.month)) + ' \u00b7 ' + g.customers_with_revenue + ' customers billed</div>';
+        '<div class="cf-gauge-sub">' + esc(def.sub(g)) + '</div>';
     }
-    return '<div class="cf-gauge-card">' +
-      '<div class="lbl">Recurring Revenue (MRR)</div>' +
+    var clickable = !!(g && !s.loading && !s.error);
+    var tag = clickable ? 'button' : 'div';
+    var attrs = clickable ? ' type="button" data-action="open-gauge-detail" data-gauge="' + def.key + '"' : '';
+    return '<' + tag + ' class="cf-gauge-card' + (clickable ? ' clickable' : '') + '"' + attrs + '>' +
+      '<div class="lbl">' + esc(def.label) + '</div>' +
       body +
       '<div class="cf-gauge-foot">' + esc(gaugeCoverageText(g)) + '</div>' +
+    '</' + tag + '>';
+  }
+
+  function bulkSyncControlHtml() {
+    var b = state.bulkSync;
+    var text;
+    if (b.running) {
+      text = 'Syncing the whole portfolio\u2026' + (b.remaining != null ? (' (' + b.remaining + ' sections left)') : '');
+    } else if (b.error) {
+      text = 'Sync error: ' + b.error;
+    } else if (b.status && b.status.bulk_sync && b.status.bulk_sync.finished_at) {
+      text = 'Portfolio data last refreshed ' + fmtDate(b.status.bulk_sync.finished_at) + '.';
+    } else if (b.status && b.status.bulk_sync && b.status.bulk_sync.started_at) {
+      text = 'A portfolio sync is already in progress (started elsewhere).';
+    } else {
+      text = 'Portfolio data has not been refreshed from this page yet.';
+    }
+    return '<div class="cf-bulk-sync-row">' +
+      '<div class="hint">' + esc(text) + '</div>' +
+      '<button type="button" class="btn secondary small" data-action="run-bulk-sync"' + (b.running ? ' disabled' : '') + '>' +
+        (b.running ? 'Syncing\u2026' : 'Sync all customers now') +
+      '</button>' +
     '</div>';
   }
 
   function gaugesHtml() {
-    return '<div class="cf-gauges-wrap"><div class="cf-gauges-row">' + gaugeMrrCardHtml() + '</div></div>';
+    return '<div class="cf-gauges-wrap"><div class="cf-gauges-row">' + GAUGES.map(gaugeCardHtml).join('') + '</div>' + bulkSyncControlHtml() + '</div>';
+  }
+
+  // ---- bulk sync (added 2026-11-06 -- "anyone with access to that card"
+  // can run the full portfolio sync from here instead of needing a
+  // cPanel cron scheduled; see api/bulk-sync.php's header) ------------
+
+  function loadBulkSyncStatus() {
+    api('api/bulk-sync.php?action=status').then(function (r) {
+      if (r.data && r.data.ok) state.bulkSync.status = r.data;
+      render();
+    }).catch(function () { /* footer just won't show a freshness line */ });
+  }
+
+  var bulkSyncSeq = 0;
+
+  function runBulkSync() {
+    var seq = ++bulkSyncSeq;
+    state.bulkSync.running = true;
+    state.bulkSync.error = null;
+    state.bulkSync.remaining = null;
+    render();
+    api('api/bulk-sync.php?action=start', {}).then(function (r) {
+      if (seq !== bulkSyncSeq) return;
+      if (!r.data || !r.data.ok) {
+        state.bulkSync.running = false;
+        state.bulkSync.error = (r.data && r.data.error) || 'Could not start the sync.';
+        render();
+        return;
+      }
+      bulkSyncStep(seq);
+    }).catch(function () {
+      if (seq !== bulkSyncSeq) return;
+      state.bulkSync.running = false;
+      state.bulkSync.error = 'Could not reach the server.';
+      render();
+    });
+  }
+
+  function bulkSyncStep(seq) {
+    api('api/bulk-sync.php?action=step', {}).then(function (r) {
+      if (seq !== bulkSyncSeq) return;
+      if (!r.data || !r.data.ok) {
+        state.bulkSync.running = false;
+        state.bulkSync.error = (r.data && r.data.error) || 'Sync step failed.';
+        render();
+        return;
+      }
+      state.bulkSync.remaining = r.data.remaining;
+      if (r.data.done) {
+        state.bulkSync.running = false;
+        GAUGES.forEach(function (def) { loadGauge(def.key); });
+        loadBulkSyncStatus();
+        render();
+      } else {
+        render();
+        bulkSyncStep(seq);
+      }
+    }).catch(function () {
+      if (seq !== bulkSyncSeq) return;
+      state.bulkSync.running = false;
+      state.bulkSync.error = 'Could not reach the server mid-sync.';
+      render();
+    });
+  }
+
+  // ---- gauge drill-down popover (added 2026-11-06) --------------------
+
+  function openGaugeDetail(kind) {
+    var meta = GAUGE_DETAIL_META[kind];
+    if (!meta) return;
+    state.gaugeDetail = { kind: kind, loading: true, error: null, rows: null, expandedId: null };
+    render();
+    api('api/gauges.php?action=' + meta.action).then(function (r) {
+      if (!state.gaugeDetail || state.gaugeDetail.kind !== kind) return; // closed/reopened while in flight
+      state.gaugeDetail.loading = false;
+      if (r.data && r.data.ok) {
+        state.gaugeDetail.rows = r.data[meta.rowsKey] || [];
+        state.gaugeDetail.error = null;
+      } else {
+        state.gaugeDetail.error = (r.data && r.data.error) || 'Could not load this list.';
+      }
+      render();
+    }).catch(function () {
+      if (!state.gaugeDetail || state.gaugeDetail.kind !== kind) return;
+      state.gaugeDetail.loading = false;
+      state.gaugeDetail.error = 'Could not reach the server.';
+      render();
+    });
+  }
+
+  function closeGaugeDetail() {
+    state.gaugeDetail = null;
+    render();
+  }
+
+  function toggleGaugeDetailRow(id) {
+    if (!state.gaugeDetail) return;
+    state.gaugeDetail.expandedId = state.gaugeDetail.expandedId === id ? null : id;
+    render();
+  }
+
+  function gaugeDetailModalHtml() {
+    var gd = state.gaugeDetail;
+    if (!gd) return '';
+    var meta = GAUGE_DETAIL_META[gd.kind];
+    var def = GAUGES.filter(function (g) { return g.key === gd.kind; })[0];
+    var body;
+    if (gd.loading) {
+      body = '<div class="loading">Loading\u2026</div>';
+    } else if (gd.error) {
+      body = '<div class="banner error">' + esc(gd.error) + '</div>';
+    } else if (!gd.rows || gd.rows.length === 0) {
+      body = '<div class="hint">Nothing in this window yet.</div>';
+    } else {
+      var rows = gd.rows.map(function (row) {
+        var expanded = gd.expandedId === row.id;
+        var numberCell = row[meta.numberField] ? esc(row[meta.numberField]) : '<span class="hint">\u2014</span>';
+        var extraVal = row[meta.extraField];
+        var extraCell = extraVal ? esc(extraVal) : '<span class="hint">\u2014</span>';
+        var out = '<tr class="cf-invoice-row" data-action="toggle-gauge-line" data-id="' + row.id + '">' +
+          '<td>' + numberCell + '</td>' +
+          '<td>' + esc(row.company_name) + '</td>' +
+          '<td>' + fmtDate(row[meta.dateField]) + '</td>' +
+          '<td>' + extraCell + '</td>' +
+          '<td class="r">' + fmtCurrency(row.total) + '</td>' +
+          '<td class="r hint">' + (row.lines && row.lines.length ? (expanded ? '\u25b2 hide' : '\u25bc ' + row.lines.length) : '\u2014') + '</td>' +
+        '</tr>';
+        if (expanded) {
+          out += '<tr><td colspan="6" style="padding:0">' +
+            '<table class="data" style="margin:4px 0 10px">' +
+              '<thead><tr><th>Product</th><th class="r">Qty</th><th class="r">Price</th><th class="r">Cost</th><th class="r">Margin</th><th>Sold via</th></tr></thead>' +
+              '<tbody>' + lineDetailRowsHtml(row.lines) + '</tbody>' +
+            '</table>' +
+          '</td></tr>';
+        }
+        return out;
+      }).join('');
+      body = '<table class="data"><thead><tr><th>' + esc(meta.numberLabel) + '</th><th>Company</th><th>Date</th><th>' + esc(meta.extraLabel) + '</th><th class="r">Total</th><th class="r">Lines</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+    return '<div class="cf-modal-backdrop" data-action="close-gauge-detail">' +
+      '<div class="cf-modal" data-action="noop">' +
+        '<div class="cf-modal-head"><h3>' + esc(def ? def.label : '') + ' \u2014 sorted by total, high to low</h3>' +
+          '<button type="button" class="cf-modal-close" data-action="close-gauge-detail" aria-label="Close">&times;</button>' +
+        '</div>' +
+        '<div class="cf-modal-body">' + body + '</div>' +
+      '</div>' +
+    '</div>';
   }
 
   // ---- search -------------------------------------------------------------
@@ -722,6 +934,7 @@
       html += searchViewHtml();
     }
     html += '</main>';
+    html += gaugeDetailModalHtml();
 
     root.innerHTML = html;
 
@@ -765,6 +978,20 @@
     } else if (action === 'push-opportunity') {
       e.preventDefault();
       pushOpportunity(Number(el.getAttribute('data-id')));
+    } else if (action === 'open-gauge-detail') {
+      e.preventDefault();
+      openGaugeDetail(el.getAttribute('data-gauge'));
+    } else if (action === 'close-gauge-detail') {
+      e.preventDefault();
+      closeGaugeDetail();
+    } else if (action === 'toggle-gauge-line') {
+      toggleGaugeDetailRow(Number(el.getAttribute('data-id')));
+    } else if (action === 'run-bulk-sync') {
+      e.preventDefault();
+      if (!state.bulkSync.running) runBulkSync();
+    } else if (action === 'noop') {
+      // swallow -- keeps a click inside the modal panel from bubbling up
+      // to the backdrop's close-gauge-detail action
     }
   });
 

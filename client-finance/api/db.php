@@ -92,6 +92,7 @@ function client_finance_migrate(PDO $pdo): void
             agreements_synced_at TEXT,
             credits_synced_at TEXT,
             opportunities_synced_at TEXT,
+            sales_orders_synced_at TEXT,
             last_error TEXT
         );
 
@@ -199,6 +200,28 @@ function client_finance_migrate(PDO $pdo): void
             created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_cf_opportunities_company ON opportunities(cw_company_id, status);
+
+        -- Real ConnectWise Sales Order entities (added 2026-11-06, for
+        -- Michael's "Sales Order Revenue" gauge -- see
+        -- client-finance-gauges.md). Distinct from `invoices` rows whose
+        -- category = 'sales_order' (those are the invoice(s) billed
+        -- against an order; one order's invoiceIds can span more than
+        -- one invoice per client-finance-probe-findings.md #3, so this
+        -- is the order itself, not a re-derivation from invoice data).
+        -- Product-line detail for an order is NOT duplicated here --
+        -- it's already on invoice_lines.sales_order_id from the existing
+        -- Product Sales sync, queried straight from there.
+        CREATE TABLE IF NOT EXISTS sales_orders (
+            id INTEGER PRIMARY KEY,              -- ConnectWise sales order id
+            cw_company_id INTEGER NOT NULL,
+            order_date TEXT,                      -- YYYY-MM-DD (ConnectWise `orderDate`)
+            month TEXT,                           -- YYYY-MM
+            status TEXT,
+            po_number TEXT,
+            total REAL NOT NULL DEFAULT 0,
+            synced_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_cf_sales_orders_company ON sales_orders(cw_company_id, month);
 
         -- Per-company batched sync plumbing (Bluehost execution-time
         -- safety), same start()/step() shape as relationships' and

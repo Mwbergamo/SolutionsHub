@@ -60,13 +60,38 @@ const CLIENT_FINANCE_STANDARD_MONTHS_BACK = 7;      // 6 full months + current p
 const CLIENT_FINANCE_CREDITS_MONTHS_BACK = 7;
 const CLIENT_FINANCE_PRODUCT_SALES_MONTHS_BACK = 25; // this year-to-date + full prior year, for YoY
 const CLIENT_FINANCE_AGREEMENTS_MONTHS_BACK = 13;    // 12 full months + current partial, for the trend chart
-const CLIENT_FINANCE_SECTIONS = ['standard', 'product_sales', 'agreements', 'credits', 'opportunities'];
+const CLIENT_FINANCE_SALES_ORDERS_MONTHS_BACK = 13;  // matches Agreements' window; real ConnectWise Sales Order entities, added 2026-11-06 for the Sales Order Revenue gauge
+const CLIENT_FINANCE_SECTIONS = ['standard', 'product_sales', 'agreements', 'credits', 'opportunities', 'sales_orders'];
 
 /** Clean-signal subcategories -- see findings doc #6. */
 const CLIENT_FINANCE_COMPUTER_SUBCATS = ['Desktop', 'Laptop', 'Server', 'Servers', 'Workstation'];
 const CLIENT_FINANCE_NETWORK_SUBCATS = ['Network Device'];
 /** The two newer catch-all subcategories that get the keyword fallback instead of a clean match. */
 const CLIENT_FINANCE_CATCHALL_SUBCATS = ['IT HW/SW Sold', 'Premise HW/SW Sold'];
+
+/**
+ * Returns the EARLIER of ($monthsBack months ago) and (Jan 1 of the
+ * current calendar year), as a ConnectWise date-filter string. Added
+ * 2026-11-06 for Michael's "Annual Revenue -- all invoice types, closed
+ * within the calendar year to date" gauge (client-finance-gauges.md):
+ * Standard/Credits originally synced a flat N-month trailing window
+ * (CLIENT_FINANCE_STANDARD_MONTHS_BACK / CLIENT_FINANCE_CREDITS_MONTHS_BACK,
+ * both 7), which stops reaching back to January once more than ~7 months
+ * of the year have elapsed -- so a strict "all invoice types, calendar
+ * YTD" rollup would silently undercount Standard/Credit invoices from
+ * earlier in the year. This keeps the original N-month window for the
+ * first ~7 months of any year (nothing changes there) and widens it
+ * automatically for the rest of the year so Annual Revenue stays
+ * correct. Costs more ConnectWise API calls later in the year (more
+ * invoices to page through per company) -- an accepted, disclosed
+ * trade-off, not a hidden one; see client-finance-gauges.md.
+ */
+function client_finance_ytd_safe_cutoff(int $monthsBack): string
+{
+    $monthsBackTs = strtotime('-' . $monthsBack . ' months');
+    $jan1Ts = strtotime(gmdate('Y') . '-01-01T00:00:00Z');
+    return gmdate('Y-m-d\\TH:i:s\\Z', min($monthsBackTs, $jan1Ts));
+}
 
 // ---------------------------------------------------------------------
 // Classification
@@ -284,12 +309,14 @@ function client_finance_sync_start(PDO $pdo, int $cwCompanyId, string $companyNa
     try {
         $pdo->prepare('DELETE FROM invoices WHERE cw_company_id = :c')->execute([':c' => $cwCompanyId]); // cascades invoice_lines, opportunities
         $pdo->prepare('DELETE FROM agreements WHERE cw_company_id = :c')->execute([':c' => $cwCompanyId]); // cascades agreement_additions
+        $pdo->prepare('DELETE FROM sales_orders WHERE cw_company_id = :c')->execute([':c' => $cwCompanyId]);
         $pdo->prepare('DELETE FROM sync_queue WHERE cw_company_id = :c')->execute([':c' => $cwCompanyId]);
         $pdo->prepare(
-            'INSERT INTO company_sync_state (cw_company_id, company_name, standard_synced_at, product_sales_synced_at, agreements_synced_at, credits_synced_at, opportunities_synced_at, last_error)
-             VALUES (:c, :n, NULL, NULL, NULL, NULL, NULL, NULL)
+            'INSERT INTO company_sync_state (cw_company_id, company_name, standard_synced_at, product_sales_synced_at, agreements_synced_at, credits_synced_at, opportunities_synced_at, sales_orders_synced_at, last_error)
+             VALUES (:c, :n, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
              ON CONFLICT(cw_company_id) DO UPDATE SET company_name = excluded.company_name, standard_synced_at = NULL,
-               product_sales_synced_at = NULL, agreements_synced_at = NULL, credits_synced_at = NULL, opportunities_synced_at = NULL, last_error = NULL'
+               product_sales_synced_at = NULL, agreements_synced_at = NULL, credits_synced_at = NULL, opportunities_synced_at = NULL,
+               sales_orders_synced_at = NULL, last_error = NULL'
         )->execute([':c' => $cwCompanyId, ':n' => $companyName]);
         $insQ = $pdo->prepare("INSERT INTO sync_queue (cw_company_id, section, status) VALUES (:c, :s, 'pending')");
         foreach (CLIENT_FINANCE_SECTIONS as $section) {
@@ -338,6 +365,9 @@ function client_finance_sync_step(PDO $pdo): array
             case 'opportunities':
                 client_finance_sync_opportunities($pdo, $cwCompanyId);
                 break;
+            case 'sales_orders':
+                client_finance_sync_sales_orders($pdo, $cwCompanyId);
+                break;
         }
         $pdo->prepare("UPDATE sync_queue SET status = 'done' WHERE id = :id")->execute([':id' => $queueId]);
         $pdo->prepare("UPDATE company_sync_state SET $syncedAtCol = :t, last_error = NULL WHERE cw_company_id = :c")
@@ -360,7 +390,7 @@ function client_finance_sync_step(PDO $pdo): array
 
 function client_finance_sync_standard(PDO $pdo, int $cwCompanyId): void
 {
-    $cutoff = gmdate('Y-m-d\TH:i:s\Z', strtotime('-' . CLIENT_FINANCE_STANDARD_MONTHS_BACK . ' months'));
+    $cutoff = client_finance_ytd_safe_cutoff(CLIENT_FINANCE_STANDARD_MONTHS_BACK);
     $rows = relationships_cw_list('/finance/invoices',
         "company/id=$cwCompanyId and date>=[$cutoff] and (type='Standard' or type='Miscellaneous')",
         ['id', 'invoiceNumber', 'date', 'type', 'applyToType', 'applyToId', 'total']);
@@ -371,18 +401,47 @@ function client_finance_sync_standard(PDO $pdo, int $cwCompanyId): void
          ON CONFLICT(id) DO UPDATE SET invoice_number = excluded.invoice_number, invoice_date = excluded.invoice_date, month = excluded.month,
            cw_type = excluded.cw_type, cw_apply_to_type = excluded.cw_apply_to_type, category = excluded.category, total = excluded.total, synced_at = excluded.synced_at'
     );
+    $standardIds = [];
     foreach ($rows as $r) {
         $type = (string) ($r['type'] ?? '');
         $applyToType = (string) ($r['applyToType'] ?? '');
         if (client_finance_classify_invoice_category($type, $applyToType) !== 'standard') {
             continue; // same raw type, but it's really a SalesOrder/Agreement-applied row -- not this section
         }
+        $id = (int) $r['id'];
         $date = substr((string) ($r['date'] ?? ''), 0, 10);
         $ins->execute([
-            ':id' => (int) $r['id'], ':c' => $cwCompanyId, ':num' => (string) ($r['invoiceNumber'] ?? ''),
+            ':id' => $id, ':c' => $cwCompanyId, ':num' => (string) ($r['invoiceNumber'] ?? ''),
             ':d' => $date, ':m' => substr($date, 0, 7), ':t' => $type, ':att' => $applyToType,
             ':cat' => 'standard', ':tot' => (float) ($r['total'] ?? 0), ':sa' => gmdate('c'),
         ]);
+        $standardIds[] = $id;
+    }
+
+    // Added 2026-11-06 for the Annual Revenue gauge's "expand that
+    // invoice for full detail on the products billed on it" -- reuses
+    // the same confirmed-generic /procurement/products?conditions=
+    // invoice/id=N linkage Product Sales/Credits already use (findings
+    // doc #5: every product line carries its own invoice regardless of
+    // how that invoice originated). Most T&M/Standard invoices are pure
+    // labor with zero catalog products on them -- that's a real, correct
+    // "no line items" result, not a gap; this only surfaces real catalog
+    // products when ConnectWise actually has one attached to the invoice.
+    if ($standardIds !== []) {
+        $pdo->prepare('DELETE FROM invoice_lines WHERE invoice_id IN (' . implode(',', $standardIds) . ") AND kind = 'product'")->execute();
+        $productsByInvoice = client_finance_products_for_invoices($standardIds);
+        $catalogIds = [];
+        foreach ($productsByInvoice as $lines) {
+            foreach ($lines as $l) {
+                $catalogIds[] = (int) ($l['catalogItem']['id'] ?? 0);
+            }
+        }
+        $catalog = client_finance_catalog_lookup($catalogIds);
+        foreach ($productsByInvoice as $invoiceId => $lines) {
+            if ($lines !== []) {
+                client_finance_store_product_lines($pdo, $invoiceId, $lines, $catalog);
+            }
+        }
     }
 }
 
@@ -493,19 +552,44 @@ function client_finance_sync_agreements(PDO $pdo, int $cwCompanyId): void
            cw_type = excluded.cw_type, cw_apply_to_type = excluded.cw_apply_to_type, category = \'agreement\', agreement_id = excluded.agreement_id,
            total = excluded.total, synced_at = excluded.synced_at'
     );
+    $agreementInvoiceIds = [];
     foreach ($rows as $r) {
         $type = (string) ($r['type'] ?? '');
         $applyToType = (string) ($r['applyToType'] ?? '');
         if (client_finance_classify_invoice_category($type, $applyToType) !== 'agreement') {
             continue; // the rare CreditMemo|Agreement edge case (findings doc #1) belongs to Credits, not here
         }
+        $id = (int) $r['id'];
         $date = substr((string) ($r['date'] ?? ''), 0, 10);
         $insInv->execute([
-            ':id' => (int) $r['id'], ':c' => $cwCompanyId, ':num' => (string) ($r['invoiceNumber'] ?? ''),
+            ':id' => $id, ':c' => $cwCompanyId, ':num' => (string) ($r['invoiceNumber'] ?? ''),
             ':d' => $date, ':m' => substr($date, 0, 7), ':t' => $type,
             ':att' => $applyToType, ':aid' => (int) ($r['applyToId'] ?? 0) ?: null,
             ':tot' => (float) ($r['total'] ?? 0), ':sa' => gmdate('c'),
         ]);
+        $agreementInvoiceIds[] = $id;
+    }
+
+    // Same reuse as Standard above -- most Agreement invoices are pure
+    // recurring-service with no catalog lines (the real per-invoice
+    // story there is the agreement's additions, already synced above
+    // and shown in its own section); this only adds real data when an
+    // agreement invoice actually has a catalog product on it.
+    if ($agreementInvoiceIds !== []) {
+        $pdo->prepare('DELETE FROM invoice_lines WHERE invoice_id IN (' . implode(',', $agreementInvoiceIds) . ") AND kind = 'product'")->execute();
+        $productsByInvoice = client_finance_products_for_invoices($agreementInvoiceIds);
+        $catalogIds = [];
+        foreach ($productsByInvoice as $lines) {
+            foreach ($lines as $l) {
+                $catalogIds[] = (int) ($l['catalogItem']['id'] ?? 0);
+            }
+        }
+        $catalog = client_finance_catalog_lookup($catalogIds);
+        foreach ($productsByInvoice as $invoiceId => $lines) {
+            if ($lines !== []) {
+                client_finance_store_product_lines($pdo, $invoiceId, $lines, $catalog);
+            }
+        }
     }
 }
 
@@ -515,7 +599,7 @@ function client_finance_sync_agreements(PDO $pdo, int $cwCompanyId): void
 
 function client_finance_sync_credits(PDO $pdo, int $cwCompanyId): void
 {
-    $cutoff = gmdate('Y-m-d\TH:i:s\Z', strtotime('-' . CLIENT_FINANCE_CREDITS_MONTHS_BACK . ' months'));
+    $cutoff = client_finance_ytd_safe_cutoff(CLIENT_FINANCE_CREDITS_MONTHS_BACK);
     $rows = relationships_cw_list('/finance/invoices',
         "company/id=$cwCompanyId and date>=[$cutoff] and type='CreditMemo'",
         ['id', 'invoiceNumber', 'date', 'type', 'applyToType', 'total']);
@@ -643,6 +727,57 @@ function client_finance_sync_opportunities(PDO $pdo, int $cwCompanyId): void
             ':c' => $cwCompanyId, ':lid' => (int) $line['id'], ':cat' => $match['category'],
             ':sub' => (string) $line['catalog_subcategory'], ':conf' => $match['confidence'],
             ':sd' => $soldDate, ':ya' => round($years, 1), ':ca' => gmdate('c'),
+        ]);
+    }
+}
+
+// ---------------------------------------------------------------------
+// Section 6 -- Sales Orders (real ConnectWise Sales Order entities)
+// ---------------------------------------------------------------------
+
+/**
+ * Added 2026-11-06 for Michael's "Sales Order Revenue" gauge
+ * (client-finance-gauges.md). Syncs the real /sales/orders entity --
+ * confirmed fields per client-finance-probe-findings.md #3: id, company,
+ * orderDate, status, total, poNumber (identifier/number is NOT requested
+ * here since it was never confirmed directly on this endpoint -- only on
+ * the embedded `salesOrder` object product lines carry, which is a
+ * different probe call; poNumber is the one order-level reference field
+ * that IS confirmed, so that's what's stored/shown instead).
+ *
+ * Deliberately a SEPARATE table from `invoices` (category='sales_order')
+ * rather than a re-derivation of it: a Sales Order's own `invoiceIds` can
+ * span more than one invoice (findings doc #3), so grouping by the real
+ * order is the only way to show one row per order with the order's own
+ * date and total, per Michael's spec. No new line-detail sync is needed
+ * for this section's drill-down -- product lines already carry their own
+ * sales_order_id (populated by client_finance_store_product_lines() via
+ * Product Sales/Standard/Agreement/Credits' syncs), so the frontend
+ * queries invoice_lines WHERE sales_order_id = this order's id.
+ */
+function client_finance_sync_sales_orders(PDO $pdo, int $cwCompanyId): void
+{
+    $cutoff = client_finance_ytd_safe_cutoff(CLIENT_FINANCE_SALES_ORDERS_MONTHS_BACK);
+    $rows = relationships_cw_list('/sales/orders',
+        "company/id=$cwCompanyId and orderDate>=[$cutoff]",
+        ['id', 'company', 'orderDate', 'status', 'total', 'poNumber']);
+
+    if ($rows === []) {
+        return;
+    }
+
+    $ins = $pdo->prepare(
+        'INSERT INTO sales_orders (id, cw_company_id, order_date, month, status, po_number, total, synced_at)
+         VALUES (:id, :c, :d, :m, :st, :po, :tot, :sa)
+         ON CONFLICT(id) DO UPDATE SET order_date = excluded.order_date, month = excluded.month, status = excluded.status,
+           po_number = excluded.po_number, total = excluded.total, synced_at = excluded.synced_at'
+    );
+    foreach ($rows as $r) {
+        $date = substr((string) ($r['orderDate'] ?? ''), 0, 10);
+        $ins->execute([
+            ':id' => (int) $r['id'], ':c' => $cwCompanyId, ':d' => $date, ':m' => substr($date, 0, 7),
+            ':st' => (string) ($r['status']['name'] ?? $r['status'] ?? ''),
+            ':po' => (string) ($r['poNumber'] ?? ''), ':tot' => (float) ($r['total'] ?? 0), ':sa' => gmdate('c'),
         ]);
     }
 }

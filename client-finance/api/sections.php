@@ -41,38 +41,7 @@ if ($cwCompanyId <= 0) {
     client_finance_respond(400, ['ok' => false, 'error' => 'Missing cw_company_id.']);
 }
 
-/** invoice_lines of kind='product' for a set of invoice ids, grouped by invoice id. */
-function client_finance_lines_for_invoices(PDO $pdo, array $invoiceIds): array
-{
-    $invoiceIds = array_values(array_unique(array_filter(array_map('intval', $invoiceIds))));
-    if ($invoiceIds === []) {
-        return [];
-    }
-    $stmt = $pdo->prepare(
-        'SELECT invoice_id, description, product_identifier, qty, unit_cost, unit_price, cost, price,
-                catalog_category, catalog_subcategory, sales_order_identifier, opportunity_name
-         FROM invoice_lines WHERE kind = \'product\' AND invoice_id IN (' . implode(',', $invoiceIds) . ')
-         ORDER BY id'
-    );
-    $stmt->execute();
-    $out = [];
-    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $l) {
-        $out[(int) $l['invoice_id']][] = [
-            'description' => (string) $l['description'],
-            'product_identifier' => (string) $l['product_identifier'],
-            'qty' => (float) $l['qty'],
-            'unit_cost' => (float) $l['unit_cost'],
-            'unit_price' => (float) $l['unit_price'],
-            'cost' => (float) $l['cost'],
-            'price' => (float) $l['price'],
-            'catalog_category' => $l['catalog_category'],
-            'catalog_subcategory' => $l['catalog_subcategory'],
-            'sales_order_identifier' => (string) $l['sales_order_identifier'],
-            'opportunity_name' => (string) $l['opportunity_name'],
-        ];
-    }
-    return $out;
-}
+/** client_finance_lines_for_invoices() moved to _util.php 2026-11-06 so gauges.php can share it too. */
 
 if ($action === 'standard') {
     $months = $pdo->prepare(
