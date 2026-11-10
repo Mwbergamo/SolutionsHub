@@ -972,6 +972,28 @@ a { color: inherit; }
 .peoplefirst-log-btn:hover { background: oklch(0.78 0.15 85 / 0.26); }
 .peoplefirst-log-btn:disabled { opacity: .6; cursor: default; }
 
+/* Edit (2026-11-10, per Michael: "add an edit button to assist reps in
+   adjusting their set date if entered in error or by accident") -- a
+   second action button next to Log Today, and the inline date-edit form
+   it opens. Reuses .meeting-form-input / .vendor-field-btn /
+   .vendor-field-actions rather than inventing new input/button styles. */
+.peoplefirst-field-actions { flex: 0 0 auto; display: flex; gap: 6px; }
+
+.peoplefirst-edit-btn {
+  background: transparent;
+  border: 1px solid oklch(0.4 0.015 255);
+  color: oklch(0.65 0.015 255);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.peoplefirst-edit-btn:hover { border-color: oklch(0.55 0.015 255); color: oklch(0.85 0.01 255); }
+.peoplefirst-edit-btn:disabled { opacity: .6; cursor: default; }
+
+.peoplefirst-edit-form { flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px; }
+
 /* Risk scans (upload/download/review) -- added 2026-09-23 per Michael.
    Shown on every customer's dashboard, right under the activity panel. */
 

@@ -32,6 +32,15 @@
  *                                last_risk_scan_at, last_risk_scan_by } }
  *   Stamps "now" + the signed-in CRC's name onto the relevant field. Only
  *   valid for a customer that is actually is_peoplefirst = 1.
+ *
+ * POST /relationships/api/peoplefirst.php?action=edit
+ *   { customer_id, type: 'checkin'|'scan', date: 'YYYY-MM-DD' }
+ *   -> { ok: true, customer: { ...same shape as action=log } }
+ *   Added 2026-11-10 per Michael: "add an edit button to assist reps in
+ *   adjusting their set date if entered in error or by accident." Same
+ *   as 'log' except the caller supplies the date instead of this always
+ *   stamping "now" -- the _by field is still re-stamped to whoever makes
+ *   the edit, same as a fresh log.
  */
 
 declare(strict_types=1);
@@ -153,6 +162,62 @@ if ($action === 'log') {
 
     $upd = $pdo->prepare("UPDATE customers SET $atCol = datetime('now'), $byCol = :by WHERE id = :id");
     $upd->execute([':by' => $user['name'], ':id' => $customerId]);
+
+    $outStmt = $pdo->prepare(
+        'SELECT id, name, is_peoplefirst, last_client_checkin_at, last_client_checkin_by, last_risk_scan_at, last_risk_scan_by
+         FROM customers WHERE id = :id'
+    );
+    $outStmt->execute([':id' => $customerId]);
+    $out = $outStmt->fetch(PDO::FETCH_ASSOC);
+
+    relationships_respond(200, [
+        'ok' => true,
+        'customer' => [
+            'id' => (int) $out['id'],
+            'name' => $out['name'],
+            'is_peoplefirst' => (bool) $out['is_peoplefirst'],
+            'last_client_checkin_at' => $out['last_client_checkin_at'],
+            'last_client_checkin_by' => $out['last_client_checkin_by'],
+            'last_risk_scan_at' => $out['last_risk_scan_at'],
+            'last_risk_scan_by' => $out['last_risk_scan_by'],
+        ],
+    ]);
+}
+
+// Added 2026-11-10 per Michael: "add an edit button to assist reps in
+// adjusting their set date if entered in error or by accident." Log
+// Today always stamps "now"; this lets a rep correct a wrong date (or
+// backfill one Log Today was never clicked for) to any date they pick.
+// Same territory-scope + is_peoplefirst guard as 'log' -- only the SET
+// clause differs (a bound :at instead of datetime('now')).
+if ($action === 'edit') {
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        relationships_respond(405, ['ok' => false, 'error' => 'Method not allowed.']);
+    }
+    $data = relationships_read_json_body();
+    $customerId = (int) ($data['customer_id'] ?? 0);
+    $type = (string) ($data['type'] ?? '');
+    $date = (string) ($data['date'] ?? '');
+    if ($customerId <= 0 || ($type !== 'checkin' && $type !== 'scan') || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+        relationships_respond(400, ['ok' => false, 'error' => 'Missing/invalid customer_id, type, or date (expected YYYY-MM-DD).']);
+    }
+
+    $custStmt = $pdo->prepare('SELECT id, is_peoplefirst, territory_name FROM customers WHERE id = :id');
+    $custStmt->execute([':id' => $customerId]);
+    $cust = $custStmt->fetch(PDO::FETCH_ASSOC);
+    if ($cust === false) {
+        relationships_respond(404, ['ok' => false, 'error' => 'Customer not found.']);
+    }
+    relationships_require_territory_scope($allowedTerritories, $cust['territory_name']);
+    if (!$cust['is_peoplefirst']) {
+        relationships_respond(400, ['ok' => false, 'error' => 'This customer is not a PeopleFirst member.']);
+    }
+
+    $atCol = $type === 'checkin' ? 'last_client_checkin_at' : 'last_risk_scan_at';
+    $byCol = $type === 'checkin' ? 'last_client_checkin_by' : 'last_risk_scan_by';
+
+    $upd = $pdo->prepare("UPDATE customers SET $atCol = :at, $byCol = :by WHERE id = :id");
+    $upd->execute([':at' => $date, ':by' => $user['name'], ':id' => $customerId]);
 
     $outStmt = $pdo->prepare(
         'SELECT id, name, is_peoplefirst, last_client_checkin_at, last_client_checkin_by, last_risk_scan_at, last_risk_scan_by

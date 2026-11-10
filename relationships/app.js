@@ -319,6 +319,14 @@
     pfQueueType: null, // 'checkin' | 'scan'
     pfLogging: null, // "customerId::type" currently being logged, or null
 
+    // Added 2026-11-10 per Michael: "add an edit button to assist reps in
+    // adjusting their set date if entered in error or by accident." Log
+    // Today always stamps "now"; this lets a rep pick any date instead.
+    // Same open/draft/saving shape as the meeting-edit feature.
+    pfEditingKey: null, // "customerId::type" currently being edited, or null
+    pfEditDraftDate: '', // "YYYY-MM-DD" bound to the date input while editing
+    pfEditSaving: false,
+
     // Ticket/billing activity for the currently-open customer
     // (api/activity.php) -- reset whenever a different customer is opened.
     // { available: bool, ticket_count_ytd (live), billing: {series, trend}
@@ -2600,6 +2608,41 @@
     }).catch(function () {
       state.pfLogging = null;
       state.error = 'Could not log that — check your connection and try again.';
+      render();
+    });
+  }
+
+  // Added 2026-11-10 per Michael: "add an edit button to assist reps in
+  // adjusting their set date if entered in error or by accident." Log
+  // Today always stamps "now"; this lets a rep correct a wrong date (or
+  // backfill one that was never logged) to any date they choose. Same
+  // request/response shape as logPeopleFirst() above, pointed at
+  // ?action=edit with a caller-supplied date instead of the server
+  // always stamping "now".
+  function savePeopleFirstEdit(customerId, type) {
+    var date = state.pfEditDraftDate;
+    if (!date) {
+      state.error = 'Pick a date.';
+      render();
+      return;
+    }
+    state.pfEditSaving = true;
+    state.error = null;
+    render();
+    apiPost('api/peoplefirst.php?action=edit', { customer_id: customerId, type: type, date: date }).then(function (r) {
+      state.pfEditSaving = false;
+      if (r.data && r.data.ok) {
+        if (state.selectedCustomer && state.selectedCustomer.customer.id === r.data.customer.id) {
+          state.selectedCustomer.customer = r.data.customer;
+        }
+        state.pfEditingKey = null;
+      } else {
+        state.error = (r.data && r.data.error) || 'Could not save that date — try again.';
+      }
+      render();
+    }).catch(function () {
+      state.pfEditSaving = false;
+      state.error = 'Could not save that date — check your connection and try again.';
       render();
     });
   }
@@ -6693,6 +6736,21 @@
   function peopleFirstFieldHtml(customer, type, label, at, by) {
     var key = customer.id + '::' + type;
     var isLogging = state.pfLogging === key;
+    var isEditing = state.pfEditingKey === key;
+
+    if (isEditing) {
+      return '<div class="peoplefirst-field">' +
+        '<div class="peoplefirst-field-label">' + escapeHtml(label) + '</div>' +
+        '<div class="peoplefirst-edit-form">' +
+          '<input type="date" id="pfEditDateInput" class="meeting-form-input" value="' + escapeHtml(state.pfEditDraftDate) + '">' +
+          '<div class="vendor-field-actions">' +
+            '<button type="button" class="vendor-field-btn primary small" data-action="pf-edit-save" data-customer="' + customer.id + '" data-type="' + type + '" ' + (state.pfEditSaving ? 'disabled' : '') + '>' + (state.pfEditSaving ? 'Saving…' : 'Save') + '</button>' +
+            '<button type="button" class="vendor-field-btn secondary small" data-action="pf-edit-cancel" ' + (state.pfEditSaving ? 'disabled' : '') + '>Cancel</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
     var valueHtml = at
       ? escapeHtml(fmtTimestamp(at)) + (by ? '<div class="peoplefirst-field-by">by ' + escapeHtml(by) + '</div>' : '')
       : '<span class="peoplefirst-field-empty">Not recorded yet</span>';
@@ -6700,8 +6758,12 @@
     return '<div class="peoplefirst-field">' +
       '<div class="peoplefirst-field-label">' + escapeHtml(label) + '</div>' +
       '<div class="peoplefirst-field-value">' + valueHtml + '</div>' +
-      '<button class="peoplefirst-log-btn" type="button" data-action="log-peoplefirst" data-customer="' + customer.id + '" data-type="' + type + '" ' +
-        (isLogging ? 'disabled' : '') + '>' + (isLogging ? 'Logging…' : 'Log Today') + '</button>' +
+      '<div class="peoplefirst-field-actions">' +
+        '<button class="peoplefirst-log-btn" type="button" data-action="log-peoplefirst" data-customer="' + customer.id + '" data-type="' + type + '" ' +
+          (isLogging ? 'disabled' : '') + '>' + (isLogging ? 'Logging…' : 'Log Today') + '</button>' +
+        '<button class="peoplefirst-edit-btn" type="button" data-action="pf-edit-open" data-customer="' + customer.id + '" data-type="' + type + '" data-at="' + escapeHtml(at || '') + '" ' +
+          (isLogging ? 'disabled' : '') + '>Edit</button>' +
+      '</div>' +
     '</div>';
   }
 
@@ -8865,6 +8927,12 @@
         state.meetingDraftDate = e.target.value;
       });
     }
+    var pfEditDateInput = document.getElementById('pfEditDateInput');
+    if (pfEditDateInput) {
+      pfEditDateInput.addEventListener('input', function (e) {
+        state.pfEditDraftDate = e.target.value;
+      });
+    }
     var ticketOutgrowText = document.getElementById('ticketOutgrowText');
     if (ticketOutgrowText) {
       ticketOutgrowText.addEventListener('input', function (e) {
@@ -9203,6 +9271,20 @@
       selectCustomer(el.getAttribute('data-customer'));
     } else if (action === 'log-peoplefirst') {
       logPeopleFirst(parseInt(el.getAttribute('data-customer'), 10), el.getAttribute('data-type'));
+    } else if (action === 'pf-edit-open') {
+      var pfEditCustomerId = parseInt(el.getAttribute('data-customer'), 10);
+      var pfEditType = el.getAttribute('data-type');
+      var pfEditAt = el.getAttribute('data-at') || '';
+      state.pfEditingKey = pfEditCustomerId + '::' + pfEditType;
+      state.pfEditDraftDate = pfEditAt ? pfEditAt.slice(0, 10) : outgrowTodayYmd();
+      state.error = null;
+      render();
+    } else if (action === 'pf-edit-cancel') {
+      state.pfEditingKey = null;
+      state.error = null;
+      render();
+    } else if (action === 'pf-edit-save') {
+      savePeopleFirstEdit(parseInt(el.getAttribute('data-customer'), 10), el.getAttribute('data-type'));
     } else if (action === 'toggle-checklist') {
       var custId = state.selectedCustomer.customer.id;
       var checklistKey = custId + '::' + el.getAttribute('data-pillar') + '::' + el.getAttribute('data-service');
