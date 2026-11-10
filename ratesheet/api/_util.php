@@ -98,20 +98,32 @@ function ratesheet_require_login(PDO $pdo): array
  * The "Sending Representative" roster, verbatim names/emails as Michael
  * gave them (chat, 2026-09-17): the first 6 names' emails come from
  * relationships/api/catalog.php's relationships_todo_roster_cw_email()
- * (same 7-person roster minus Jake Bradshaw, who isn't a sender here --
- * see ratesheet_admin_emails() below for where Jake does show up); the
- * next 3 (Courtney Cruz, Kasie Van Fossen, Trey Hayden) came with their
- * emails spelled out directly in Michael's request. Not a
- * ratesheet_users query, same reasoning as relationships_todo_roster():
- * this list is the source of truth for the dropdown regardless of who
- * has actually signed in yet.
+ * (same 7-person roster minus Jake Bradshaw, who originally wasn't a
+ * sender here -- see ratesheet_admin_emails() below for where Jake
+ * already showed up, as a dashboard-only admin); the next 3 (Courtney
+ * Cruz, Kasie Van Fossen, Trey Hayden) came with their emails spelled
+ * out directly in Michael's request. Not a ratesheet_users query, same
+ * reasoning as relationships_todo_roster(): this list is the source of
+ * truth for the dropdown regardless of who has actually signed in yet.
  *
  * Daemian Caron and Kevin Headley added 2026-09-18, per Michael, with
  * their emails spelled out directly in his request the same way
  * Courtney/Kasie/Trey's were -- appended to the end rather than
  * alphabetized in, so the dropdown order for the original 9 names never
- * shifts. Keep app.js's SENDER_ROSTER array (names only) in sync with
- * this list if it's ever changed again.
+ * shifts.
+ *
+ * Jake Bradshaw added 2026-11-10, per Michael: "I would like to add
+ * Jake Bradshaw (jbradshaw@codebluetechnology.com) as a person that can
+ * send a Rate Sheet." He was already an admin (full dashboard
+ * visibility, ratesheet_admin_emails() below) but not previously in the
+ * sender dropdown -- this just adds the second role on top of the one
+ * he already had, same email address. No territory mapping needed
+ * (ratesheet_rep_territory_search_term() falls back to House Accounts
+ * for any name not explicitly listed there, same as every other
+ * relationship coordinator in this roster).
+ *
+ * Keep app.js's SENDER_ROSTER array (names only) in sync with this list
+ * if it's ever changed again.
  *
  * @return array<string,string> name => email
  */
@@ -129,16 +141,18 @@ function ratesheet_sender_roster(): array
         'Trey Hayden' => 'Thayden@codebluetechnology.com',
         'Daemian Caron' => 'Dcaron@codebluetechnology.com',
         'Kevin Headley' => 'Kheadley@codebluetechnology.com',
+        'Jake Bradshaw' => 'Jbradshaw@codebluetechnology.com',
     ];
 }
 
 /**
  * Emails allowed to see EVERY rate sheet on the dashboard, per Michael:
  * "Michael, Trey, Kasie, Courtney, Claire, Jake and Casey should be able
- * to see all rate sheets." Jake Bradshaw isn't in the sender dropdown
- * above (he's not a rate-sheet sender, just a dashboard viewer) -- his
- * email comes from the same confirmed roster map in
- * relationships/api/catalog.php. Anyone signed in but NOT in this list
+ * to see all rate sheets." Jake Bradshaw was originally dashboard-only
+ * (not a rate-sheet sender) -- his email came from the same confirmed
+ * roster map in relationships/api/catalog.php. As of 2026-11-10 he's
+ * also in ratesheet_sender_roster() above (see that function's
+ * docblock), so he now has both roles. Anyone signed in but NOT in this list
  * sees only rows whose rep_email matches their own signed-in email --
  * see requests.php's ?action=list.
  *
@@ -150,6 +164,11 @@ function ratesheet_sender_roster(): array
  * visibility), per Michael's walk-in-rate-sheet request: they previously
  * saw only rows they personally sent (not in this list at all) --
  * promoted to match Charlie Trible's full-dashboard access.
+ *
+ * Jake Bradshaw was already here (full visibility) before he was also
+ * added to ratesheet_sender_roster() above, 2026-11-10 -- he now has
+ * both roles (can send AND sees every rate sheet), same email either
+ * way.
  *
  * @return string[] lowercased emails
  */

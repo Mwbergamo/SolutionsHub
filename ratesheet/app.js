@@ -33,7 +33,7 @@
   var SENDER_ROSTER = [
     'Chester Sienko', 'Moe Okeilli', 'Walter Drew', 'Claire Hayden',
     'Casey Mayes', 'Michael Bergamo', 'Courtney Cruz', 'Kasie Van Fossen', 'Trey Hayden',
-    'Daemian Caron', 'Kevin Headley'
+    'Daemian Caron', 'Kevin Headley', 'Jake Bradshaw'
   ];
 
   var root = document.getElementById('app-root');
