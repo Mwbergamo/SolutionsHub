@@ -8411,7 +8411,10 @@
   function setProjectAssigned(projectId, assigned, assignedToName) {
     state.projectsTogglingId = projectId;
     render();
-    var body = assigned ? { project_id: projectId, assigned_to_name: assignedToName } : { project_id: projectId };
+    var assignProj = (state.projectsData || []).filter(function (p) { return String(p.id) === String(projectId); })[0];
+    var body = assigned
+      ? { project_id: projectId, assigned_to_name: assignedToName, project_name: assignProj ? assignProj.name : '', company_name: assignProj ? assignProj.company_name : '' }
+      : { project_id: projectId };
     apiPost('api/projects.php?action=' + (assigned ? 'assign' : 'unassign'), body).then(function (r) {
       state.projectsTogglingId = null;
       if (r.data && r.data.ok) {

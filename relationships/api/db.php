@@ -1363,6 +1363,18 @@ function relationships_migrate(PDO $pdo): void
     $seedAssetColumn('vpn', 'VPN Assignment', 'Enabled, Not enabled', 11);
     $seedAssetColumn('duo', 'DUO', 'Enrolled, Not enrolled', 12);
     $seedAssetColumn('guardz', 'Guardz', 'Protected, Not protected', 13);
+
+    // Project Relationship Coordinator assignment email -- added
+    // 2026-11-11 per Michael: assigning a coordinator to a project
+    // (project_assignments above) should send that coordinator an email
+    // from Solutions Hub announcing them as the project's "Project
+    // Relationship Coordinator" and spelling out their responsibility
+    // (see relationships/api/project-assignment-email.php). Same
+    // fail-open pattern as meeting_tasks.email_status/email_error -- a
+    // send failure never blocks or undoes the assignment itself, it's
+    // only recorded here for troubleshooting.
+    relationships_add_column_if_missing($pdo, 'project_assignments', 'email_status', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'project_assignments', 'email_error', 'TEXT');
 }
 
 /**

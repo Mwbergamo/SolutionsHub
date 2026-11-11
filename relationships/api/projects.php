@@ -44,7 +44,13 @@
  *        is computed per project and then used only to filter the response;
  *        it is not sent to the frontend since there's nothing left for it
  *        to describe. Sorting is still client-side over this list.
- * POST ?action=assign      { project_id, assigned_to_name }
+ * POST ?action=assign      { project_id, assigned_to_name, project_name?, company_name? }
+ *   -> also emails the assigned coordinator (see
+ *      relationships_send_project_assignment_email(), in
+ *      project-assignment-email.php) announcing them as the project's
+ *      Project Relationship Coordinator -- fails open, logged to
+ *      project_assignments.email_status/email_error, never blocks the
+ *      assignment itself.
  * POST ?action=unassign    { project_id }
  * POST ?action=checklist_toggle  { project_id, step_number, completed }
  * POST ?action=kickoff_date_set  { project_id, kickoff_date }  ("" clears it)
@@ -74,6 +80,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/connectwise.php';
 require_once __DIR__ . '/catalog.php';
+require_once __DIR__ . '/project-assignment-email.php';
 
 const RELATIONSHIPS_PROJECTS_BOARD_CONDITION = '(board/id=45 or board/id=3)';
 
@@ -319,6 +326,38 @@ if ($action === 'assign' || $action === 'unassign') {
             ':uid' => $assigneeUserId !== false ? (int) $assigneeUserId : null,
             ':uname' => $assignedToName,
         ]);
+
+        // Announcement email -- added 2026-11-11 per Michael: the assigned
+        // coordinator gets an email from Solutions Hub naming them the
+        // project's "Project Relationship Coordinator" and spelling out
+        // their responsibility. Fires on every assign (including
+        // re-assigning the same project to someone else), never on
+        // unassign. project_name/company_name come from the frontend's
+        // already-loaded project row (app.js's setProjectAssigned()) --
+        // avoids a second live ConnectWise fetch just to re-fetch what the
+        // screen already has on hand; a blank value just makes for a less
+        // specific (but still sent) email rather than a hard failure.
+        $coordinatorEmail = relationships_todo_roster_cw_email($assignedToName);
+        $emailStatus = null;
+        $emailError = null;
+        if ($coordinatorEmail !== null) {
+            try {
+                relationships_send_project_assignment_email([
+                    'to_email' => $coordinatorEmail,
+                    'coordinator_name' => $assignedToName,
+                    'project_name' => trim((string) ($data['project_name'] ?? '')),
+                    'company_name' => trim((string) ($data['company_name'] ?? '')),
+                ]);
+                $emailStatus = 'sent';
+            } catch (Throwable $e) {
+                $emailStatus = 'failed';
+                $emailError = $e->getMessage();
+            }
+        } else {
+            $emailStatus = 'no_email_on_file';
+        }
+        $pdo->prepare('UPDATE project_assignments SET email_status = :s, email_error = :e WHERE cw_project_id = :id')
+            ->execute([':s' => $emailStatus, ':e' => $emailError, ':id' => $projectId]);
     } else {
         $pdo->prepare('DELETE FROM project_assignments WHERE cw_project_id = :id')->execute([':id' => $projectId]);
     }
