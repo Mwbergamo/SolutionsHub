@@ -94,6 +94,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/../../relationships/api/db.php';
+require_once __DIR__ . '/gauges-core.php';
 
 client_finance_require_access();
 $pdo = client_finance_db();
@@ -153,26 +154,18 @@ function client_finance_bulk_sync_state(PDO $pdo): array
 try {
 
 if ($action === 'recurring_revenue') {
-    // Strictly before the current month, so a month that's only
-    // partially elapsed never shows as an artificially low number.
-    $cutoffMonth = gmdate('Y-m');
-    $stmt = $pdo->prepare(
-        "SELECT month, SUM(total) AS total, COUNT(DISTINCT cw_company_id) AS customers
-         FROM invoices WHERE category = 'agreement' AND month < :cutoff
-         GROUP BY month ORDER BY month DESC LIMIT 1"
-    );
-    $stmt->execute([':cutoff' => $cutoffMonth]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    // Core aggregate extracted to gauges-core.php 2026-11-12 -- shared
+    // with the My Day personal dashboard, which calls the same function
+    // with a territory-scoped company id list. Unchanged math here, just
+    // no longer duplicated.
+    $core = client_finance_recurring_revenue_core($pdo);
 
     $synced = (int) $pdo->query('SELECT COUNT(*) FROM company_sync_state WHERE agreements_synced_at IS NOT NULL')->fetchColumn();
 
-    client_finance_respond(200, ['ok' => true, 'recurring_revenue' => [
-        'month' => $row['month'] ?? null,
-        'total' => $row ? (float) $row['total'] : 0.0,
-        'customers_with_revenue' => $row ? (int) $row['customers'] : 0,
+    client_finance_respond(200, ['ok' => true, 'recurring_revenue' => array_merge($core, [
         'coverage' => ['synced' => $synced, 'eligible' => client_finance_eligible_customer_count()],
         'bulk_sync' => client_finance_bulk_sync_state($pdo),
-    ]]);
+    ])]);
 }
 
 /**
@@ -225,13 +218,9 @@ if ($action === 'recurring_revenue_detail') {
  * reliably reach back to January even late in the year.
  */
 if ($action === 'annual_revenue') {
-    $yearStart = gmdate('Y') . '-01';
-    $stmt = $pdo->prepare(
-        "SELECT SUM(CASE WHEN category = 'credit' THEN -ABS(total) ELSE total END) AS total, COUNT(*) AS invoice_count
-         FROM invoices WHERE category IN ('standard','agreement','sales_order','credit') AND month >= :start"
-    );
-    $stmt->execute([':start' => $yearStart]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    // Core aggregate extracted to gauges-core.php 2026-11-12 -- see the
+    // note on recurring_revenue above.
+    $core = client_finance_annual_revenue_core($pdo);
 
     $synced = (int) $pdo->query(
         'SELECT COUNT(*) FROM company_sync_state
@@ -239,13 +228,10 @@ if ($action === 'annual_revenue') {
            AND credits_synced_at IS NOT NULL AND product_sales_synced_at IS NOT NULL'
     )->fetchColumn();
 
-    client_finance_respond(200, ['ok' => true, 'annual_revenue' => [
-        'year' => gmdate('Y'),
-        'total' => $row ? (float) $row['total'] : 0.0,
-        'invoice_count' => $row ? (int) $row['invoice_count'] : 0,
+    client_finance_respond(200, ['ok' => true, 'annual_revenue' => array_merge($core, [
         'coverage' => ['synced' => $synced, 'eligible' => client_finance_eligible_customer_count()],
         'bulk_sync' => client_finance_bulk_sync_state($pdo),
-    ]]);
+    ])]);
 }
 
 if ($action === 'annual_revenue_detail') {
@@ -283,22 +269,16 @@ if ($action === 'annual_revenue_detail') {
  * year-to-date, per Michael's explicit answer (client-finance-gauges.md).
  */
 if ($action === 'sales_order_revenue') {
-    $yearStart = gmdate('Y') . '-01';
-    $stmt = $pdo->prepare(
-        'SELECT SUM(total) AS total, COUNT(*) AS order_count FROM sales_orders WHERE month >= :start'
-    );
-    $stmt->execute([':start' => $yearStart]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    // Core aggregate extracted to gauges-core.php 2026-11-12 -- see the
+    // note on recurring_revenue above.
+    $core = client_finance_sales_order_revenue_core($pdo);
 
     $synced = (int) $pdo->query('SELECT COUNT(*) FROM company_sync_state WHERE sales_orders_synced_at IS NOT NULL')->fetchColumn();
 
-    client_finance_respond(200, ['ok' => true, 'sales_order_revenue' => [
-        'year' => gmdate('Y'),
-        'total' => $row ? (float) $row['total'] : 0.0,
-        'order_count' => $row ? (int) $row['order_count'] : 0,
+    client_finance_respond(200, ['ok' => true, 'sales_order_revenue' => array_merge($core, [
         'coverage' => ['synced' => $synced, 'eligible' => client_finance_eligible_customer_count()],
         'bulk_sync' => client_finance_bulk_sync_state($pdo),
-    ]]);
+    ])]);
 }
 
 if ($action === 'sales_order_revenue_detail') {

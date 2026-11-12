@@ -114,6 +114,16 @@
         </div>
         </sc-if>
         <div class="hub-tiles">
+          <!-- My Day -- added 2026-11-12 per Michael: a personalized daily
+               dashboard (myday/) for each signed-in rep -- today's
+               must-dos, their projects' status, and territory health/
+               finance. Placed first since it's meant to be where a rep
+               starts their day before diving into the other tiles. -->
+          <a href="myday/" class="hub-tile" style="--c:#c15fb0">
+            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"></path></svg></div><span class="hub-tile-led" title="Ready"></span></div>
+            <div class="hub-tile-txt"><div class="hub-tile-title">My Day</div><div class="hub-tile-desc">Your must-dos, projects and territory health -- all in one place to start the day.</div></div>
+            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
+          </a>
           <button type="button" data-on-click="{{goToSolutionsCreator}}" class="hub-tile" style="--c:#4d7bd6">
             <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg></div><sc-if value="{{scHasSelections}}" hint-placeholder-val="{{false}}"><span class="hub-tile-badge">{{scSelectedCount}} selected</span></sc-if><sc-if value="{{scNoSelections}}" hint-placeholder-val="{{true}}"><span class="hub-tile-led" title="Ready"></span></sc-if></div>
             <div class="hub-tile-txt"><div class="hub-tile-title">Solutions Creator</div><div class="hub-tile-desc">Search or browse every service area and build out a solution.</div></div>

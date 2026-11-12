@@ -700,6 +700,18 @@
 
   // Deep link from the Hub's Sales / Project Management cards: index.html?view=report|prospecting|projects&section=sales|projects
   // Views that moved to Hub cards always show their own section's top bar.
+  //
+  // Also handles index.html?view=rep-todos -- added for the My Day hub
+  // tile's Must-Do strip (myday/app.js) to jump straight into the
+  // signed-in rep's own calendar/to-do list, same screen as clicking your
+  // own name in the To-Do Checklist (data-action="show-rep-todos"). There
+  // is no data-rep attribute to read on a URL-based deep link, so this
+  // defaults to state.user.name -- boot() always sets state.user before
+  // calling openViewFromLink(), so it's populated by the time this runs.
+  // No state.section to set here: mainHtml() dispatches state.view ===
+  // 'rep-todos' on its own, and the screen's own back button returns to
+  // state.view = 'dashboard' regardless of state.section (see
+  // 'rep-todos-back' in handleAction()).
   function openViewFromLink() {
     var v = '', sec = '';
     try {
@@ -710,6 +722,21 @@
       state.section = 'sales';
     } else if (v === 'projects') {
       state.section = 'projects';
+    } else if (v === 'rep-todos') {
+      var repTodosLinkName = (state.user && state.user.name) || '';
+      var repTodosLinkToday = new Date();
+      state.view = 'rep-todos';
+      state.error = null;
+      state.repTodosName = repTodosLinkName;
+      state.repTodosData = null;
+      state.repTodosError = null;
+      state.repTodosCalYear = repTodosLinkToday.getFullYear();
+      state.repTodosCalMonth = repTodosLinkToday.getMonth() + 1;
+      state.repTodosExpandedProjectId = null;
+      render();
+      loadRepTodos(repTodosLinkName);
+      loadProjects();
+      return;
     } else {
       return;
     }
