@@ -88,3 +88,12 @@ Thumbs.db
 /client-finance/data/*.sqlite
 /client-finance/data/*.sqlite-wal
 /client-finance/data/*.sqlite-shm
+
+# Marketing document hub's runtime SQLite database + the uploaded files
+# themselves -- created on first request by marketing/api/db.php. Never
+# commit these: live marketing collateral and a filing-cabinet database,
+# not source, and a `git pull` deploy must never overwrite or wipe them.
+/marketing/data/*.sqlite
+/marketing/data/*.sqlite-wal
+/marketing/data/*.sqlite-shm
+/marketing/data/documents/

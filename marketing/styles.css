@@ -1,0 +1,137 @@
+/* marketing/styles.css — Marketing document hub (added 2026-11-12).
+   Same dark-navy / Space Grotesk + IBM Plex Sans look as Relationships and
+   Client Finance, so this reads as part of the same product rather than a
+   bolt-on -- same hardcoded-oklch approach those sub-apps use (this is a
+   separate page from the themed root portal, so the root's --cbt-* light/
+   dark tokens aren't in scope here). */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: oklch(0.15 0.028 255);
+  font-family: 'IBM Plex Sans', sans-serif;
+  color: oklch(0.9 0.006 255);
+}
+a { color: inherit; }
+.loading, .mk-empty { padding: 60px 40px; color: oklch(0.6 0.02 255); text-align: center; }
+.mk-empty--error { color: oklch(0.75 0.17 27); }
+
+/* ---- top bar ---- */
+.mk-topbar { display: flex; align-items: center; gap: 16px; padding: 18px 40px; border-bottom: 1px solid oklch(0.26 0.03 255); flex-wrap: wrap; }
+.mk-topbar-left { display: flex; align-items: center; gap: 14px; }
+.mk-brand { font-family: 'Space Grotesk', sans-serif; font-size: 20px; font-weight: 700; color: white; }
+.mk-brand-sub { font-size: 12.5px; color: oklch(0.6 0.02 255); }
+.mk-topbar-search { flex: 1 1 260px; min-width: 200px; max-width: 420px; }
+.mk-topbar-search .mk-input { width: 100%; }
+.mk-topbar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.mk-back-to-hub { font-size: 12.5px; font-weight: 600; color: oklch(0.7 0.02 255); text-decoration: none; padding: 8px 14px; border-radius: 999px; border: 1px solid oklch(0.32 0.03 255); }
+.mk-back-to-hub:hover { border-color: #e3b04b; color: white; }
+
+main.mk-main { padding: 24px 40px 60px; max-width: 1200px; margin: 0 auto; }
+.mk-view-title { font-family: 'Space Grotesk', sans-serif; font-size: 22px; margin: 0 0 4px; color: white; }
+.mk-view-sub { font-size: 13px; color: oklch(0.62 0.02 255); margin-bottom: 16px; line-height: 1.5; }
+.mk-subhead { font-family: 'Space Grotesk', sans-serif; font-size: 15px; color: white; margin: 22px 0 10px; }
+
+/* ---- buttons / inputs ---- */
+.mk-btn { background: oklch(0.24 0.02 255); color: oklch(0.9 0.006 255); border: 1px solid oklch(0.34 0.03 255); border-radius: 10px; padding: 9px 16px; font-weight: 600; font-size: 13px; cursor: pointer; font-family: inherit; }
+.mk-btn:hover { border-color: #e3b04b; }
+.mk-btn[disabled] { opacity: .5; cursor: default; }
+.mk-btn--primary { background: #e3b04b; border-color: #e3b04b; color: #1a1406; }
+.mk-btn--primary:hover { filter: brightness(1.08); }
+.mk-btn--active { border-color: #e3b04b; color: white; }
+.mk-btn--small { padding: 6px 12px; font-size: 12px; }
+.mk-btn--danger { background: transparent; border-color: oklch(0.45 0.1 27); color: oklch(0.78 0.14 27); }
+.mk-btn--danger:hover { background: oklch(0.22 0.06 27); }
+
+.mk-input, textarea.mk-input { background: oklch(0.2 0.02 255); border: 1px solid oklch(0.34 0.03 255); color: white; border-radius: 8px; padding: 9px 11px; font-family: inherit; font-size: 13px; }
+.mk-textarea { width: 100%; resize: vertical; font-family: inherit; }
+.mk-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+
+.mk-banner { border-radius: 12px; padding: 10px 14px; font-size: 13px; margin: 10px 0; line-height: 1.5; }
+.mk-banner--error { background: oklch(0.22 0.06 27); border: 1px solid oklch(0.5 0.16 27); color: oklch(0.88 0.06 27); }
+.mk-hint { font-size: 12px; color: oklch(0.62 0.02 255); padding: 6px 0; }
+.mk-tag { font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; padding: 1px 6px; border-radius: 999px; background: oklch(0.28 0.05 80); color: oklch(0.85 0.12 85); }
+
+/* ---- pillar tabs ---- */
+.mk-pillar-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.mk-pillar-tab { background: oklch(0.2 0.02 255); border: 1px solid oklch(0.3 0.03 255); color: oklch(0.78 0.015 255); border-radius: 999px; padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; }
+.mk-pillar-tab:hover { border-color: #e3b04b; }
+.mk-pillar-tab.active { background: #e3b04b; border-color: #e3b04b; color: #1a1406; }
+
+/* ---- breadcrumb ---- */
+.mk-breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 14px; font-size: 13px; }
+.mk-crumb { background: none; border: none; color: oklch(0.72 0.02 255); font: inherit; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+.mk-crumb:last-child { color: white; font-weight: 600; }
+.mk-crumb:hover { background: oklch(0.22 0.02 255); }
+.mk-crumb-sep { color: oklch(0.45 0.01 255); }
+
+/* ---- toolbar ---- */
+.mk-toolbar { display: flex; gap: 10px; margin-bottom: 14px; }
+.mk-new-folder-row { display: flex; gap: 8px; margin-bottom: 16px; max-width: 420px; }
+.mk-new-folder-row .mk-input { flex: 1; }
+
+/* ---- folder grid ---- */
+.mk-folder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 260px)); gap: 10px; margin-bottom: 20px; }
+.mk-folder-card { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: oklch(0.19 0.02 255); border: 1px solid oklch(0.27 0.03 255); border-radius: 12px; padding: 10px 12px; }
+.mk-folder-card--editing { flex-direction: column; align-items: stretch; }
+.mk-folder-open { display: flex; align-items: center; gap: 8px; background: none; border: none; color: white; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; padding: 0; text-align: left; flex: 1; min-width: 0; }
+.mk-folder-open span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mk-folder-icon { width: 20px; height: 20px; flex-shrink: 0; fill: none; stroke: #e3b04b; stroke-width: 1.8; }
+.mk-folder-card-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.mk-icon-btn { background: none; border: none; color: oklch(0.65 0.015 255); cursor: pointer; font-size: 14px; padding: 4px 6px; border-radius: 6px; line-height: 1; }
+.mk-icon-btn:hover { background: oklch(0.24 0.02 255); color: white; }
+.mk-icon-btn--danger:hover { color: oklch(0.78 0.14 27); }
+.mk-rename-input { width: 100%; margin-bottom: 6px; }
+
+/* ---- documents table ---- */
+table.mk-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.mk-table th { text-align: left; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: oklch(0.62 0.02 255); padding: 8px 10px; border-bottom: 1px solid oklch(0.3 0.03 255); white-space: nowrap; }
+table.mk-table th.mk-sortable { cursor: pointer; user-select: none; }
+table.mk-table th.mk-sortable:hover { color: white; }
+table.mk-table td { padding: 10px; border-bottom: 1px solid oklch(0.24 0.03 255); vertical-align: top; }
+table.mk-table--compact td, table.mk-table--compact th { padding: 6px 8px; }
+.mk-filename { font-weight: 600; color: white; }
+.mk-filename-sub { font-size: 11.5px; color: oklch(0.6 0.02 255); font-weight: 400; margin-top: 2px; }
+.mk-row-actions { white-space: nowrap; text-align: right; }
+.mk-ext-chip { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .02em; padding: 3px 8px; border-radius: 6px; background: color-mix(in srgb, var(--c) 22%, oklch(0.19 0.02 255)); color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); }
+
+/* ---- send / history modal ---- */
+.mk-modal-backdrop { position: fixed; inset: 0; background: rgba(5, 8, 15, .6); display: flex; align-items: flex-start; justify-content: center; padding: 60px 20px; z-index: 50; overflow-y: auto; }
+.mk-modal { background: oklch(0.17 0.025 255); border: 1px solid oklch(0.3 0.03 255); border-radius: 16px; width: 100%; max-width: 520px; padding: 0; }
+.mk-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid oklch(0.27 0.03 255); }
+.mk-modal-head h3 { margin: 0; font-family: 'Space Grotesk', sans-serif; font-size: 17px; color: white; }
+.mk-modal-body { padding: 18px 20px 22px; }
+.mk-send-file { background: oklch(0.2 0.02 255); border: 1px solid oklch(0.28 0.03 255); border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.mk-field { margin-bottom: 14px; position: relative; }
+.mk-field label { display: block; font-size: 11px; letter-spacing: .03em; text-transform: uppercase; color: oklch(0.62 0.02 255); margin-bottom: 6px; }
+.mk-field .mk-input { width: 100%; }
+.mk-dropdown { position: absolute; top: calc(100% + 2px); left: 0; right: 0; background: oklch(0.2 0.02 255); border: 1px solid oklch(0.32 0.03 255); border-radius: 10px; overflow: hidden; z-index: 5; max-height: 220px; overflow-y: auto; }
+.mk-dropdown-row { display: block; width: 100%; text-align: left; padding: 9px 12px; background: none; border: none; color: white; font: inherit; font-size: 13px; cursor: pointer; }
+.mk-dropdown-row:hover { background: oklch(0.26 0.03 255); }
+.mk-dropdown-empty { padding: 10px 12px; font-size: 12.5px; color: oklch(0.6 0.02 255); }
+.mk-contact-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
+.mk-contact-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; background: oklch(0.2 0.02 255); border: 1px solid oklch(0.28 0.03 255); border-radius: 10px; padding: 8px 12px; cursor: pointer; font: inherit; text-align: left; }
+.mk-contact-row:hover { border-color: #e3b04b; }
+.mk-contact-row.selected { border-color: #e3b04b; background: color-mix(in srgb, #e3b04b 12%, oklch(0.2 0.02 255)); }
+.mk-contact-row.disabled, .mk-contact-row[disabled] { opacity: .45; cursor: default; }
+.mk-contact-name { font-size: 13px; font-weight: 600; color: white; }
+.mk-contact-email { font-size: 12px; color: oklch(0.65 0.02 255); }
+.mk-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
+
+@media (max-width: 760px) {
+  .mk-topbar { padding: 14px 16px; }
+  .mk-topbar-search { order: 3; flex-basis: 100%; max-width: none; }
+  main.mk-main { padding: 18px 16px 48px; }
+  .mk-folder-grid { grid-template-columns: 1fr 1fr; }
+  table.mk-table thead { display: none; }
+  table.mk-table, table.mk-table tbody, table.mk-table tr, table.mk-table td { display: block; width: 100%; }
+  table.mk-table tr { border-bottom: 1px solid oklch(0.26 0.03 255); padding: 10px 0; }
+  table.mk-table td { border-bottom: none; padding: 2px 0; }
+  .mk-row-actions { text-align: left; margin-top: 6px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

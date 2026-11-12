@@ -1,0 +1,8 @@
+# Block all direct HTTP access to this folder — it holds the Marketing
+# document hub's SQLite database and the uploaded files themselves
+# (data/documents/<id>/<filename>). Nothing here should ever be served
+# directly to a browser; only marketing/api/*.php reads/writes it,
+# streaming a file back out through the 'download' action's own
+# sign-in-gated PHP code.
+Order allow,deny
+Deny from all
