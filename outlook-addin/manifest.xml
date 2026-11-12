@@ -1,21 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  outlook-addin/manifest.xml -- "Send to Relationships" Outlook add-in.
+  outlook-addin/manifest.xml: "Send to Relationships" Outlook add-in.
   Added 2026-11-12 per Michael; see claude/relationships-outlook-addin-plan.md
   for the full product design and claude/relationships-outlook-addin-plan.md's
   "Microsoft 365 Centralized Deployment" section for how to actually roll
-  this out (Settings -> Integrated apps -> Deploy Add-in -> upload this
-  file -> Specific users/groups).
+  this out (Settings > Integrated apps > Deploy Add-in > upload this
+  file > Specific users/groups).
 
   This is the XML "add-in only" manifest format (NOT the newer unified
-  JSON manifest) -- deliberately, since that's what the Centralized
+  JSON manifest), deliberately, since that's what the Centralized
   Deployment wizard's "Deploy Add-in" path (as opposed to a Teams-store
   flow) accepts directly.
 
   All URLs below assume the add-in is deployed to
   https://portal.codebluetechnology.com/outlook-addin/ alongside the rest
-  of SolutionsHub -- if it's ever served from a different domain, every
-  URL in this file (and the <AppDomains> entry) needs to change together,
+  of SolutionsHub. If it's ever served from a different domain, every
+  URL in this file (and the AppDomains entry) needs to change together,
   and so does auth-config.php's addin_redirect_uri (see
   auth-config.sample.php).
 -->
@@ -26,7 +26,7 @@
     xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
     xsi:type="MailApp">
 
-  <!-- Fixed, permanent identity for this add-in -- generated once
+  <!-- Fixed, permanent identity for this add-in: generated once
        (2026-11-12) and must never change across redeployments, or
        Centralized Deployment will treat an update as a brand-new add-in
        instead of upgrading the existing one. -->
@@ -52,7 +52,7 @@
     <Host Name="Mailbox" />
   </Hosts>
 
-  <!-- Mailbox 1.8 -- the lowest requirement set that includes
+  <!-- Mailbox 1.8: the lowest requirement set that includes
        getAttachmentContentAsync(), which "File as Document(s)" needs to
        actually read a picked attachment's bytes before uploading it. -->
   <Requirements>
@@ -93,8 +93,8 @@
         <DesktopFormFactor>
           <FunctionFile resid="Commands.Url" />
 
-          <!-- The ribbon button on a read message -- this IS "the
-               clickable menu" from Michael's design: Outlook doesn't
+          <!-- The ribbon button on a read message: this IS "the
+               clickable menu" from Michael's design. Outlook doesn't
                support a true right-click context menu for 3rd-party
                add-ins, so a ribbon button opens the task pane instead,
                and the 3-action menu (File as Document(s) / Create a
@@ -107,7 +107,7 @@
                   <Label resid="SendToRelationshipsButton.Label" />
                   <Supertip>
                     <Title resid="SendToRelationshipsButton.Label" />
-                    <Description resid="SendToRelationshipsButton.Tooltip" />
+                    <Description resid="SendToRelationshipsButton.Tip" />
                   </Supertip>
                   <Icon>
                     <bt:Image size="16" resid="Icon.16x16" />
@@ -140,7 +140,7 @@
         <bt:String id="SendToRelationshipsButton.Label" DefaultValue="Send to Relationships" />
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="SendToRelationshipsButton.Tooltip" DefaultValue="File this email's attachments, or create a Meeting or To-Do from it, under the matching customer in Relationships." />
+        <bt:String id="SendToRelationshipsButton.Tip" DefaultValue="File this email's attachments, or create a Meeting or To-Do from it, under the matching customer in Relationships." />
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>
