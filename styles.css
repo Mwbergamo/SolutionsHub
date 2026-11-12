@@ -723,3 +723,103 @@ body { overflow-x: hidden; }
 @keyframes hub-blink { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .hub-tile, .hub-tile::after { transition: none; } .hub-tile--soon .hub-tile-led { animation: none; } .hub-beat .pulse { animation: none; stroke-dasharray: none; } }
 button.hub-tile { font: inherit; text-align: left; width: 100%; }
+
+/* ---- Home dashboard (2026-11-12, per Michael): My Day's content now
+   lives on the main portal screen instead of the old generic "Welcome
+   in!" blurb + hub-tiles grid. The hub tiles became a compact stacked
+   left nav (.home-nav*), and the My Day cards (now rendered by
+   home-dashboard.js into #home-dashboard-root) take over the main
+   column. Reuses the --cbt-* theme tokens above so it follows the
+   light/dark toggle, unlike the old myday/ app, which was dark-only.
+   See claude/home-dashboard-redesign.md. ---- */
+.home-sidebar { flex: 0 0 240px; display: flex; flex-direction: column; gap: 18px; margin-top: 36px; min-width: 0; }
+.home-sidebar .favorites-sidebar { margin-top: 0; }
+
+.home-nav { display: flex; flex-direction: column; gap: 12px; }
+.home-nav-item { --c: #4d7bd6; display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 14px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.08); color: var(--cbt-text-on-dark-primary); text-decoration: none; font-family: 'Jost', sans-serif; font-weight: 600; font-size: 15px; cursor: pointer; transition: transform .15s, border-color .15s; width: 100%; text-align: left; font: inherit; }
+button.home-nav-item { font-family: 'Jost', sans-serif; font-weight: 600; font-size: 15px; }
+.home-nav-item:hover, .home-nav-item:focus-visible { transform: translateX(3px); border-color: color-mix(in srgb, var(--c) 55%, transparent); }
+.home-nav-item-chip { flex: none; width: 34px; height: 34px; border-radius: 10px; border: 1.5px solid var(--c); color: var(--c); display: grid; place-items: center; background: rgba(255,255,255,.03); }
+.home-nav-item-chip svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.home-nav-item-label { flex: 1; line-height: 1.25; }
+.home-nav-item-badge { flex: none; background: var(--c); color: #fff; font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+.home-nav-item-soon { flex: none; font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; background: rgba(227,176,75,.15); color: #f0c870; }
+.home-nav-item--soon { cursor: default; opacity: .75; }
+.home-nav-item--soon:hover { transform: none; border-color: rgba(255,255,255,.08); }
+:root[data-theme="light"] .home-nav-item { background: rgba(10,16,32,.03); border-color: rgba(10,16,32,.08); }
+:root[data-theme="light"] .home-nav-item-chip { background: rgba(10,16,32,.03); }
+
+/* ---- dashboard cards (ported from the old myday/styles.css, now
+   theme-token-based instead of hardcoded dark colors) ---- */
+.home-dash-root { flex: 1 1 0%; min-width: 320px; max-width: 980px; }
+.home-dash-loading, .home-dash-error { margin-top: 36px; padding: 40px 0; color: var(--cbt-text-on-dark-muted); font-size: 14px; }
+.home-dash-error { color: var(--cbt-brand-red); }
+.home-dash-greeting { margin: 36px 0 24px; }
+.home-dash-greeting-h { font-family: 'Jost', sans-serif; font-size: 30px; font-weight: 700; color: var(--cbt-text-on-dark-primary); margin: 0; }
+.home-dash-greeting-sub { font-size: 14px; color: var(--cbt-text-on-dark-tertiary); margin-top: 6px; }
+.home-dash-card { background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.08); border-radius: 18px; padding: 22px 24px; margin-bottom: 22px; }
+.home-dash-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.home-dash-card-title { font-family: 'Jost', sans-serif; font-size: 17px; font-weight: 700; color: var(--cbt-text-on-dark-primary); margin: 0; }
+.home-dash-card-hint { font-size: 12.5px; color: var(--cbt-text-on-dark-muted); }
+.home-dash-card-link { font-size: 12.5px; font-weight: 600; color: var(--cbt-brand-blue); }
+.home-dash-card-link:hover { color: var(--cbt-brand-blue-deep); text-decoration: underline; }
+.home-dash-card.clickable { cursor: pointer; transition: border-color .15s, transform .15s; display: block; }
+.home-dash-card.clickable:hover { border-color: color-mix(in srgb, var(--cbt-brand-blue) 40%, transparent); transform: translateY(-2px); }
+
+.home-dash-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.home-dash-stat { border-radius: 14px; padding: 18px; border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.025); display: block; transition: border-color .15s, transform .15s; }
+.home-dash-stat:hover { transform: translateY(-2px); }
+.home-dash-stat-value { font-family: 'Jost', sans-serif; font-size: 34px; font-weight: 700; line-height: 1; }
+.home-dash-stat-label { font-size: 13px; margin-top: 8px; color: var(--cbt-text-on-dark-secondary); }
+.home-dash-stat-overdue .home-dash-stat-value { color: var(--cbt-brand-red); }
+.home-dash-stat-overdue:hover { border-color: var(--cbt-brand-red); }
+.home-dash-stat-due-today .home-dash-stat-value { color: #d9a63e; }
+.home-dash-stat-due-today:hover { border-color: #d9a63e; }
+.home-dash-stat-future .home-dash-stat-value { color: var(--cbt-brand-green); }
+.home-dash-stat-future:hover { border-color: var(--cbt-brand-green); }
+.home-dash-stat-zero .home-dash-stat-value { color: var(--cbt-text-on-dark-muted); }
+
+.home-dash-bar-track { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: rgba(255,255,255,.06); margin: 4px 0 14px; }
+.home-dash-bar-seg { height: 100%; transition: width .3s; }
+.home-dash-bar-seg.red { background: var(--cbt-brand-red); }
+.home-dash-bar-seg.amber { background: #d9a63e; }
+.home-dash-bar-seg.green { background: var(--cbt-brand-green); }
+.home-dash-bar-seg.gray { background: var(--cbt-text-on-dark-muted); }
+.home-dash-bar-legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--cbt-text-on-dark-secondary); }
+.home-dash-bar-legend-item { display: flex; align-items: center; gap: 7px; }
+.home-dash-bar-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.home-dash-bar-dot.red { background: var(--cbt-brand-red); }
+.home-dash-bar-dot.amber { background: #d9a63e; }
+.home-dash-bar-dot.green { background: var(--cbt-brand-green); }
+.home-dash-bar-dot.gray { background: var(--cbt-text-on-dark-muted); }
+.home-dash-bar-count { font-weight: 700; color: var(--cbt-text-on-dark-primary); }
+
+.home-dash-gauge-wrap { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+.home-dash-gauge { --pct: 0; width: 108px; height: 108px; border-radius: 50%; flex: none; position: relative; background: conic-gradient(var(--gauge-color, var(--cbt-brand-green)) calc(var(--pct) * 1%), rgba(255,255,255,.08) 0); display: grid; place-items: center; }
+.home-dash-gauge::before { content: ''; position: absolute; inset: 10px; border-radius: 50%; background: var(--cbt-bg-page); }
+.home-dash-gauge-label { position: relative; font-family: 'Jost', sans-serif; font-size: 22px; font-weight: 700; color: var(--cbt-text-on-dark-primary); }
+
+.home-dash-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.home-dash-chip { font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 999px; background: rgba(255,255,255,.05); color: var(--cbt-text-on-dark-secondary); border: 1px solid rgba(255,255,255,.1); }
+
+.home-dash-grid-finance { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.home-dash-finance-tile { border-radius: 14px; padding: 18px; border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.025); display: block; transition: border-color .15s, transform .15s; }
+.home-dash-finance-tile:hover { border-color: color-mix(in srgb, var(--cbt-brand-blue) 40%, transparent); transform: translateY(-2px); }
+.home-dash-finance-value { font-family: 'Jost', sans-serif; font-size: 25px; font-weight: 700; color: var(--cbt-text-on-dark-primary); }
+.home-dash-finance-label { font-size: 13px; margin-top: 6px; color: var(--cbt-text-on-dark-secondary); }
+.home-dash-finance-sub { font-size: 12px; margin-top: 4px; color: var(--cbt-text-on-dark-muted); }
+
+.home-dash-locked { font-size: 13px; color: var(--cbt-text-on-dark-muted); padding: 10px 0; }
+
+:root[data-theme="light"] .home-dash-card, :root[data-theme="light"] .home-dash-stat, :root[data-theme="light"] .home-dash-finance-tile { background: rgba(10,16,32,.025); border-color: rgba(10,16,32,.08); }
+:root[data-theme="light"] .home-dash-bar-track { background: rgba(10,16,32,.08); }
+:root[data-theme="light"] .home-dash-chip { background: rgba(10,16,32,.04); border-color: rgba(10,16,32,.1); }
+:root[data-theme="light"] .home-dash-gauge { background: conic-gradient(var(--gauge-color, var(--cbt-brand-green)) calc(var(--pct) * 1%), rgba(10,16,32,.08) 0); }
+
+@media (max-width: 900px) {
+  .home-dash-grid-3, .home-dash-grid-finance { grid-template-columns: 1fr; }
+  .home-dash-gauge-wrap { gap: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-dash-bar-seg, .home-dash-stat, .home-dash-card.clickable, .home-dash-finance-tile, .home-nav-item { transition: none; }
+}

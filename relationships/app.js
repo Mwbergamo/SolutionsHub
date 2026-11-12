@@ -702,7 +702,7 @@
   // Views that moved to Hub cards always show their own section's top bar.
   //
   // Also handles index.html?view=rep-todos -- added for the My Day hub
-  // tile's Must-Do strip (myday/app.js) to jump straight into the
+  // home screen's Must-Do strip (home-dashboard.js) to jump straight into the
   // signed-in rep's own calendar/to-do list, same screen as clicking your
   // own name in the To-Do Checklist (data-action="show-rep-todos"). There
   // is no data-rep attribute to read on a URL-based deep link, so this

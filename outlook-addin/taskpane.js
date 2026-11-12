@@ -2,7 +2,7 @@
    task pane. Added 2026-11-12 per Michael; see
    claude/relationships-outlook-addin-plan.md for the full product
    design this implements. Vanilla JS + Office.js, same render()-from-
-   state approach as relationships/app.js and myday/app.js.
+   state approach as relationships/app.js and home-dashboard.js.
 
    AUTH: this task pane runs inside Outlook's own sandboxed webview,
    which does NOT reliably share portal.codebluetechnology.com's normal

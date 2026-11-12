@@ -3471,7 +3471,7 @@ class Component extends DCLogic {
     var scCount = itCount + dcCount + voipCount + cablingCount + securityCount;
 
     // Cross-app "Add to Favorites" sidebar (added 2026-10-15 per Michael) --
-    // shown on the Overview screen, to the left of the hub-tiles grid. Each
+    // shown on the Overview screen, below the stacked nav menu. Each
     // row is a real <a href> (the favorited page is very often a different
     // app entirely -- relationships/, register/, ... -- so this is a real
     // navigation, not an in-SPA route) with a small remove (x) button that

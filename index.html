@@ -25,7 +25,7 @@
 <link rel="icon" type="image/png" href="assets/favicon.png">
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 <link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700&family=Libre+Franklin:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=27fe7a7">
+<link rel="stylesheet" href="styles.css?v=homedash1">
 </head>
 <body>
 <div id="app-root"></div>
@@ -88,88 +88,76 @@
     <sc-if value="{{isOverview}}" hint-placeholder-val="{{true}}">
       <div class="view-pad view-enter" style="padding:44px 56px 40px;">
         <div style="display:flex;align-items:flex-start;gap:28px;flex-wrap:wrap;">
-          <img src="{{clydeForTheme}}" alt="CodeBlue Clyde — Solution Helper" style="width:150px;max-width:38vw;height:auto;flex:0 0 auto;" />
-          <div style="flex:1;min-width:300px;">
-
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
-          <span style="display:inline-block;width:34px;height:3px;border-radius:999px;background:linear-gradient(90deg, var(--cbt-brand-green), var(--cbt-brand-blue));"></span>
-          <span style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.08em;color:var(--cbt-brand-green);text-transform:uppercase;">CodeBlue Technology &middot; SolutionsHub</span>
-        </div>
-        <div style="font-family:'Jost',sans-serif;font-size:32px;font-weight:700;color:var(--cbt-text-on-dark-primary);max-width:680px;line-height:1.15;">Welcome in!</div>
-        <div style="margin-top:10px;font-size:15px;color:var(--cbt-text-on-dark-tertiary);max-width:620px;">Clyde is here to help. Below are several tools we use to help customers. Use the Help Center for the latest features and updates.</div>
-
-          </div>
-        </div>
-
-        <div style="display:flex;align-items:flex-start;gap:28px;flex-wrap:wrap;">
-        <sc-if value="{{hasFavorites}}" hint-placeholder-val="{{false}}">
-        <div class="favorites-sidebar">
-          <div class="favorites-sidebar-title">Favorites</div>
-          <sc-for list="{{favoritesList}}" as="fav" hint-placeholder-count="2">
-            <div class="favorites-sidebar-item">
-              <a href="{{fav.url}}" class="favorites-sidebar-link">{{fav.label}}</a>
-              <button type="button" class="favorites-sidebar-remove" data-on-click="{{fav.onRemove}}" title="Remove from Favorites">&times;</button>
+          <div class="home-sidebar">
+            <!-- Stacked left nav (2026-10-07 hub tiles -> 2026-11-12
+                 restyled as a compact stacked menu per Michael: the My
+                 Day dashboard now IS the main screen below, so these are
+                 just the doors to everything else. Same --c accent
+                 colors and SVG icons as the old hub-tile grid so nothing
+                 about "what app is this" changes for a rep, just the
+                 shape. Project Management kept (Michael confirmed,
+                 2026-11-12) even though his own mockup's quick sketch
+                 left it off. -->
+            <nav class="home-nav">
+              <button type="button" data-on-click="{{goToSolutionsCreator}}" class="home-nav-item" style="--c:#4d7bd6">
+                <span class="home-nav-item-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg></span>
+                <span class="home-nav-item-label">Solutions Creator</span>
+                <sc-if value="{{scHasSelections}}" hint-placeholder-val="{{false}}"><span class="home-nav-item-badge">{{scSelectedCount}}</span></sc-if>
+              </button>
+              <a href="relationships/" class="home-nav-item" style="--c:#7a5cd6">
+                <span class="home-nav-item-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.4"></circle><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7"></path></svg></span>
+                <span class="home-nav-item-label">Relationships</span>
+              </a>
+              <sc-if value="{{canViewFinance}}" hint-placeholder-val="{{false}}">
+              <a href="finance/" class="home-nav-item" style="--c:#2e9d6b">
+                <span class="home-nav-item-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="3" x2="12" y2="21"></line><path d="M16.5 7.5c0-1.7-2-3-4.5-3s-4.5 1.3-4.5 3 2 2.7 4.5 3 4.5 1.3 4.5 3-2 3-4.5 3-4.5-1.3-4.5-3"></path></svg></span>
+                <span class="home-nav-item-label">Finance</span>
+              </a>
+              </sc-if>
+              <a href="sales/" class="home-nav-item" style="--c:#e0833a">
+                <span class="home-nav-item-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18l5-6 4 3 7-9"></path><path d="M15 6h5v5"></path></svg></span>
+                <span class="home-nav-item-label">Sales</span>
+              </a>
+              <a href="ratesheet/" class="home-nav-item" style="--c:#d5636d">
+                <span class="home-nav-item-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v4H4z"></path><path d="M4 12h7v8H4z"></path><path d="M15 12h5v8h-5z"></path></svg></span>
+                <span class="home-nav-item-label">Customer Rate Sheet</span>
+              </a>
+              <a href="projects/" class="home-nav-item" style="--c:#2aa3b8">
+                <span class="home-nav-item-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18"></path><path d="M8 13h3M8 16h6"></path></svg></span>
+                <span class="home-nav-item-label">Project Management</span>
+              </a>
+              <a href="retail/" class="home-nav-item" style="--c:#9dc22c">
+                <span class="home-nav-item-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="20" r="1.4"></circle><circle cx="18" cy="20" r="1.4"></circle><path d="M2 3h2.5l2.6 12.6a2 2 0 0 0 2 1.6h8.2a2 2 0 0 0 2-1.6L21 7H6"></path></svg></span>
+                <span class="home-nav-item-label">Retail</span>
+              </a>
+              <!-- Marketing -- placeholder, not built yet. Becomes an <a href> (and loses home-nav-item--soon) when the app exists. -->
+              <div class="home-nav-item home-nav-item--soon" style="--c:#e3b04b">
+                <span class="home-nav-item-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"></path><path d="M15 9a4 4 0 0 1 0 6"></path><path d="M18 6.5a8 8 0 0 1 0 11"></path></svg></span>
+                <span class="home-nav-item-label">Marketing</span>
+                <span class="home-nav-item-soon">Soon</span>
+              </div>
+            </nav>
+            <sc-if value="{{hasFavorites}}" hint-placeholder-val="{{false}}">
+            <div class="favorites-sidebar">
+              <div class="favorites-sidebar-title">Favorites</div>
+              <sc-for list="{{favoritesList}}" as="fav" hint-placeholder-count="2">
+                <div class="favorites-sidebar-item">
+                  <a href="{{fav.url}}" class="favorites-sidebar-link">{{fav.label}}</a>
+                  <button type="button" class="favorites-sidebar-remove" data-on-click="{{fav.onRemove}}" title="Remove from Favorites">&times;</button>
+                </div>
+              </sc-for>
             </div>
-          </sc-for>
-        </div>
-        </sc-if>
-        <div class="hub-tiles">
-          <!-- My Day -- added 2026-11-12 per Michael: a personalized daily
-               dashboard (myday/) for each signed-in rep -- today's
-               must-dos, their projects' status, and territory health/
-               finance. Placed first since it's meant to be where a rep
-               starts their day before diving into the other tiles. -->
-          <a href="myday/" class="hub-tile" style="--c:#c15fb0">
-            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"></path></svg></div><span class="hub-tile-led" title="Ready"></span></div>
-            <div class="hub-tile-txt"><div class="hub-tile-title">My Day</div><div class="hub-tile-desc">Your must-dos, projects and territory health -- all in one place to start the day.</div></div>
-            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
-          </a>
-          <button type="button" data-on-click="{{goToSolutionsCreator}}" class="hub-tile" style="--c:#4d7bd6">
-            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg></div><sc-if value="{{scHasSelections}}" hint-placeholder-val="{{false}}"><span class="hub-tile-badge">{{scSelectedCount}} selected</span></sc-if><sc-if value="{{scNoSelections}}" hint-placeholder-val="{{true}}"><span class="hub-tile-led" title="Ready"></span></sc-if></div>
-            <div class="hub-tile-txt"><div class="hub-tile-title">Solutions Creator</div><div class="hub-tile-desc">Search or browse every service area and build out a solution.</div></div>
-            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
-          </button>
-          <a href="relationships/" class="hub-tile" style="--c:#7a5cd6">
-            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.4"></circle><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7"></path></svg></div><span class="hub-tile-led" title="Ready"></span></div>
-            <div class="hub-tile-txt"><div class="hub-tile-title">Relationships</div><div class="hub-tile-desc">CRC dashboard — see what each customer has, and what’s worth a conversation.</div></div>
-            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
-          </a>
-          <sc-if value="{{canViewFinance}}" hint-placeholder-val="{{false}}">
-          <a href="finance/" class="hub-tile" style="--c:#2e9d6b">
-            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="3" x2="12" y2="21"></line><path d="M16.5 7.5c0-1.7-2-3-4.5-3s-4.5 1.3-4.5 3 2 2.7 4.5 3 4.5 1.3 4.5 3-2 3-4.5 3-4.5-1.3-4.5-3"></path></svg></div><span class="hub-tile-led" title="Ready"></span></div>
-            <div class="hub-tile-txt"><div class="hub-tile-title">Finance</div><div class="hub-tile-desc">Commissions and open-invoice collections from ConnectWise.</div></div>
-            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
-          </a>
-          </sc-if>
-          <a href="sales/" class="hub-tile" style="--c:#e0833a">
-            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18l5-6 4 3 7-9"></path><path d="M15 6h5v5"></path></svg></div><span class="hub-tile-led" title="Ready"></span></div>
-            <div class="hub-tile-txt"><div class="hub-tile-title">Sales</div><div class="hub-tile-desc">Cross-Sell Report and Prospecting.</div></div>
-            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
-          </a>
-          <a href="ratesheet/" class="hub-tile" style="--c:#d5636d">
-            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v4H4z"></path><path d="M4 12h7v8H4z"></path><path d="M15 12h5v8h-5z"></path></svg></div><span class="hub-tile-led" title="Ready"></span></div>
-            <div class="hub-tile-txt"><div class="hub-tile-title">Customer Rate Sheet</div><div class="hub-tile-desc">Send a prospect a rate sheet to sign, and track it through submission.</div></div>
-            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
-          </a>
-          <a href="projects/" class="hub-tile" style="--c:#2aa3b8">
-            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18"></path><path d="M8 13h3M8 16h6"></path></svg></div><span class="hub-tile-led" title="Ready"></span></div>
-            <div class="hub-tile-txt"><div class="hub-tile-title">Project Management</div><div class="hub-tile-desc">ConnectWise projects, checklists and notes.</div></div>
-            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
-          </a>
-          <a href="retail/" class="hub-tile" style="--c:#9dc22c">
-            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="20" r="1.4"></circle><circle cx="18" cy="20" r="1.4"></circle><path d="M2 3h2.5l2.6 12.6a2 2 0 0 0 2 1.6h8.2a2 2 0 0 0 2-1.6L21 7H6"></path></svg></div><span class="hub-tile-led" title="Ready"></span></div>
-            <div class="hub-tile-txt"><div class="hub-tile-title">Retail</div><div class="hub-tile-desc">The walk-in store, starting with the Register.</div></div>
-            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
-          </a>
-          <!-- Marketing -- placeholder tile, not built yet. Becomes an <a href> (and loses hub-tile--soon) when the app exists. -->
-          <div  class="hub-tile hub-tile--soon" style="--c:#e3b04b">
-            <div class="hub-tile-top"><div class="hub-tile-chip"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"></path><path d="M15 9a4 4 0 0 1 0 6"></path><path d="M18 6.5a8 8 0 0 1 0 11"></path></svg></div><span class="hub-tile-soon">Coming soon</span></div>
-            <div class="hub-tile-txt"><div class="hub-tile-title">Marketing</div><div class="hub-tile-desc">Internal marketing material for the team.</div></div>
-            <svg class="hub-beat" viewBox="0 0 240 30" preserveAspectRatio="none" aria-hidden="true"><path class="base" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path><path class="pulse" pathLength="100" d="M0 15H78l5-3 5 3H102l4 4 6-17 6 27 5-14H148l5-5 7 5H240"></path></svg>
+            </sc-if>
           </div>
-
-
-        </div>
+          <!-- My Day's dashboard (todos/projects/territory health/finance)
+               merged onto the main screen 2026-11-12 per Michael, replacing
+               the old generic "Welcome in!" blurb -- see
+               claude/relationships-myday-dashboard.md and
+               claude/home-dashboard-redesign.md. Rendered entirely by
+               home-dashboard.js (fetches myday/api/digest.php), kept out of
+               this template/runtime system on purpose -- see that file's
+               own doc comment for why. -->
+          <div id="home-dashboard-root" class="home-dash-root"></div>
         </div>
       </div>
     </sc-if>
@@ -2057,6 +2045,7 @@
 <script src="camera-plan.js?v=2"></script>
 <script src="solution-save.js?v=4"></script>
 <script src="runtime.js?v=62c06d5"></script>
+<script src="home-dashboard.js?v=1"></script>
 <script>
   // Sign-in gate (added 2026-09-15) -- app.js/runtime.js load unconditionally
   // above (they're just static definitions; nothing runs yet), but the app
