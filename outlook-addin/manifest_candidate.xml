@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  outlook-addin/manifest.xml: "Send to Relationships" Outlook add-in.
+  Added 2026-11-12 per Michael; see claude/relationships-outlook-addin-plan.md
+  for the full product design and claude/relationships-outlook-addin-plan.md's
+  "Microsoft 365 Centralized Deployment" section for how to actually roll
+  this out (Settings > Integrated apps > Deploy Add-in > upload this
+  file > Specific users/groups).
+
+  This is the XML "add-in only" manifest format (NOT the newer unified
+  JSON manifest), deliberately, since that's what the Centralized
+  Deployment wizard's "Deploy Add-in" path (as opposed to a Teams-store
+  flow) accepts directly.
+
+  All URLs below assume the add-in is deployed to
+  https://portal.codebluetechnology.com/outlook-addin/ alongside the rest
+  of SolutionsHub. If it's ever served from a different domain, every
+  URL in this file (and the AppDomains entry) needs to change together,
+  and so does auth-config.php's addin_redirect_uri (see
+  auth-config.sample.php).
+-->
+<OfficeApp
+    xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+    xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
+    xsi:type="MailApp">
+
+  <!-- Fixed, permanent identity for this add-in: generated once
+       (2026-11-12) and must never change across redeployments, or
+       Centralized Deployment will treat an update as a brand-new add-in
+       instead of upgrading the existing one. -->
+  <Id>c87de0f4-bc63-4403-8c1c-d3f4f5524399</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>CodeBlue Technology</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+
+  <DisplayName DefaultValue="Send to Relationships" />
+  <Description DefaultValue="File an email's attachments as Documents, or create a Meeting or To-Do from it, directly under the matching customer in Relationships." />
+
+  <IconUrl DefaultValue="https://portal.codebluetechnology.com/assets/favicon.png" />
+  <HighResolutionIconUrl DefaultValue="https://portal.codebluetechnology.com/assets/apple-touch-icon.png" />
+  <SupportUrl DefaultValue="https://portal.codebluetechnology.com/" />
+
+  <!-- Every domain the task pane or its sign-in dialog navigates to. -->
+  <AppDomains>
+    <AppDomain>https://portal.codebluetechnology.com</AppDomain>
+    <AppDomain>https://login.microsoftonline.com</AppDomain>
+  </AppDomains>
+
+  <Hosts>
+    <Host Name="Mailbox" />
+  </Hosts>
+
+  <!-- Mailbox 1.8: the lowest requirement set that includes
+       getAttachmentContentAsync(), which "File as Document(s)" needs to
+       actually read a picked attachment's bytes before uploading it. -->
+  <Requirements>
+    <Sets>
+      <Set Name="Mailbox" MinVersion="1.8" />
+    </Sets>
+  </Requirements>
+
+  <!-- Down-level (Outlook on the web/older desktop builds that don't
+       read VersionOverrides below): always show the task pane button on
+       a read message. -->
+  <FormSettings>
+    <Form xsi:type="ItemRead">
+      <DesktopSettings>
+        <SourceLocation DefaultValue="https://portal.codebluetechnology.com/outlook-addin/taskpane.html" />
+        <RequestedHeight>450</RequestedHeight>
+      </DesktopSettings>
+    </Form>
+  </FormSettings>
+
+  <!-- getAttachmentContentAsync() (File as Document(s)) requires
+       ReadWriteMailbox, not just ReadItem. -->
+  <Permissions>ReadWriteMailbox</Permissions>
+
+  <Rule xsi:type="RuleCollection" Mode="Or">
+    <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read" />
+  </Rule>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Requirements>
+      <bt:Sets DefaultMinVersion="1.8">
+        <bt:Set Name="Mailbox" />
+      </bt:Sets>
+    </Requirements>
+
+    <Hosts>
+      <Host xsi:type="MailHost">
+        <DesktopFormFactor>
+          <FunctionFile resid="Commands.Url" />
+
+          <!-- The ribbon button on a read message: this IS "the
+               clickable menu" from Michael's design. Outlook doesn't
+               support a true right-click context menu for 3rd-party
+               add-ins, so a ribbon button opens the task pane instead,
+               and the 3-action menu (File as Document(s) / Create a
+               Meeting / Create a To-Do) lives inside that pane. -->
+          <ExtensionPoint xsi:type="MessageReadCommandSurface">
+            <OfficeTab id="TabDefault">
+              <Group id="SendToRelationshipsGroup">
+                <Label resid="SendToRelationshipsGroup.Label" />
+                <Control xsi:type="Button" id="SendToRelationshipsButton">
+                  <Label resid="SendToRelationshipsButton.Label" />
+                  <Supertip>
+                    <Title resid="SendToRelationshipsButton.Label" />
+                    <Description resid="SendToRelationshipsButton.Tooltip" />
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16" />
+                    <bt:Image size="32" resid="Icon.32x32" />
+                    <bt:Image size="80" resid="Icon.80x80" />
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="Taskpane.Url" />
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Icon.16x16" DefaultValue="https://portal.codebluetechnology.com/assets/favicon.png" />
+        <bt:Image id="Icon.32x32" DefaultValue="https://portal.codebluetechnology.com/assets/favicon.png" />
+        <bt:Image id="Icon.80x80" DefaultValue="https://portal.codebluetechnology.com/assets/apple-touch-icon.png" />
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Commands.Url" DefaultValue="https://portal.codebluetechnology.com/outlook-addin/taskpane.html" />
+        <bt:Url id="Taskpane.Url" DefaultValue="https://portal.codebluetechnology.com/outlook-addin/taskpane.html" />
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="SendToRelationshipsGroup.Label" DefaultValue="Relationships" />
+        <bt:String id="SendToRelationshipsButton.Label" DefaultValue="Send to Relationships" />
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="SendToRelationshipsButton.Tooltip" DefaultValue="File this email's attachments, or create a Meeting or To-Do from it, under the matching customer in Relationships." />
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>
