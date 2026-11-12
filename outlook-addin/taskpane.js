@@ -1,4 +1,4 @@
-/* outlook-addin/taskpane.js -- "Send to Relationships" Outlook add-in
+/* outlook-addin/taskpane.js -- "Relationships Hub" Outlook add-in
    task pane. Added 2026-11-12 per Michael; see
    claude/relationships-outlook-addin-plan.md for the full product
    design this implements. Vanilla JS + Office.js, same render()-from-
@@ -357,7 +357,7 @@
       : '';
     return (
       '<div class="topbar">' +
-        '<div><div class="brand">Send to Relationships</div><div class="brand-sub">' + esc(state.userName || 'CodeBlue Technology') + '</div></div>' +
+        '<div><div class="brand">Relationships Hub</div><div class="brand-sub">' + esc(state.userName || 'CodeBlue Technology') + '</div></div>' +
         signOutBtn +
       '</div>'
     );

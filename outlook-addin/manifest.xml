@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  outlook-addin/manifest.xml: "Send to Relationships" Outlook add-in.
+  outlook-addin/manifest.xml: "Relationships Hub" Outlook add-in.
   Added 2026-11-12 per Michael; see claude/relationships-outlook-addin-plan.md
   for the full product design and claude/relationships-outlook-addin-plan.md's
   "Microsoft 365 Centralized Deployment" section for how to actually roll
@@ -31,11 +31,11 @@
        Centralized Deployment will treat an update as a brand-new add-in
        instead of upgrading the existing one. -->
   <Id>c87de0f4-bc63-4403-8c1c-d3f4f5524399</Id>
-  <Version>1.0.0.0</Version>
+  <Version>1.0.1.0</Version>
   <ProviderName>CodeBlue Technology</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
 
-  <DisplayName DefaultValue="Send to Relationships" />
+  <DisplayName DefaultValue="Relationships Hub" />
   <Description DefaultValue="File an email's attachments as Documents, or create a Meeting or To-Do from it, directly under the matching customer in Relationships." />
 
   <IconUrl DefaultValue="https://portal.codebluetechnology.com/assets/favicon.png" />
@@ -137,7 +137,7 @@
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="SendToRelationshipsGroup.Label" DefaultValue="Relationships" />
-        <bt:String id="SendToRelationshipsButton.Label" DefaultValue="Send to Relationships" />
+        <bt:String id="SendToRelationshipsButton.Label" DefaultValue="Relationships Hub" />
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="SendToRelationshipsButton.Tip" DefaultValue="File this email's attachments, or create a Meeting or To-Do from it, under the matching customer in Relationships." />

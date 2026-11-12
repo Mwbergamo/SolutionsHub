@@ -4,7 +4,7 @@ declare(strict_types=1);
 /**
  * relationships/api/outlook-addin.php
  *
- * Backend for the "Send to Relationships" Outlook add-in (outlook-addin/,
+ * Backend for the "Relationships Hub" Outlook add-in (outlook-addin/,
  * added 2026-11-12 per Michael -- see claude/relationships-outlook-addin-plan.md
  * for the full product design). A rep reading an email in Outlook can,
  * from the add-in's task pane:
