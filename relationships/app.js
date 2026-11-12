@@ -8957,6 +8957,28 @@
         state.meetingDraftDate = e.target.value;
       });
     }
+    // Edit Meeting form (added 2026-10-21 with the meeting-edit feature,
+    // but its input listeners were never wired up -- the drafts stayed at
+    // the pre-filled values, so Save Changes re-saved the OLD subject/date/
+    // notes and edits appeared not to commit).
+    var meetingEditSubjectInput = document.getElementById('meetingEditSubjectInput');
+    if (meetingEditSubjectInput) {
+      meetingEditSubjectInput.addEventListener('input', function (e) {
+        state.meetingEditDraftSubject = e.target.value;
+      });
+    }
+    var meetingEditDateInput = document.getElementById('meetingEditDateInput');
+    if (meetingEditDateInput) {
+      meetingEditDateInput.addEventListener('input', function (e) {
+        state.meetingEditDraftDate = e.target.value;
+      });
+    }
+    var meetingEditNotesInput = document.getElementById('meetingEditNotesInput');
+    if (meetingEditNotesInput) {
+      meetingEditNotesInput.addEventListener('input', function (e) {
+        state.meetingEditDraftNotes = e.target.value;
+      });
+    }
     var pfEditDateInput = document.getElementById('pfEditDateInput');
     if (pfEditDateInput) {
       pfEditDateInput.addEventListener('input', function (e) {
