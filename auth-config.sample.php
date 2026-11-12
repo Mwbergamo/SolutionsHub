@@ -69,4 +69,24 @@ return [
     // emails ending in this are allowed to complete sign-in, in case the
     // tenant ever grows guest/B2B accounts from other domains.
     'allowed_email_domain' => 'codebluetechnology.com',
+
+    // OPTIONAL: only needed for the Outlook add-in's own sign-in dialog
+    // (auth/addin-login.php -> auth/addin-callback.php -- see
+    // claude/relationships-outlook-addin-plan.md). This is a SECOND
+    // Redirect URI on the SAME Entra app registration as 'redirect_uri'
+    // above, not a second app registration -- add it under App
+    // registrations -> (this app) -> Authentication -> Add a platform ->
+    // Web -> Redirect URI, alongside the existing one, then set it here.
+    // Leaving this unset (or commented out) simply means the add-in's
+    // sign-in dialog is not configured yet -- the rest of the site is
+    // completely unaffected either way.
+    // 'addin_redirect_uri' => 'https://portal.codebluetechnology.com/auth/addin-callback.php',
+
+    // Same idea as 'redirect_uris' above, but for the add-in dialog --
+    // only needed if the add-in is ever reachable from more than one
+    // domain. Each value here must ALSO be registered as its own
+    // Redirect URI on the Entra app registration.
+    // 'addin_redirect_uris' => [
+    //     'portal.codebluetechnology.com' => 'https://portal.codebluetechnology.com/auth/addin-callback.php',
+    // ],
 ];

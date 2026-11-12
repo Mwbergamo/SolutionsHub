@@ -137,90 +137,16 @@ require_once __DIR__ . '/territory-access.php';
 require_once __DIR__ . '/prospecting-core.php';
 require_once __DIR__ . '/connectwise-meeting-activity.php';
 require_once __DIR__ . '/task-email.php';
+// Shared row-shape/lookup helpers, plus create_meeting/add_task's actual
+// logic -- also used directly by outlook-addin.php. See
+// meetings-core.php's own doc comment.
+require_once __DIR__ . '/meetings-core.php';
 
 $pdo = relationships_db();
 $user = relationships_require_login($pdo);
 $allowedTerritories = relationships_allowed_territories($pdo);
 
 $action = $_GET['action'] ?? '';
-
-/**
- * This customer's connectwise_id, or null for a mock/unsynced customer --
- * same "MOCK-%" convention every other file in this integration uses
- * (activity.php, outgrow.php, checklist.php's Activity trigger).
- */
-function relationships_meetings_cw_id(PDO $pdo, int $customerId): ?string
-{
-    $stmt = $pdo->prepare('SELECT connectwise_id FROM customers WHERE id = :id');
-    $stmt->execute([':id' => $customerId]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-    $cwId = $row['connectwise_id'] ?? null;
-    return ($cwId === null || $cwId === '' || str_starts_with((string) $cwId, 'MOCK-')) ? null : (string) $cwId;
-}
-
-/** crc_users (id, email) for a name, matched case-insensitively -- null if nobody has registered under that name yet. */
-function relationships_meetings_user_by_name(PDO $pdo, string $name): ?array
-{
-    $stmt = $pdo->prepare('SELECT id, email FROM crc_users WHERE LOWER(name) = LOWER(:name) LIMIT 1');
-    $stmt->execute([':name' => $name]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-    return $row !== false ? ['id' => (int) $row['id'], 'email' => (string) $row['email']] : null;
-}
-
-function relationships_meeting_task_row(array $r): array
-{
-    return [
-        'id' => (int) $r['id'],
-        'description' => $r['description'],
-        'assigned_to_name' => $r['assigned_to_name'],
-        'created_by_name' => $r['created_by_name'],
-        'created_at' => $r['created_at'],
-        'due_date' => $r['due_date'] ?? null,
-        'completed_at' => $r['completed_at'],
-        'completed_by_name' => $r['completed_by_name'],
-        'cw_push' => ['status' => $r['cw_push_status'], 'error' => $r['cw_push_error']],
-        // Added 2026-09-17 -- the separate close-on-done attempt (see
-        // set_task_done below and relationships_cw_close_activity()),
-        // same shape/convention as cw_push above.
-        'cw_close' => ['status' => $r['cw_close_status'] ?? null, 'error' => $r['cw_close_error'] ?? null],
-        'email' => ['status' => $r['email_status'] ?? null, 'error' => $r['email_error'] ?? null],
-    ];
-}
-
-function relationships_general_todo_row(array $r): array
-{
-    return [
-        'id' => (int) $r['id'],
-        'description' => $r['description'],
-        'assigned_to_name' => $r['assigned_to_name'],
-        'created_by_name' => $r['created_by_name'],
-        'created_at' => $r['created_at'],
-        'due_date' => $r['due_date'] ?? null,
-        'completed_at' => $r['completed_at'],
-        'completed_by_name' => $r['completed_by_name'],
-        'cw_push' => ['status' => $r['cw_push_status'], 'error' => $r['cw_push_error']],
-        'cw_close' => ['status' => $r['cw_close_status'] ?? null, 'error' => $r['cw_close_error'] ?? null],
-    ];
-}
-
-function relationships_meeting_row(array $m, array $tasks): array
-{
-    return [
-        'id' => (int) $m['id'],
-        'subject' => $m['subject'],
-        'meeting_date' => $m['meeting_date'],
-        'notes' => $m['notes'],
-        'logged_by_name' => $m['logged_by_name'],
-        'created_at' => $m['created_at'],
-        // Added 2026-10-21 for the meeting-edit feature -- null/null on
-        // every meeting until it's actually been edited once.
-        'edited_at' => $m['edited_at'] ?? null,
-        'edited_by_name' => $m['edited_by_name'] ?? null,
-        'cw_push' => ['status' => $m['cw_push_status'], 'error' => $m['cw_push_error']],
-        'cw_update' => ['status' => $m['cw_update_status'] ?? null, 'error' => $m['cw_update_error'] ?? null],
-        'tasks' => $tasks,
-    ];
-}
 
 /**
  * Shared row shape for the cross-customer task views ('global' and
@@ -320,8 +246,8 @@ if ($action === 'list') {
     relationships_require_territory_scope($allowedTerritories, relationships_customer_territory($pdo, $customerId));
 
     $meetingStmt = $pdo->prepare(
-        'SELECT id, subject, meeting_date, notes, logged_by_name, created_at, cw_push_status, cw_push_error,
-                edited_at, edited_by_name, cw_update_status, cw_update_error
+        'SELECT id, subject, meeting_date, meeting_time, notes, logged_by_name, created_at, cw_push_status, cw_push_error,
+                edited_at, edited_by_name, cw_update_status, cw_update_error, source_email_document_id
          FROM customer_meetings WHERE customer_id = :id ORDER BY id DESC'
     );
     $meetingStmt->execute([':id' => $customerId]);
@@ -330,7 +256,7 @@ if ($action === 'list') {
     $taskStmt = $pdo->prepare(
         'SELECT id, meeting_id, description, assigned_to_name, created_by_name, created_at, due_date,
                 completed_at, completed_by_name, cw_push_status, cw_push_error, cw_close_status, cw_close_error,
-                email_status, email_error
+                email_status, email_error, attached_document_id
          FROM meeting_tasks WHERE customer_id = :id ORDER BY id ASC'
     );
     $taskStmt->execute([':id' => $customerId]);
@@ -748,74 +674,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
 }
 
 if ($action === 'create_meeting') {
-    $data = relationships_read_json_body();
-    $customerId = (int) ($data['customer_id'] ?? 0);
-    $subject = trim((string) ($data['subject'] ?? ''));
-    $meetingDate = (string) ($data['meeting_date'] ?? '');
-    $notes = trim((string) ($data['notes'] ?? ''));
-
-    if ($customerId <= 0 || $subject === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $meetingDate)) {
-        relationships_respond(400, ['ok' => false, 'error' => 'Missing/invalid customer_id, subject, or meeting_date (expected YYYY-MM-DD).']);
-    }
-    if (mb_strlen($subject) > 200) {
-        relationships_respond(400, ['ok' => false, 'error' => 'Subject is too long (200 characters max).']);
-    }
-
-    $custStmt = $pdo->prepare('SELECT id, connectwise_id, name, territory_name FROM customers WHERE id = :id');
-    $custStmt->execute([':id' => $customerId]);
-    $customer = $custStmt->fetch(PDO::FETCH_ASSOC);
-    if ($customer === false) {
-        relationships_respond(404, ['ok' => false, 'error' => 'Customer not found.']);
-    }
-    relationships_require_territory_scope($allowedTerritories, $customer['territory_name']);
-
-    // Local save first, unconditionally -- per this integration's standing
-    // "save locally, log the ConnectWise failure" instruction.
-    $insert = $pdo->prepare(
-        'INSERT INTO customer_meetings (customer_id, subject, meeting_date, notes, logged_by_user_id, logged_by_name)
-         VALUES (:cid, :subj, :mdate, :notes, :uid, :uname)'
-    );
-    $insert->execute([
-        ':cid' => $customerId, ':subj' => $subject, ':mdate' => $meetingDate, ':notes' => $notes,
-        ':uid' => $user['id'], ':uname' => $user['name'],
-    ]);
-    $meetingId = (int) $pdo->lastInsertId();
-
-    $cwPush = ['status' => 'skipped', 'error' => null];
-    $cwCompanyId = relationships_meetings_cw_id($pdo, $customerId);
-    if ($cwCompanyId !== null) {
-        try {
-            $nowEastern = new DateTimeImmutable('now', new DateTimeZone('America/New_York'));
-            $result = relationships_cw_create_meeting_activity($pdo, [
-                'customer_id' => $customerId,
-                'cw_company_id' => $cwCompanyId,
-                'subject' => $subject,
-                'notes' => $notes,
-                'logged_by_name' => $user['name'],
-                'logged_by_email' => $user['email'],
-                'logged_at_display' => $nowEastern->format('M j, Y g:i A T'),
-            ]);
-            $cwPush = ['status' => 'pushed', 'error' => null];
-            $pdo->prepare('UPDATE customer_meetings SET cw_activity_id = :aid, cw_push_status = :status, cw_push_error = NULL WHERE id = :id')
-                ->execute([':aid' => $result['id'], ':status' => 'pushed', ':id' => $meetingId]);
-        } catch (Throwable $e) {
-            $cwPush = ['status' => 'error', 'error' => substr($e->getMessage(), 0, 4000)];
-            $pdo->prepare('UPDATE customer_meetings SET cw_push_status = :status, cw_push_error = :err WHERE id = :id')
-                ->execute([':status' => 'error', ':err' => $cwPush['error'], ':id' => $meetingId]);
-        }
-    } else {
-        $pdo->prepare('UPDATE customer_meetings SET cw_push_status = :status WHERE id = :id')
-            ->execute([':status' => 'skipped', ':id' => $meetingId]);
-    }
-
-    $meetingStmt = $pdo->prepare(
-        'SELECT id, subject, meeting_date, notes, logged_by_name, created_at, cw_push_status, cw_push_error,
-                edited_at, edited_by_name, cw_update_status, cw_update_error
-         FROM customer_meetings WHERE id = :id'
-    );
-    $meetingStmt->execute([':id' => $meetingId]);
-    $meeting = relationships_meeting_row($meetingStmt->fetch(PDO::FETCH_ASSOC), []);
-    relationships_respond(200, ['ok' => true, 'meeting' => $meeting]);
+    relationships_respond(200, relationships_meetings_create($pdo, $user, $allowedTerritories, relationships_read_json_body()));
 }
 
 // Added 2026-10-21 per Michael: "the ability to edit an existing meeting
@@ -909,142 +768,7 @@ if ($action === 'update_meeting') {
 }
 
 if ($action === 'add_task') {
-    $data = relationships_read_json_body();
-    $meetingId = (int) ($data['meeting_id'] ?? 0);
-    $description = trim((string) ($data['description'] ?? ''));
-    $assignedToName = trim((string) ($data['assigned_to_name'] ?? ''));
-    // Scheduled to-dos (Michael, 2026-09-16) -- OPTIONAL: an empty/missing
-    // due_date is valid and just means this to-do never appears on the
-    // new per-coordinator calendar (confirmed via AskUserQuestion).
-    $dueDateRaw = trim((string) ($data['due_date'] ?? ''));
-    $dueDate = null;
-    if ($dueDateRaw !== '') {
-        // DateTimeImmutable::createFromFormat() silently ROLLS OVER an
-        // out-of-range date (e.g. "2026-13-40" parses as 2027-02-09
-        // instead of failing) rather than returning false, so the regex
-        // + createFromFormat()!==false check alone isn't enough --
-        // re-format the parsed result and require it to match the input
-        // exactly, catching the roll-over case too.
-        $parsedDueDate = DateTimeImmutable::createFromFormat('Y-m-d', $dueDateRaw);
-        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dueDateRaw) || $parsedDueDate === false || $parsedDueDate->format('Y-m-d') !== $dueDateRaw) {
-            relationships_respond(400, ['ok' => false, 'error' => 'Invalid due date -- expected YYYY-MM-DD.']);
-        }
-        $dueDate = $dueDateRaw;
-    }
-
-    $roster = relationships_todo_roster();
-    if ($meetingId <= 0 || $description === '' || !in_array($assignedToName, $roster, true)) {
-        relationships_respond(400, ['ok' => false, 'error' => 'Missing/invalid meeting_id, description, or assigned_to_name (must be one of the roster names).']);
-    }
-    if (mb_strlen($description) > 500) {
-        relationships_respond(400, ['ok' => false, 'error' => 'Task description is too long (500 characters max).']);
-    }
-
-    $meetingStmt = $pdo->prepare(
-        'SELECT m.id, m.subject, m.customer_id, c.name AS customer_name, c.connectwise_id, c.territory_name
-         FROM customer_meetings m JOIN customers c ON c.id = m.customer_id WHERE m.id = :id'
-    );
-    $meetingStmt->execute([':id' => $meetingId]);
-    $meeting = $meetingStmt->fetch(PDO::FETCH_ASSOC);
-    if ($meeting === false) {
-        relationships_respond(404, ['ok' => false, 'error' => 'Meeting not found.']);
-    }
-    relationships_require_territory_scope($allowedTerritories, $meeting['territory_name']);
-    $customerId = (int) $meeting['customer_id'];
-
-    // crc_users lookup -- LOCAL bookkeeping only (assigned_to_user_id
-    // below). Deliberately NOT used for the ConnectWise push anymore (see
-    // relationships_todo_roster_cw_email() in catalog.php, 2026-09-16 bug
-    // fix): it depends on that roster member having registered a
-    // Relationships login, which isn't guaranteed, and a null email there
-    // used to sink the whole ConnectWise Activity create (assignTo/id is
-    // REQUIRED on this ConnectWise instance).
-    $assignee = relationships_meetings_user_by_name($pdo, $assignedToName);
-
-    // Local save first, unconditionally.
-    $insert = $pdo->prepare(
-        'INSERT INTO meeting_tasks (meeting_id, customer_id, description, assigned_to_user_id, assigned_to_name, created_by_user_id, created_by_name, due_date)
-         VALUES (:mid, :cid, :desc, :auid, :aname, :cuid, :cname, :due)'
-    );
-    $insert->execute([
-        ':mid' => $meetingId, ':cid' => $customerId, ':desc' => $description,
-        ':auid' => $assignee['id'] ?? null, ':aname' => $assignedToName,
-        ':cuid' => $user['id'], ':cname' => $user['name'], ':due' => $dueDate,
-    ]);
-    $taskId = (int) $pdo->lastInsertId();
-
-    $cwCompanyId = relationships_meetings_cw_id($pdo, $customerId);
-    if ($cwCompanyId !== null) {
-        try {
-            $nowEastern = new DateTimeImmutable('now', new DateTimeZone('America/New_York'));
-            $result = relationships_cw_create_task_activity($pdo, [
-                'customer_id' => $customerId,
-                'cw_company_id' => $cwCompanyId,
-                'description' => $description,
-                'meeting_subject' => $meeting['subject'],
-                'assigned_to_name' => $assignedToName,
-                // The fixed roster's real ConnectWise office email
-                // (Michael, chat, 2026-09-16) -- NOT $assignee['email'],
-                // so this always resolves regardless of Relationships
-                // login status. See relationships_todo_roster_cw_email()'s
-                // docblock in catalog.php for the full bug-fix story.
-                'assigned_to_email' => relationships_todo_roster_cw_email($assignedToName),
-                'created_by_name' => $user['name'],
-                'created_at_display' => $nowEastern->format('M j, Y g:i A T'),
-                'due_date' => $dueDate,
-            ]);
-            $pdo->prepare('UPDATE meeting_tasks SET cw_activity_id = :aid, cw_push_status = :status, cw_push_error = NULL WHERE id = :id')
-                ->execute([':aid' => $result['id'], ':status' => 'pushed', ':id' => $taskId]);
-        } catch (Throwable $e) {
-            $pdo->prepare('UPDATE meeting_tasks SET cw_push_status = :status, cw_push_error = :err WHERE id = :id')
-                ->execute([':status' => 'error', ':err' => substr($e->getMessage(), 0, 4000), ':id' => $taskId]);
-        }
-    } else {
-        $pdo->prepare('UPDATE meeting_tasks SET cw_push_status = :status WHERE id = :id')
-            ->execute([':status' => 'skipped', ':id' => $taskId]);
-    }
-
-    // "We have a next step!" notification email (Michael, 2026-09-16) --
-    // independent of the ConnectWise push above: attempted regardless of
-    // whether the ConnectWise Activity succeeded, never blocks or reverts
-    // the already-committed local task save, and its outcome is logged
-    // the same way (email_status/email_error) rather than silently lost.
-    // See task-email.php's file header for the recipient-resolution
-    // rationale (the same roster->real-email map as the ConnectWise fix
-    // above, not a crc_users login lookup).
-    $taskEmail = relationships_todo_roster_cw_email($assignedToName);
-    if ($taskEmail !== null) {
-        try {
-            $nowEastern = new DateTimeImmutable('now', new DateTimeZone('America/New_York'));
-            relationships_send_task_email([
-                'to_email' => $taskEmail,
-                'created_by_name' => $user['name'],
-                'assigned_to_name' => $assignedToName,
-                'customer_name' => (string) $meeting['customer_name'],
-                'todo_text' => $description,
-                'created_at_display' => $nowEastern->format('M j, Y g:i A T'),
-            ]);
-            $pdo->prepare('UPDATE meeting_tasks SET email_status = :status, email_error = NULL WHERE id = :id')
-                ->execute([':status' => 'sent', ':id' => $taskId]);
-        } catch (Throwable $e) {
-            error_log('[meetings:add_task email] ' . $e->getMessage());
-            $pdo->prepare('UPDATE meeting_tasks SET email_status = :status, email_error = :err WHERE id = :id')
-                ->execute([':status' => 'failed', ':err' => substr($e->getMessage(), 0, 4000), ':id' => $taskId]);
-        }
-    } else {
-        // Shouldn't happen -- every roster name has a mapped email -- but
-        // degrade the same way as an unresolved ConnectWise assignee
-        // rather than assume this can never occur.
-        $pdo->prepare('UPDATE meeting_tasks SET email_status = :status, email_error = :err WHERE id = :id')
-            ->execute([':status' => 'skipped', ':err' => 'No ConnectWise/work email on file for "' . $assignedToName . '".', ':id' => $taskId]);
-    }
-
-    $taskStmt = $pdo->prepare(
-        'SELECT id, description, assigned_to_name, created_by_name, created_at, due_date, completed_at, completed_by_name, cw_push_status, cw_push_error, email_status, email_error
-         FROM meeting_tasks WHERE id = :id'
-    );
-    $taskStmt->execute([':id' => $taskId]);
-    relationships_respond(200, ['ok' => true, 'task' => relationships_meeting_task_row($taskStmt->fetch(PDO::FETCH_ASSOC))]);
+    relationships_respond(200, relationships_meetings_add_task($pdo, $user, $allowedTerritories, relationships_read_json_body()));
 }
 
 if ($action === 'set_task_done') {

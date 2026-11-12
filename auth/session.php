@@ -97,6 +97,30 @@ function auth_redirect_uri(array $config): string
     return (string) $config['redirect_uri'];
 }
 
+/**
+ * Same idea as auth_redirect_uri(), but for the Outlook add-in's own
+ * sign-in dialog (auth/addin-login.php -> auth/addin-callback.php), which
+ * is a SEPARATE redirect URI on the same Entra app registration -- Office
+ * dialogs are opened with a fixed URL known ahead of time
+ * (outlook-addin/taskpane.js), not the arbitrary ?return_to= the normal
+ * web login supports, so this never needed its own return_to concept.
+ *
+ * Added 2026-11-12. If 'addin_redirect_uri'/'addin_redirect_uris' are
+ * missing from auth-config.php, auth/addin-login.php refuses before this
+ * is ever called -- see its own check and auth-config.sample.php's
+ * documentation of the new key.
+ */
+function auth_addin_redirect_uri(array $config): string
+{
+    $host = strtolower((string) ($_SERVER['HTTP_HOST'] ?? ''));
+    $host = preg_replace('/:\d+$/', '', $host) ?? $host;
+    $map = $config['addin_redirect_uris'] ?? null;
+    if (is_array($map) && $host !== '' && isset($map[$host]) && is_string($map[$host]) && $map[$host] !== '') {
+        return $map[$host];
+    }
+    return (string) ($config['addin_redirect_uri'] ?? '');
+}
+
 /** Clears the shared session -- used by /logout.php. */
 function auth_logout(): void
 {

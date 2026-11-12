@@ -1375,6 +1375,64 @@ function relationships_migrate(PDO $pdo): void
     // only recorded here for troubleshooting.
     relationships_add_column_if_missing($pdo, 'project_assignments', 'email_status', 'TEXT');
     relationships_add_column_if_missing($pdo, 'project_assignments', 'email_error', 'TEXT');
+
+    // Outlook add-in ("Send to Relationships") -- added 2026-11-12 per
+    // Michael: a rep viewing an email in Outlook can create a Meeting or
+    // a To-Do from it, with the email itself auto-filed as a Document
+    // (see relationships/api/outlook-addin.php and
+    // claude/relationships-outlook-addin-plan.md).
+    //
+    // meeting_time/source_email_document_id: Create-a-Meeting lets the
+    // rep set a time, not just a date (nothing in this table has ever
+    // carried a time before), and auto-attaches the email that spawned
+    // it as a Document -- optional/nullable so the existing web app's
+    // own meeting-creation form (which collects neither) is completely
+    // unaffected; it just keeps leaving both null, exactly as before.
+    relationships_add_column_if_missing($pdo, 'customer_meetings', 'meeting_time', 'TEXT');
+    relationships_add_column_if_missing($pdo, 'customer_meetings', 'source_email_document_id', 'INTEGER REFERENCES customer_documents(id)');
+
+    // attached_document_id: Create-a-To-Do attaches the spawning email to
+    // that SPECIFIC to-do (not just the customer in general) -- nothing
+    // in meeting_tasks has ever linked to a Document before. Optional/
+    // nullable; every to-do created the normal way (web app) just leaves
+    // it null.
+    relationships_add_column_if_missing($pdo, 'meeting_tasks', 'attached_document_id', 'INTEGER REFERENCES customer_documents(id)');
+
+    // Bearer tokens for the add-in's task pane -- it runs in Outlook's own
+    // sandboxed webview, which does not reliably share this site's session
+    // cookie, so a rep signs in once per device via a small OAuth-dialog
+    // flow (auth/addin-login.php + auth/addin-callback.php) that mints one
+    // of these instead of setting the session cookie. Only the SHA-256
+    // hash is ever stored -- the raw token is handed back to the task pane
+    // exactly once, over the dialog's own message channel, and never
+    // logged or re-displayed. last_used_at is bumped on every authed call
+    // (relationships_require_login_or_bearer() in _util.php) so a stale/
+    // abandoned token is easy to spot; revoked_at lets a token be killed
+    // without deleting the audit row.
+    $pdo->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS addin_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            crc_user_id INTEGER NOT NULL REFERENCES crc_users(id),
+            email TEXT NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            last_used_at TEXT,
+            revoked_at TEXT
+        )
+    SQL);
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_addin_tokens_user ON addin_tokens(crc_user_id)');
+
+    // "Email To-Dos" -- the Create-a-To-Do path still needs a parent
+    // customer_meetings row (meeting_tasks.meeting_id stays NOT NULL;
+    // loosening that would touch the meetings UI, the per-coordinator
+    // calendar, and the global dashboard). Rather than a real table, this
+    // is just a marker: email_todos_meeting_id on customers records which
+    // ONE auto-created "Email To-Dos" meeting (if any) this customer's
+    // add-in-originated to-dos reuse, so a second email never creates a
+    // second placeholder meeting for the same customer. Invisible
+    // plumbing -- the rep chose "Create a To-Do," not "Create a Meeting,"
+    // and the UI never surfaces this row directly.
+    relationships_add_column_if_missing($pdo, 'customers', 'email_todos_meeting_id', 'INTEGER REFERENCES customer_meetings(id)');
 }
 
 /**
