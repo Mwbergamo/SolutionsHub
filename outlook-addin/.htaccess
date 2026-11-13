@@ -1,0 +1,20 @@
+# outlook-addin/.htaccess
+#
+# Overrides the account-wide Content-Security-Policy (set by the hosting
+# platform's own default, not by anything in this repo -- see the root
+# .htaccess, which sets no CSP at all) for this one folder only. The
+# account default sends `frame-ancestors 'self'`, which blocks exactly
+# what this folder needs: Outlook on the web / New Outlook embeds
+# taskpane.html inside an iframe on a different origin
+# (outlook.office.com and friends), and `'self'`-only framing makes
+# Chromium refuse to load it there ("portal.codebluetechnology.com
+# refused to connect") -- confirmed 2026-11-13 by Michael, via
+# `curl -sI` against the live site, against classic desktop Outlook
+# (which isn't as strict here and has worked throughout this feature's
+# testing) vs. New Outlook (which isn't).
+#
+# Everything else about the inherited policy is kept as-is -- only the
+# frame-ancestors list is widened, and only for this folder.
+<IfModule mod_headers.c>
+    Header always set Content-Security-Policy "upgrade-insecure-requests; frame-ancestors 'self' https://outlook.office.com https://outlook.office365.com https://outlook.live.com https://*.outlook.com; object-src 'none'; base-uri 'self'"
+</IfModule>
