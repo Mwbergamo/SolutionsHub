@@ -37,12 +37,30 @@
  *        user: { name, email },
  *        restricted: bool,
  *        todos: { overdue, due_today, future },
+ *        meetings: { today, this_week, later },
  *        projects: { total, red, yellow, green },
  *        territory_risk: { danger, stable, opportunity, total, territories: [name, ...] },
  *        finance_access: bool,
  *        finance: { recurring_revenue: {month, total, customers_with_revenue},
  *                   annual_revenue: {year, total, invoice_count},
  *                   sales_order_revenue: {year, total, order_count} } | null }
+ *
+ * `meetings` -- added 2026-11-13 per Michael: a home-screen gauge for "any
+ * and all meetings for that rep... similar to Today's Must-Dos, this would
+ * be one of scheduled Meetings." customer_meetings has no assigned-to/
+ * attendee column -- logged_by_name (whoever logged the meeting) is the
+ * only person-identifying field it has, the same credit rule
+ * dashboard.php's "Meetings Logged This Week" leaderboard already uses,
+ * so that's what "for that rep" means here too (confirmed via
+ * AskUserQuestion). Unlike a to-do, a meeting doesn't go "overdue" -- a
+ * past meeting_date is just a log entry at that point, not something
+ * outstanding -- so the buckets are forward-looking only (Today / This
+ * Week / Later) and anything already past is excluded entirely rather
+ * than forced into a 4th bucket (confirmed via AskUserQuestion:
+ * "scheduled Meetings" means upcoming only). "This Week" runs through
+ * Sunday of the current week, the same Monday-start week
+ * relationships_leaderboard_week_start_utc() (dashboard.php) already uses
+ * for the weekly leaderboards.
  *
  * `finance_access` / `finance` -- added 2026-11-12: Client Finance's own
  * numbers are restricted to the same 4-person allow-list everywhere else
@@ -155,6 +173,34 @@ try {
         );
         $todos[$bucket] = $general + $meeting;
     }
+
+    // ---------------------------------------------------------------
+    // My Scheduled Meetings -- see the doc comment above. Only rows
+    // credited to me (logged_by_name) with meeting_date today or later;
+    // Monday-start week boundary matches
+    // relationships_leaderboard_week_start_utc() (dashboard.php).
+    // ---------------------------------------------------------------
+    $isoDayOfWeek = (int) (new DateTimeImmutable('today', new DateTimeZone('America/New_York')))->format('N');
+    $weekEnd = (new DateTimeImmutable('today', new DateTimeZone('America/New_York')))
+        ->modify('+' . (7 - $isoDayOfWeek) . ' days')
+        ->format('Y-m-d');
+    $meetings = [
+        'today' => myday_count(
+            $rpdo,
+            'SELECT COUNT(*) FROM customer_meetings WHERE logged_by_name = :me AND meeting_date = :today',
+            [':me' => $myName, ':today' => $today]
+        ),
+        'this_week' => myday_count(
+            $rpdo,
+            'SELECT COUNT(*) FROM customer_meetings WHERE logged_by_name = :me AND meeting_date > :today AND meeting_date <= :weekEnd',
+            [':me' => $myName, ':today' => $today, ':weekEnd' => $weekEnd]
+        ),
+        'later' => myday_count(
+            $rpdo,
+            'SELECT COUNT(*) FROM customer_meetings WHERE logged_by_name = :me AND meeting_date > :weekEnd',
+            [':me' => $myName, ':weekEnd' => $weekEnd]
+        ),
+    ];
 
     // ---------------------------------------------------------------
     // My Projects -- counts only (names/status are one click away on
@@ -272,6 +318,7 @@ try {
         'user' => ['name' => $myName, 'email' => (string) ($sessionUser['email'] ?? '')],
         'restricted' => $restricted,
         'todos' => $todos,
+        'meetings' => $meetings,
         'projects' => $projects,
         'territory_risk' => $territoryRisk,
         'finance_access' => $financeAllowed,

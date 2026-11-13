@@ -71,6 +71,7 @@
       return (
         greetingHtml(d) +
         mustDoHtml(d.todos) +
+        meetingsHtml(d.meetings) +
         projectsCardHtml(d.projects) +
         territoryHealthCardHtml(d.territory_risk, d.restricted) +
         financeCardHtml(d)
@@ -109,6 +110,43 @@
             tile('overdue', 'Overdue', todos.overdue || 0) +
             tile('due-today', 'Due Today', todos.due_today || 0) +
             tile('future', 'Upcoming', todos.future || 0) +
+          '</div>' +
+        '</div>'
+      );
+    }
+
+    // Scheduled Meetings -- added 2026-11-12, per Michael: "a gauge... for
+    // any and all meetings for that rep... similar to Today's Must-Dos,
+    // this would be one of scheduled Meetings." Mirrors mustDoHtml's
+    // 3-tile layout, but bucketed Today / This Week / Later instead of
+    // Overdue / Due Today / Upcoming -- a meeting doesn't go "overdue" the
+    // way a to-do does, and only forward-looking (meeting_date >= today)
+    // rows are counted at all (confirmed via AskUserQuestion; see
+    // myday/api/digest.php's doc comment for the full reasoning and the
+    // logged_by_name credit rule). There's no dedicated "my meetings" list
+    // screen the way rep-todos is for to-dos -- a meeting only lives on
+    // its own customer's profile page -- so these tiles link to the
+    // Relationships app root, same fallback territoryHealthCardHtml below
+    // already uses for the same reason.
+    function meetingsHtml(meetings) {
+      var total = (meetings.today || 0) + (meetings.this_week || 0) + (meetings.later || 0);
+      function tile(key, label, count) {
+        var zero = count === 0 ? ' home-dash-stat-zero' : '';
+        return '<a class="home-dash-stat home-dash-stat-' + key + zero + '" href="' + RELATIONSHIPS_URL + '" title="Open Relationships">' +
+          '<div class="home-dash-stat-value">' + count + '</div>' +
+          '<div class="home-dash-stat-label">' + label + '</div>' +
+        '</a>';
+      }
+      return (
+        '<div class="home-dash-card">' +
+          '<div class="home-dash-card-head">' +
+            '<h2 class="home-dash-card-title">Scheduled Meetings</h2>' +
+            '<span class="home-dash-card-hint">' + total + ' upcoming meeting' + (total === 1 ? '' : 's') + ' — click any to open Relationships</span>' +
+          '</div>' +
+          '<div class="home-dash-grid-3">' +
+            tile('due-today', 'Today', meetings.today || 0) +
+            tile('this-week', 'This Week', meetings.this_week || 0) +
+            tile('later', 'Later', meetings.later || 0) +
           '</div>' +
         '</div>'
       );

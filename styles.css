@@ -777,6 +777,10 @@ button.home-nav-item { font-family: 'Jost', sans-serif; font-weight: 600; font-s
 .home-dash-stat-due-today:hover { border-color: #d9a63e; }
 .home-dash-stat-future .home-dash-stat-value { color: var(--cbt-brand-green); }
 .home-dash-stat-future:hover { border-color: var(--cbt-brand-green); }
+.home-dash-stat-this-week .home-dash-stat-value { color: var(--cbt-brand-blue); }
+.home-dash-stat-this-week:hover { border-color: var(--cbt-brand-blue); }
+.home-dash-stat-later .home-dash-stat-value { color: var(--cbt-text-on-dark-tertiary); }
+.home-dash-stat-later:hover { border-color: var(--cbt-text-on-dark-tertiary); }
 .home-dash-stat-zero .home-dash-stat-value { color: var(--cbt-text-on-dark-muted); }
 
 .home-dash-bar-track { display: flex; height: 14px; border-radius: 999px; overflow: hidden; background: rgba(255,255,255,.06); margin: 4px 0 14px; }
