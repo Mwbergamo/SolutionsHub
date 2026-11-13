@@ -395,7 +395,23 @@
     if (!q) { m.companyResults = null; render(); return; }
     api('api/send.php?action=company_search&q=' + encodeURIComponent(q)).then(function (r) {
       if (!state.sendModal || state.sendModal.companySeq !== seq) return;
-      state.sendModal.companyResults = (r.data && r.data.ok) ? r.data.companies : [];
+      if (!r.data || !r.data.ok) {
+        // A real failure (bad session, server error) looks identical to a
+        // genuine zero-result search unless we surface it here -- show it
+        // in the same error banner the rest of this modal already uses,
+        // rather than letting it read as "no companies match".
+        state.sendModal.companyResults = [];
+        state.sendModal.error = (r.data && r.data.error) || ('Company search failed (HTTP ' + r.status + '). Try again.');
+        render();
+        return;
+      }
+      state.sendModal.error = null;
+      state.sendModal.companyResults = r.data.companies;
+      render();
+    }).catch(function () {
+      if (!state.sendModal || state.sendModal.companySeq !== seq) return;
+      state.sendModal.companyResults = [];
+      state.sendModal.error = 'Could not reach the server.';
       render();
     });
   }, 250);
