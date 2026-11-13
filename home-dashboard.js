@@ -123,16 +123,15 @@
     // way a to-do does, and only forward-looking (meeting_date >= today)
     // rows are counted at all (confirmed via AskUserQuestion; see
     // myday/api/digest.php's doc comment for the full reasoning and the
-    // logged_by_name credit rule). There's no dedicated "my meetings" list
-    // screen the way rep-todos is for to-dos -- a meeting only lives on
-    // its own customer's profile page -- so these tiles link to the
-    // Relationships app root, same fallback territoryHealthCardHtml below
-    // already uses for the same reason.
+    // logged_by_name credit rule). Tiles link to the rep's own rep-todos
+    // screen, same as mustDoHtml's tiles -- per Michael (2026-11-13), the
+    // number should go straight to "the person's calendar" rather than
+    // the Relationships root.
     function meetingsHtml(meetings) {
       var total = (meetings.today || 0) + (meetings.this_week || 0) + (meetings.later || 0);
       function tile(key, label, count) {
         var zero = count === 0 ? ' home-dash-stat-zero' : '';
-        return '<a class="home-dash-stat home-dash-stat-' + key + zero + '" href="' + RELATIONSHIPS_URL + '" title="Open Relationships">' +
+        return '<a class="home-dash-stat home-dash-stat-' + key + zero + '" href="' + REP_TODOS_URL + '" title="Open your calendar">' +
           '<div class="home-dash-stat-value">' + count + '</div>' +
           '<div class="home-dash-stat-label">' + label + '</div>' +
         '</a>';
@@ -141,7 +140,7 @@
         '<div class="home-dash-card">' +
           '<div class="home-dash-card-head">' +
             '<h2 class="home-dash-card-title">Scheduled Meetings</h2>' +
-            '<span class="home-dash-card-hint">' + total + ' upcoming meeting' + (total === 1 ? '' : 's') + ' — click any to open Relationships</span>' +
+            '<span class="home-dash-card-hint">' + total + ' upcoming meeting' + (total === 1 ? '' : 's') + ' — click any to open your calendar</span>' +
           '</div>' +
           '<div class="home-dash-grid-3">' +
             tile('due-today', 'Today', meetings.today || 0) +
