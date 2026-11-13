@@ -85,6 +85,23 @@ declare(strict_types=1);
  *   the request still errors out.
  *   -> { ok: true, documents: [ {...}, ... ] } (same row shape as
  *      documents.php's own upload)
+ *
+ * POST ?action=outgrow
+ *   { email_body_text }
+ *   "OutGrow!" (added 2026-11-13 per Michael) -- reads the OPEN EMAIL'S
+ *   text the exact same way relationships/api/outgrow-ticket.php reads a
+ *   pasted ConnectWise "OutGrow Action" ticket (same parser, same Last
+ *   OutGrow Touch update, same pre-filled Formstack link): this just
+ *   substitutes the email body for the paste box. Independent of
+ *   customer_id/the matched-customer flow above -- the company comes
+ *   straight out of the parsed text's "Company:" line, same as the web
+ *   app's standalone "Ticket -> OutGrow" page. Uses $allowedTerritories
+ *   (not relationships_allowed_territories($pdo)) for the Last OutGrow
+ *   Touch write's territory check, for the same bearer-auth reason as
+ *   everywhere else in this file.
+ *   -> { ok: true, values: {...}, warnings: [...], formstack_url: "...",
+ *        touch: {...} } (same shape as outgrow-ticket.php) or
+ *      { ok: false, error: "..." } (text didn't look like a ticket)
  */
 
 require_once __DIR__ . '/_util.php';
@@ -92,6 +109,9 @@ require_once __DIR__ . '/territory-access.php';
 require_once __DIR__ . '/documents-core.php';
 require_once __DIR__ . '/meetings-core.php';
 require_once __DIR__ . '/catalog.php';
+require_once __DIR__ . '/connectwise-outgrow.php';
+require_once __DIR__ . '/outgrow-ticket-parse.php';
+require_once __DIR__ . '/outgrow-ticket-touch.php';
 
 $pdo = relationships_db();
 $user = relationships_require_login_or_bearer($pdo);
@@ -371,6 +391,43 @@ if ($action === 'file_documents') {
     }
 
     relationships_respond(200, ['ok' => true, 'documents' => $documents]);
+}
+
+if ($action === 'outgrow') {
+    $data = relationships_read_json_body();
+    $text = trim((string) ($data['email_body_text'] ?? ''));
+    if ($text === '') {
+        relationships_respond(400, ['ok' => false, 'error' => 'No email text to read.']);
+    }
+
+    $parsed = relationships_outgrow_parse_ticket($text);
+    if (!$parsed['ok']) {
+        relationships_respond(422, ['ok' => false, 'error' => $parsed['error']]);
+    }
+
+    try {
+        $touch = relationships_outgrow_apply_touch(
+            $pdo,
+            $user,
+            $allowedTerritories,
+            (string) $parsed['values']['company'],
+            $parsed['values']['note_date'],
+            static function (string $cwCompanyId, string $dateYmd): void {
+                relationships_cw_outgrow_write($cwCompanyId, $dateYmd);
+            }
+        );
+    } catch (Throwable $e) {
+        error_log('[outlook-addin/outgrow] touch update failed: ' . $e->getMessage());
+        $touch = ['status' => 'error', 'message' => 'Couldn’t update Last OutGrow Touch (see server log). The OutGrow form link below still works.'];
+    }
+
+    relationships_respond(200, [
+        'ok' => true,
+        'values' => $parsed['values'],
+        'warnings' => $parsed['warnings'],
+        'formstack_url' => relationships_outgrow_form_url($parsed['values']),
+        'touch' => $touch,
+    ]);
 }
 
 relationships_respond(400, ['ok' => false, 'error' => 'Unknown action.']);

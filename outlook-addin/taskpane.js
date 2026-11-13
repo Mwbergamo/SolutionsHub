@@ -38,7 +38,7 @@
   var searchDebounceTimer = null;
 
   var state = {
-    // 'loading' | 'signin' | 'resolving-customer' | 'pick-customer' | 'menu' | 'file-documents' | 'create-meeting' | 'create-todo' | 'done'
+    // 'loading' | 'signin' | 'resolving-customer' | 'pick-customer' | 'menu' | 'file-documents' | 'create-meeting' | 'create-todo' | 'outgrow' | 'done'
     stage: 'loading',
     error: null,
     busy: false,
@@ -70,6 +70,14 @@
     todoAssignedTo: '',
 
     doneResult: null, // { kind: 'meeting'|'todo'|'documents', payload }
+
+    // "OutGrow!" -- independent of customer match/search above; see the
+    // section near the bottom of this file. outgrowReturnStage is the
+    // stage "Back" restores, since this is reachable from any of them.
+    outgrowReturnStage: 'menu',
+    outgrowBusy: false,
+    outgrowError: null,
+    outgrowResult: null, // { values, warnings, touch, formstack_url } (outgrow-ticket.php's own response shape)
   };
 
   // ---- small helpers -------------------------------------------------
@@ -352,13 +360,20 @@
 
   function topHtml() {
     if (state.stage === 'loading') return '';
+    // Available as soon as you're signed in, independent of whether a
+    // customer has been matched/searched yet -- "OutGrow!" doesn't use
+    // that match at all (see the section near the bottom of this file),
+    // so gating it behind Step 1 would just be pointless friction.
+    var outgrowBtn = (state.token && state.stage !== 'outgrow')
+      ? '<button class="outgrow-link" data-action="goto-outgrow" type="button">OutGrow!</button>'
+      : '';
     var signOutBtn = state.token
       ? '<button class="signout-link" data-action="signout" type="button">Sign out</button>'
       : '';
     return (
       '<div class="topbar">' +
         '<div><div class="brand">Relationships Hub</div><div class="brand-sub">' + esc(state.userName || 'CodeBlue Technology') + '</div></div>' +
-        signOutBtn +
+        '<div class="topbar-actions">' + outgrowBtn + signOutBtn + '</div>' +
       '</div>'
     );
   }
@@ -387,6 +402,7 @@
       case 'file-documents': return emailContextHtml() + customerPillHtml() + errorHtml + fileDocumentsHtml();
       case 'create-meeting': return emailContextHtml() + customerPillHtml() + errorHtml + createMeetingHtml();
       case 'create-todo': return emailContextHtml() + customerPillHtml() + errorHtml + createTodoHtml();
+      case 'outgrow': return emailContextHtml() + outgrowHtml();
       case 'done': return emailContextHtml() + customerPillHtml() + errorHtml + doneHtml();
       default: return '';
     }
@@ -556,6 +572,102 @@
     );
   }
 
+  function outgrowHtml() {
+    var o = state.outgrowResult;
+    var html = '<div class="card">' +
+      '<h2 class="card-title">OutGrow!</h2>' +
+      '<p class="hint" style="margin-top:-4px;">Reads this email the same way Relationships\u2019 \u201cTicket \u2192 OutGrow\u201d page reads a pasted ticket \u2014 it needs a dated Discussion entry with Company/Contact lines, like a ConnectWise ticket-notification email.</p>';
+
+    if (state.outgrowBusy) {
+      html += '<div class="loading">Reading this email\u2026</div>';
+    }
+    if (state.outgrowError) {
+      html += '<div class="error-banner">' + esc(state.outgrowError) + '</div>';
+    }
+    if (o) {
+      var v = o.values;
+      var row = function (label, value) {
+        return '<div class="outgrow-row"><div class="outgrow-row-label">' + esc(label) + '</div><div class="outgrow-row-value">' + esc(value || '\u2014') + '</div></div>';
+      };
+      html += '<div class="outgrow-result-title">OutGrow form opened' + (v.ticket ? ' \u2014 ticket #' + esc(v.ticket) : '') + '</div>';
+      if (o.touch) {
+        html += '<div class="outgrow-touch outgrow-touch--' + (o.touch.status === 'updated' ? 'ok' : 'note') + '">' + esc(o.touch.message) + '</div>';
+      }
+      html += row('Your Email', v.email) + row('Your Name', v.name) + row('Client/Prospect Type', v.type) +
+        row('Client/Prospect Company', v.company) + row('Contact', v.contact) +
+        row('Actions / F-U Plan', v.actions) +
+        row('Proactive Call', v.proactive_call) + row('Call Type', v.call_type) +
+        row('DYK', v.dyk) + row('Pivot to Sale', v.pivot);
+      (o.warnings || []).forEach(function (w) {
+        html += '<div class="outgrow-warn">' + esc(w) + '</div>';
+      });
+      html += '<button class="btn btn-primary" data-action="outgrow-reopen-form" type="button" style="margin-top:10px;">Reopen the form</button>';
+    }
+    html += '<button class="btn btn-secondary" data-action="outgrow-back" type="button" style="margin-top:8px;">Back</button>' +
+      '</div>';
+    return html;
+  }
+
+  // ---- OutGrow! -----------------------------------------------------
+  //
+  // Independent of the customer match/search flow above by design (see
+  // the AskUserQuestion decision 2026-11-13): the company comes straight
+  // out of the parsed email text's own "Company:" line, same as the web
+  // app's standalone "Ticket -> OutGrow" nav tab, which likewise has no
+  // customer-selection step. Reachable from any stage via the header
+  // button in topHtml().
+
+  var outgrowDialog = null;
+
+  function gotoOutgrow() {
+    if (state.stage !== 'outgrow') {
+      state.outgrowReturnStage = state.stage;
+    }
+    state.stage = 'outgrow';
+    state.error = null;
+    state.outgrowError = null;
+    state.outgrowResult = null;
+    render();
+    runOutgrow();
+  }
+
+  function runOutgrow() {
+    state.outgrowBusy = true;
+    render();
+    ensureBodyTextLoaded(function (bodyText) {
+      apiPostJson('outgrow', { email_body_text: bodyText }).then(function (r) {
+        state.outgrowBusy = false;
+        if (r.data && r.data.ok) {
+          state.outgrowResult = r.data;
+          openOutgrowDialog(r.data.formstack_url);
+        } else {
+          state.outgrowError = (r.data && r.data.error) || 'Could not read this email as an OutGrow ticket.';
+        }
+        render();
+      }).catch(function () {
+        state.outgrowBusy = false;
+        state.outgrowError = 'Could not reach Relationships. Please try again.';
+        render();
+      });
+    });
+  }
+
+  function openOutgrowDialog(url) {
+    // A plain informational dialog, not the sign-in dialog's messageParent
+    // handshake -- Formstack is a third-party form with no Office.js of
+    // its own, so there's nothing to listen for beyond the rep closing it
+    // once they've reviewed/submitted.
+    Office.context.ui.displayDialogAsync(url, { height: 80, width: 70 }, function (asyncResult) {
+      if (asyncResult.status === Office.AsyncResultStatus.Failed) {
+        state.outgrowError = 'Could not open the OutGrow form: ' + asyncResult.error.message;
+        render();
+        return;
+      }
+      outgrowDialog = asyncResult.value;
+      outgrowDialog.addEventHandler(Office.EventType.DialogEventReceived, function () { outgrowDialog = null; });
+    });
+  }
+
   // ---- Submit handlers --------------------------------------------------
 
   function submitFileDocuments() {
@@ -721,6 +833,9 @@
         else if (action === 'submit-file-documents') { submitFileDocuments(); }
         else if (action === 'submit-create-meeting') { submitCreateMeeting(); }
         else if (action === 'submit-create-todo') { submitCreateTodo(); }
+        else if (action === 'goto-outgrow') { gotoOutgrow(); }
+        else if (action === 'outgrow-back') { state.stage = state.outgrowReturnStage || 'menu'; state.error = null; render(); }
+        else if (action === 'outgrow-reopen-form') { if (state.outgrowResult) openOutgrowDialog(state.outgrowResult.formstack_url); }
       });
     });
   }

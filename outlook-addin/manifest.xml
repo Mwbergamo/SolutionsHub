@@ -31,12 +31,12 @@
        Centralized Deployment will treat an update as a brand-new add-in
        instead of upgrading the existing one. -->
   <Id>c87de0f4-bc63-4403-8c1c-d3f4f5524399</Id>
-  <Version>1.0.1.0</Version>
+  <Version>1.0.2.0</Version>
   <ProviderName>CodeBlue Technology</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
 
   <DisplayName DefaultValue="Relationships Hub" />
-  <Description DefaultValue="File an email's attachments as Documents, or create a Meeting or To-Do from it, directly under the matching customer in Relationships." />
+  <Description DefaultValue="File an email's attachments as Documents, create a Meeting or To-Do from it under the matching customer, or turn it into a pre-filled OutGrow entry." />
 
   <IconUrl DefaultValue="https://portal.codebluetechnology.com/assets/favicon.png" />
   <HighResolutionIconUrl DefaultValue="https://portal.codebluetechnology.com/assets/apple-touch-icon.png" />
@@ -46,6 +46,12 @@
   <AppDomains>
     <AppDomain>https://portal.codebluetechnology.com</AppDomain>
     <AppDomain>https://login.microsoftonline.com</AppDomain>
+    <!-- "OutGrow!" (added 2026-11-13) opens the real OutGrow Formstack
+         form in a dialog (Office.context.ui.displayDialogAsync), pre-
+         filled from the parsed email — that target domain must be
+         listed here too, same as login.microsoftonline.com above for
+         the sign-in dialog. -->
+    <AppDomain>https://outgrow.formstack.com</AppDomain>
   </AppDomains>
 
   <Hosts>
@@ -140,7 +146,7 @@
         <bt:String id="SendToRelationshipsButton.Label" DefaultValue="Relationships Hub" />
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="SendToRelationshipsButton.Tip" DefaultValue="File this email's attachments, or create a Meeting or To-Do from it, under the matching customer in Relationships." />
+        <bt:String id="SendToRelationshipsButton.Tip" DefaultValue="File this email's attachments, create a Meeting or To-Do from it, or turn it into a pre-filled OutGrow entry." />
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>
