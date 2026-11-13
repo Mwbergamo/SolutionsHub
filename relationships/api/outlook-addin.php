@@ -31,6 +31,11 @@ declare(strict_types=1);
  * GET  ?action=me
  *   -> { ok: true, user: { id, name, email } }
  *
+ * GET  ?action=roster
+ *   -> { ok: true, roster: [...7 fixed assignee names...] } -- same list
+ *      as relationships_todo_roster() (catalog.php), for the "Assigned
+ *      to" dropdown on Create a To-Do.
+ *
  * GET  ?action=match&email=someone@customer.com
  *   Exact (case-insensitive) match against contacts.email, territory-
  *   scoped. A restricted rep never even learns a matching customer
@@ -86,6 +91,7 @@ require_once __DIR__ . '/_util.php';
 require_once __DIR__ . '/territory-access.php';
 require_once __DIR__ . '/documents-core.php';
 require_once __DIR__ . '/meetings-core.php';
+require_once __DIR__ . '/catalog.php';
 
 $pdo = relationships_db();
 $user = relationships_require_login_or_bearer($pdo);
@@ -160,6 +166,15 @@ function relationships_outlook_addin_file_email_snapshot(
 
 if ($action === 'me') {
     relationships_respond(200, ['ok' => true, 'user' => $user]);
+}
+
+if ($action === 'roster') {
+    // The same fixed 7-name assignee roster the web app's own to-do
+    // pickers use (relationships_todo_roster(), catalog.php) -- the
+    // task pane's "Assigned to" dropdown on Create a To-Do was calling
+    // this action already, but it was never implemented here, so the
+    // dropdown always came back empty and a to-do could never be saved.
+    relationships_respond(200, ['ok' => true, 'roster' => relationships_todo_roster()]);
 }
 
 if ($action === 'match') {
