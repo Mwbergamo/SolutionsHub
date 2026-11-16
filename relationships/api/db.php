@@ -41,6 +41,27 @@ function relationships_db(): PDO
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->exec('PRAGMA foreign_keys = ON');
     $pdo->exec('PRAGMA journal_mode = WAL');
+    // Added 2026-11-16 -- this is the one db.php in the whole app that was
+    // missing this (client-finance/api/db.php, commissions/api/db.php and
+    // marketing/api/db.php all already set it). relationships.sqlite is the
+    // busiest file in SolutionsHub by far: half a dozen ConnectWise sync
+    // jobs (billing/tickets/contacts/opportunity/YTD billing -- see the
+    // connectwise-*-sync-core.php files) write to it, while myday/api/
+    // digest.php, client-finance's gauges, and marketing's own company
+    // search (marketing/api/send.php's company_search action, which opens
+    // THIS file, not marketing's own db) all read it on every request. In
+    // WAL mode a reader doesn't normally block a writer, but a momentary
+    // exclusive lock (e.g. a sync job's own transaction, or a WAL
+    // checkpoint) can still collide with one -- and with no busy_timeout
+    // set, SQLite returns SQLITE_BUSY immediately instead of retrying,
+    // which PDO throws as an exception. That's what Michael was hitting in
+    // Marketing's company search ("very flakey... works 1% of the time"):
+    // a genuine, intermittent SQLITE_BUSY on THIS file, previously masked
+    // as "No companies match" (see marketing/app.js's company-search error
+    // banner fix, same commit) and now, with this, far less likely to
+    // happen at all -- 8s matches the retry window the other three db.php
+    // files already use.
+    $pdo->exec('PRAGMA busy_timeout = 8000');
 
     relationships_migrate($pdo);
 
