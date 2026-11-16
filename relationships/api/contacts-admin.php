@@ -101,7 +101,7 @@ $action = $_GET['action'] ?? '';
 
 // relationships_contacts_admin_resolve_customer()/_cw_id()/_primary()/_shape()/
 // _fetch_one() now live in contacts-admin-core.php (required above) -- also used
-// by marketing/api/send.php for the "select a contact's email" step. No behavior
+// by marketing/api/outreach.php for the "select a contact's email" step. No behavior
 // change here.
 
 if ($action === 'list') {
@@ -109,7 +109,7 @@ if ($action === 'list') {
     if ($customerId <= 0) {
         relationships_respond(400, ['ok' => false, 'error' => 'Missing customer_id.']);
     }
-    // Shared with marketing/api/send.php's "select a contact's email" step --
+    // Shared with marketing/api/outreach.php's "select a contact's email" step --
     // see contacts-admin-core.php.
     $result = relationships_contacts_admin_list_for_customer($pdo, $allowedTerritories, $customerId);
     relationships_respond(200, ['ok' => true] + $result);

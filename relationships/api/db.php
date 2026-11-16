@@ -48,7 +48,7 @@ function relationships_db(): PDO
     // jobs (billing/tickets/contacts/opportunity/YTD billing -- see the
     // connectwise-*-sync-core.php files) write to it, while myday/api/
     // digest.php, client-finance's gauges, and marketing's own company
-    // search (marketing/api/send.php's company_search action, which opens
+    // search (marketing/api/outreach.php's company_search action, which opens
     // THIS file, not marketing's own db) all read it on every request. In
     // WAL mode a reader doesn't normally block a writer, but a momentary
     // exclusive lock (e.g. a sync job's own transaction, or a WAL

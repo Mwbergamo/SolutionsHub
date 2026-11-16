@@ -5,7 +5,7 @@ declare(strict_types=1);
  * relationships/api/contacts-admin-core.php
  *
  * Added 2026-11-12, extracted out of contacts-admin.php so the Marketing
- * document hub (marketing/api/send.php -- "search for a company, select a
+ * document hub (marketing/api/outreach.php -- "search for a company, select a
  * contact's email, attach a file, send it") can get a company's live
  * ConnectWise contact list (with email) WITHOUT duplicating the
  * extraction logic contacts-admin.php already got right (primary

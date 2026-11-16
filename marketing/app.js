@@ -393,7 +393,7 @@
     if (!m) return;
     var seq = ++m.companySeq;
     if (!q) { m.companyResults = null; render(); return; }
-    api('api/send.php?action=company_search&q=' + encodeURIComponent(q)).then(function (r) {
+    api('api/outreach.php?action=company_search&q=' + encodeURIComponent(q)).then(function (r) {
       if (!state.sendModal || state.sendModal.companySeq !== seq) return;
       if (!r.data || !r.data.ok) {
         // A real failure (bad session, server error) looks identical to a
@@ -436,7 +436,7 @@
     if (m.mode === 'send') {
       m.contactsLoading = true;
       render();
-      api('api/send.php?action=company_contacts&customer_id=' + company.id).then(function (r) {
+      api('api/outreach.php?action=company_contacts&customer_id=' + company.id).then(function (r) {
         if (!state.sendModal) return;
         state.sendModal.contactsLoading = false;
         if (r.data && r.data.ok) { state.sendModal.contacts = r.data.contacts; }
@@ -446,7 +446,7 @@
     } else {
       m.historyLoading = true;
       render();
-      api('api/send.php?action=history&customer_id=' + company.id).then(function (r) {
+      api('api/outreach.php?action=history&customer_id=' + company.id).then(function (r) {
         if (!state.sendModal) return;
         state.sendModal.historyLoading = false;
         if (r.data && r.data.ok) { state.sendModal.history = r.data.sends; }
@@ -467,7 +467,7 @@
     m.sending = true;
     m.error = null;
     render();
-    api('api/send.php?action=send', {
+    api('api/outreach.php?action=send', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         document_id: m.document.id,

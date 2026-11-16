@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /**
- * marketing/api/send.php
+ * marketing/api/outreach.php
  *
  * "Search for a company, select a contact's email, attach a file within
  * the marketing app and send it via email" (Michael, 2026-11-12), plus
