@@ -674,6 +674,22 @@
 
     html += companyPickerHtml(m);
 
+    // Added 2026-11-16: this used to live inside the `m.company &&
+    // m.mode === 'send'` block below, so a company_search failure --
+    // the search hasn't found/selected a company yet, that's the whole
+    // point of this banner -- set m.error (see runCompanySearch()) but
+    // never actually reached the screen. The dropdown just fell through
+    // to companyPickerHtml()'s own "No companies match." empty state
+    // instead, which looks identical to a real zero-result search. Per
+    // Michael, 2026-11-16: "No Company is found when typing one to
+    // search. It is very flakey and works 1% of the time" -- that 99%
+    // failure rate was this: every genuine search error (bad session,
+    // a SQLite-busy hiccup on relationships.sqlite, etc.) was rendering
+    // as a plain empty dropdown with no error ever visible, so there was
+    // nothing to go on. Hoisted up here so it shows as soon as it's set,
+    // in either mode, whether or not a company has been picked yet.
+    if (m.error) html += '<div class="mk-banner mk-banner--error">' + esc(m.error) + '</div>';
+
     if (m.company && m.mode === 'send') {
       html += '<div class="mk-field"><label>Contact</label>';
       if (m.contactsLoading) {
@@ -700,8 +716,6 @@
         html += '<div class="mk-field"><label>Subject</label><input type="text" class="mk-input" id="mk-subject-input" value="' + esc(m.subject) + '"></div>';
         html += '<div class="mk-field"><label>Note (optional)</label><textarea class="mk-input mk-textarea" id="mk-note-input" rows="3" placeholder="A short note to include above the attachment…">' + esc(m.note) + '</textarea></div>';
       }
-
-      if (m.error) html += '<div class="mk-banner mk-banner--error">' + esc(m.error) + '</div>';
 
       html += '<div class="mk-modal-actions">';
       html += '<button type="button" class="mk-btn" data-action="close-modal">Cancel</button>';
