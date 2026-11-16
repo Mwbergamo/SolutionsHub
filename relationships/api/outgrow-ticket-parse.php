@@ -137,6 +137,27 @@ function relationships_outgrow_email_for(string $name): ?string
 function relationships_outgrow_parse_ticket(string $text): array
 {
     $text = str_replace(["\r\n", "\r", "\xC2\xA0"], ["\n", "\n", ' '], $text);
+    // Added 2026-11-16: a plain NBSP (above) isn't the only lookalike-space
+    // character that shows up in ticket text. The web app's own paste box
+    // only ever sees what a human actually copies, which is almost always
+    // a plain NBSP at worst -- but the Outlook add-in's "OutGrow!" button
+    // feeds this function Office.js's own HTML-to-plain-text conversion of
+    // the live email body (body.getAsync(Office.CoercionType.Text) in
+    // taskpane.js), and that conversion can substitute other Unicode
+    // space/invisible-format characters for an ordinary one when
+    // rendering a tightly-spaced HTML table like ConnectWise's ticket
+    // notification template -- invisible on screen, but \s in the regexes
+    // below only ever matches plain ASCII whitespace, so a header line
+    // that LOOKS exactly like "Mon 11/16/2026/8:42 AM EST/ Kevin Headley
+    // (time)-" could still fail to match. Confirmed 2026-11-16 (SR#960342,
+    // Michael): the exact same ticket text parsed fine through this web
+    // app's own paste box (proving the regexes themselves are fine) but
+    // failed through the Outlook add-in on the identical-looking text --
+    // isolating the difference to Office.js's own text extraction.
+    // Collapses the rest of Unicode's space-separator block plus a few
+    // zero-width/invisible marks (word joiner, BOM, line/paragraph
+    // separators) to a plain space; harmless no-op on ordinary text.
+    $text = preg_replace('/[\x{2000}-\x{200B}\x{202F}\x{205F}\x{3000}\x{FEFF}\x{2028}\x{2029}\x{2060}]/u', ' ', $text) ?? $text;
     $lines = explode("\n", $text);
 
     $company = relationships_outgrow_label_value($lines, 'Company');
