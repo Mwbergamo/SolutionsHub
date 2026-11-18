@@ -1160,6 +1160,36 @@ a { color: inherit; }
   vertical-align: middle;
 }
 
+/* Document category tabs + filename search (2026-11-18, per Michael) --
+   tabs reuse .pf-tabs/.pf-tab from the Prospecting view; only the search
+   box and its clear button are new. */
+.document-filter-tabs { margin: 12px 0 10px; }
+.document-search-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.document-search-input {
+  flex: 1 1 260px;
+  max-width: 320px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid oklch(0.3 0.02 255);
+  background: oklch(0.17 0.014 255);
+  color: white;
+  font: inherit;
+  font-size: 13px;
+}
+.document-search-input::placeholder { color: oklch(0.55 0.015 255); }
+.document-search-clear {
+  background: transparent;
+  border: 1px solid oklch(0.3 0.02 255);
+  color: oklch(0.7 0.01 255);
+  font-size: 14px;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.document-search-clear:hover { border-color: #8fc3ff; color: #8fc3ff; }
+
 /* PeopleFirst summary line atop the Cross-Sell Report */
 
 .peoplefirst-summary {

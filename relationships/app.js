@@ -1525,6 +1525,11 @@
     state.documentUploading = false;
     state.documentUploadProgress = '';
     state.documentRetryingId = null;
+    // Category tabs + filename search over the already-loaded list -- added
+    // 2026-11-18 per Michael. 'All' shows everything; a category name
+    // narrows to just that category's documents.
+    state.documentCategoryFilter = 'All';
+    state.documentSearchTerm = '';
   }
 
   function loadDocuments(customerId) {
@@ -3720,6 +3725,7 @@
     // already stale. Reading document.activeElement here, before any
     // mutation, is the only reliable way to know it was focused.
     var searchFocus = captureSearchFocus();
+    var documentSearchFocus = captureDocumentSearchFocus();
     // Same idea for the Overview list's own scroll position (added
     // 2026-10-07, per Michael: hovering/clicking the Opportunity/Risk badge
     // was jumping a scrolled customer list back to the top) -- re-creating
@@ -3741,6 +3747,7 @@
     // DOMContentLoaded setup yet (harmless no-op on that first render).
     if (window.CBTFavorites) window.CBTFavorites.refreshButtons();
     restoreSearchFocus(searchFocus);
+    restoreDocumentSearchFocus(documentSearchFocus);
     adjustOverviewListScroll();
     restoreOverviewListScroll(overviewScroll);
   }
@@ -3756,6 +3763,32 @@
   function restoreSearchFocus(focusInfo) {
     if (!focusInfo) return;
     var el = document.getElementById('customerSearchInput');
+    if (!el) return;
+    el.focus();
+    try {
+      el.setSelectionRange(focusInfo.start, focusInfo.end);
+    } catch (e) {
+      // setSelectionRange can throw on some input types -- ignore, focus
+      // alone is the important part.
+    }
+  }
+
+  // Same idea as captureSearchFocus/restoreSearchFocus above, for the
+  // Documents panel's filename search box (added 2026-11-18) -- it re-
+  // renders on every keystroke (pure client-side filtering, no debounce
+  // needed since the list is already loaded), so without this the input
+  // would lose focus/caret after each character typed.
+  function captureDocumentSearchFocus() {
+    var el = document.getElementById('documentSearchInput');
+    if (el && document.activeElement === el) {
+      return { start: el.selectionStart, end: el.selectionEnd };
+    }
+    return null;
+  }
+
+  function restoreDocumentSearchFocus(focusInfo) {
+    if (!focusInfo) return;
+    var el = document.getElementById('documentSearchInput');
     if (!el) return;
     el.focus();
     try {
@@ -7332,11 +7365,47 @@
     } else if (!state.documents || !state.documents.length) {
       html += '<div class="roster-empty">No documents uploaded yet.</div>';
     } else {
-      html += '<div class="risk-scan-list">';
-      state.documents.forEach(function (doc) {
-        html += documentItemHtml(doc);
+      // Category tabs + filename search (2026-11-18, per Michael) -- both
+      // run client-side over the already-loaded list, since
+      // documents.php?action=list already returns every document for this
+      // customer in one call. Only categories that already hold at least
+      // one document get a tab (an empty tab would just be dead weight for
+      // customers with a handful of files); 'All' is always first.
+      var docCounts = {};
+      state.documents.forEach(function (d) {
+        var cat = d.category || 'General';
+        docCounts[cat] = (docCounts[cat] || 0) + 1;
       });
-      html += '</div>';
+      var docTabs = ['All'].concat(DOCUMENT_CATEGORIES.filter(function (c) { return docCounts[c] > 0; }));
+      html += '<div class="pf-tabs document-filter-tabs">' + docTabs.map(function (c) {
+        var count = c === 'All' ? state.documents.length : docCounts[c];
+        return '<button type="button" class="pf-tab' + (state.documentCategoryFilter === c ? ' active' : '') + '" data-action="document-category-filter" data-category="' + escapeHtml(c) + '">' + escapeHtml(c) + ' (' + count + ')</button>';
+      }).join('') + '</div>';
+
+      html += '<div class="document-search-row">' +
+        '<input type="text" id="documentSearchInput" class="document-search-input" placeholder="Search by filename…" value="' + escapeHtml(state.documentSearchTerm) + '">' +
+        (state.documentSearchTerm ? '<button type="button" class="document-search-clear" data-action="document-search-clear" aria-label="Clear search">×</button>' : '') +
+      '</div>';
+
+      var activeDocCategory = state.documentCategoryFilter;
+      var docSearchLower = state.documentSearchTerm.trim().toLowerCase();
+      var filteredDocs = state.documents.filter(function (d) {
+        if (activeDocCategory !== 'All' && (d.category || 'General') !== activeDocCategory) return false;
+        if (docSearchLower && d.original_filename.toLowerCase().indexOf(docSearchLower) === -1) return false;
+        return true;
+      });
+
+      if (!filteredDocs.length) {
+        html += '<div class="roster-empty">No documents match' +
+          (docSearchLower ? ' “' + escapeHtml(state.documentSearchTerm) + '”' : '') +
+          (activeDocCategory !== 'All' ? ' in ' + escapeHtml(activeDocCategory) : '') + '.</div>';
+      } else {
+        html += '<div class="risk-scan-list">';
+        filteredDocs.forEach(function (doc) {
+          html += documentItemHtml(doc);
+        });
+        html += '</div>';
+      }
     }
 
     html += '</div>';
@@ -8931,6 +9000,14 @@
       });
     }
 
+    var documentSearchInput = document.getElementById('documentSearchInput');
+    if (documentSearchInput) {
+      documentSearchInput.addEventListener('input', function (e) {
+        state.documentSearchTerm = e.target.value;
+        render();
+      });
+    }
+
     var outgrowDateInput = document.getElementById('outgrowDateInput');
     if (outgrowDateInput) {
       outgrowDateInput.addEventListener('input', function (e) {
@@ -9775,6 +9852,12 @@
       uploadDocuments(parseInt(el.getAttribute('data-customer'), 10));
     } else if (action === 'document-retry-cw') {
       retryDocumentCw(parseInt(el.getAttribute('data-doc'), 10));
+    } else if (action === 'document-category-filter') {
+      state.documentCategoryFilter = el.getAttribute('data-category') || 'All';
+      render();
+    } else if (action === 'document-search-clear') {
+      state.documentSearchTerm = '';
+      render();
     } else if (action === 'riskscan-mark-reviewed') {
       setRiskScanReviewed(parseInt(el.getAttribute('data-scan'), 10), true);
     } else if (action === 'riskscan-unmark-reviewed') {
