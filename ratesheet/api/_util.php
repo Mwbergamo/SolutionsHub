@@ -122,6 +122,14 @@ function ratesheet_require_login(PDO $pdo): array
  * for any name not explicitly listed there, same as every other
  * relationship coordinator in this roster).
  *
+ * Thomas Kimmitt added 2026-11-18, per Michael, email given directly
+ * in his request.
+ *
+ * Reordered alphabetically by first name 2026-11-18, per Michael ("Can
+ * you organize that list alphabetically?") -- supersedes the
+ * append-only convention described above; a future addition should be
+ * inserted alphabetically, not appended to the end.
+ *
  * Keep app.js's SENDER_ROSTER array (names only) in sync with this list
  * if it's ever changed again.
  *
@@ -130,19 +138,19 @@ function ratesheet_require_login(PDO $pdo): array
 function ratesheet_sender_roster(): array
 {
     return [
-        'Chester Sienko' => 'Csienko@codebluetechnology.com',
-        'Moe Okeilli' => 'Mokeilli@codebluetechnology.com',
-        'Walter Drew' => 'Wdrew@codebluetechnology.com',
-        'Claire Hayden' => 'Chayden@codebluetechnology.com',
         'Casey Mayes' => 'cmayes@codebluetechnology.com',
-        'Michael Bergamo' => 'Mbergamo@codebluetechnology.com',
+        'Chester Sienko' => 'Csienko@codebluetechnology.com',
+        'Claire Hayden' => 'Chayden@codebluetechnology.com',
         'Courtney Cruz' => 'Ccruz@codebluetechnology.com',
-        'Kasie Van Fossen' => 'Kvanfossen@codebluetechnology.com',
-        'Trey Hayden' => 'Thayden@codebluetechnology.com',
         'Daemian Caron' => 'Dcaron@codebluetechnology.com',
-        'Kevin Headley' => 'Kheadley@codebluetechnology.com',
         'Jake Bradshaw' => 'Jbradshaw@codebluetechnology.com',
+        'Kasie Van Fossen' => 'Kvanfossen@codebluetechnology.com',
+        'Kevin Headley' => 'Kheadley@codebluetechnology.com',
+        'Michael Bergamo' => 'Mbergamo@codebluetechnology.com',
+        'Moe Okeilli' => 'Mokeilli@codebluetechnology.com',
         'Thomas Kimmitt' => 'tkimmitt@codebluetechnology.com',
+        'Trey Hayden' => 'Thayden@codebluetechnology.com',
+        'Walter Drew' => 'Wdrew@codebluetechnology.com',
     ];
 }
 

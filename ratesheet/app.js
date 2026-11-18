@@ -29,11 +29,12 @@
 
   // Keep in sync with api/_util.php's ratesheet_sender_roster() -- names
   // only here (the dropdown doesn't need the email, the server resolves
-  // it), same order Michael gave.
+  // it). Alphabetical by first name, per Michael (2026-11-18) -- was
+  // previously append-only in whatever order each name was added.
   var SENDER_ROSTER = [
-    'Chester Sienko', 'Moe Okeilli', 'Walter Drew', 'Claire Hayden',
-    'Casey Mayes', 'Michael Bergamo', 'Courtney Cruz', 'Kasie Van Fossen', 'Trey Hayden',
-    'Daemian Caron', 'Kevin Headley', 'Jake Bradshaw', 'Thomas Kimmitt'
+    'Casey Mayes', 'Chester Sienko', 'Claire Hayden', 'Courtney Cruz',
+    'Daemian Caron', 'Jake Bradshaw', 'Kasie Van Fossen', 'Kevin Headley',
+    'Michael Bergamo', 'Moe Okeilli', 'Thomas Kimmitt', 'Trey Hayden', 'Walter Drew'
   ];
 
   var root = document.getElementById('app-root');
