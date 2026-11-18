@@ -142,6 +142,7 @@ function ratesheet_sender_roster(): array
         'Daemian Caron' => 'Dcaron@codebluetechnology.com',
         'Kevin Headley' => 'Kheadley@codebluetechnology.com',
         'Jake Bradshaw' => 'Jbradshaw@codebluetechnology.com',
+        'Thomas Kimmitt' => 'tkimmitt@codebluetechnology.com',
     ];
 }
 
